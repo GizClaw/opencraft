@@ -99,6 +99,12 @@ type Manager struct {
 	// single workspace is supposed to assemble once per engine-input
 	// change, not once per turn.
 	assemblies map[string]int
+	// recovered records, by session root, what this process's
+	// crash-recovery pass did. Recovery is idempotent by itself; the
+	// guard keeps a runtime reload from re-scanning, and the stored
+	// summary lets the Host a reload assembles report the pass the
+	// previous one ran instead of claiming nothing happened.
+	recovered map[string]RecoveryReport
 
 	// User-level database state, opened on demand by OpenUserDB.
 	userDB          *db.DB
@@ -782,8 +788,56 @@ func (m *Manager) buildHost(
 			obs.SetSink(h.onArtifactWrite)
 		}
 	}
+	// Materialize the turns a previous process never archived before
+	// this Host starts serving reads: the window's first session read
+	// must already see an interrupted turn instead of a gap.
+	if prior, owed := m.claimRecovery(layout.SessionsDir); !owed {
+		h.setRecoveryReport(prior)
+	} else {
+		h.recoverInterruptedRuns(ctx)
+		if report, ok := h.RecoveryReport(); ok {
+			m.recordRecovery(layout.SessionsDir, report)
+		}
+	}
 	h.attachRuntimeReloadObserver(ctx)
 	return h, nil
+}
+
+// claimRecovery reports whether this process still owes a crash-recovery
+// pass to one session root, together with the summary of the pass it
+// already ran (zero when there is none yet). The pass is idempotent;
+// claiming keeps a runtime reload from re-scanning a store that was
+// already scanned.
+func (m *Manager) claimRecovery(root string) (RecoveryReport, bool) {
+	if m == nil || root == "" {
+		return RecoveryReport{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.recovered == nil {
+		m.recovered = make(map[string]RecoveryReport)
+	}
+	if report, ok := m.recovered[root]; ok {
+		return report, false
+	}
+	// Claim the root before the pass runs: a second assembly that
+	// overtakes it would otherwise scan the same store twice.
+	m.recovered[root] = RecoveryReport{}
+	return RecoveryReport{}, true
+}
+
+// recordRecovery stores the summary of a finished pass so the Hosts
+// this Manager assembles later can report it.
+func (m *Manager) recordRecovery(root string, report RecoveryReport) {
+	if m == nil || root == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.recovered == nil {
+		m.recovered = make(map[string]RecoveryReport)
+	}
+	m.recovered[root] = report
 }
 
 // reportUsage routes an engine usage report to the run that owns it.
@@ -1004,6 +1058,9 @@ type Host struct {
 	// active runs wait on it before returning so the shared session
 	// store outlives every post-run write (including auto titles).
 	closeDone chan struct{}
+	// recovery is the summary of the crash-recovery pass this Host ran
+	// at assembly (see recover.go). Guarded by mu.
+	recovery RecoveryReport
 }
 
 // RunID identifies one engine run inside a Host.

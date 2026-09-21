@@ -9,9 +9,17 @@ runtime:
     # How long an idle Session stays in memory before it is reclaimed. A
     # live Session carries its tool catalog and attached MCP clients, so
     # this is the knob that decides how much of the recently-opened
-    # conversations the process keeps resident. History itself lives in
-    # the sessions store below (resume: false), so reclaiming a Session
-    # costs a re-open, not context.
+    # conversations the process keeps resident. The store below owns
+    # conversation history, so reclaiming a Session costs a re-open,
+    # not context.
+    #
+    # resume: false keeps the board out of the loop: a turn never seeds
+    # from the last committed board, never parks an interrupted run and
+    # cannot be replayed from its frontier. What the engine still writes
+    # is one checkpoint per completed wave, and that is the crash-
+    # recovery log the host replays at assembly to reconstruct a turn
+    # the process never archived (L1-4). Turning resume on is a board
+    # continuity decision, not a recovery prerequisite.
     idle_timeout: 3m
     resume: false
   # Caller-owned host values injected by the engine at assembly (the

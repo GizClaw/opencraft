@@ -1157,6 +1157,234 @@ describe('ChatView transcript windowing', () => {
   });
 });
 
+// A turn the engine never archived comes back on the next assembly as an
+// interrupted one (host/recover.go), and the notice that renders it is
+// the only place the user can pick the work up again: the frontier is
+// never replayed, so "continue" re-sends the turn's own message with the
+// partial reply already in context.
+describe('ChatView interrupted turn recovery', () => {
+  const restartCopy = 'The app closed or crashed while this reply was running.';
+
+  it('offers Continue on the newest interrupted turn and re-sends its message', async () => {
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'build the search index',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-2',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 'p-1', text: 'wrote half of it' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 't-1',
+          start: 0,
+          docs: [],
+          status: 'interrupted',
+          interruptCause: 'app_restart',
+        },
+      ],
+    );
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-2',
+      context_id: 's-1',
+    });
+    render(<ChatView />);
+
+    // The recovery cause has its own copy instead of the generic
+    // "interrupted before it finished" line.
+    expect(screen.getByText('Reply interrupted')).toBeInTheDocument();
+    expect(screen.getByText(restartCopy)).toBeInTheDocument();
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Continue' }));
+
+    await vi.waitFor(() => expect(apiMock.startTurn).toHaveBeenCalled());
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-1',
+      expect.objectContaining({
+        content: {
+          parts: [
+            expect.objectContaining({
+              type: 'text',
+              text: 'build the search index',
+            }),
+          ],
+        },
+      }),
+      '/tmp/w',
+    );
+  });
+
+  it('keeps an older interrupted turn static', () => {
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'first ask',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-2',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 'p-1', text: 'partial' }],
+          attachments: [],
+        },
+        {
+          id: 'm-3',
+          role: 'user',
+          text: 'second ask',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-4',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 'p-2', text: 'done' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 't-1',
+          start: 0,
+          docs: [],
+          status: 'interrupted',
+          interruptCause: 'app_restart',
+        },
+        { id: 't-2', start: 2, docs: [], status: 'completed' },
+      ],
+    );
+    render(<ChatView />);
+
+    // The notice explains the older turn, but it has been answered over
+    // since: continuing it would only repeat history.
+    expect(screen.getByText('Reply interrupted')).toBeInTheDocument();
+    expect(screen.getByText(restartCopy)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Continue' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Edit & resend' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('restores the original message into the composer for editing', async () => {
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'summarize notes.txt',
+          items: [],
+          attachments: [
+            {
+              id: 'a-1',
+              kind: 'file',
+              path: '/tmp/notes.txt',
+              name: 'notes.txt',
+            },
+          ],
+        },
+        {
+          id: 'm-2',
+          role: 'assistant',
+          text: '',
+          items: [],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 't-1',
+          start: 0,
+          docs: [],
+          status: 'interrupted',
+          interruptCause: 'app_restart',
+        },
+      ],
+    );
+    render(<ChatView />);
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Edit & resend' }));
+
+    // Both halves of the message are back in the composer so the user
+    // edits what they originally sent, not a text-only copy of it.
+    expect(screen.getByRole('textbox')).toHaveTextContent(
+      'summarize notes.txt',
+    );
+    expect(screen.getByLabelText('Remove attachment')).toBeInTheDocument();
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+  });
+
+  it('offers Continue from a windowed transcript', async () => {
+    const messages: MessageView[] = [
+      {
+        id: 'm-0',
+        role: 'user',
+        text: 'original ask',
+        items: [],
+        attachments: [],
+      },
+      ...Array.from({ length: 249 }, (_, i) => ({
+        id: `m-${i + 1}`,
+        role: 'assistant' as const,
+        text: '',
+        items: [{ kind: 'text' as const, id: `p-${i}`, text: `step ${i}` }],
+        attachments: [],
+      })),
+    ];
+    setConversation(messages, [
+      {
+        id: 't-1',
+        start: 0,
+        docs: [],
+        status: 'interrupted',
+        interruptCause: 'app_restart',
+      },
+    ]);
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-2',
+      context_id: 's-1',
+    });
+    render(<ChatView />);
+
+    // The windowed renderer draws the same notice; the turn's user
+    // message is outside the window and is still the one that is sent.
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Continue' }));
+
+    await vi.waitFor(() => expect(apiMock.startTurn).toHaveBeenCalled());
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-1',
+      expect.objectContaining({
+        content: {
+          parts: [
+            expect.objectContaining({ type: 'text', text: 'original ask' }),
+          ],
+        },
+      }),
+      '/tmp/w',
+    );
+  });
+});
+
 describe('ChatView turn end notice diagnostics', () => {
   it('shows the correlation id and raw detail for non-user failures', () => {
     setConversation(

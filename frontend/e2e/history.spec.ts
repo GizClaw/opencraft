@@ -143,3 +143,71 @@ test('collapsing a workspace folds an expanded session list back', async ({
   await expect(rows).toHaveCount(10);
   await expect(more).toBeVisible();
 });
+
+// A turn the process never archived (the app was killed mid-reply) comes
+// back as an interrupted one, and the only way to pick the work up is the
+// transcript's own affordance: the engine does not replay the frontier, so
+// "continue" sends the turn's message again as a fresh turn.
+test('continues an interrupted turn with its own message', async ({ page }) => {
+  await page.addInitScript(mockBackend as never, {
+    listSessions: [
+      {
+        id: 's-1',
+        title: 'Crashed session',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-02T00:00:00Z',
+        messages: 2,
+        total_tokens: 0,
+      },
+    ],
+    sessionTurns: [
+      {
+        seq: 1,
+        at: '2026-01-01T00:00:00Z',
+        run_id: 'run-crashed',
+        status: 'interrupted',
+        interrupt_cause: 'app_restart',
+        messages: [
+          {
+            role: 'user',
+            content: {
+              parts: [{ type: 'text', text: 'finish the report' }],
+            },
+          },
+          {
+            role: 'assistant',
+            content: { parts: [{ type: 'text', text: 'wrote the outline' }] },
+          },
+        ],
+        artifacts: [],
+      },
+    ],
+  });
+  await page.goto('/');
+
+  await page.getByRole('button', { name: 'Crashed session' }).click();
+  await expect(page.getByText('Reply interrupted')).toBeVisible();
+  await expect(
+    page.getByText('The app closed or crashed while this reply was running.'),
+  ).toBeVisible();
+
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as never as {
+              __ocStartTurnCalls: { contextID: string; text: string }[];
+            }
+          ).__ocStartTurnCalls,
+      ),
+    )
+    .toEqual([{ contextID: 's-1', text: 'finish the report' }]);
+  // The carried-on turn is a normal turn: the message renders a second
+  // time, after the interrupted reply it continues.
+  await expect(
+    page.getByTestId('chat-scroll').getByText('finish the report'),
+  ).toHaveCount(2);
+});

@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 )
 
 func TestOpenMigrateAndReopen(t *testing.T) {
@@ -48,5 +50,46 @@ func TestStateServesCheckpointsAndSettings(t *testing.T) {
 	}
 	if err := s.Delete(ctx, "run-1"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCheckpointStatsSplitRunsFromSessionState(t *testing.T) {
+	ctx := context.Background()
+	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
+
+	stats, err := s.CheckpointStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (state.CheckpointStats{}) {
+		t.Fatalf("empty store stats = %+v", stats)
+	}
+
+	write := func(execID string) {
+		t.Helper()
+		if err := s.Save(ctx, agent.Checkpoint{
+			ExecID:    execID,
+			Steps:     []string{"step-a"},
+			Board:     &agent.BoardSnapshot{Vars: map[string]any{"k": "v"}},
+			Timestamp: time.Now().UTC(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One assistant run (the crash-recovery log) and one core
+	// session-state row: both live in the table, only the first is a run
+	// checkpoint.
+	write("run-a")
+	write("session-s-1")
+
+	stats, err = s.CheckpointStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Rows != 2 || stats.Runs != 1 {
+		t.Fatalf("stats = %+v, want 2 rows and 1 run", stats)
+	}
+	if stats.Bytes <= 0 {
+		t.Fatalf("stats = %+v, want encoded bytes", stats)
 	}
 }

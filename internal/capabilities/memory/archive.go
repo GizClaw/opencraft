@@ -3,10 +3,13 @@ package memory
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
+	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
@@ -127,58 +130,98 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 	// turn's context keeps the interrupted content. WithoutCancel keeps
 	// the derived values but detaches the cancellation.
 	persistCtx := context.WithoutCancel(ctx)
-	if atomic, ok := o.sink.(atomicTurnSink); ok {
-		// The write must outlive the run context: canceled turns deliver
-		// OnRunEnd with an already-canceled ctx, and SQLite observes it
-		// on the first query. Without WithoutCancel a stopped turn's
-		// whole transcript is silently dropped.
-		if err := o.store.AppendTurnWithRunIDAndHook(
-			persistCtx, id.ConversationID, id.RunID, raw,
-			func(ctx context.Context, tx *sql.Tx) error {
-				return atomic.AppendMessagesTx(
-					ctx, tx, id.ConversationID, id.RunID,
-					renderConversation(raw),
-				)
-			},
-		); err != nil {
-			telemetry.WarnErr(ctx, "memory: archive turn failed", err,
-				otellog.String("conversation", id.ConversationID),
-				otellog.String("run", id.RunID),
-				otellog.String("status", string(res.Status)))
-			return
-		}
-		if len(raw) <= 1 {
-			return
-		}
-		if err := atomic.FoldOnly(persistCtx, id.ConversationID); err != nil {
-			telemetry.Error(ctx, "memory: archive fold failed",
-				otellog.String("conversation", id.ConversationID),
-				otellog.String("run", res.RunID),
-				otellog.String("error", err.Error()))
-		}
-		return
-	}
-	if err := o.store.AppendTurnWithRunID(
-		persistCtx, id.ConversationID, id.RunID, raw,
+	// The write must outlive the run context: canceled turns deliver
+	// OnRunEnd with an already-canceled ctx, and SQLite observes it on
+	// the first query. Without WithoutCancel a stopped turn's whole
+	// transcript is silently dropped.
+	if err := commitArchivedTurn(
+		persistCtx, o.store, o.sink, o.settings.scopeFor(id),
+		id.ConversationID, id.RunID, raw,
 	); err != nil {
 		telemetry.WarnErr(ctx, "memory: archive turn failed", err,
 			otellog.String("conversation", id.ConversationID),
 			otellog.String("run", id.RunID),
 			otellog.String("status", string(res.Status)))
-		return
 	}
-	if len(raw) <= 1 {
-		return
+}
+
+// RecoverTurn persists one turn crash recovery reconstructed from a run
+// checkpoint (see orchestration/host/recover.go). The write is the same
+// as the one the archive observer performs for an in-process
+// interruption: archive rows and memory rows in a single transaction,
+// then a memory fold. The archive's (conversation, run) uniqueness
+// makes a second recovery of the same run a no-op.
+//
+// scope is only consulted by sinks that cannot join the archive
+// transaction; the SQLite assembly ignores it. Recovery runs outside a
+// deployment hook, so it passes the same scope convention imports use.
+func RecoverTurn(
+	ctx context.Context,
+	store *sessions.Store,
+	sink corememory.TurnSink,
+	conversationID, runID string,
+	msgs []message.Message,
+) error {
+	if store == nil {
+		return errors.New("memory: recover turn without a session store")
 	}
-	if err := o.sink.CommitTurn(persistCtx, corememory.Turn{
-		Scope:          o.settings.scopeFor(id),
-		ConversationID: id.ConversationID,
-		IdempotencyKey: res.RunID,
-		Messages:       renderConversation(raw),
+	if sink == nil {
+		return errors.New("memory: recover turn without a memory sink")
+	}
+	return commitArchivedTurn(
+		ctx, store, sink,
+		corememory.Scope{RuntimeID: "opencraft"},
+		conversationID, runID, msgs,
+	)
+}
+
+// commitArchivedTurn writes one unfinished turn: the archive rows and
+// the memory rows land in one transaction when the sink can join it,
+// and the memory assembly folds afterwards. Sinks that cannot join fall
+// back to appending memory after the archive write.
+func commitArchivedTurn(
+	ctx context.Context,
+	store *sessions.Store,
+	sink corememory.TurnSink,
+	scope corememory.Scope,
+	conversationID, runID string,
+	msgs []message.Message,
+) error {
+	if atomic, ok := sink.(atomicTurnSink); ok {
+		if err := store.AppendTurnWithRunIDAndHook(
+			ctx, conversationID, runID, msgs,
+			func(ctx context.Context, tx *sql.Tx) error {
+				return atomic.AppendMessagesTx(
+					ctx, tx, conversationID, runID,
+					renderConversation(msgs),
+				)
+			},
+		); err != nil {
+			return err
+		}
+		if len(msgs) <= 1 {
+			return nil
+		}
+		if err := atomic.FoldOnly(ctx, conversationID); err != nil {
+			return fmt.Errorf("memory: fold after archive: %w", err)
+		}
+		return nil
+	}
+	if err := store.AppendTurnWithRunID(
+		ctx, conversationID, runID, msgs,
+	); err != nil {
+		return err
+	}
+	if len(msgs) <= 1 {
+		return nil
+	}
+	if err := sink.CommitTurn(ctx, corememory.Turn{
+		Scope:          scope,
+		ConversationID: conversationID,
+		IdempotencyKey: runID,
+		Messages:       renderConversation(msgs),
 	}); err != nil {
-		telemetry.Error(ctx, "memory: archive commit failed",
-			otellog.String("conversation", id.ConversationID),
-			otellog.String("run", res.RunID),
-			otellog.String("error", err.Error()))
+		return fmt.Errorf("memory: commit after archive: %w", err)
 	}
+	return nil
 }

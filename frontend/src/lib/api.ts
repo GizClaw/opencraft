@@ -62,6 +62,7 @@ import type {
   WebSearchTestRequest,
   WebSearchTestResult,
   ExecPool,
+  Recovery,
   PathEnvironment,
   PolicyDecision,
   PetsSettings,
@@ -431,6 +432,10 @@ export const api = {
   // execPool configures the exec supervisor pool: pre-warmed children,
   // the idle ceiling, the active-workspace cap and the idle TTL.
   execPool: () => Diagnostics.ExecPool() as unknown as Promise<ExecPool>,
+  // recovery reports the crash-recovery state of the active workspace:
+  // what the last pass materialized and how much the checkpoint table is
+  // holding.
+  recovery: () => Diagnostics.Recovery() as unknown as Promise<Recovery>,
   setExecPool: (
     prewarm: number,
     maxIdle: number,

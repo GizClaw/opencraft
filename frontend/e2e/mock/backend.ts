@@ -98,6 +98,11 @@ export function mockBackend(cfg?: MockConfig) {
   // text went to the live run with that run's id instead of into the Tab
   // queue. Specs read them back from window.__ocSteerCalls.
   const steerCalls: { runID: string; text: string }[] = [];
+  // StartTurn call log: "continue" on an interrupted turn leaves the
+  // composer as exactly one Conversation.StartTurn, so the request body
+  // is the only proof it carried the turn's own message instead of a
+  // synthetic prompt.
+  const startTurnCalls: { contextID: string; text: string }[] = [];
   const recordPet = (method: string, args: unknown[]) => {
     petCalls.push({ method, args });
   };
@@ -221,6 +226,19 @@ export function mockBackend(cfg?: MockConfig) {
       SessionMode: async () => 'workspace',
       SetSessionMode: noop,
       StartTurn: async (req: unknown) => {
+        const request = req as {
+          context_id?: string;
+          message?: {
+            content?: { parts?: Array<{ type?: string; text?: string }> };
+          };
+        };
+        startTurnCalls.push({
+          contextID: request?.context_id ?? config.currentSession ?? 's-1',
+          text: (request?.message?.content?.parts ?? [])
+            .filter((part) => part.type === 'text')
+            .map((part) => part.text ?? '')
+            .join(''),
+        });
         const contextID =
           (req as { context_id?: string } | undefined)?.context_id ??
           config.currentSession ??
@@ -717,11 +735,13 @@ export function mockBackend(cfg?: MockConfig) {
     __ocPetCalls: typeof petCalls;
     __ocPetReports: typeof petReports;
     __ocSteerCalls: typeof steerCalls;
+    __ocStartTurnCalls: typeof startTurnCalls;
   };
   exposed.__ocMockByModule = modules;
   exposed.__ocPetCalls = petCalls;
   exposed.__ocPetReports = petReports;
   exposed.__ocSteerCalls = steerCalls;
+  exposed.__ocStartTurnCalls = startTurnCalls;
   exposed.__ocCall = async (
     qualified: string,
     callArgs: unknown[],

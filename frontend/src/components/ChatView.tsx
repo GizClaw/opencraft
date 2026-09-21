@@ -352,6 +352,13 @@ function archivedTurnEndKind(status?: TurnStatus): TurnEndKind | undefined {
 // into the assistant message. It renders after the turn's last message
 // and only exposes a live Dismiss action while that turn is still
 // the current XState failure; resumed history stays static.
+//
+// An interrupted turn additionally offers a way to carry on: the engine
+// never replays its frontier (a reboot cannot re-run the wave that was
+// in flight without running its tools twice), so "continue" means the
+// user's own message again as a fresh turn, with the partial reply
+// already in context. Both callbacks are passed for the newest turn of
+// an idle conversation only, so history keeps the static notice.
 function TurnEndNotice({
   status,
   error,
@@ -361,6 +368,8 @@ function TurnEndNotice({
   responseID,
   live = false,
   onDismiss,
+  onContinue,
+  onEditResend,
 }: {
   status: TurnEndKind;
   error?: string;
@@ -370,6 +379,8 @@ function TurnEndNotice({
   responseID?: string;
   live?: boolean;
   onDismiss?: () => void;
+  onContinue?: () => void;
+  onEditResend?: () => void;
 }) {
   const { t } = useTranslation();
   const [dismissed, setDismissed] = useState(false);
@@ -409,6 +420,9 @@ function TurnEndNotice({
     detail = friendlyError || error || t('chat.lastFailedDetail');
   }
   const showRawDetail = !userStop && Boolean(error) && error !== detail;
+  const actionable =
+    status === 'interrupted' &&
+    (onContinue !== undefined || onEditResend !== undefined);
   return (
     <div
       role={failure ? 'alert' : 'status'}
@@ -440,6 +454,30 @@ function TurnEndNotice({
           <p className="mt-1 break-all font-mono text-micro leading-relaxed text-faint">
             {t('chat.responseId')}: {responseID}
           </p>
+        )}
+        {actionable && (
+          <div className="mt-2 flex items-center gap-2">
+            {onContinue && (
+              <button
+                type="button"
+                onClick={onContinue}
+                data-tip={t('chat.continueTurnTip')}
+                className="rounded-control bg-accent px-2.5 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90"
+              >
+                {t('chat.continueTurn')}
+              </button>
+            )}
+            {onEditResend && (
+              <button
+                type="button"
+                onClick={onEditResend}
+                data-tip={t('chat.editResendTip')}
+                className="rounded-control border border-edge bg-panel px-2.5 py-1 text-xs text-fg transition-colors hover:bg-panel2"
+              >
+                {t('chat.editResend')}
+              </button>
+            )}
+          </div>
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
@@ -1173,8 +1211,11 @@ function sameTurnBlock(prev: TurnBlockProps, next: TurnBlockProps): boolean {
     prev.responseID === next.responseID &&
     prev.liveEnd === next.liveEnd &&
     prev.forking === next.forking &&
+    prev.latest === next.latest &&
     prev.onFork === next.onFork &&
     prev.onDismissFailure === next.onDismissFailure &&
+    prev.onContinue === next.onContinue &&
+    prev.onEditResend === next.onEditResend &&
     sameTurnRows(prev.rows, next.rows)
   );
 }
@@ -1203,8 +1244,15 @@ interface TurnBlockProps {
   responseID?: string;
   liveEnd: boolean;
   forking: boolean;
+  // latest marks the conversation's newest turn. Only that turn's
+  // interrupted notice is actionable; older turns stay static.
+  latest: boolean;
   onFork: (turn: TurnArtifacts) => void;
   onDismissFailure: () => void;
+  // onContinue / onEditResend act on the newest turn's original user
+  // message; they are stable per conversation, so the memo holds.
+  onContinue?: () => void;
+  onEditResend?: () => void;
 }
 
 // TurnBlock renders one complete turn. Live turns stay fully expanded
@@ -1223,8 +1271,11 @@ const TurnBlock = memo(function TurnBlock({
   responseID,
   liveEnd,
   forking,
+  latest,
   onFork,
   onDismissFailure,
+  onContinue,
+  onEditResend,
 }: TurnBlockProps) {
   const [processOpen, setProcessOpen] = useState(false);
   const userRows = rows.filter((row) => row.msg.role === 'user');
@@ -1292,6 +1343,16 @@ const TurnBlock = memo(function TurnBlock({
         responseID={responseID}
         live={liveEnd}
         onDismiss={liveEnd ? onDismissFailure : undefined}
+        onContinue={
+          latest && !busy && endStatus === 'interrupted'
+            ? onContinue
+            : undefined
+        }
+        onEditResend={
+          latest && !busy && endStatus === 'interrupted'
+            ? onEditResend
+            : undefined
+        }
       />
     ) : null;
   // The compaction note stays live-only (like the correlation ids above):
@@ -1908,6 +1969,40 @@ export function ChatView() {
   const wsTriggerRef = useRef<HTMLButtonElement>(null);
   const composerDraft = useStore((s) => s.composerDraft);
   const clearComposerDraft = useStore((s) => s.clearComposerDraft);
+  const draftComposer = useStore((s) => s.draftComposer);
+  // resumeTarget finds the user message that opened the newest turn: the
+  // words "continue" sends again and "edit & resend" restores into the
+  // composer. Compaction summaries are prepended context, not the user's
+  // own message, so they are skipped. It reads the live refs instead of
+  // taking the message as an argument, which keeps the callbacks stable:
+  // TurnBlock is memoized on them.
+  const resumeTarget = useCallback((): MessageView | undefined => {
+    const turns = turnArtifactsRef.current;
+    const msgs = messagesRef.current;
+    const turn = turns[turns.length - 1];
+    if (!turn) return undefined;
+    for (let i = turn.start; i < msgs.length; i += 1) {
+      const msg = msgs[i];
+      if (msg?.role !== 'user') continue;
+      if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) continue;
+      return msg;
+    }
+    return undefined;
+  }, []);
+  // continueTurn re-sends that message as a fresh turn. The engine does
+  // not replay an interrupted frontier (see host/recover.go), so this is
+  // "say it again with the partial reply already in context" — the two
+  // paths the notice offers are that, and editing it first.
+  const continueTurn = useCallback(() => {
+    const target = resumeTarget();
+    if (target) void send(target.text, target.attachments);
+  }, [resumeTarget, send]);
+  const editTurnMessage = useCallback(() => {
+    const target = resumeTarget();
+    if (!target) return;
+    setAttachments(target.attachments ?? []);
+    draftComposer(target.text);
+  }, [draftComposer, resumeTarget]);
   const composerRef = useRef<MarkdownComposerHandle>(null);
   const [composerBox, setComposerBox] = useState<HTMLDivElement | null>(null);
   const [composerInset, setComposerInset] = useState(0);
@@ -2951,9 +3046,12 @@ export function ChatView() {
                       responseID={turn.responseID}
                       liveEnd={Boolean(liveEnd)}
                       forking={forking}
+                      latest={turn === lastTurn}
                       scrollContainer={() => scrollRef.current}
                       onFork={setForkTarget}
                       onDismissFailure={clearLastFailed}
+                      onContinue={continueTurn}
+                      onEditResend={editTurnMessage}
                     />
                   );
                 })}
@@ -2985,6 +3083,11 @@ export function ChatView() {
                   const liveEnd = isTurnEnd && failedTurn && turn === lastTurn;
                   const endStatus =
                     archivedEnd ?? (liveEnd ? failedTurn.status : undefined);
+                  // Only the newest turn's interruption can be continued:
+                  // an older one has been answered over since, so its
+                  // "continue" would just repeat history.
+                  const resumable =
+                    endStatus === 'interrupted' && turn === lastTurn && !busy;
                   const isAssistantTurnLast =
                     msg.role === 'assistant' &&
                     (i === messages.length - 1 ||
@@ -3039,6 +3142,8 @@ export function ChatView() {
                           errorKind={turn.errorKind}
                           live={Boolean(liveEnd)}
                           onDismiss={liveEnd ? clearLastFailed : undefined}
+                          onContinue={resumable ? continueTurn : undefined}
+                          onEditResend={resumable ? editTurnMessage : undefined}
                         />
                       )}
                     </Fragment>

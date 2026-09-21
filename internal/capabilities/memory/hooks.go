@@ -133,19 +133,40 @@ func (s commitSettings) scopeFor(id agent.Identity) corememory.Scope {
 // injected context when persisting a turn.
 const worldSectionsCountVar = "world.sections.count"
 
-// extractConversation pulls the turn's raw conversation messages from
-// the final board: everything after the world-state section prefix.
-// Compaction summaries appended by the compact graph node are filtered
-// out: they are derived context, not conversation. When the board or
-// the section boundary marker is unavailable (custom graphs, tests,
-// non-graph engines), it falls back to the request plus the result's
-// trailing assistant messages.
+// extractConversation is ExtractTurnMessages over one finished result.
 func extractConversation(req *agent.Request, res *agent.Result) []message.Message {
+	var board *agent.Board
+	var tail []message.Message
+	if res != nil {
+		board = res.LastBoard
+		tail = res.Messages
+	}
+	return ExtractTurnMessages(board, req, tail)
+}
+
+// ExtractTurnMessages pulls the turn's raw conversation messages from
+// the board it left behind: everything after the world-state section
+// prefix. Compaction summaries appended by the compact graph node are
+// filtered out: they are derived context, not conversation. When the
+// board or the section boundary marker is unavailable (custom graphs,
+// tests, non-graph engines, a checkpoint whose world node never ran),
+// it falls back to the request plus tail.
+//
+// req restores the turn's user message in its original (pre-inline)
+// form, the shape the archive keeps for attachments. A nil req (a
+// checkpoint written before the recovery annotation existed, or one
+// over the size cap) keeps the board's own message and skips
+// re-anchoring. Crash recovery passes a checkpoint board and the
+// request decoded from the checkpoint annotation.
+func ExtractTurnMessages(
+	board *agent.Board,
+	req *agent.Request,
+	tail []message.Message,
+) []message.Message {
 	var msgs []message.Message
-	if res != nil && res.LastBoard != nil {
-		board := res.LastBoard
+	if board != nil {
 		channel := board.Channel(agent.MainChannel)
-		if n, ok := sectionCount(res.LastBoard); ok && n >= 0 && n <= len(channel) {
+		if n, ok := sectionCount(board); ok && n >= 0 && n <= len(channel) {
 			// The compact node moves the prefix it folds onto a side
 			// channel before shrinking MainChannel for the model. That
 			// channel holds the folded messages in order, so the union
@@ -179,16 +200,18 @@ func extractConversation(req *agent.Request, res *agent.Result) []message.Messag
 			// request so attachments stay compact and
 			// re-renderable on resume.
 			askPos := -1
-			if ts, ok := compactTurnStart(board); ok &&
-				ts >= n && ts < len(channel) &&
-				channel[ts].Role == message.RoleUser {
-				askPos = len(archived) + (ts - n) - h
+			if req != nil {
+				if ts, ok := compactTurnStart(board); ok &&
+					ts >= n && ts < len(channel) &&
+					channel[ts].Role == message.RoleUser {
+					askPos = len(archived) + (ts - n) - h
+				}
+				if askPos < 0 && len(turn) > 0 &&
+					turn[0].Role == message.RoleUser {
+					askPos = 0
+				}
 			}
-			if askPos < 0 && len(turn) > 0 &&
-				turn[0].Role == message.RoleUser {
-				askPos = 0
-			}
-			if askPos >= 0 && askPos < len(turn) &&
+			if req != nil && askPos >= 0 && askPos < len(turn) &&
 				turn[askPos].Role == message.RoleUser {
 				restored := make([]message.Message, 0, len(turn)+1)
 				restored = append(restored, req.Message)
@@ -207,9 +230,11 @@ func extractConversation(req *agent.Request, res *agent.Result) []message.Messag
 		}
 	}
 	if len(msgs) == 0 {
-		msgs = make([]message.Message, 0, 1+len(res.Messages))
-		msgs = append(msgs, req.Message)
-		msgs = append(msgs, res.Messages...)
+		msgs = make([]message.Message, 0, 1+len(tail))
+		if req != nil {
+			msgs = append(msgs, req.Message)
+		}
+		msgs = append(msgs, tail...)
 	}
 	out := make([]message.Message, 0, len(msgs))
 	for _, m := range msgs {

@@ -425,6 +425,83 @@ type Report struct {
 	UsageTotalTokens    int64  `json:"usage_total_tokens"`
 }
 
+// RecoveryDTO is the diagnostics view of crash recovery: what the last
+// pass did, and how much the active workspace's checkpoint table is
+// holding right now.
+//
+// A run writes one checkpoint per completed wave and drops it once the
+// turn has an archive row, so the table is normally empty between
+// turns. Rows left behind belong either to a live run (a sibling
+// process the pass deliberately skips) or to a turn whose archive write
+// never landed — the ones the pass materializes as interrupted turns
+// (see orchestration/host/recover.go).
+type RecoveryDTO struct {
+	// Workspace names the store these numbers came from.
+	Workspace string `json:"workspace,omitempty"`
+	// Ran reports whether an assembly ran a pass in this process.
+	Ran bool `json:"ran"`
+	// At is when that pass ran.
+	At string `json:"at,omitempty"`
+	// Recovered counts turns materialized as interrupted.
+	Recovered int `json:"recovered"`
+	// Archived counts checkpoints dropped because the turn already had
+	// an archive row (an in-process stop).
+	Archived int `json:"archived"`
+	// Discarded counts checkpoints dropped as unusable: not a
+	// conversation, a deleted conversation, or a board without a
+	// reconstructable turn.
+	Discarded int `json:"discarded"`
+	// SkippedLive counts checkpoints a sibling process may still own.
+	SkippedLive int `json:"skipped_live"`
+	// Failed counts recovery writes that failed; the next pass retries
+	// them.
+	Failed int `json:"failed"`
+	// Pending counts checkpoints the pass did not examine (its cap).
+	Pending int `json:"pending"`
+	// CheckpointRows is every row of the table; CheckpointRuns is the
+	// assistant-run subset under state.RunCheckpointPrefix, which is
+	// what the recovery pass examines. CheckpointBytes is their
+	// encoded size.
+	CheckpointRows  int   `json:"checkpoint_rows"`
+	CheckpointRuns  int   `json:"checkpoint_runs"`
+	CheckpointBytes int64 `json:"checkpoint_bytes"`
+}
+
+// Recovery reports the crash-recovery state of the active workspace.
+// With no workspace assembled yet every counter is zero and Ran is
+// false, which the card renders as "no pass yet" instead of a clean
+// bill of health.
+func (b *Diagnostics) Recovery() RecoveryDTO {
+	dto := RecoveryDTO{}
+	h := b.core.Runtime.Current()
+	if h == nil {
+		return dto
+	}
+	dto.Workspace = h.WorkDir()
+	if report, ok := h.RecoveryReport(); ok {
+		dto.Ran = true
+		dto.At = report.At.UTC().Format(time.RFC3339)
+		dto.Recovered = report.Recovered
+		dto.Archived = report.Archived
+		dto.Discarded = report.Discarded
+		dto.SkippedLive = report.SkippedLive
+		dto.Failed = report.Failed
+		dto.Pending = report.Pending
+	}
+	if store := h.Sessions(); store != nil {
+		stats, err := store.State().CheckpointStats(b.core.Shell.Context())
+		if err != nil {
+			// A store that cannot be read is what the pass would report
+			// as failed; the card simply shows no checkpoint numbers.
+			return dto
+		}
+		dto.CheckpointRows = stats.Rows
+		dto.CheckpointRuns = stats.Runs
+		dto.CheckpointBytes = stats.Bytes
+	}
+	return dto
+}
+
 // Diagnostics gathers the environment/health summary.
 func (b *Diagnostics) Diagnostics() Report {
 	ctx := b.core.Shell.Context()

@@ -154,6 +154,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   },
   {
     tab: 'diagnostics',
+    section: 'diag-recovery',
+    labelKey: 'config.diagRecoveryTitle',
+    keywords:
+      'crash recovery interrupted restart checkpoint resume continue ' +
+      '崩溃 恢复 中断 重启 检查点 继续',
+  },
+  {
+    tab: 'diagnostics',
     section: 'diag-otlp',
     labelKey: 'config.diagTelemetryTitle',
     keywords:

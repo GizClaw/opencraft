@@ -66,6 +66,56 @@ var ErrNotFound = errors.New("state: not found")
 // owner) instead of a second sqlite backend sharing the same file.
 // ---------------------------------------------------------------------------
 
+// RunCheckpointPrefix is the engine's run id prefix. Checkpoint rows
+// under it belong to assistant runs — they are the crash-recovery log
+// the host replays at assembly to reconstruct a turn the process never
+// archived. Core's own session-state rows use a different prefix and
+// share the table.
+const RunCheckpointPrefix = "run-"
+
+// CheckpointStats summarizes the agent_checkpoints table. A checkpoint
+// is rewritten once per completed wave, so Rows/Runs/Bytes are also the
+// write-amplification figure for recovery: a turn normally drops its
+// row when it ends, and anything left is either a live run or a turn the
+// next assembly has to reconstruct.
+type CheckpointStats struct {
+	// Rows counts every checkpoint in the table.
+	Rows int `json:"rows"`
+	// Runs counts the rows under [RunCheckpointPrefix].
+	Runs int `json:"runs"`
+	// Bytes is the encoded size of every row.
+	Bytes int64 `json:"bytes"`
+}
+
+// CheckpointStats reports the size of the checkpoint table.
+func (s *Store) CheckpointStats(ctx context.Context) (CheckpointStats, error) {
+	rows, err := s.db.SQLDB().QueryContext(ctx,
+		`SELECT exec_id, length(CAST(data AS BLOB)) FROM agent_checkpoints`)
+	if err != nil {
+		return CheckpointStats{}, fmt.Errorf("state: checkpoint stats: %w", err)
+	}
+	defer func() {
+		telemetry.WarnErr(ctx, "state: close checkpoint rows failed", rows.Close())
+	}()
+	var stats CheckpointStats
+	for rows.Next() {
+		var id string
+		var size sql.NullInt64
+		if err := rows.Scan(&id, &size); err != nil {
+			return CheckpointStats{}, fmt.Errorf("state: checkpoint stats: %w", err)
+		}
+		stats.Rows++
+		stats.Bytes += size.Int64
+		if strings.HasPrefix(id, RunCheckpointPrefix) {
+			stats.Runs++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return CheckpointStats{}, fmt.Errorf("state: checkpoint stats: %w", err)
+	}
+	return stats, nil
+}
+
 // Save implements agent.CheckpointStore: an atomic upsert keyed by exec
 // id; the later of two overlapping saves wins.
 func (s *Store) Save(ctx context.Context, cp agent.Checkpoint) error {

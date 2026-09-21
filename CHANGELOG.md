@@ -34,9 +34,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all still run). The run list offers the action on a running row and
   the task menu on a task whose run is live; the failure notification
   policy stays quiet for a stop the user asked for. (#186)
+- A reply the process never finished is no longer lost: every turn now
+  writes one checkpoint per completed wave, and the next assembly turns
+  a checkpoint with no archive row into an interrupted turn — same
+  conversation, same run id, the original user message (media left in
+  its URL form) plus whatever assistant and tool output the crash had
+  already produced, archived and folded into memory in one transaction.
+  The transcript shows it as `interrupted` with the cause `app_restart`,
+  and the newest such turn offers **Continue** (say it again as a fresh
+  turn, with the partial reply in context) and **Edit & resend** (put
+  the message back in the composer). The frontier is deliberately not
+  replayed: the wave that was in flight may have run side-effecting
+  tools, so there is no safe place to resume from. (#188)
+- Settings ▸ Diagnostics grew a Crash recovery card: what the last pass
+  did (recovered / already archived / discarded / skipped-as-live /
+  failed / not examined) and what the active workspace's checkpoint
+  table holds right now. A checkpoint is dropped as soon as its turn is
+  archived, so rows left behind are a live run or a turn the next pass
+  has to reconstruct. (#188)
 
 ### Changed
 
+- Checkpoints are a crash-recovery log rather than a resume cache: a
+  session now starts persistent so the engine stamps one per completed
+  wave, the host deletes a run's checkpoint once its turn has an
+  archive row (a turn whose archive write failed keeps it), and deleting
+  a conversation deletes the checkpoints that would otherwise resurrect
+  it on the next assembly. `runtime.sessions.resume` stays `false`:
+  board seeding, parking and `Resume` are a separate decision, and the
+  recovery pass reads only the checkpoint rows. (#188)
 - Stream deltas are coalesced before they reach the window: the desktop
   shell folds adjacent text/reasoning deltas of one stream into a
   single `stream` event per 25 ms window (or per 64 KiB / 128-delta
