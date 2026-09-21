@@ -37,6 +37,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Stream deltas are coalesced before they reach the window: the desktop
+  shell folds adjacent text/reasoning deltas of one stream into a
+  single `stream` event per 25 ms window (or per 64 KiB / 128-delta
+  cap), by the same rule the frontend's own coalescer uses — so an
+  already-merged stream passes through it unchanged — and every
+  non-stream event flushes the buffer first, which keeps `turn_end`
+  behind the text it ends. A token burst that cost one IPC event per
+  token now costs one per window; the transcript renders the same.
+- SQLite handles open with `synchronous=NORMAL` instead of the default
+  `FULL`. WAL + NORMAL still writes each commit to the WAL before it is
+  acknowledged, so a crash cannot corrupt the database — the exposure
+  is the last transactions not yet checkpointed when the machine loses
+  power — and it halves the fsyncs every commit pays, including the
+  turn-end archive+memory transaction.
+- Runtime assembly is attributed in the log: `host: runtime assembled`
+  and `host: runtime invalidated` name the reason (`workspace_open`,
+  `settings_save`, `plugin_change`, `inference_change`, …), the
+  workspace, the duration, whether a turn was running, and the
+  workspace's in-process assembly sequence; an in-place document reload
+  logs `host: document reloaded in place` with its generation, and a
+  save that falls back to a full rebuild now reports why the swap was
+  refused instead of dropping the error. The stream coalescer reports
+  its merge ratio on a one-minute heartbeat.
+- Skills are user-root only: `<workspace>/.agents/skills` is no longer
+  scanned (it was the one discovery input that varied per workspace, and
+  the one that put a workspace's own tree on the sandbox read
+  whitelist). Discovery, `skill_install`, `skill_create`/`skill_modify`
+  and the Settings import dialog all address the user root
+  (`~/.agents/skills`) now — the tools' `scope` argument, the dialog's
+  scope picker and `RenderSkillPatch`'s scope parameter are removed, and
+  a call that still passes `"repo"` fails as an unknown field. A leftover
+  `<workspace>/.agents/skills` tree is ignored too — no compatibility
+  path, no warning. `skills.settings.work_dir` is retired with it (a
+  hand-edited user layer that still sets it fails the strict settings
+  decode until the key is removed).
 - Enter in the composer now steers the running turn instead of
   interrupting it; Tab keeps the after-turn queue, a draft carrying
   attachments is refused with a hint rather than changed silently, and
@@ -82,6 +117,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   left is served by its own background Host (the UI's current Host is
   never taken over), and a start for a conversation no store owns is
   refused rather than minted somewhere.
+- A completion notification that races a workspace store close (runtime
+  rebuild, workspace switch, shutdown) no longer logs a spurious
+  `sql: database is closed`: a store that closed between the banner's
+  pre-check and its title read falls back to the app name like the
+  pre-check already intended, and only a store that was still open
+  reports the read as an error.
 
 ## [0.5.3] - 2026-09-17
 

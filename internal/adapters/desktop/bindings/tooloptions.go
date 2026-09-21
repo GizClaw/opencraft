@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // Provider-specific tool options as the settings page consumes them:
@@ -189,7 +190,9 @@ func (b *Config) SaveToolOptions(req ToolOptionsRequest) error {
 	if err := config.SaveToolOptions(b.core.UserDir, opts, cfg.Instances); err != nil {
 		return err
 	}
-	return b.core.ApplyDocumentReload(b.core.Shell.Context())
+	ctx := host.WithAssemblyReason(
+		b.core.Shell.Context(), host.ReasonToolOptionsSave)
+	return b.core.ApplyDocumentReload(ctx)
 }
 
 // nestToolOptions turns the flat dotted values the page submits back

@@ -8,6 +8,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/websearch"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // Web search settings as the tools tab consumes them: foundation/config
@@ -192,7 +193,8 @@ func (b *Config) SaveWebSearch(req WebSearchRequest) error {
 	if err := config.SaveWebSearch(b.core.UserDir, next); err != nil {
 		return err
 	}
-	return b.core.ApplyDocumentReload(ctx)
+	return b.core.ApplyDocumentReload(
+		host.WithAssemblyReason(ctx, host.ReasonSettingsSave))
 }
 
 // TestWebSearch runs one real query through the selected provider and

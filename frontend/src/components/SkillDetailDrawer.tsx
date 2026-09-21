@@ -55,11 +55,7 @@ export function SkillDetailDrawer({
   const scopeLabel =
     skill.scope === 'builtin'
       ? t('config.skillsScopeBuiltin')
-      : skill.scope === 'user'
-        ? t('config.skillsScopeUser')
-        : skill.scope === 'repo'
-          ? t('config.skillsScopeRepo')
-          : skill.scope;
+      : t('config.skillsScopeUser');
 
   return (
     <>

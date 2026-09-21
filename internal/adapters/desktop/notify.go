@@ -131,6 +131,14 @@ func (d *Desktop) sessionTitle(contextID string) string {
 	}
 	title, err := store.Title(contextID)
 	if err != nil {
+		// The pre-check above is not atomic: a runtime rebuild or
+		// shutdown closes the store between the two calls, and the
+		// title read then fails with a closed-database driver error.
+		// That race is expected copy-wise — the banner falls back to
+		// the app name — so only a still-open store reports the error.
+		if store.Closed() {
+			return ""
+		}
 		telemetry.WarnErr(context.Background(),
 			"desktop: read session title for notification failed", err)
 		return ""

@@ -7,7 +7,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	"github.com/GizClaw/flowcraft/core/workspace"
 	"go.opentelemetry.io/otel/log"
 )
 
@@ -15,9 +14,9 @@ import (
 // registry.
 const ResourceKind = "opencraft.skills"
 
-// Factory builds the opencraft.skills resource: one discovery pass
-// cached for the process lifetime, consumed by the worldstate prepare
-// hook and the skill_search / skill_read tools.
+// Factory builds the opencraft.skills resource: discovery runs when
+// the service is constructed and again on every Reload, consumed by
+// the worldstate prepare hook and the skill_search / skill_read tools.
 type Factory struct{}
 
 var _ resource.Factory = Factory{}
@@ -34,10 +33,6 @@ func (Factory) Spec() resource.Spec {
 		Kind: ResourceKind,
 		Impl: "local",
 		Deps: []resource.DepSpec{
-			// Optional: in-root reads go through the workspace
-			// abstraction when present (local deployments usually
-			// omit it and read the host filesystem directly).
-			{Name: "workspace", Type: "workspace.Workspace", Required: false},
 			// Optional: enabled plugins may contribute skill roots.
 			{Name: "plugin.host", Type: "opencraft.plugins", Required: false},
 		},
@@ -45,10 +40,9 @@ func (Factory) Spec() resource.Spec {
 }
 
 // Settings configures discovery. Paths are resolver-expanded from the
-// engine assembly values (${ocraft:WORKDIR}, ${ocraft:DATA_DIR}, ...).
+// engine assembly values (${ocraft:DATA_DIR}, ...).
 type Settings struct {
 	Enabled    *bool    `json:"enabled,omitempty"`
-	WorkDir    string   `json:"work_dir"`
 	UserDir    string   `json:"user_dir,omitempty"`
 	TopN       int      `json:"top_n,omitempty"`
 	MinScore   float64  `json:"min_score,omitempty"`
@@ -69,12 +63,6 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 	if settings.Enabled != nil {
 		enabled = *settings.Enabled
 	}
-	var ws workspace.Workspace
-	if dep, ok := in.Dep("workspace"); ok {
-		if w, ok := dep.(workspace.Workspace); ok {
-			ws = w
-		}
-	}
 	extraRoots := append([]string(nil), settings.ExtraRoots...)
 	if dep, ok := in.Dep("plugin.host"); ok {
 		if p, ok := dep.(pluginRootsProvider); ok && p != nil {
@@ -82,9 +70,7 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		}
 	}
 	svc := NewService(ctx, Options{
-		WorkBase:   settings.WorkDir,
 		UserDir:    settings.UserDir,
-		Workspace:  ws,
 		Enabled:    enabled,
 		TopN:       settings.TopN,
 		MinScore:   settings.MinScore,

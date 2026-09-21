@@ -94,6 +94,11 @@ type Manager struct {
 	// closeHost is the teardown entry point. It is a field so tests
 	// can substitute a fake close without spinning up a runtime.
 	closeHost func(*Host)
+	// assemblies counts one workspace's runtime assemblies in this
+	// process. A rebuild storm is visible as this number climbing: a
+	// single workspace is supposed to assemble once per engine-input
+	// change, not once per turn.
+	assemblies map[string]int
 
 	// User-level database state, opened on demand by OpenUserDB.
 	userDB          *db.DB
@@ -406,7 +411,7 @@ func (m *Manager) recordUserUsage(
 // InvalidateAll drops every pooled Host. Idle hosts close immediately;
 // hosts with active runs finish on the old runtime and close after the
 // last run ends.
-func (m *Manager) InvalidateAll() {
+func (m *Manager) InvalidateAll(ctx context.Context) {
 	m.mu.Lock()
 	dirs := make([]string, 0, len(m.hosts))
 	for wd := range m.hosts {
@@ -414,7 +419,7 @@ func (m *Manager) InvalidateAll() {
 	}
 	m.mu.Unlock()
 	for _, wd := range dirs {
-		m.Invalidate(wd)
+		m.Invalidate(ctx, wd)
 	}
 }
 
@@ -473,7 +478,7 @@ func (m *Manager) Acquire(
 // engine-input swaps to idle so a second Host (and a second flowcraft
 // Session for the same conversation) is never assembled while the old
 // runtime still has live runs.
-func (m *Manager) Invalidate(workDir string) {
+func (m *Manager) Invalidate(ctx context.Context, workDir string) {
 	workDir = filepath.Clean(workDir)
 	m.mu.Lock()
 	ref := m.hosts[workDir]
@@ -484,12 +489,25 @@ func (m *Manager) Invalidate(workDir string) {
 	ref.stale = true
 	h := ref.host
 	h.markStale()
+	active := h.hasActiveRuns()
 	var closeNow bool
-	if !h.hasActiveRuns() {
+	if !active {
 		delete(m.hosts, workDir)
 		closeNow = m.trackRetiringLocked(workDir, h)
 	}
 	m.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// The reason names what asked for the rebuild, not what is being
+	// torn down: a storm of invalidations all pointing at one caller is
+	// the signal this line exists for.
+	telemetry.Info(ctx, "host: runtime invalidated",
+		otellog.String("reason", string(AssemblyReasonFrom(ctx))),
+		otellog.String("workspace", workDir),
+		otellog.Bool("in_turn", active),
+		otellog.Bool("deferred", !closeNow),
+		otellog.String("host_ptr", fmt.Sprintf("%p", h)))
 	if closeNow {
 		m.closeHost(h)
 	}
@@ -549,7 +567,7 @@ func (m *Manager) trackRetiringLocked(workDir string, h *Host) bool {
 // old runtime in the background, so callers that must stop promptly
 // should CancelAll first.
 func (m *Manager) CloseAll() {
-	m.InvalidateAll()
+	m.InvalidateAll(context.Background())
 }
 
 // CancelAll cancels every live run on every pooled Host.
@@ -565,8 +583,77 @@ func (m *Manager) CancelAll() {
 	}
 }
 
-// assemble builds one Host without holding the manager lock.
+// assemble builds one Host without holding the manager lock and logs
+// the one line every assembly is identified by: who asked for it, how
+// long it took, and whether the app was busy while it ran.
 func (m *Manager) assemble(
+	ctx context.Context,
+	workDir string,
+	fallback interact.Backend,
+	resolver func(runID string) interact.Backend,
+) (*Host, error) {
+	started := time.Now()
+	h, err := m.buildHost(ctx, workDir, fallback, resolver)
+	duration := time.Since(started)
+	if err != nil {
+		telemetry.WarnErr(ctx, "host: runtime assembly failed", err,
+			otellog.String("reason", string(AssemblyReasonFrom(ctx))),
+			otellog.String("workspace", workDir),
+			otellog.Int64("duration_ms", duration.Milliseconds()))
+		return nil, err
+	}
+	m.logAssembled(ctx, h, duration)
+	return h, nil
+}
+
+// logAssembled reports one completed assembly. assembly_seq counts the
+// workspace's assemblies in this process: the line that turns "turns
+// feel slow" into "this workspace was assembled 33 times in a minute".
+func (m *Manager) logAssembled(
+	ctx context.Context,
+	h *Host,
+	duration time.Duration,
+) {
+	m.mu.Lock()
+	if m.assemblies == nil {
+		m.assemblies = make(map[string]int)
+	}
+	m.assemblies[h.workDir]++
+	seq := m.assemblies[h.workDir]
+	m.mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	telemetry.Info(ctx, "host: runtime assembled",
+		otellog.String("reason", string(AssemblyReasonFrom(ctx))),
+		otellog.String("workspace", h.workDir),
+		otellog.Int64("duration_ms", duration.Milliseconds()),
+		otellog.Bool("in_turn", m.anyActiveRuns()),
+		otellog.Int("assembly_seq", seq),
+		otellog.String("host_ptr", fmt.Sprintf("%p", h)))
+}
+
+// anyActiveRuns reports whether any pooled or draining Host has a live
+// run. An assembly that overlaps a run is one the user paid for inside
+// a turn.
+func (m *Manager) anyActiveRuns() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, ref := range m.hosts {
+		if ref.host.hasActiveRuns() {
+			return true
+		}
+	}
+	for _, h := range m.retiring {
+		if h.hasActiveRuns() {
+			return true
+		}
+	}
+	return false
+}
+
+// buildHost builds one Host without holding the manager lock.
+func (m *Manager) buildHost(
 	ctx context.Context,
 	workDir string,
 	fallback interact.Backend,

@@ -7,6 +7,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	plugininstalltool "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // pluginInstaller adapts the desktop plugin registry to the agent's
@@ -116,6 +117,7 @@ func (p pluginInstaller) reload(ctx context.Context) error {
 	if p.core.Shell != nil {
 		ctx = p.core.Shell.Context()
 	}
+	ctx = host.WithAssemblyReason(ctx, host.ReasonPluginChange)
 	return p.core.RebuildRuntime(ctx)
 }
 

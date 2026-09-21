@@ -8,6 +8,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // Workspace exposes workspace history/open/remove operations.
@@ -50,6 +51,7 @@ func (b *Workspace) Open(workDir string) error {
 	// Writing first keeps the invariant that anything observing a
 	// finished open already sees this workspace's new last_opened.
 	b.core.RecordWorkspace(workDir)
+	ctx = host.WithAssemblyReason(ctx, host.ReasonWorkspaceOpen)
 	if err := b.core.RebuildRuntime(ctx); err != nil {
 		return err
 	}
@@ -71,7 +73,8 @@ func (b *Workspace) Remove(id string) error {
 	}
 	ctx := b.core.Shell.Context()
 	b.core.SetWorkDir("")
-	return b.core.RebuildRuntime(ctx)
+	return b.core.RebuildRuntime(
+		host.WithAssemblyReason(ctx, host.ReasonWorkspaceOpen))
 }
 
 // ChooseWorkspace opens a native picker and opens the selection.

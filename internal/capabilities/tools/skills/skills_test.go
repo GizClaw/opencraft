@@ -33,8 +33,9 @@ func confirmCtx(t *testing.T, choice string, cancelled bool) context.Context {
 
 func newTestService(t *testing.T) *skillspkg.Service {
 	t.Helper()
-	root := t.TempDir()
-	scan := filepath.Join(root, ".agents", "skills")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	scan := filepath.Join(home, ".agents", "skills")
 	write := func(name, desc string) {
 		dir := filepath.Join(scan, name)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -50,7 +51,7 @@ func newTestService(t *testing.T) *skillspkg.Service {
 	write("review", "review code and docs for quality")
 	write("plan", "build execution plans")
 	return skillspkg.NewService(context.Background(), skillspkg.Options{
-		WorkBase: root, Enabled: true,
+		Enabled: true,
 	})
 }
 

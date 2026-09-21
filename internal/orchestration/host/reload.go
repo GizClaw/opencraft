@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/event"
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
@@ -33,6 +34,7 @@ func (h *Host) ReloadDocument(ctx context.Context) error {
 	if h == nil || h.ctrl == nil {
 		return ErrRuntimeNotReady
 	}
+	started := time.Now()
 	doc, err := engine.LoadDocument(ctx, h.userDir)
 	if err != nil {
 		return fmt.Errorf("host: load document: %w", err)
@@ -62,6 +64,16 @@ func (h *Host) ReloadDocument(ctx context.Context) error {
 	// onRuntimeReload serializes both paths and is idempotent.
 	h.onRuntimeReload(context.Background(),
 		runtimecore.RuntimeRebuildEvent{GenerationID: result.GenerationID})
+	// The counterpart of "host: runtime assembled": an in-place swap is
+	// the cheap path, and this line is what tells the two apart when a
+	// review asks why a settings save rebuilt the whole runtime.
+	telemetry.Info(ctx, "host: document reloaded in place",
+		otellog.String("reason", string(AssemblyReasonFrom(ctx))),
+		otellog.String("workspace", h.workDir),
+		otellog.Int64("duration_ms", time.Since(started).Milliseconds()),
+		otellog.Int64("generation", int64(result.GenerationID)),
+		otellog.Bool("in_turn", h.hasActiveRuns()),
+		otellog.String("host_ptr", fmt.Sprintf("%p", h)))
 	return nil
 }
 

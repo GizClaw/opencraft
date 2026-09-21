@@ -11,20 +11,29 @@ import (
 
 func newWriteService(t *testing.T) *Service {
 	t.Helper()
-	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	return NewService(context.Background(), Options{
-		WorkBase: root,
-		UserDir:  t.TempDir(),
-		Enabled:  true,
+		UserDir: t.TempDir(),
+		Enabled: true,
 	})
+}
+
+// writeRoot returns the user skill root the service writes to.
+func writeRoot(t *testing.T) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(home, ".agents", "skills")
 }
 
 func TestCreateModifyDeleteRoundTrip(t *testing.T) {
 	svc := newWriteService(t)
+	root := writeRoot(t)
 
-	// Create in the repo scope and verify it is discoverable at once.
+	// Create in the user root and verify it is discoverable at once.
 	path, err := svc.Create(
 		"qa-checks",
 		SkillDocument{
@@ -36,13 +45,12 @@ func TestCreateModifyDeleteRoundTrip(t *testing.T) {
 			},
 			Executable: []string{"scripts/run.py"},
 		},
-		ScopeRepo,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := filepath.Join(
-		svc.opts.WorkBase, ".agents", "skills", "qa-checks", "SKILL.md",
+		root, "qa-checks", "SKILL.md",
 	); path != want {
 		t.Fatalf("create path = %s, want %s", path, want)
 	}
@@ -51,7 +59,7 @@ func TestCreateModifyDeleteRoundTrip(t *testing.T) {
 	}
 	// Supporting files land with the right content and mode.
 	script := filepath.Join(
-		svc.opts.WorkBase, ".agents", "skills", "qa-checks", "scripts", "run.py",
+		root, "qa-checks", "scripts", "run.py",
 	)
 	info, err := os.Stat(script)
 	if err != nil {
@@ -61,21 +69,21 @@ func TestCreateModifyDeleteRoundTrip(t *testing.T) {
 		t.Fatalf("script not executable: %v", info.Mode())
 	}
 	if data, err := os.ReadFile(filepath.Join(
-		svc.opts.WorkBase, ".agents", "skills", "qa-checks", "references", "notes.md",
+		root, "qa-checks", "references", "notes.md",
 	)); err != nil || !strings.Contains(string(data), "Keep them short") {
 		t.Fatalf("reference file = %q, %v", data, err)
 	}
 
 	// Duplicate name is refused.
 	if _, err := svc.Create(
-		"qa-checks", SkillDocument{Description: "dup", Body: "body"}, ScopeRepo,
+		"qa-checks", SkillDocument{Description: "dup", Body: "body"},
 	); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("duplicate create error = %v", err)
 	}
 
 	// Invalid names are refused.
 	if _, err := svc.Create(
-		"Bad Name", SkillDocument{Description: "x", Body: "body"}, ScopeRepo,
+		"Bad Name", SkillDocument{Description: "x", Body: "body"},
 	); err == nil || !strings.Contains(err.Error(), "invalid name") {
 		t.Fatalf("invalid name error = %v", err)
 	}
@@ -88,7 +96,6 @@ func TestCreateModifyDeleteRoundTrip(t *testing.T) {
 			Body:        "body",
 			Files:       map[string]string{"../evil.txt": "boom"},
 		},
-		ScopeRepo,
 	); err == nil || !strings.Contains(err.Error(), "escapes") {
 		t.Fatalf("traversal error = %v", err)
 	}
@@ -99,7 +106,6 @@ func TestCreateModifyDeleteRoundTrip(t *testing.T) {
 			Body:        "body",
 			Files:       map[string]string{"SKILL.md": "hijack"},
 		},
-		ScopeRepo,
 	); err == nil || !strings.Contains(err.Error(), "SKILL.md") {
 		t.Fatalf("SKILL.md hijack error = %v", err)
 	}
@@ -113,7 +119,6 @@ func TestCreateModifyDeleteRoundTrip(t *testing.T) {
 				"scripts/run.py": "#!/usr/bin/env python3\nprint('v2')\n",
 			},
 		},
-		ScopeRepo,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -133,14 +138,14 @@ func TestCreateModifyDeleteRoundTrip(t *testing.T) {
 		t.Fatalf("modified script = %q, %v", data, err)
 	}
 	if _, err := os.Stat(filepath.Join(
-		svc.opts.WorkBase, ".agents", "skills", "qa-checks", "references", "notes.md",
+		root, "qa-checks", "references", "notes.md",
 	)); err != nil {
 		t.Fatalf("unlisted reference file removed: %v", err)
 	}
 
 	// Modify of a missing skill is refused.
 	if _, err := svc.Modify(
-		"nope", SkillDocument{Body: "body"}, ScopeRepo,
+		"nope", SkillDocument{Body: "body"},
 	); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("missing modify error = %v", err)
 	}
@@ -172,13 +177,13 @@ func TestCreateModifyDeleteRoundTrip(t *testing.T) {
 		t.Fatalf("outside delete error = %v", err)
 	}
 	if err := svc.Delete(filepath.Join(
-		svc.opts.WorkBase, ".agents", "skills", "README.md",
+		root, "README.md",
 	)); err == nil {
 		t.Fatal("non-SKILL.md delete must fail")
 	}
 }
 
-func TestCreateUserScope(t *testing.T) {
+func TestCreateLandsInUserRoot(t *testing.T) {
 	svc := newWriteService(t)
 	path, err := svc.Create(
 		"notes",
@@ -186,7 +191,6 @@ func TestCreateUserScope(t *testing.T) {
 			Description: "take notes",
 			Body:        "## Notes\nKeep them short.\n",
 		},
-		ScopeUser,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -212,7 +216,6 @@ func TestPatchSkillPartialEdit(t *testing.T) {
 			},
 			Executable: []string{"scripts/run.py"},
 		},
-		ScopeRepo,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +230,7 @@ func TestPatchSkillPartialEdit(t *testing.T) {
 -print('v1')
 +print('v2')
 *** End Patch
-`, ScopeRepo)
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +245,7 @@ func TestPatchSkillPartialEdit(t *testing.T) {
 		t.Fatalf("SKILL.md not patched: %q", body)
 	}
 	script := filepath.Join(
-		svc.opts.WorkBase, ".agents", "skills", "qa-checks", "scripts", "run.py",
+		writeRoot(t), "qa-checks", "scripts", "run.py",
 	)
 	if data, err := os.ReadFile(script); err != nil ||
 		!strings.Contains(string(data), "v2") {
@@ -260,7 +263,7 @@ func TestPatchSkillPartialEdit(t *testing.T) {
 -description: run the QA checklist
 +description:
 *** End Patch
-`, ScopeRepo); err == nil {
+`); err == nil {
 		t.Fatal("broken frontmatter must be rejected")
 	}
 	_, body, err = svc.ReadFull("qa-checks")
@@ -272,13 +275,12 @@ func TestPatchSkillPartialEdit(t *testing.T) {
 	}
 
 	// Missing skill and escaping paths are refused.
-	if _, err := svc.Patch("nope", "*** Begin Patch\n*** End Patch\n", ScopeRepo); err == nil {
+	if _, err := svc.Patch("nope", "*** Begin Patch\n*** End Patch\n"); err == nil {
 		t.Fatal("missing skill patch must fail")
 	}
 	if _, err := svc.Patch(
 		"qa-checks",
 		"*** Begin Patch\n*** Update File: ../x\n@@\n-a\n+b\n*** End Patch\n",
-		ScopeRepo,
 	); err == nil {
 		t.Fatal("escaping patch must fail")
 	}
@@ -295,12 +297,11 @@ func TestPatchRestoresOriginalWhenSwapFails(t *testing.T) {
 			Description: "guard the swap",
 			Body:        "original body",
 		},
-		ScopeRepo,
 	); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(
-		svc.opts.WorkBase, ".agents", "skills", "swap-guard", "SKILL.md",
+		writeRoot(t), "swap-guard", "SKILL.md",
 	)
 	original, err := os.ReadFile(path)
 	if err != nil {
@@ -324,7 +325,7 @@ func TestPatchRestoresOriginalWhenSwapFails(t *testing.T) {
 -original body
 +replacement body
 *** End Patch
-`, ScopeRepo); err == nil {
+`); err == nil {
 		t.Fatal("injected rename failure must fail the patch")
 	}
 	if !injected {
@@ -338,7 +339,7 @@ func TestPatchRestoresOriginalWhenSwapFails(t *testing.T) {
 	if string(got) != string(original) {
 		t.Fatalf("original content changed after failed swap: %q", got)
 	}
-	root := filepath.Join(svc.opts.WorkBase, ".agents", "skills")
+	root := writeRoot(t)
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)

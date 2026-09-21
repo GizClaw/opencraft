@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"testing"
+
+	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
 // fakeManagerHost builds a Host that can sit in a Manager pool without
@@ -48,7 +50,7 @@ func TestInvalidateDefersBusyHost(t *testing.T) {
 	h := fakeManagerHost(m, "/workspace/a", 1)
 	m.hosts[h.workDir] = &hostRef{host: h, refs: 1}
 
-	m.Invalidate(h.workDir)
+	m.Invalidate(context.Background(), h.workDir)
 
 	ref := m.hosts[h.workDir]
 	if ref == nil {
@@ -74,7 +76,7 @@ func TestInvalidateClosesIdleHost(t *testing.T) {
 	h := fakeManagerHost(m, "/workspace/b", 0)
 	m.hosts[h.workDir] = &hostRef{host: h, refs: 1}
 
-	m.Invalidate(h.workDir)
+	m.Invalidate(context.Background(), h.workDir)
 
 	if m.hosts[h.workDir] != nil {
 		t.Fatal("idle host stayed in the pool")
@@ -97,7 +99,7 @@ func TestStaleHostRetiresWhenLastRunEnds(t *testing.T) {
 	h := fakeManagerHost(m, "/workspace/c", 1)
 	m.hosts[h.workDir] = &hostRef{host: h, refs: 1}
 
-	m.Invalidate(h.workDir)
+	m.Invalidate(context.Background(), h.workDir)
 	if m.hosts[h.workDir] == nil {
 		t.Fatal("busy host left the pool at invalidate time")
 	}
@@ -157,5 +159,45 @@ func TestWaitClosedHonorsContextCancel(t *testing.T) {
 	cancel()
 	if err := h.WaitClosed(ctx); err == nil {
 		t.Fatal("WaitClosed returned nil on a canceled context")
+	}
+}
+
+// TestInvalidateLogsAttribution pins the diagnostic contract item 2.0
+// exists for: every invalidation names the caller that asked for it,
+// the workspace it tore down, and whether it was deferred behind live
+// runs. A rebuild storm has to be answerable from the log alone.
+func TestInvalidateLogsAttribution(t *testing.T) {
+	recorder := logcapture.Install(t)
+	m := NewManagerAt(t.TempDir(), t.TempDir())
+	closed := make(chan *Host, 1)
+	recordingClose(m, closed)
+	h := fakeManagerHost(m, "/workspace/logged", 1)
+	m.hosts[h.workDir] = &hostRef{host: h, refs: 1}
+
+	ctx := WithAssemblyReason(context.Background(), ReasonSettingsSave)
+	m.Invalidate(ctx, h.workDir)
+
+	var found bool
+	for _, record := range recorder.Records() {
+		if record.Body().AsString() != "host: runtime invalidated" {
+			continue
+		}
+		found = true
+		if got := logcapture.Attribute(record, "reason"); got != "settings_save" {
+			t.Fatalf("reason = %q, want settings_save", got)
+		}
+		if got := logcapture.Attribute(record, "workspace"); got != h.workDir {
+			t.Fatalf("workspace = %q, want %q", got, h.workDir)
+		}
+		if got := logcapture.Attribute(record, "in_turn"); got != "true" {
+			t.Fatalf("in_turn = %q, want true", got)
+		}
+		if got := logcapture.Attribute(record, "deferred"); got != "true" {
+			t.Fatalf("deferred = %q, want true", got)
+		}
+	}
+	if !found {
+		t.Fatalf("no invalidation log record emitted; bodies: %v",
+			recorder.Bodies())
 	}
 }

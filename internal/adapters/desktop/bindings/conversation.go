@@ -112,12 +112,12 @@ func (b *Conversation) StartTurn(
 		if !agent.IsStreamDelta(env.Subject) {
 			return nil
 		}
-		b.core.Shell.Emit("stream", map[string]any{
-			"run_id":          interact.StreamRunID(env.Subject),
-			"conversation_id": contextID,
-			"agent_id":        agentIDOrAssistant(env),
-			"parent_run_id":   env.ParentRunID(),
-			"delta":           delta,
+		b.core.Shell.EmitStream(core.StreamEvent{
+			RunID:          interact.StreamRunID(env.Subject),
+			ConversationID: contextID,
+			AgentID:        agentIDOrAssistant(env),
+			ParentRunID:    env.ParentRunID(),
+			Delta:          delta,
 		})
 		return nil
 	})
@@ -199,7 +199,8 @@ func (b *Conversation) turnHost(
 	if !background {
 		return b.core.Runtime.Current(), nil
 	}
-	return b.core.Runtime.HostInWorkspace(ctx, workDir)
+	return b.core.Runtime.HostInWorkspace(
+		host.WithAssemblyReason(ctx, host.ReasonConversation), workDir)
 }
 
 // ensureHostWithin waits for a usable Host inside the retry window,
@@ -551,7 +552,8 @@ func (b *Conversation) runHost(
 			core.SameWorkspace(h.WorkDir(), workDir) {
 			return h, nil
 		}
-		return b.core.Runtime.HostInWorkspace(ctx, workDir)
+		return b.core.Runtime.HostInWorkspace(
+			host.WithAssemblyReason(ctx, host.ReasonConversation), workDir)
 	}
 	if h := b.core.Runtime.Current(); h != nil {
 		return h, nil

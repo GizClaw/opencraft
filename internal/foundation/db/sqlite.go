@@ -53,6 +53,15 @@ func OpenWithOptions(path string, opts OpenOptions) (*DB, error) {
 	db.SetMaxOpenConns(1)
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL",
+		// WAL + NORMAL is the combination SQLite documents as safe:
+		// a commit still writes the WAL before it is acknowledged, so
+		// a crash cannot corrupt the database — the worst case is
+		// losing the last transactions that had not reached a
+		// checkpoint when the machine lost power. It drops the second
+		// fsync per commit that FULL pays (WAL frame + directory), and
+		// the turn-end archive+memory transaction is exactly the write
+		// path that pays it on every turn.
+		"PRAGMA synchronous=NORMAL",
 		"PRAGMA busy_timeout=5000",
 	}
 	if opts.ForeignKeys {

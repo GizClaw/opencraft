@@ -312,7 +312,7 @@ func renderSkillActivation(
 	out, err := render(skillActivTmpl, skillActivationData{
 		Name:      sk.Name,
 		Path:      sk.Path,
-		Untrusted: sk.Scope != "repo" && sk.Scope != "builtin",
+		Untrusted: sk.Scope != "builtin",
 		Staged:    staged,
 		Note:      note,
 		Body:      body,

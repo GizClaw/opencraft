@@ -12,12 +12,28 @@ import (
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/message"
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
+	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
+
+// recordsWithBody returns the records whose body equals msg, in order.
+func recordsWithBody(
+	recorder *logcapture.Recorder,
+	msg string,
+) []sdklog.Record {
+	var out []sdklog.Record
+	for _, record := range recorder.Records() {
+		if record.Body().AsString() == msg {
+			out = append(out, record)
+		}
+	}
+	return out
+}
 
 // TestRuntimeInPlaceReloadGenerationSemantics is the M0 verification
 // experiment from docs/backend-runtime-reload-plan.md: it applies a
@@ -37,6 +53,7 @@ import (
 //   - an external runtime.Attach subscription (the mechanism Broker
 //     uses) still observes the new generation's rebuild event.
 func TestRuntimeInPlaceReloadGenerationSemantics(t *testing.T) {
+	recorder := logcapture.Install(t)
 	providerA := fakeprovider.New(t, fakeprovider.Reply{Text: "done-a"})
 	gate := providerA.HoldNext()
 	providerB := fakeprovider.New(t, fakeprovider.Reply{Text: "done-b"})
@@ -57,6 +74,24 @@ func TestRuntimeInPlaceReloadGenerationSemantics(t *testing.T) {
 		t.Fatalf("acquire host: %v", err)
 	}
 	defer func() { _ = h.Close() }()
+
+	// Assembly attribution: the acquire emitted exactly the line an
+	// operator uses to spot a rebuild storm, with the workspace and the
+	// caller's reason on it.
+	assembled := recordsWithBody(recorder, "host: runtime assembled")
+	if len(assembled) != 1 {
+		t.Fatalf("assembly log lines = %d, want 1 (bodies: %v)",
+			len(assembled), recorder.Bodies())
+	}
+	if got := logcapture.Attribute(assembled[0], "workspace"); got != workDir {
+		t.Fatalf("assembly workspace = %q, want %q", got, workDir)
+	}
+	if got := logcapture.Attribute(assembled[0], "reason"); got != "unknown" {
+		t.Fatalf("assembly reason = %q, want unknown", got)
+	}
+	if got := logcapture.Attribute(assembled[0], "assembly_seq"); got != "1" {
+		t.Fatalf("assembly_seq = %q, want 1", got)
+	}
 
 	rt := h.Controller().Runtime()
 	if rt == nil {
@@ -136,8 +171,25 @@ func TestRuntimeInPlaceReloadGenerationSemantics(t *testing.T) {
 	// Rewrite the user inference layer to point at provider B and
 	// apply the document in place through the production entry point.
 	writeFakeConfig(t, configDir, providerB.URL())
-	if err := h.ReloadDocument(ctx); err != nil {
+	reloadCtx := host.WithAssemblyReason(ctx, host.ReasonSettingsSave)
+	if err := h.ReloadDocument(reloadCtx); err != nil {
 		t.Fatalf("in-place reload: %v", err)
+	}
+
+	// The cheap path logs its counterpart line, tagged with the reason
+	// the caller passed and the generation it swapped in: together with
+	// the assembly line this is what tells "reloaded in place" apart
+	// from "rebuilt everything".
+	reloaded := recordsWithBody(recorder, "host: document reloaded in place")
+	if len(reloaded) != 1 {
+		t.Fatalf("in-place reload log lines = %d, want 1 (bodies: %v)",
+			len(reloaded), recorder.Bodies())
+	}
+	if got := logcapture.Attribute(reloaded[0], "reason"); got != "settings_save" {
+		t.Fatalf("reload reason = %q, want settings_save", got)
+	}
+	if got := logcapture.Attribute(reloaded[0], "generation"); got != "2" {
+		t.Fatalf("reload generation = %q, want 2", got)
 	}
 
 	// The external attachment must observe the new generation's

@@ -19,7 +19,6 @@ export interface SkillCatalogEntry {
   description: string;
   repo: string;
   subpath: string;
-  scope: 'user' | 'repo';
 }
 
 const mcpHome = (name: string) =>
@@ -89,7 +88,6 @@ const codexSkill = (name: string, description: string): SkillCatalogEntry => ({
   description,
   repo: 'https://github.com/openai/codex.git',
   subpath: `.codex/skills/${name}`,
-  scope: 'user',
 });
 
 const flowcraftSkill = (
@@ -100,7 +98,6 @@ const flowcraftSkill = (
   description,
   repo: 'https://github.com/GizClaw/flowcraft.git',
   subpath: `skills/${name}`,
-  scope: 'user',
 });
 
 export const SKILL_CATALOG: SkillCatalogEntry[] = [

@@ -202,16 +202,14 @@ var _ tool.Tool = installTool{}
 func (installTool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		InstallName,
-		"Installs a skill from a git repository into the user or "+
-			"repo skill root, validates its SKILL.md, and reloads the "+
+		"Installs a skill from a git repository into the user "+
+			"skill root (~/.agents/skills), validates its SKILL.md, and reloads the "+
 			"registry so it is usable immediately (no restart). Use "+
 			"path when the skill lives in a subdirectory of the repo.",
 		message.ToolProperty("repo", "string",
 			"Git repository URL or local path."),
 		message.ToolProperty("path", "string",
 			`Subdirectory inside the repo containing the skill (e.g. "skills/flowcraft-config"). Empty installs the whole repo.`),
-		message.ToolPropertyWithDefault("scope", "string",
-			`Target scope: "user" (default, ~/.agents/skills) or "repo" (.agents/skills).`, "user"),
 	).Required("repo").Build()
 }
 
@@ -234,27 +232,22 @@ func (t installTool) Execute(
 // execute renders the tool's text result.
 func (t installTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
-		Repo  string `json:"repo"`
-		Scope string `json:"scope"`
-		Path  string `json:"path"`
+		Repo string `json:"repo"`
+		Path string `json:"path"`
 	}
-	if err := strictDecode(arguments, &args, "repo", "scope", "path"); err != nil {
+	if err := strictDecode(arguments, &args, "repo", "path"); err != nil {
 		return "", err
 	}
-	scope := args.Scope
-	if scope == "" {
-		scope = "user"
-	}
 	ok, err := confirm.Confirm(ctx, "Install skill?",
-		fmt.Sprintf("Install skill from %q into the %s skill root%s?",
-			args.Repo, scope, subpathNote(args.Path)))
+		fmt.Sprintf("Install skill from %q into the user skill root (~/.agents/skills)%s?",
+			args.Repo, subpathNote(args.Path)))
 	if err != nil {
 		return "", err
 	}
 	if !ok {
 		return `{"cancelled":true,"action":"install"}`, nil
 	}
-	dst, err := t.svc.Install(ctx, args.Repo, args.Scope, args.Path)
+	dst, err := t.svc.Install(ctx, args.Repo, args.Path)
 	if err != nil {
 		return "", err
 	}
@@ -270,7 +263,7 @@ func (createTool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		CreateName,
 		"Creates a new skill: writes a validated SKILL.md (frontmatter "+
-			"name + description) into the repo or user skill root and "+
+			"name + description) into the user skill root (~/.agents/skills) and "+
 			"reloads the registry so the skill is usable immediately. "+
 			"The body should be concise, self-contained Markdown "+
 			"instructions an agent can follow without other context.",
@@ -289,8 +282,6 @@ func (createTool) Definition() message.ToolDefinition {
 			"Relative file paths to make executable (chmod 0755) after writing, "+
 				"e.g. shell or Python entry scripts.",
 			message.Items("string")),
-		message.ToolPropertyWithDefault("scope", "string",
-			`Where to create it: "repo" (default, <workspace>/.agents/skills) or "user" (~/.agents/skills).`, "repo"),
 	).Required("name", "description", "body").Build()
 }
 
@@ -316,18 +307,17 @@ func (t createTool) execute(ctx context.Context, arguments string) (string, erro
 		Name        string            `json:"name"`
 		Description string            `json:"description"`
 		Body        string            `json:"body"`
-		Scope       string            `json:"scope"`
 		Files       map[string]string `json:"files"`
 		Executable  []string          `json:"executable"`
 	}
 	if err := strictDecode(
-		arguments, &args, "name", "description", "body", "scope", "files", "executable",
+		arguments, &args, "name", "description", "body", "files", "executable",
 	); err != nil {
 		return "", err
 	}
 	ok, err := confirm.Confirm(ctx, "Create skill?",
-		fmt.Sprintf("Create skill %q in the %s skill root with %d supporting file(s)?",
-			args.Name, scopeLabel(args.Scope), len(args.Files)))
+		fmt.Sprintf("Create skill %q in the user skill root (~/.agents/skills) with %d supporting file(s)?",
+			args.Name, len(args.Files)))
 	if err != nil {
 		return "", err
 	}
@@ -339,7 +329,7 @@ func (t createTool) execute(ctx context.Context, arguments string) (string, erro
 		Body:        args.Body,
 		Files:       args.Files,
 		Executable:  args.Executable,
-	}, args.Scope)
+	})
 	if err != nil {
 		return "", err
 	}
@@ -379,8 +369,6 @@ func (modifyTool) Definition() message.ToolDefinition {
 				"files, so you can change just a few lines of SKILL.md or "+
 				"one script instead of rewriting the whole skill. Paths are "+
 				"relative to the skill directory."),
-		message.ToolPropertyWithDefault("scope", "string",
-			`Which root the skill lives in: "repo" (default) or "user".`, "repo"),
 	).Required("name").Build()
 }
 
@@ -406,19 +394,18 @@ func (t modifyTool) execute(ctx context.Context, arguments string) (string, erro
 		Name        string            `json:"name"`
 		Description string            `json:"description"`
 		Body        string            `json:"body"`
-		Scope       string            `json:"scope"`
 		Files       map[string]string `json:"files"`
 		Executable  []string          `json:"executable"`
 		Patch       string            `json:"patch"`
 	}
 	if err := strictDecode(
-		arguments, &args, "name", "description", "body", "scope", "files", "executable", "patch",
+		arguments, &args, "name", "description", "body", "files", "executable", "patch",
 	); err != nil {
 		return "", err
 	}
 	ok, err := confirm.Confirm(ctx, "Modify skill?",
-		fmt.Sprintf("Modify skill %q in the %s skill root?",
-			args.Name, scopeLabel(args.Scope)))
+		fmt.Sprintf("Modify skill %q in the user skill root (~/.agents/skills)?",
+			args.Name))
 	if err != nil {
 		return "", err
 	}
@@ -432,7 +419,7 @@ func (t modifyTool) execute(ctx context.Context, arguments string) (string, erro
 			return "", errdefs.Validationf(
 				"skill_modify: use either patch or body/files, not both")
 		}
-		paths, err := t.svc.Patch(args.Name, args.Patch, args.Scope)
+		paths, err := t.svc.Patch(args.Name, args.Patch)
 		if err != nil {
 			return "", err
 		}
@@ -445,19 +432,12 @@ func (t modifyTool) execute(ctx context.Context, arguments string) (string, erro
 		Body:        args.Body,
 		Files:       args.Files,
 		Executable:  args.Executable,
-	}, args.Scope)
+	})
 	if err != nil {
 		return "", err
 	}
 	return "Updated skill " + args.Name + " at " + path +
 		". The registry reloaded; skill_read and skill_search now see the new content.", nil
-}
-
-func scopeLabel(scope string) string {
-	if scope == "" || scope == "repo" {
-		return "repo"
-	}
-	return scope
 }
 
 func subpathNote(path string) string {
