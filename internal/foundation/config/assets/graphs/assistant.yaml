@@ -99,6 +99,15 @@ nodes:
     type: tool
     config:
       results_key: tool_results
+  # Delivers mid-turn steering: the node drains the turn's steer queue
+  # right after a round's tool results and appends what it took as one
+  # user message, so the next inference round reads it (see
+  # nodes/steer.js for the boundary rules and the merge).
+  - id: steer
+    type: script
+    config:
+      runtime: js
+      source: { embed: assets/graphs/nodes/steer.js }
 
 edges:
   - { from: world, to: compact }
@@ -115,4 +124,8 @@ edges:
   - { from: llm, to: tools, condition: "tool_pending == true" }
   - { from: llm, to: compact, condition: "recover_pending == true" }
   - { from: llm, to: __end__ }
-  - { from: tools, to: compact }
+  # The tools node lands on the steer boundary: results are on the
+  # channel, the next round has not read it. The node holds back while a
+  # compaction fold is in flight.
+  - { from: tools, to: steer }
+  - { from: steer, to: compact }

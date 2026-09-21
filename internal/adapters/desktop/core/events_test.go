@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/GizClaw/flowcraft/core/agent"
 )
 
 func TestTurnEndEventCarriesDurationMs(t *testing.T) {
@@ -18,7 +20,7 @@ func TestTurnEndEventCarriesDurationMs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := NewTurnEnd(
 				"r-1", "s-1", "completed", "", "req-1", "resp-1", "done",
-				now, tc.durationMs,
+				now, tc.durationMs, &agent.Result{},
 			)
 			raw, err := json.Marshal(ev)
 			if err != nil {
@@ -44,5 +46,53 @@ func TestTurnEndEventCarriesDurationMs(t *testing.T) {
 				t.Fatalf("response_id = %v, want resp-1", got["response_id"])
 			}
 		})
+	}
+}
+
+func TestTurnEndEventSteerPendingWireShape(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	marshal := func(res *agent.Result) map[string]any {
+		t.Helper()
+		ev := NewTurnEnd(
+			"r-1", "s-1", "completed", "", "", "", "done", now, 10, res,
+		)
+		raw, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	// A delivered turn sends a literal zero, never an omitted field: the
+	// frontend treats an absent (or null) value as an unknown count, so
+	// "nothing pending" has to travel as itself.
+	got := marshal(&agent.Result{})
+	if v, ok := got["steer_pending"].(float64); !ok || v != 0 {
+		t.Fatalf("steer_pending = %v, want 0", got["steer_pending"])
+	}
+
+	// A recorded count travels as itself.
+	got = marshal(&agent.Result{State: map[string]any{
+		"session.pending_steer": 2,
+	}})
+	if v, ok := got["steer_pending"].(float64); !ok || v != 2 {
+		t.Fatalf("steer_pending = %v, want 2", got["steer_pending"])
+	}
+
+	// A count this build cannot read — like no result at all — travels
+	// as null instead of a zero the UI would trust.
+	got = marshal(&agent.Result{State: map[string]any{
+		"session.pending_steer": "2",
+	}})
+	if v, present := got["steer_pending"]; !present || v != nil {
+		t.Fatalf("steer_pending = %v (present %v), want null", v, present)
+	}
+	got = marshal(nil)
+	if v, present := got["steer_pending"]; !present || v != nil {
+		t.Fatalf("steer_pending = %v (present %v), want null", v, present)
 	}
 }

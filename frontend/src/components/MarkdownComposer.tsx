@@ -547,6 +547,11 @@ interface MarkdownComposerProps {
   // the draft was staged, so the editor suppresses the default Tab
   // behavior (focus move / indentation).
   onQueue?: () => boolean;
+  // onInterrupt handles Cmd/Ctrl+Enter while a turn is running: send
+  // the draft now, interrupting the live reply (the pre-steer Enter
+  // meaning). It returns true when the draft was taken, so the editor
+  // suppresses the default modifier+Enter behavior.
+  onInterrupt?: () => boolean;
   // onPasteImages receives raster files pasted into the composer so
   // the parent can stage them as attachments. Pasting an image never
   // inserts into the markdown document itself.
@@ -582,6 +587,7 @@ export const MarkdownComposer = forwardRef<
     onValueChange,
     onSubmit,
     onQueue,
+    onInterrupt,
     onPasteImages,
   },
   ref,
@@ -592,6 +598,7 @@ export const MarkdownComposer = forwardRef<
   const onChangeRef = useRef(onValueChange);
   const onSubmitRef = useRef(onSubmit);
   const onQueueRef = useRef(onQueue);
+  const onInterruptRef = useRef(onInterrupt);
   const onPasteImagesRef = useRef(onPasteImages);
   useEffect(() => {
     onChangeRef.current = onValueChange;
@@ -602,6 +609,9 @@ export const MarkdownComposer = forwardRef<
   useEffect(() => {
     onQueueRef.current = onQueue;
   }, [onQueue]);
+  useEffect(() => {
+    onInterruptRef.current = onInterrupt;
+  }, [onInterrupt]);
   useEffect(() => {
     onPasteImagesRef.current = onPasteImages;
   }, [onPasteImages]);
@@ -718,6 +728,17 @@ export const MarkdownComposer = forwardRef<
             return true;
           }
           return false;
+        }
+        if (
+          event.key === 'Enter' &&
+          (event.metaKey || event.ctrlKey) &&
+          !event.shiftKey &&
+          !event.isComposing &&
+          event.keyCode !== 229 &&
+          onInterruptRef.current?.()
+        ) {
+          event.preventDefault();
+          return true;
         }
         if (
           event.key === 'Enter' &&

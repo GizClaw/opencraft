@@ -37,6 +37,7 @@ const apiMock = vi.hoisted(() => ({
   setModel: vi.fn(),
   newChat: vi.fn(),
   startTurn: vi.fn(),
+  steerTurn: vi.fn(),
   forkTurn: vi.fn(),
   cancelTurn: vi.fn(),
   deleteSession: vi.fn(),
@@ -140,6 +141,7 @@ beforeEach(() => {
     run_id: 'r-1',
     context_id: 's-1',
   });
+  apiMock.steerTurn.mockResolvedValue(undefined);
   apiMock.forkTurn.mockResolvedValue('s-fork');
   apiMock.deleteSession.mockResolvedValue({
     session_id: '',
@@ -178,6 +180,7 @@ describe('store: send and stream', () => {
     expect(apiMock.startTurn).toHaveBeenCalledWith(
       's-1',
       expect.objectContaining({ role: 'user' }),
+      '/tmp/w',
     );
   });
 
@@ -258,6 +261,34 @@ describe('store: send and stream', () => {
     ).toMatchObject({ role: 'user', text: 'staged' });
     expect(useStore.getState().runConvs['r-new']).toBe('s-1');
     expect(actorValue('s-1')?.turn).toBe('running');
+  });
+
+  it('drains a staged draft into the workspace that owns the conversation', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    expect(useStore.getState().queueInput('staged elsewhere')).toBe(true);
+
+    // The user switched to another workspace while the queued turn was
+    // still running: the drain must keep targeting the conversation's
+    // own workspace instead of the one now on screen, otherwise the
+    // start lands in the wrong workspace's session store.
+    useStore.setState({ workspace: '/tmp/other' });
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-old',
+        conversation_id: 's-1',
+        status: 'completed',
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-1',
+      expect.objectContaining({ role: 'user' }),
+      '/tmp/w',
+    );
   });
 
   it('an Enter during starting fires the draft when the run starts', async () => {
@@ -1735,6 +1766,7 @@ describe('store: first-message workspace attribution', () => {
     expect(apiMock.startTurn).toHaveBeenCalledWith(
       's-new',
       expect.objectContaining({ role: 'user' }),
+      '/tmp/w',
     );
     expect(stateRoot.focusSnapshot.value).toBe('active');
     expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-new');
@@ -1809,6 +1841,7 @@ describe('store: first-message workspace attribution', () => {
     expect(apiMock.startTurn).toHaveBeenCalledWith(
       's-new',
       expect.objectContaining({ role: 'user' }),
+      '/tmp/b',
     );
     expect(stateRoot.focusSnapshot.value).toBe('active');
     const conv = useStore.getState().conversations['s-new'];
@@ -2376,5 +2409,374 @@ describe('store: model switch cost notice', () => {
     });
     await useStore.getState().setModel('provider/m-2');
     expect(useStore.getState().toasts).toHaveLength(0);
+  });
+});
+
+describe('store: mid-turn steer', () => {
+  function runningConversation(runID = 'r-run') {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID });
+    useStore.setState({ runConvs: { [runID]: 's-1' } });
+    return actor;
+  }
+
+  it('draws the optimistic row and registers it for the run', async () => {
+    runningConversation();
+
+    const ok = await useStore.getState().steer('mid-turn note');
+
+    expect(ok).toBe(true);
+    expect(apiMock.steerTurn).toHaveBeenCalledWith('r-run', 'mid-turn note');
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.at(-1)).toMatchObject({
+      role: 'user',
+      text: 'mid-turn note',
+    });
+    expect(conv.steerSent).toEqual([
+      {
+        runID: 'r-run',
+        messageID: conv.messages.at(-1)?.id,
+        text: 'mid-turn note',
+      },
+    ]);
+  });
+
+  it('keeps delivered rows through turn_end', async () => {
+    runningConversation();
+    await useStore.getState().steer('kept');
+
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+        // A delivered turn reports a literal zero, not an absent field:
+        // absence now means the count could not be read.
+        steer_pending: 0,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.some((m) => m.text === 'kept')).toBe(true);
+    expect(conv.steerSent ?? []).toEqual([]);
+    expect(conv.undeliveredSteers ?? []).toEqual([]);
+  });
+
+  it('turns an undelivered steer into a card at turn_end', async () => {
+    runningConversation();
+    await useStore.getState().steer('lost note');
+
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+        steer_pending: 1,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.some((m) => m.text === 'lost note')).toBe(false);
+    expect(conv.undeliveredSteers).toHaveLength(1);
+    expect(conv.undeliveredSteers?.[0].text).toBe('lost note');
+    expect(conv.steerSent ?? []).toEqual([]);
+  });
+
+  it('classifies only the newest entries as undelivered', async () => {
+    runningConversation();
+    await useStore.getState().steer('first');
+    await useStore.getState().steer('second');
+
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+        steer_pending: 1,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.some((m) => m.text === 'first')).toBe(true);
+    expect(conv.messages.some((m) => m.text === 'second')).toBe(false);
+    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual(['second']);
+  });
+
+  it('keeps the undelivered card when turn_end wins the race and the RPC rejects', async () => {
+    runningConversation();
+    apiMock.steerTurn.mockImplementation(async () => {
+      useStore.getState().handleEvent({
+        type: 'turn_end',
+        data: {
+          run_id: 'r-run',
+          conversation_id: 's-1',
+          status: 'completed',
+          steer_pending: 1,
+        },
+      });
+      throw new Error('turn not found');
+    });
+
+    const ok = await useStore.getState().steer('raced note');
+
+    // The turn settled mid-submission: the row is already a card, so a
+    // late rejection must neither clear it nor start a fresh turn.
+    expect(ok).toBe(true);
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.some((m) => m.text === 'raced note')).toBe(false);
+    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual(['raced note']);
+    expect(useStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('does not duplicate the steer row when turn_end and the RPC both land', async () => {
+    runningConversation();
+    apiMock.steerTurn.mockImplementation(async () => {
+      useStore.getState().handleEvent({
+        type: 'turn_end',
+        data: {
+          run_id: 'r-run',
+          conversation_id: 's-1',
+          status: 'completed',
+          steer_pending: 1,
+        },
+      });
+    });
+
+    expect(await useStore.getState().steer('raced note')).toBe(true);
+
+    // Exactly one copy of the text: out of the transcript, into a card,
+    // with the registration for the run cleared.
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.filter((m) => m.text === 'raced note')).toHaveLength(
+      0,
+    );
+    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual(['raced note']);
+    expect(conv.steerSent ?? []).toEqual([]);
+    expect(useStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('caps the undelivered cards at the newest twenty', async () => {
+    runningConversation();
+    for (let i = 0; i < 25; i += 1) {
+      await useStore.getState().steer(`note ${i}`);
+    }
+
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+        steer_pending: 25,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const conv = useStore.getState().conversations['s-1'];
+    const cards = conv.undeliveredSteers ?? [];
+    expect(cards).toHaveLength(20);
+    expect(cards[0].text).toBe('note 5');
+    expect(cards[19].text).toBe('note 24');
+  });
+
+  it('treats a pending count above the local rows as bounded, not phantom', async () => {
+    runningConversation();
+    await useStore.getState().steer('only one');
+
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+        steer_pending: 5,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // A count larger than what this client registered (another window,
+    // a lost row) still only converts what exists.
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual(['only one']);
+    expect(conv.messages.some((m) => m.text === 'only one')).toBe(false);
+  });
+
+  it('keeps every steered row when the backend cannot read the count', async () => {
+    runningConversation();
+    await useStore.getState().steer('first');
+    await useStore.getState().steer('second');
+
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+        steer_pending: null,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Unknown is not zero: the rows are the only copy of that text, so
+    // all of them become cards instead of being reconciled away.
+    const conv = useStore.getState().conversations['s-1'];
+    expect(
+      conv.messages.some((m) => m.text === 'first' || m.text === 'second'),
+    ).toBe(false);
+    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual([
+      'first',
+      'second',
+    ]);
+  });
+
+  it('keeps every steered row when turn_end omits the count', async () => {
+    runningConversation();
+    await useStore.getState().steer('from an older producer');
+
+    // A producer that does not know the field must fail closed: the
+    // absent value is not a zero the transcript can be reconciled away
+    // against.
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual([
+      'from an older producer',
+    ]);
+    expect(conv.messages.some((m) => m.text === 'from an older producer')).toBe(
+      false,
+    );
+  });
+
+  it('resends a card as a new turn and drops it', async () => {
+    runningConversation();
+    await useStore.getState().steer('lost note');
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+        steer_pending: 1,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const card =
+      useStore.getState().conversations['s-1'].undeliveredSteers?.[0];
+    expect(card).toBeDefined();
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-new',
+      context_id: 's-1',
+    });
+
+    await useStore.getState().resendSteer(card!.id);
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.undeliveredSteers ?? []).toEqual([]);
+    expect(conv.messages.at(-1)).toMatchObject({
+      role: 'user',
+      text: 'lost note',
+    });
+    expect(useStore.getState().runConvs['r-new']).toBe('s-1');
+  });
+
+  it('drops a card without sending', async () => {
+    runningConversation();
+    await useStore.getState().steer('lost note');
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+        steer_pending: 1,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const card =
+      useStore.getState().conversations['s-1'].undeliveredSteers?.[0];
+
+    useStore.getState().dismissSteer(card!.id);
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.undeliveredSteers ?? []).toEqual([]);
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+  });
+
+  it('keeps the text out of the transcript when a live turn rejects', async () => {
+    runningConversation();
+    apiMock.steerTurn.mockRejectedValue(new Error('steer queue full'));
+
+    const ok = await useStore.getState().steer('rejected');
+
+    expect(ok).toBe(false);
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.some((m) => m.text === 'rejected')).toBe(false);
+    expect(conv.steerSent ?? []).toEqual([]);
+    expect(useStore.getState().toasts).toHaveLength(1);
+    expect(useStore.getState().toasts[0].kind).toBe('warning');
+  });
+
+  it('falls back to a normal send when the turn ended before the rejection', async () => {
+    runningConversation();
+    apiMock.steerTurn.mockImplementation(async () => {
+      useStore.getState().handleEvent({
+        type: 'turn_end',
+        data: {
+          run_id: 'r-run',
+          conversation_id: 's-1',
+          status: 'completed',
+          steer_pending: 0,
+        },
+      });
+      throw new Error('turn not found');
+    });
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-fallback',
+      context_id: 's-1',
+    });
+
+    const ok = await useStore.getState().steer('late note');
+
+    expect(ok).toBe(true);
+    expect(apiMock.startTurn).toHaveBeenCalledTimes(1);
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.filter((m) => m.text === 'late note')).toHaveLength(1);
+    expect(useStore.getState().runConvs['r-fallback']).toBe('s-1');
+    expect(useStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('refuses steer with attachments or without a live run', async () => {
+    const busyActor = stateRoot.registry.get('s-1');
+    busyActor?.send({ type: 'SEND_STARTED' });
+    expect(await useStore.getState().steer('no run yet')).toBe(false);
+
+    runningConversation();
+    const attachment = {
+      id: 'a-1',
+      kind: 'file' as const,
+      path: '/tmp/a.txt',
+      name: 'a.txt',
+    };
+    expect(await useStore.getState().steer('with file', [attachment])).toBe(
+      false,
+    );
+    expect(apiMock.steerTurn).not.toHaveBeenCalled();
   });
 });

@@ -57,6 +57,18 @@ export class StateRoot {
   }
 
   /**
+   * workspaceOf returns the workspace a conversation actor was opened
+   * for, or undefined when no actor holds it. Registry actors outlive
+   * workspace switches, so this is what keeps grouped UI state (and
+   * turn submission) attached to the workspace that owns the
+   * conversation rather than the one on screen.
+   */
+  workspaceOf(conversationID: string): string | undefined {
+    const actor = this.registry.get(conversationID);
+    return actor?.getSnapshot().context.workspace as string | undefined;
+  }
+
+  /**
    * Resets workspace-scoped state: old conversations are stopped,
    * tombstones are cleared, and focus returns to no-session.
    */

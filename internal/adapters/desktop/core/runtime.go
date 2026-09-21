@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +36,10 @@ type Runtime struct {
 	// to EnsureUsableHost and is swappable in tests so deadline-window
 	// behaviour can be pinned without assembling a real engine.
 	ensureHost func(context.Context, string) (*host.Host, error)
+	// ensureBackgroundHost resolves a usable Host for a workspace that
+	// is not the active one. It defaults to HostInWorkspace and is
+	// swappable in tests for the same deadline-window reason.
+	ensureBackgroundHost func(context.Context, string) (*host.Host, error)
 }
 
 // NewRuntime creates the runtime service rooted at dataDir/userDir.
@@ -53,7 +58,19 @@ func NewRuntime(dataDir, userDir string) *Runtime {
 		hostConfigured: make(map[*host.Host]bool),
 	}
 	r.ensureHost = r.EnsureUsableHost
+	r.ensureBackgroundHost = r.HostInWorkspace
 	return r
+}
+
+// SameWorkspace reports whether two paths name the same workspace
+// directory. Empty paths never match: an unresolved workspace must not
+// borrow another workspace's identity.
+func SameWorkspace(a, b string) bool {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 // Manager returns the shared host manager.
@@ -163,12 +180,32 @@ func (r *Runtime) EnsureUsableHost(
 	if r.manager == nil {
 		return nil, fmt.Errorf("runtime: host manager is not configured")
 	}
-	if h := r.Current(); h != nil &&
-		filepath.Clean(h.WorkDir()) == filepath.Clean(workDir) &&
+	if h := r.Current(); h != nil && SameWorkspace(h.WorkDir(), workDir) &&
 		!h.IsClosing() {
 		return h, nil
 	}
 	return r.Acquire(ctx, workDir, interact.Auto{})
+}
+
+// HostInWorkspace returns a Host that can accept new turns for
+// workDir without making it the active workspace Host. The current
+// Host is reused when it already serves workDir; every other
+// workspace is acquired (and pooled) in the background. Callers use it
+// for work that stays bound to a workspace the window has left — a
+// queued draft draining after a workspace switch, for example — so
+// Runtime.current keeps describing the workspace the UI is showing.
+func (r *Runtime) HostInWorkspace(
+	ctx context.Context,
+	workDir string,
+) (*host.Host, error) {
+	if r.manager == nil {
+		return nil, fmt.Errorf("runtime: host manager is not configured")
+	}
+	if h := r.Current(); h != nil && SameWorkspace(h.WorkDir(), workDir) &&
+		!h.IsClosing() {
+		return h, nil
+	}
+	return r.AcquireBackground(ctx, workDir, interact.Auto{})
 }
 
 // EnsureUsableHostWithin waits for a replacement Host for workDir, but
@@ -184,7 +221,33 @@ func (r *Runtime) EnsureUsableHostWithin(
 	workDir string,
 	lastErr error,
 ) error {
-	if r.ensureHost == nil {
+	return r.ensureHostWithin(ctx, deadline, workDir, lastErr, r.ensureHost)
+}
+
+// EnsureHostInWorkspaceWithin is EnsureUsableHostWithin for a
+// workspace the window has left: the replacement Host is acquired in
+// the background, so a retried background start never takes over
+// Runtime.current.
+func (r *Runtime) EnsureHostInWorkspaceWithin(
+	ctx context.Context,
+	deadline time.Time,
+	workDir string,
+	lastErr error,
+) error {
+	return r.ensureHostWithin(
+		ctx, deadline, workDir, lastErr, r.ensureBackgroundHost,
+	)
+}
+
+// ensureHostWithin bounds one ensure attempt by the retry deadline.
+func (r *Runtime) ensureHostWithin(
+	ctx context.Context,
+	deadline time.Time,
+	workDir string,
+	lastErr error,
+	ensure func(context.Context, string) (*host.Host, error),
+) error {
+	if ensure == nil {
 		return lastErr
 	}
 	remaining := time.Until(deadline)
@@ -193,7 +256,7 @@ func (r *Runtime) EnsureUsableHostWithin(
 	}
 	attemptCtx, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
-	if _, err := r.ensureHost(attemptCtx, workDir); err != nil {
+	if _, err := ensure(attemptCtx, workDir); err != nil {
 		return lastErr
 	}
 	if time.Now().After(deadline) {

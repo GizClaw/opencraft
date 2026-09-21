@@ -182,3 +182,84 @@ func TestAutomationToolRequiresHost(t *testing.T) {
 		t.Fatal("create without an AskUser host must fail")
 	}
 }
+
+// schemaNode is the part of a JSON Schema this test reads back.
+type schemaNode struct {
+	Type        string                `json:"type"`
+	Description string                `json:"description"`
+	Enum        []string              `json:"enum"`
+	Properties  map[string]schemaNode `json:"properties"`
+}
+
+// TestAutomationToolDefinitionCarriesNestedFields pins the schema the
+// model reads. The nested task/schedule objects are built as raw schema
+// maps because a ToolPropertyDef keeps its schema unexported: placed
+// below the top level one marshals as an empty object, and the model is
+// handed a property that exists by name only — no type, no description,
+// no enum. The tool is the only place a field like `timeout` is
+// announced at all, so its wording is what tells the model that an
+// empty value means the 15-minute default rather than "unbounded".
+func TestAutomationToolDefinitionCarriesNestedFields(t *testing.T) {
+	def := New(&fakeHost{}).Definition()
+	var schema schemaNode
+	if err := json.Unmarshal(def.InputSchema, &schema); err != nil {
+		t.Fatalf("tool schema is not JSON: %v", err)
+	}
+	task, ok := schema.Properties["task"]
+	if !ok {
+		t.Fatalf("schema has no task property: %s", def.InputSchema)
+	}
+	if len(task.Properties) == 0 {
+		t.Fatalf("task property is empty: %s", def.InputSchema)
+	}
+	for name, prop := range task.Properties {
+		if prop.Type == "" {
+			t.Errorf("task.%s carries no type: %+v", name, prop)
+		}
+	}
+	timeout, ok := task.Properties["timeout"]
+	if !ok {
+		t.Fatalf("task schema has no timeout property: %s", def.InputSchema)
+	}
+	if timeout.Type != "string" ||
+		!strings.Contains(timeout.Description, "15-minute default") {
+		t.Fatalf("task.timeout = %+v, want a string naming the default",
+			timeout)
+	}
+	// The schedule enum is the part a model gets wrong most often, and
+	// it only reaches the model through this nested object.
+	schedule := task.Properties["schedule"]
+	if schedule.Type != "object" || len(schedule.Properties) == 0 {
+		t.Fatalf("task.schedule = %+v, want an object with fields", schedule)
+	}
+	kind := schedule.Properties["type"]
+	if kind.Type != "string" || len(kind.Enum) != 4 {
+		t.Fatalf("task.schedule.type = %+v, want the enum of rule kinds", kind)
+	}
+}
+
+// TestPreviewSummaryRendersTimeout pins the confirm prompt: the bound is
+// shown as minutes, and an unset limit says so instead of printing a
+// number the task does not carry.
+func TestPreviewSummaryRendersTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		timeout string
+		want    string
+	}{
+		{name: "unset shows the default", timeout: "", want: "timeout: 15m (default)"},
+		{name: "explicit bound", timeout: "2h", want: "timeout: 120m"},
+		{name: "minutes stay minutes", timeout: "45m", want: "timeout: 45m"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := previewSummary(automations.Task{
+				Name:    "brief",
+				Prompt:  "summarize",
+				Timeout: tc.timeout,
+			})
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("preview = %q, want it to contain %q", got, tc.want)
+			}
+		})
+	}
+}

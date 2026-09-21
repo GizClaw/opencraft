@@ -6,7 +6,10 @@ package core
 import (
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/inference"
+
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // AssistantAgentID is the flowcraft agent identity that desktop
@@ -59,6 +62,19 @@ type TurnEndEvent struct {
 	// the UI says so once instead of leaving the user to wonder why a
 	// familiar conversation suddenly cost more.
 	Compaction *CompactionEvent `json:"compaction,omitempty"`
+	// SteerPending is how many mid-turn steered messages the turn ended
+	// without delivering, or null when the count could not be read. The
+	// count lives on the turn result state, not in an event, because the
+	// run-end envelope is published before the turn settles.
+	//
+	// It is a pointer (like Notify) because the two states must stay
+	// distinct on the wire: a turn that delivered everything sends a
+	// literal 0, and a reader that sees null — or no field at all, from
+	// a producer this build does not know — keeps every steered row
+	// instead of trusting a zero. The transcript rows are the only copy
+	// of that text, and archive reconciliation rebuilds the turn from
+	// the archive, which never saw them.
+	SteerPending *int `json:"steer_pending"`
 }
 
 // CompactionEvent mirrors worldstate.CompactionReport onto the wire.
@@ -74,13 +90,19 @@ type CompactionEvent struct {
 }
 
 // NewTurnEnd builds a wire turn-end event with the RFC3339 end time
-// and the duration the Host persisted for this run.
+// and the duration the Host persisted for this run. res is the settled
+// turn result the event describes: reading the undelivered-steer count
+// off it here (host.PendingSteer) is what keeps every turn_end
+// producer reporting the same shape — a producer that has no result
+// (the wait was cut short) leaves the count null, which the UI treats
+// as unknown rather than as "everything made it".
 func NewTurnEnd(
 	runID, conversationID, status, errorText, requestID, responseID string,
 	output string,
 	finishedAt time.Time, durationMs int64,
+	res *agent.Result,
 ) TurnEndEvent {
-	return TurnEndEvent{
+	end := TurnEndEvent{
 		RunID:          runID,
 		ConversationID: conversationID,
 		Status:         status,
@@ -91,6 +113,10 @@ func NewTurnEnd(
 		DurationMs:     durationMs,
 		Output:         output,
 	}
+	if count, known := host.PendingSteer(res); known {
+		end.SteerPending = &count
+	}
+	return end
 }
 
 // UsageEvent reports one inference usage report.

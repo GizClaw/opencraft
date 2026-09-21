@@ -512,9 +512,14 @@ export const api = {
     Session.ImportBundle(path) as unknown as Promise<SessionImportDTO>,
   sessionMode: () => Conversation.SessionMode(),
   setSessionMode: (mode: string) => Conversation.SetSessionMode(mode),
-  startTurn: (contextID: string, msg: TurnMessage) =>
+  // workspace states which workspace owns the conversation. It is
+  // empty for the common case (the active workspace) and carries the
+  // owning path when a staged draft fires after a workspace switch,
+  // so the turn runs where its conversation lives.
+  startTurn: (contextID: string, msg: TurnMessage, workspace = '') =>
     Conversation.StartTurn({
       context_id: contextID,
+      workspace,
       message: msg,
     } as unknown as gen.StartTurnRequest) as unknown as Promise<TurnStart>,
   readAttachment: (path: string) =>
@@ -530,6 +535,11 @@ export const api = {
       !!reply.cancel,
     ),
   cancelTurn: (runID: string) => Conversation.CancelTurn(runID),
+  // steerTurn hands one mid-turn message to the live run: the engine
+  // delivers it at its next round boundary instead of waiting for the
+  // turn to end. A rejected message leaves the turn running, so the
+  // caller keeps its text and decides what to do next.
+  steerTurn: (runID: string, text: string) => Conversation.Steer(runID, text),
   listAgents: () => Agent.List() as unknown as Promise<AgentSummary[]>,
   unregisterAgent: (name: string) => Agent.Unregister(name),
   listDir: (dir: string, showHidden = false) =>

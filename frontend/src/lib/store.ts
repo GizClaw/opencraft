@@ -136,12 +136,36 @@ export interface MessageView {
 // QueuedInput is the single draft a user staged while a turn is
 // starting or running. interrupt=false is the Tab queue: it fires
 // after the watched turn completes. interrupt=true is a barge-in send
-// that arrived before the awaited run had a run id, so it fires as
-// soon as that run starts (and barges it in).
+// (Cmd/Ctrl+Enter) that arrived before the awaited run had a run id,
+// so it fires as soon as that run starts (and barges it in).
 export interface QueuedInput {
   text: string;
   attachments: AttachmentView[];
   interrupt: boolean;
+}
+
+// QueuedSteer tracks an optimistic steer row handed to a live run, in
+// submission order (the engine's queue is FIFO). turn_end maps the
+// undelivered count the backend reports (steer_pending) onto the newest
+// entries: those rows never made it into the conversation.
+//
+// The entries live only until their run's turn_end classifies them. A
+// run whose terminal event never arrives (a lost event, a turn
+// superseded by a barge-in) leaves its entries behind; only that run's
+// turn_end ever reads them, so they stay inert.
+export interface QueuedSteer {
+  runID: string;
+  messageID: string;
+  text: string;
+}
+
+// UndeliveredSteer is a mid-turn message the turn ended without
+// delivering. Its text never entered the archive (nothing appended it
+// to the conversation), so the transcript keeps it as its own card
+// until the user resends it as a regular turn or drops it.
+export interface UndeliveredSteer {
+  id: string;
+  text: string;
 }
 
 // ConversationState is the live UI state of one conversation. Each
@@ -168,6 +192,15 @@ export interface ConversationState {
   historySeq?: number;
   historyHasMore?: boolean;
   historyLoading?: boolean;
+  // steerSent tracks steer rows still awaiting their run's turn_end;
+  // undeliveredSteers keeps the ones the turn ended without delivering.
+  // A row leaves steerSent only on the matching turn_end, so a run whose
+  // turn_end never arrives (a dropped event, a turn superseded by a
+  // barge-in that settled on its own) keeps its row here until the
+  // archive reconciliation rebuilds the conversation; both lists are
+  // render-process state and start empty again after a reload.
+  steerSent?: QueuedSteer[];
+  undeliveredSteers?: UndeliveredSteer[];
 }
 
 export type ToastKind = 'info' | 'warning';
@@ -212,6 +245,12 @@ const HISTORY_PAGE_TURNS = 10;
 // fold into a counter, which is what keeps the message (and every
 // re-render that walks it) bounded. The archive keeps the full turn.
 const MAX_ITEMS_PER_MESSAGE = 400;
+
+// MAX_UNDELIVERED_STEERS bounds the per-conversation list of steered
+// messages a turn ended without delivering. Each one is a card in the
+// transcript; a conversation that keeps producing them should not grow
+// the list without bound.
+const MAX_UNDELIVERED_STEERS = 20;
 
 // MAX_REASONING_CHARS keeps only the tail of a reasoning trace: the
 // transcript never renders it, so everything it holds is overhead.
@@ -1001,11 +1040,26 @@ interface StoreState {
   send: (text: string, attachments?: AttachmentView[]) => Promise<void>;
   // sendInterrupt submits while a turn is running: the backend's
   // session start interrupts the active turn (barge-in) and starts
-  // the replacement as soon as the old one has been finalized.
+  // the replacement as soon as the old one has been finalized. The
+  // composer calls it for Cmd/Ctrl+Enter; the Stop button covers the
+  // plain interrupt, which carries no message.
   sendInterrupt: (
     text: string,
     attachments?: AttachmentView[],
   ) => Promise<boolean>;
+  // steer submits while a turn is running: the engine delivers the text
+  // at its next round boundary, not after the turn. The optimistic row
+  // is drawn first; on rejection the local turn state decides — an
+  // already-ended turn sends the text as a normal turn, a live one
+  // reports the failure and keeps the draft. The return value says
+  // whether the conversation took the text over (steered, resent, or
+  // carded), which is when the caller clears its draft.
+  steer: (text: string, attachments?: AttachmentView[]) => Promise<boolean>;
+  // resendSteer turns an undelivered steer card into a regular turn
+  // (staging it behind a running turn like a Tab draft); dismissSteer
+  // drops the card.
+  resendSteer: (id: string) => Promise<void>;
+  dismissSteer: (id: string) => void;
   // queueInput stages the single draft that fires after the current
   // turn ends. Returns false when nothing was queued.
   queueInput: (text: string, attachments?: AttachmentView[]) => boolean;
@@ -1333,6 +1387,13 @@ export const useStore = create<StoreState>((set, get) => {
     attachments: AttachmentView[] = [],
   ) => {
     const conv = get().conversations[convID];
+    // The turn belongs to the workspace that owns the conversation,
+    // not to the one on screen: a Tab/Enter draft drains on the
+    // terminal event of the turn it waited for, which can land long
+    // after the user switched workspaces. The actor records the
+    // workspace the conversation was opened in; a conversation without
+    // one is being minted right here, so the active workspace owns it.
+    const workspace = stateRoot.workspaceOf(convID) || get().workspace;
     const requestedAt = new Date().toISOString();
     // Keep existing turn strips that still own messages in the new
     // transcript, then open a new live turn entry at the user message
@@ -1352,7 +1413,7 @@ export const useStore = create<StoreState>((set, get) => {
     });
     const startingActor = stateRoot.registry.ensure(convID, {
       workspaceGeneration: stateRoot.generation(),
-      workspace: get().workspace,
+      workspace,
     });
     startingActor?.send({ type: 'SEND_STARTED' });
     try {
@@ -1362,7 +1423,7 @@ export const useStore = create<StoreState>((set, get) => {
         parts.push(attachmentPart(att));
       }
       const wire: TurnMessage = { role: 'user', content: { parts } };
-      const start = await api.startTurn(convID, wire);
+      const start = await api.startTurn(convID, wire, workspace);
       const list = get().conversations[convID].turnArtifacts;
       const liveIdx = list.length - 1;
       const turnArtifacts =
@@ -1567,6 +1628,15 @@ export const useStore = create<StoreState>((set, get) => {
               failures?: number;
               notified?: boolean;
             };
+            // steer_pending counts the steered messages this turn ended
+            // without delivering. A zero is a real zero (everything made
+            // it); null — or the field missing entirely, which a producer
+            // this build does not know about would send — means the
+            // backend could not read the count, and every steered row for
+            // the run is kept as a card instead: the transcript rows are
+            // the only copy of that text and archive reconciliation
+            // rebuilds the turn from the archive, which never saw them.
+            steer_pending?: number | null;
           };
           const conv = ensureConversation(conversationID);
           if (!conv) break;
@@ -1595,13 +1665,47 @@ export const useStore = create<StoreState>((set, get) => {
                   }
                 : t,
             );
+            // Steer bookkeeping: the run's steered messages are FIFO, so
+            // the undelivered ones are the newest entries registered for
+            // it. Their text never reached the archive, so the rows come
+            // out of the transcript and the text stays behind as a card —
+            // otherwise archive reconciliation would silently drop it.
+            const tracked = (conv.steerSent ?? []).filter(
+              (s) => s.runID === data.run_id,
+            );
+            const rawPending = data.steer_pending;
+            const pending =
+              rawPending === null || rawPending === undefined
+                ? tracked.length
+                : Math.max(0, Math.floor(rawPending));
+            const undelivered = pending > 0 ? tracked.slice(-pending) : [];
+            const undeliveredIDs = new Set(undelivered.map((s) => s.messageID));
+            const messages =
+              undeliveredIDs.size > 0
+                ? conv.messages.filter((m) => !undeliveredIDs.has(m.id))
+                : conv.messages;
+            const undeliveredSteers =
+              undelivered.length > 0
+                ? [
+                    ...(conv.undeliveredSteers ?? []),
+                    ...undelivered.map((s) => ({
+                      id: newID('steer'),
+                      text: s.text,
+                    })),
+                  ].slice(-MAX_UNDELIVERED_STEERS)
+                : conv.undeliveredSteers;
             return {
               runConvs,
               conversations: {
                 ...state.conversations,
                 [conversationID]: capConversation({
                   ...conv,
+                  messages,
                   turnArtifacts,
+                  steerSent: (conv.steerSent ?? []).filter(
+                    (s) => s.runID !== data.run_id,
+                  ),
+                  undeliveredSteers,
                 }),
               },
             };
@@ -2216,6 +2320,117 @@ export const useStore = create<StoreState>((set, get) => {
       updateConv(convID, { queued: undefined });
       await startTurnFor(convID, text, attachments);
       return true;
+    },
+
+    steer: async (text, attachments = []) => {
+      const trimmed = text.trim();
+      const state = get();
+      const convID = activeConversationID();
+      const conv = convID ? state.conversations[convID] : undefined;
+      if (
+        !trimmed ||
+        attachments.length > 0 ||
+        !convID ||
+        !conv ||
+        !state.configured
+      ) {
+        // Steer carries text only; a draft with attachments has to wait
+        // for its own turn.
+        return false;
+      }
+      const turn = conversationTurnState(convID);
+      if (turn.name !== 'running' || !turn.runID) return false;
+      const runID = turn.runID;
+      const row: MessageView = {
+        id: newID('msg'),
+        role: 'user',
+        text: trimmed,
+        items: [],
+        attachments: [],
+      };
+      // Draw the optimistic row and register it before the RPC: turn_end
+      // can settle while the submission is still in flight, and it
+      // classifies rows by what is registered at that moment.
+      updateConv(convID, {
+        messages: [...conv.messages, row],
+        steerSent: [
+          ...(conv.steerSent ?? []),
+          { runID, messageID: row.id, text: trimmed },
+        ],
+      });
+      try {
+        await api.steerTurn(runID, trimmed);
+        return true;
+      } catch {
+        const convNow = get().conversations[convID];
+        const stillDrawn = (convNow?.messages ?? []).some(
+          (m) => m.id === row.id,
+        );
+        const patch: Partial<ConversationState> = {
+          steerSent: (convNow?.steerSent ?? []).filter(
+            (s) => s.messageID !== row.id,
+          ),
+        };
+        if (stillDrawn) {
+          patch.messages = (convNow?.messages ?? []).filter(
+            (m) => m.id !== row.id,
+          );
+        }
+        updateConv(convID, patch);
+        if (!stillDrawn) {
+          // The run's turn_end settled while this submission was in
+          // flight and already pulled the row out; the conversation owns
+          // the text now (either the archive has it or it became an
+          // undelivered card).
+          return true;
+        }
+        const after = conversationTurnState(convID);
+        if (
+          after.name === 'idle' ||
+          after.name === 'succeeded' ||
+          after.name === 'failed'
+        ) {
+          // The run ended between submit and rejection: a normal send is
+          // what the user meant, so start one instead of losing the text.
+          await startTurnFor(convID, trimmed, []);
+          return true;
+        }
+        // The turn (or its replacement) is still live: keep the draft
+        // and say what happened instead of silently changing the intent.
+        get().toast(i18n.t('chat.steerRejected'), 'warning');
+        return false;
+      }
+    },
+
+    resendSteer: async (id) => {
+      const convID = activeConversationID();
+      const conv = convID ? get().conversations[convID] : undefined;
+      if (!convID || !conv) return;
+      const card = (conv.undeliveredSteers ?? []).find((s) => s.id === id);
+      if (!card) return;
+      const turn = conversationTurnState(convID);
+      const busy = turn.name === 'starting' || turn.name === 'running';
+      // A live turn takes the text the way a Tab draft would; only drop
+      // the card once it is actually staged.
+      if (busy && !get().queueInput(card.text, [])) return;
+      updateConv(convID, {
+        undeliveredSteers: (conv.undeliveredSteers ?? []).filter(
+          (s) => s.id !== id,
+        ),
+      });
+      if (!busy) await startTurnFor(convID, card.text, []);
+    },
+
+    dismissSteer: (id) => {
+      const convID = activeConversationID();
+      const conv = convID ? get().conversations[convID] : undefined;
+      if (!convID || !conv) return;
+      if (!(conv.undeliveredSteers ?? []).some((s) => s.id === id)) return;
+      updateConv(convID, {
+        undeliveredSteers: (conv.undeliveredSteers ?? []).filter(
+          (s) => s.id !== id,
+        ),
+      });
     },
 
     queueInput: (text, attachments = []) => {

@@ -19,7 +19,7 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 	p := NewPrompt()
 	conv := NewConversation()
 	sessionID := conv.New("/tmp/w")
-	conv.TrackRun(sessionID, "r-1")
+	conv.TrackRun("/tmp/w", sessionID, "r-1")
 	p.SetRunConvResolver(conv.ConversationForRun)
 	events := make(chan map[string]any, 1)
 	p.SetNotifier(func(_ string, data any) {
@@ -120,7 +120,7 @@ func TestPromptResolveEmitsResolvedEvent(t *testing.T) {
 	p := NewPrompt()
 	conv := NewConversation()
 	sessionID := conv.New("/tmp/w")
-	conv.TrackRun(sessionID, "r-1")
+	conv.TrackRun("/tmp/w", sessionID, "r-1")
 	p.SetRunConvResolver(conv.ConversationForRun)
 	events := make(chan map[string]any, 2)
 	p.SetNotifier(func(_ string, data any) {

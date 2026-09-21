@@ -23,6 +23,7 @@ const apiMock = vi.hoisted(() => ({
   revealArtifact: vi.fn(async () => undefined),
   openArtifactWith: vi.fn(async () => undefined),
   startTurn: vi.fn(),
+  steerTurn: vi.fn(),
   cancelTurn: vi.fn(async () => undefined),
 }));
 
@@ -68,6 +69,7 @@ beforeEach(() => {
   stateRoot.resetWorkspace();
   vi.clearAllMocks();
   apiMock.workspace.mockResolvedValue('/tmp/w');
+  apiMock.steerTurn.mockResolvedValue(undefined);
 });
 
 describe('ChatView transcript windowing', () => {
@@ -292,6 +294,7 @@ describe('ChatView transcript windowing', () => {
           ],
         },
       }),
+      '/tmp/w',
     );
   });
 
@@ -304,17 +307,13 @@ describe('ChatView transcript windowing', () => {
 
     await userEvent.setup().click(screen.getByRole('textbox'));
     await userEvent.keyboard('next question');
-    expect(
-      screen.getByText(/Enter interrupts the reply · Tab queues the message/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Enter steers the reply/i)).toBeInTheDocument();
 
     // Tab stages the draft and clears the composer, which hides the
     // hint and surfaces the queue banner instead.
     await userEvent.keyboard('{Tab}');
     expect(
-      screen.queryByText(
-        /Enter interrupts the reply · Tab queues the message/i,
-      ),
+      screen.queryByText(/Enter steers the reply/i),
     ).not.toBeInTheDocument();
     expect(useStore.getState().conversations['s-1']?.queued).toMatchObject({
       text: 'next question',
@@ -322,7 +321,7 @@ describe('ChatView transcript windowing', () => {
     });
   });
 
-  it('shows Stop only for an empty composer and Send once a running-turn draft exists', async () => {
+  it('keeps Stop reachable while a draft steers with Send', async () => {
     setConversation([], []);
     const actor = stateRoot.registry.get('s-1');
     actor?.send({ type: 'SEND_STARTED' });
@@ -339,16 +338,111 @@ describe('ChatView transcript windowing', () => {
       screen.queryByRole('button', { name: 'Send' }),
     ).not.toBeInTheDocument();
 
-    // Typing a draft restores Send; the button barges in like Enter.
+    // Typing a draft restores Send, and Stop stays beside it: stopping
+    // the reply must not require emptying the composer first.
     await userEvent.setup().click(screen.getByRole('textbox'));
     await userEvent.keyboard('next question');
-    expect(
-      screen.queryByRole('button', { name: 'Stop' }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
 
+    // Stop cancels the run and leaves the draft alone.
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(apiMock.cancelTurn).toHaveBeenCalledWith('r-old');
+    expect(screen.getByRole('textbox')).toHaveTextContent('next question');
+
+    // Send steers like Enter; the draft becomes an optimistic row, so
+    // the composer empties and Stop is primary again.
     await userEvent.setup().click(screen.getByRole('button', { name: 'Send' }));
+    await vi.waitFor(() => expect(apiMock.steerTurn).toHaveBeenCalled());
+    expect(apiMock.steerTurn).toHaveBeenCalledWith('r-old', 'next question');
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Send' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('stages the draft when Enter arrives before the run has an id', async () => {
+    setConversation([], []);
+    stateRoot.registry.get('s-1')?.send({ type: 'SEND_STARTED' });
+    render(<ChatView />);
+
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('waits for the run');
+    await userEvent.keyboard('{Enter}');
+
+    // No run id exists yet, so nothing can take a steer: the draft is
+    // staged exactly like a Tab queue instead of being dropped.
+    expect(apiMock.steerTurn).not.toHaveBeenCalled();
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+    expect(useStore.getState().conversations['s-1']?.queued).toMatchObject({
+      text: 'waits for the run',
+      interrupt: false,
+    });
+    expect(screen.getByRole('textbox')).not.toHaveTextContent(
+      'waits for the run',
+    );
+  });
+
+  it('refuses Enter with an attachment and keeps the draft', async () => {
+    setConversation([], []);
+    apiMock.pickFile.mockResolvedValue('/tmp/notes.txt');
+    apiMock.readAttachment.mockResolvedValue({
+      path: '/tmp/notes.txt',
+      name: 'notes.txt',
+      media_type: 'text/plain',
+      size: 12,
+    });
+    render(<ChatView />);
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Attach files' }));
+    await waitFor(() =>
+      expect(screen.getByText('notes.txt')).toBeInTheDocument(),
+    );
+
+    // The turn starts with the attachment still staged.
+    stateRoot.registry.get('s-1')?.send({ type: 'SEND_STARTED' });
+    stateRoot.registry
+      .get('s-1')
+      ?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('with file');
+    await userEvent.keyboard('{Enter}');
+
+    // Steer carries text only: the refusal says so and nothing moves —
+    // the text and the attachment both stay in the composer.
+    expect(apiMock.steerTurn).not.toHaveBeenCalled();
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+    // Toasts render in their own host; the store is the assertion point.
+    const toasts = useStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].kind).toBe('warning');
+    expect(toasts[0].text).toMatch(/Steering carries text only/i);
+    expect(screen.getByText('notes.txt')).toBeInTheDocument();
+    expect(screen.getByRole('textbox')).toHaveTextContent('with file');
+    expect(useStore.getState().conversations['s-1']?.queued).toBeUndefined();
+  });
+
+  it('Cmd/Ctrl+Enter sends the draft as a barge-in', async () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-next',
+      context_id: 's-1',
+    });
+    render(<ChatView />);
+
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('do this instead');
+    await userEvent.keyboard('{Meta>}{Enter}{/Meta}');
+
+    // The draft was sent as the replacement turn (interrupting r-old),
+    // not steered into it.
     await vi.waitFor(() => expect(apiMock.startTurn).toHaveBeenCalled());
+    expect(apiMock.steerTurn).not.toHaveBeenCalled();
     expect(apiMock.startTurn).toHaveBeenCalledWith(
       's-1',
       expect.objectContaining({
@@ -356,17 +450,84 @@ describe('ChatView transcript windowing', () => {
           parts: [
             expect.objectContaining({
               type: 'text',
-              text: 'next question',
+              text: 'do this instead',
             }),
           ],
         },
       }),
+      '/tmp/w',
     );
-    // The draft was cleared by the interrupt, so Stop is primary again.
-    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: 'Send' }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox')).not.toHaveTextContent(
+      'do this instead',
+    );
+  });
+
+  it('shows an undelivered steer as a card that can resend it', async () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-next',
+      context_id: 's-1',
+    });
+    render(<ChatView />);
+
+    // Mid-turn typing steers instead of interrupting.
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('changed my mind');
+    await userEvent.keyboard('{Enter}');
+    await vi.waitFor(() =>
+      expect(apiMock.steerTurn).toHaveBeenCalledWith(
+        'r-old',
+        'changed my mind',
+      ),
+    );
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+
+    // The turn ends without picking the steer up: the optimistic row
+    // gives way to a card so the text is still visible.
+    await act(async () => {
+      useStore.getState().handleEvent({
+        type: 'turn_end',
+        data: {
+          run_id: 'r-old',
+          conversation_id: 's-1',
+          status: 'completed',
+          steer_pending: 1,
+        },
+      });
+    });
+    const card = await screen.findByTestId('steer-undelivered');
+    expect(within(card).getByText('changed my mind')).toBeInTheDocument();
+    const scroller = screen.getByTestId('chat-scroll');
+    expect(within(scroller).queryByText('changed my mind')).toBeInTheDocument();
+
+    // Copying is not a decision: the text can leave the card without
+    // committing to another turn, and the card stays put.
+    // The stub goes in after setup(): userEvent.setup() installs its own
+    // clipboard mock on navigator and would otherwise swallow the call.
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    await user.click(within(card).getByRole('button', { name: 'Copy text' }));
+    await vi.waitFor(() =>
+      expect(
+        within(card).getByRole('button', { name: 'Copied' }),
+      ).toBeInTheDocument(),
+    );
+    expect(writeText).toHaveBeenCalledWith('changed my mind');
+    expect(screen.getByTestId('steer-undelivered')).toBeInTheDocument();
+
+    // Resending turns the card into a regular turn and drops it.
+    await userEvent
+      .setup()
+      .click(within(card).getByRole('button', { name: 'Send as a new turn' }));
+    await vi.waitFor(() => expect(apiMock.startTurn).toHaveBeenCalled());
+    expect(screen.queryByTestId('steer-undelivered')).not.toBeInTheDocument();
   });
 
   it('renders recognizable badges for common document attachments', async () => {

@@ -6,6 +6,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Mid-turn steering: a message submitted while a turn is running now
+  reaches the model at the next tool-round boundary instead of waiting
+  for the turn to end. Enter in the composer sends it
+  (`Conversation.Steer`); the model reads it as a standalone user
+  message right after the round's tool results, and several corrections
+  waiting at the same boundary arrive as one message. A boundary
+  injects at most one core-sized steer (32 KiB of text); a submit that
+  would exceed that is refused with the text left in the caller's
+  hands. Whatever a turn cannot deliver comes back as a card with
+  resend/dismiss instead of disappearing with the conversation archive,
+  and a turn result whose undelivered count cannot be read keeps every
+  such row rather than assuming delivery. (#181)
+- Unattended automations get a per-task run limit: `timeout` bounds one
+  run (whole minutes, empty = the 15-minute default, at most 24h). A run
+  that outlives it is cancelled, its record says `timeout` with the
+  bound, and the concurrency slot comes back once the turn settles. The
+  editor gains a run-limit field and the run list a timeout badge.
+  (#181)
+
+### Changed
+
+- Enter in the composer now steers the running turn instead of
+  interrupting it; Tab keeps the after-turn queue, a draft carrying
+  attachments is refused with a hint rather than changed silently, and
+  barge-in moves to Cmd/Ctrl+Enter and to a stop button that stays
+  reachable while a draft is being written. (#181)
+- Automations saved without a run limit are bounded by the 15-minute
+  default. Tasks stored before the limit existed are not: the migration
+  seeds them with the one-hour bound they used to run under (the
+  assistant graph's run timeout), so an upgrade shortens no run nobody
+  asked to shorten — the 15-minute default is what a task saved without
+  a limit gets, not what existing tasks are given. (#181)
+- Users overriding the assistant graph from disk (a `{file: …}`
+  `assistant.yaml`) need the graph's new `steer` node too: copy
+  `graphs/nodes/steer.js` alongside it, or the graph references an
+  asset the deployment does not have and turns stop starting. Graphs
+  left at the shipped defaults pick it up on their own. (#181)
+
+### Fixed
+
+- A correction typed while a scheduled automation runs in the open
+  workspace is reported like one typed into an interactive turn: the
+  automation's terminal event carries the undelivered-steer count, so
+  the text becomes a resend/dismiss card instead of vanishing from the
+  transcript on the next archive reconciliation. (#181)
+- A wait cancelled before its turn settled no longer crashes the turn
+  goroutine: the settle path tolerates a result-less wait, so the turn
+  still archives and the caller still sees the cancellation. (#181)
+- The `automation` tool's nested `task`/`schedule` schema now reaches the
+  model intact. Nested properties were built as `ToolPropertyDef`
+  values, whose schema fields are unexported, so each one marshalled as
+  an empty object: the model saw property names with no type and no
+  description — including the run-limit field — and no allowed values
+  for the schedule kind. Nested properties are raw JSON Schema maps
+  now, like every other tool in the repo.
+- A staged draft (the Tab queue, or Enter pressed while the previous
+  send was still starting) runs in the workspace that owns its
+  conversation instead of the one on screen. The start used to resolve
+  its workspace from the active window, so a draft queued behind a
+  turn in another workspace was attached there as a brand-new session —
+  with that workspace's working directory and sandbox mode — and the
+  message never reached the conversation it was meant for. The start
+  request now carries the owning workspace, a workspace the window has
+  left is served by its own background Host (the UI's current Host is
+  never taken over), and a start for a conversation no store owns is
+  refused rather than minted somewhere.
+
 ## [0.5.3] - 2026-09-17
 
 ### Added

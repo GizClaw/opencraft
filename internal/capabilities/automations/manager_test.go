@@ -2,6 +2,7 @@ package automations
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -328,5 +329,171 @@ func TestManagerStopDoesNotDispatchQueued(t *testing.T) {
 	}
 	if err := m.RunNow(second.ID); err == nil {
 		t.Fatal("RunNow after Stop must fail")
+	}
+}
+
+// TestManagerRunTimeoutMarksRecordAndReleasesSlot pins the L1-2
+// contract for unattended runs: the task's timeout bounds the run, the
+// record says the run timed out (rather than showing the cancellation
+// shape the runner reported), and the slot comes back so a task queued
+// behind it still runs.
+func TestManagerRunTimeoutMarksRecordAndReleasesSlot(t *testing.T) {
+	ctx := context.Background()
+	_, store := newUserStore(t)
+	// A short timeout is a test affordance: the field accepts any
+	// positive duration; only the desktop form keeps to whole minutes.
+	first := saveDailyTask(t, store, "slow")
+	first.Timeout = "40ms"
+	first, err := store.SaveTask(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := saveDailyTask(t, store, "later")
+
+	var (
+		mu      sync.Mutex
+		started []string
+	)
+	startedCh := make(chan struct{})
+	m, err := NewManager(store, ManagerOptions{
+		Run: func(runCtx context.Context, task Task) (RunResult, error) {
+			mu.Lock()
+			started = append(started, task.ID)
+			mu.Unlock()
+			if task.ID == first.ID {
+				close(startedCh)
+				<-runCtx.Done()
+				return RunResult{
+					Status: RunFailed,
+					Error:  runCtx.Err().Error(),
+				}, nil
+			}
+			return RunResult{Status: RunCompleted}, nil
+		},
+		Now:    func() time.Time { return time.Now() },
+		Limit:  1,
+		Window: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RunNow(first.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-startedCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first run did not start")
+	}
+	// The second task has to wait for the slot: with Limit 1 it can only
+	// start once the timed-out run settled.
+	if err := m.RunNow(second.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	runs, err := waitForRuns(ctx, t, store, first.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runs[0].Status != RunTimeout {
+		t.Fatalf("run status = %q (error %q), want %q",
+			runs[0].Status, runs[0].Error, RunTimeout)
+	}
+	if !strings.Contains(runs[0].Error, "timed out after 40ms") {
+		t.Fatalf("run error = %q, want the timeout sentence", runs[0].Error)
+	}
+	secondRuns, err := waitForRuns(ctx, t, store, second.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondRuns[0].Status != RunCompleted {
+		t.Fatalf("queued task status = %q, want completed",
+			secondRuns[0].Status)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(started) != 2 || started[0] != first.ID || started[1] != second.ID {
+		t.Fatalf("start order = %v, want [%s %s]", started, first.ID, second.ID)
+	}
+}
+
+// TestManagerTickSkipsDueTaskWhileRunning pins the duplicate-trigger
+// rule: a task that comes due while its own run is still live is
+// skipped, not queued behind itself. The occurrence is not lost — the
+// anchor stays in the past and the next tick after the run settles
+// starts exactly one run.
+func TestManagerTickSkipsDueTaskWhileRunning(t *testing.T) {
+	ctx := context.Background()
+	release := make(chan struct{})
+	started := make(chan struct{})
+	var runs atomic.Int32
+	m, store, _ := newTestManager(t,
+		func(context.Context, Task) (RunResult, error) {
+			if runs.Add(1) == 1 {
+				close(started)
+			}
+			<-release
+			return RunResult{Status: RunCompleted}, nil
+		})
+	task := saveDailyTask(t, store, "brief")
+	due := time.Date(2026, 9, 1, 8, 59, 50, 0, time.Local)
+	if err := store.AdvanceNextRun(ctx, task.ID, due); err != nil {
+		t.Fatal(err)
+	}
+	m.Tick()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first tick did not start the run")
+	}
+	// Due again while its run is live: the tick must skip it.
+	if err := store.AdvanceNextRun(ctx, task.ID, due); err != nil {
+		t.Fatal(err)
+	}
+	m.Tick()
+	if got := runs.Load(); got != 1 {
+		t.Fatalf("runs while live = %d, want 1", got)
+	}
+	close(release)
+	deadline := time.Now().Add(3 * time.Second)
+	for runs.Load() < 2 && time.Now().Before(deadline) {
+		m.Tick()
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := runs.Load(); got != 2 {
+		t.Fatalf("runs after the run settled = %d, want 2", got)
+	}
+	if _, err := waitForRuns(ctx, t, store, task.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// waitForRuns polls one task's run history until it holds count settled
+// records (nothing left "running").
+func waitForRuns(
+	ctx context.Context, t *testing.T, store *Store,
+	taskID string, count int,
+) ([]Run, error) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		runs, err := store.ListRuns(ctx, taskID)
+		if err != nil {
+			return nil, err
+		}
+		settled := 0
+		for _, run := range runs {
+			if run.Status != RunRunning {
+				settled++
+			}
+		}
+		if len(runs) >= count && settled >= count {
+			return runs, nil
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s runs = %+v, want %d settled",
+				taskID, runs, count)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

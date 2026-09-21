@@ -944,6 +944,11 @@ type runDetail struct {
 	// stream finish delta. Guarded by Host.mu.
 	requestID  string
 	responseID string
+	// steerSizes holds the text size of each steer message accepted
+	// for this run and not yet observed as drained, oldest first. It
+	// is what bounds the payload one round boundary can inject (see
+	// maxSteerQueuedBytes and steerQueuedBytes). Guarded by Host.mu.
+	steerSizes []int
 }
 
 // dropRun removes an ended run from the active set. Usage for the run

@@ -331,13 +331,26 @@ func (m *Manager) run(ctx context.Context, taskID string) {
 	}
 	m.notifyRun(run)
 
-	res, runErr := m.runFn(ctx, task)
+	// Every unattended run is bounded by the task's own timeout; the
+	// runner cancels the underlying turn when the deadline fires. When
+	// the deadline did cut the run short, the record names that cause
+	// instead of showing whatever shape the cancellation took.
+	timeout := task.TimeoutDuration()
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	res, runErr := m.runFn(runCtx, task)
+	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
+	cancel()
+
 	run.Status = RunFailed
 	if runErr == nil && res.Status != "" {
 		run.Status = res.Status
 	}
 	if runErr != nil {
 		res.Error = runErr.Error()
+	}
+	if timedOut && run.Status != RunCompleted {
+		run.Status = RunTimeout
+		res.Error = fmt.Sprintf("run timed out after %s", FormatTimeout(timeout))
 	}
 	run.Error = res.Error
 	run.DurationMs = m.now().Sub(at).Milliseconds()

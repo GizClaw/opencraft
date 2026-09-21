@@ -23,6 +23,7 @@ import {
   ChevronUp,
   Clock,
   Copy,
+  CornerDownRight,
   File,
   FileArchive,
   FileCode,
@@ -455,6 +456,78 @@ function TurnEndNotice({
             <X size={ICON.sm} />
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+// UndeliveredSteerCard shows a mid-turn message whose turn ended before
+// the engine drained it (for example a pure text answer that never
+// reaches the round boundary a steer is delivered at). The text was
+// never appended to the conversation, so this card is the only place it
+// still exists: the user either sends it as a regular turn or drops it.
+function UndeliveredSteerCard({
+  text,
+  onResend,
+  onDismiss,
+}: {
+  text: string;
+  onResend: () => void;
+  onDismiss: () => void;
+}) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  // The card is the only copy of this text — it never entered the
+  // conversation, and the transcript row it came from is gone — so
+  // there is always a way to take the text elsewhere (send it from a
+  // different client, keep it in a note) before dismissing the card.
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  };
+  return (
+    <div
+      data-testid="steer-undelivered"
+      role="status"
+      className="flex items-start gap-3 rounded-card border border-warn/40 bg-warn/10 px-4 py-3 text-sm"
+    >
+      <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-control border border-warn/30 bg-warn/10 text-warn">
+        <CornerDownRight size={ICON.sm} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-fg">{t('chat.steerUndelivered')}</p>
+        <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-dim">
+          {text}
+        </p>
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onResend}
+            className="rounded-control border border-edge bg-panel px-2.5 py-1 text-xs text-fg transition-colors hover:bg-panel2"
+          >
+            {t('chat.steerResend')}
+          </button>
+          <button
+            type="button"
+            onClick={() => void copyText()}
+            aria-label={copied ? t('chat.copied') : t('chat.copyText')}
+            className="flex items-center rounded-control border border-edge bg-panel px-2 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
+          >
+            {copied ? <Check size={ICON.xs} /> : <Copy size={ICON.xs} />}
+          </button>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
+          >
+            {t('chat.steerDismiss')}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1673,8 +1746,12 @@ export function ChatView() {
   const status = useStore((s) => s.status);
   const pendingInteracts = conv?.pendingInteracts ?? [];
   const queued = conv?.queued;
+  const undeliveredSteers = conv?.undeliveredSteers ?? [];
   const send = useStore((s) => s.send);
-  const sendInterrupt = useStore((s) => s.sendInterrupt);
+  const steer = useStore((s) => s.steer);
+  const resendSteer = useStore((s) => s.resendSteer);
+  const dismissSteer = useStore((s) => s.dismissSteer);
+  const toast = useStore((s) => s.toast);
   const queueInput = useStore((s) => s.queueInput);
   const clearQueued = useStore((s) => s.clearQueued);
   const takeQueued = useStore((s) => s.takeQueued);
@@ -1684,6 +1761,7 @@ export function ChatView() {
   const retryTranscript = useStore((s) => s.retryTranscript);
   const backFromFailure = useStore((s) => s.backFromFailure);
   const cancelRun = useStore((s) => s.cancelRun);
+  const sendInterrupt = useStore((s) => s.sendInterrupt);
   const clearLastFailed = useStore((s) => s.clearLastFailed);
   const sessionDefaults = useStore((s) => s.sessionDefaults);
   const yoloOnly = useStore((s) => s.yoloOnly);
@@ -2388,10 +2466,11 @@ export function ChatView() {
     void send(stagedText, staged);
   };
 
-  // Enter while a turn is running submits immediately: the backend's
-  // session start interrupts the active turn and starts the
-  // replacement as soon as the old one has been finalized.
-  const submitInterrupt = async () => {
+  // Enter submits. While a turn is running it steers instead: the text
+  // is handed to the live run and lands at its next round boundary.
+  // Steer is text-only, so a draft carrying attachments stays put with
+  // a hint; Cmd/Ctrl+Enter and the Stop button are the interrupt paths.
+  const submitDraft = async () => {
     const text = composerRef.current?.getMarkdown() ?? input;
     const emptyComposer = !text.trim() && attachments.length === 0;
     if (switchingWs) return;
@@ -2410,10 +2489,20 @@ export function ChatView() {
       return void submit();
     }
     if (emptyComposer) return;
-    const staged = attachments;
-    const stagedText = text;
-    clearDraft();
-    void sendInterrupt(stagedText, staged);
+    if (turnState?.name !== 'running') {
+      // The awaited run has no id yet, so nothing can take a steer; the
+      // draft waits for the turn to finish like a Tab queue.
+      queueDraft();
+      return;
+    }
+    if (attachments.length > 0) {
+      toast(t('chat.steerAttachments'), 'warning');
+      return;
+    }
+    // On success (or fallback) the conversation owns the text; on a
+    // rejection it kept nothing, so the draft stays in the composer.
+    const taken = await steer(text);
+    if (taken) clearDraft();
   };
 
   // Tab while a turn is running stages the draft in the single queue
@@ -2430,9 +2519,24 @@ export function ChatView() {
     return true;
   };
 
-  // While a turn is running, Enter and Tab switch from their usual
-  // meaning to interrupt/queue; show the hint once the user starts
-  // typing so the shortcut is discoverable.
+  // Cmd/Ctrl+Enter sends the draft now and interrupts the live reply —
+  // the pre-steer Enter meaning, kept reachable so "stop this and do
+  // what I just typed" stays one gesture. The draft is cleared once the
+  // store took it; a refused barge-in keeps it in the composer.
+  const interruptDraft = () => {
+    const text = composerRef.current?.getMarkdown() ?? input;
+    if ((!text.trim() && attachments.length === 0) || !busy || switchingWs) {
+      return false;
+    }
+    const staged = attachments;
+    void sendInterrupt(text, staged).then((taken) => {
+      if (taken) clearDraft();
+    });
+    return true;
+  };
+
+  // While a turn is running, Enter steers and Tab queues; show the hint
+  // once the user starts typing so the shortcuts are discoverable.
   const composerEmpty = !input.trim() && attachments.length === 0;
   const showBusyKeyHint = busy && input.trim().length > 0;
   // A barge-in send is waiting for the superseded run to interrupt at
@@ -2945,6 +3049,21 @@ export function ChatView() {
                 ))}
               </div>
             )}
+            {/* Undelivered steers render outside the transcript branches:
+                the turn that dropped them may have left no messages at all,
+                and the cards are the only copy of their text. */}
+            {undeliveredSteers.length > 0 && (
+              <div className="max-w-4xl mx-auto mt-4 space-y-4">
+                {undeliveredSteers.map((item) => (
+                  <UndeliveredSteerCard
+                    key={item.id}
+                    text={item.text}
+                    onResend={() => void resendSteer(item.id)}
+                    onDismiss={() => dismissSteer(item.id)}
+                  />
+                ))}
+              </div>
+            )}
           </div>
           {!filesOpen && (
             <MessagePeek
@@ -3084,8 +3203,9 @@ export function ChatView() {
                   }
                   disabled={!configured}
                   onValueChange={setInput}
-                  onSubmit={() => void submitInterrupt()}
+                  onSubmit={() => void submitDraft()}
                   onQueue={queueDraft}
+                  onInterrupt={interruptDraft}
                   onPasteImages={(files) => void handlePastedImages(files)}
                 />
               </div>
@@ -3300,20 +3420,32 @@ export function ChatView() {
                       <Square size={ICON.sm} fill="currentColor" />
                     </IconButton>
                   ) : (
-                    // While a turn runs with a draft, the button sends
-                    // and interrupts the active reply, matching Enter;
-                    // Stop is only shown when the composer is empty.
-                    // A barge-in wait carries its own Stop in the
-                    // banner, so it stays available while typing.
-                    <IconButton
-                      label={t('chat.send')}
-                      tone="primary"
-                      size="lg"
-                      onClick={() => void submitInterrupt()}
-                      disabled={composerEmpty && (!busy || bargeWaiting)}
-                    >
-                      <ArrowUp size={ICON.md} />
-                    </IconButton>
+                    <div className="flex items-center gap-1.5">
+                      {busy && !bargeWaiting && (
+                        // A draft keeps the primary action on send/steer
+                        // (matching Enter), so Stop sits next to it:
+                        // interrupting a reply must not require emptying
+                        // the composer first. bargeWaiting owns its Stop
+                        // in the staged banner.
+                        <IconButton
+                          label={t('chat.stop')}
+                          tone="danger"
+                          size="md"
+                          onClick={() => void cancelRun()}
+                        >
+                          <Square size={ICON.xs} fill="currentColor" />
+                        </IconButton>
+                      )}
+                      <IconButton
+                        label={t('chat.send')}
+                        tone="primary"
+                        size="lg"
+                        onClick={() => void submitDraft()}
+                        disabled={composerEmpty && (!busy || bargeWaiting)}
+                      >
+                        <ArrowUp size={ICON.md} />
+                      </IconButton>
+                    </div>
                   )}
                 </div>
               </div>

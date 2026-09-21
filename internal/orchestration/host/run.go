@@ -424,8 +424,35 @@ func validateUserMessage(msg message.Message) error {
 	return nil
 }
 
+// WaitBounded waits for the run under a caller deadline: ctx fires the
+// cancel, never the return. A deadline must not cut the wait short —
+// the archive write, the memory commit, the artifact sweep and the
+// slot release all hang off the settle path, so a wait that returned
+// at the deadline would leave a live turn behind a caller that
+// believes the run is over. An unattended run is bounded this way: the
+// deadline stops the work, and the caller still learns when it really
+// stopped. A cancel that fails (the run is already settling, or the
+// host refused it) leaves the wait running until the turn settles on
+// its own, bounded then only by the graph's run timeout — the caller
+// waits longer instead of returning into a live turn.
+func (r *Run) WaitBounded(ctx context.Context) (*agent.Result, error) {
+	stopWatch := context.AfterFunc(ctx, func() {
+		if err := r.host.CancelRun(r.RunID()); err != nil {
+			telemetry.WarnErr(context.WithoutCancel(ctx),
+				"host: cancel run at its deadline failed", err,
+				otellog.String("run.id", r.RunID()))
+		}
+	})
+	defer stopWatch()
+	return r.Wait(context.WithoutCancel(ctx))
+}
+
 // Wait blocks until the turn finishes, unbinds the prompt broker and
-// releases the session lease.
+// releases the session lease. When ctx fires before the turn settles
+// the result is nil and the error is the context's; the settle
+// bookkeeping below still runs, so callers that pass a cancellable
+// context must tolerate a result-less wait (see WaitBounded for the
+// caller that does not want one).
 func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 	if r == nil || r.done {
 		return nil, errors.New("host: run already finished")
@@ -446,11 +473,18 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		usageDeltas := host.takeUsageDeltas(r.RunID())
 		persistCtx := context.WithoutCancel(ctx)
 		status := agent.Status("unknown")
+		// res is nil when the wait itself was cut short: core's turn
+		// Wait returns no result once the caller's context fires, and
+		// the settle path below still runs (the run is over for the
+		// caller either way). Read the result through resErr so a
+		// cancelled wait cannot dereference it.
+		var resErr error
 		var errText string
 		if res != nil {
 			status = res.Status
-			if res.Err != nil {
-				errText = res.Err.Error()
+			resErr = res.Err
+			if resErr != nil {
+				errText = resErr.Error()
 			}
 		}
 		if err != nil && errText == "" {
@@ -463,8 +497,8 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 				map[string]string{"status": string(status)})
 		}
 		execErr := err
-		if execErr == nil && res != nil {
-			execErr = res.Err
+		if execErr == nil {
+			execErr = resErr
 		}
 		// Snapshot the correlation identifiers under Host.mu: the
 		// terminal stream finish delta is written by the sink
@@ -503,7 +537,7 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		}
 		store := host.store
 		if store != nil {
-			class := ClassifyRunError(res.Err, err)
+			class := ClassifyRunError(resErr, err)
 			telemetry.WarnErr(persistCtx, "host: record turn end failed",
 				store.RecordTurnEnd(
 					detail.contextID, r.RunID(), finishedAt,

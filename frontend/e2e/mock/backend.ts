@@ -90,6 +90,11 @@ export function mockBackend(cfg?: MockConfig) {
   // spec can see "the drag called SetPosition" is this recording.
   const petCalls: { method: string; args: unknown[] }[] = [];
   const petReports: unknown[] = [];
+  // Steer call log: a mid-turn message leaves the composer as exactly one
+  // RPC (Conversation.Steer), so the arguments are the only proof the
+  // text went to the live run with that run's id instead of into the Tab
+  // queue. Specs read them back from window.__ocSteerCalls.
+  const steerCalls: { runID: string; text: string }[] = [];
   const recordPet = (method: string, args: unknown[]) => {
     petCalls.push({ method, args });
   };
@@ -223,6 +228,13 @@ export function mockBackend(cfg?: MockConfig) {
           run_id: `r-${++startTurnSeq}`,
           context_id: contextID,
         };
+      },
+      // Recorded rather than left to the unknown-binding fallback: a
+      // steer that reaches the wrong run — or never leaves the composer
+      // — has to fail a spec, and the fallback answers undefined for
+      // every name it does not know.
+      Steer: async (runID: string, text: string) => {
+        steerCalls.push({ runID, text });
       },
     },
     Diagnostics: {
@@ -689,10 +701,12 @@ export function mockBackend(cfg?: MockConfig) {
     __ocCall: (qualified: string, args: unknown[]) => Promise<unknown>;
     __ocPetCalls: typeof petCalls;
     __ocPetReports: typeof petReports;
+    __ocSteerCalls: typeof steerCalls;
   };
   exposed.__ocMockByModule = modules;
   exposed.__ocPetCalls = petCalls;
   exposed.__ocPetReports = petReports;
+  exposed.__ocSteerCalls = steerCalls;
   exposed.__ocCall = async (
     qualified: string,
     callArgs: unknown[],

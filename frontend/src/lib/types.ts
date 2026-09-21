@@ -1050,6 +1050,7 @@ export interface AutomationTask {
   think: string;
   conversation_id?: string;
   notify: string;
+  timeout: string;
   enabled: boolean;
   created_at: string;
   updated_at: string;
