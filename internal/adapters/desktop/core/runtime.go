@@ -308,7 +308,7 @@ func (r *Runtime) forgetHost(h *host.Host) {
 // the current configuration.
 func (r *Runtime) Reload(ctx context.Context) error {
 	if r.manager != nil {
-		r.manager.InvalidateAll()
+		r.manager.InvalidateAll(ctx)
 	}
 	r.mu.Lock()
 	r.current = nil

@@ -199,7 +199,8 @@ func (b *Conversation) turnHost(
 	if !background {
 		return b.core.Runtime.Current(), nil
 	}
-	return b.core.Runtime.HostInWorkspace(ctx, workDir)
+	return b.core.Runtime.HostInWorkspace(
+		host.WithAssemblyReason(ctx, host.ReasonConversation), workDir)
 }
 
 // ensureHostWithin waits for a usable Host inside the retry window,
@@ -551,7 +552,8 @@ func (b *Conversation) runHost(
 			core.SameWorkspace(h.WorkDir(), workDir) {
 			return h, nil
 		}
-		return b.core.Runtime.HostInWorkspace(ctx, workDir)
+		return b.core.Runtime.HostInWorkspace(
+			host.WithAssemblyReason(ctx, host.ReasonConversation), workDir)
 	}
 	if h := b.core.Runtime.Current(); h != nil {
 		return h, nil

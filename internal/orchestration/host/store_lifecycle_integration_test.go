@@ -61,7 +61,7 @@ func TestReloadDefersUntilActiveRunFinishes(t *testing.T) {
 		t.Fatal("provider request did not start")
 	}
 
-	mgr.Invalidate(workDir)
+	mgr.Invalidate(ctx, workDir)
 	hostB, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host during active run: %v", err)

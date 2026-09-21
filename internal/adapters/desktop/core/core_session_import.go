@@ -173,7 +173,9 @@ func (c *Core) hostForPluginImport(
 		filepath.Clean(h.WorkDir()) == filepath.Clean(workDir) {
 		return h, nil
 	}
-	h, err := c.Runtime.AcquireBackground(ctx, workDir, interact.Auto{})
+	h, err := c.Runtime.AcquireBackground(
+		host.WithAssemblyReason(ctx, host.ReasonSessionImport),
+		workDir, interact.Auto{})
 	if err != nil {
 		return nil, fmt.Errorf("session.import: workspace runtime: %w", err)
 	}

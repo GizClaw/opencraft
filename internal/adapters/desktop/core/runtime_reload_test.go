@@ -4,14 +4,18 @@ import (
 	"context"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
 
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
+	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
 // TestApplyDocumentReloadEmitsReady pins the signal a document-only save
@@ -63,6 +67,69 @@ func TestApplyDocumentReloadEmitsReady(t *testing.T) {
 	defer mu.Unlock()
 	if !slices.Contains(events, "ready") {
 		t.Fatalf("emitted %v, want a ready event", events)
+	}
+}
+
+// TestApplyDocumentReloadLogsRebuildFallback pins the diagnostic for the
+// expensive branch: when the in-place swap refuses the document, the
+// save falls back to a full runtime rebuild, and the refusal reason gets
+// a log line of its own instead of being dropped. That line (with its
+// reason attribute) is what makes "why did a settings save reassemble
+// everything" answerable after the fact.
+func TestApplyDocumentReloadLogsRebuildFallback(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	workDir := t.TempDir()
+	configDir := t.TempDir()
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeProviderConfig(t, configDir, provider.URL())
+
+	c := NewCore(configDir, t.TempDir(), "")
+	ctx := context.Background()
+	c.SetWorkDir(workDir)
+	if err := c.RebuildRuntime(ctx); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	if c.Runtime.Current() == nil {
+		t.Fatal("no current host after rebuild")
+	}
+
+	// Clear the inference configuration so the in-place swap has to
+	// refuse the document ("inference router is not configured") and the
+	// save goes down the rebuild path.
+	if err := configseed.Write(configDir, config.InferenceConfig{}); err != nil {
+		t.Fatal(err)
+	}
+
+	recorder := logcapture.Install(t)
+	reloadCtx := host.WithAssemblyReason(ctx, host.ReasonInferenceChange)
+	if err := c.ApplyDocumentReload(reloadCtx); err != nil {
+		t.Fatalf("document reload: %v", err)
+	}
+
+	var found bool
+	for _, record := range recorder.Records() {
+		body := record.Body().AsString()
+		if body == "host: document reloaded in place" {
+			t.Fatal("unconfigured router still took the in-place path")
+		}
+		if body != "host: in-place document reload unavailable; rebuilding" {
+			continue
+		}
+		found = true
+		if got := logcapture.Attribute(record, "reason"); got != "inference_change" {
+			t.Fatalf("fallback reason = %q, want inference_change", got)
+		}
+		if got := logcapture.Attribute(record, "workspace"); got != workDir {
+			t.Fatalf("fallback workspace = %q, want %q", got, workDir)
+		}
+		if got := logcapture.Attribute(record, "error.message"); !strings.Contains(got, "router") {
+			t.Fatalf("fallback error = %q, want the router refusal", got)
+		}
+	}
+	if !found {
+		t.Fatalf("no fallback record emitted; bodies: %v", recorder.Bodies())
 	}
 }
 

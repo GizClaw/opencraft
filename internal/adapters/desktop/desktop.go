@@ -302,7 +302,8 @@ func (d *Desktop) Startup(ctx context.Context) {
 			}
 		})
 	}
-	if err := d.core.RebuildRuntime(ctx); err != nil {
+	if err := d.core.RebuildRuntime(
+		host.WithAssemblyReason(ctx, host.ReasonStartup)); err != nil {
 		d.core.Shell.Emit("fatal", map[string]any{"error": err.Error()})
 	}
 	d.ensureAssistantPet(ctx)
@@ -433,7 +434,9 @@ func (d *Desktop) runAutomation(
 	}
 	current := d.core.ActiveWorkDir() != "" &&
 		filepath.Clean(d.core.ActiveWorkDir()) == filepath.Clean(task.Workspace)
-	h, err := d.core.Runtime.AcquireBackground(ctx, task.Workspace, interact.Auto{})
+	h, err := d.core.Runtime.AcquireBackground(
+		host.WithAssemblyReason(ctx, host.ReasonAutomation),
+		task.Workspace, interact.Auto{})
 	if err != nil {
 		return automations.RunResult{Status: automations.RunFailed}, err
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // pluginInferenceWrite remembers how the last runtime rebuild triggered
@@ -82,7 +83,9 @@ func (c *Core) applyPluginInferenceWrite(changed bool) error {
 		c.runtimeServesActiveWorkspace() {
 		return nil
 	}
-	err := c.RebuildRuntime(c.Shell.Context())
+	ctx := host.WithAssemblyReason(
+		c.Shell.Context(), host.ReasonInferenceChange)
+	err := c.RebuildRuntime(ctx)
 	c.pluginWrites.markApplied(err)
 	return err
 }

@@ -16,6 +16,7 @@ import (
 	pluginupdate "github.com/GizClaw/opencraft/internal/capabilities/plugins/update"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // Plugin exposes plugin registry, KV and capability invocation.
@@ -31,7 +32,9 @@ func NewPluginBinding(c *core.Core) *Plugin {
 // refresh invalidates pooled runtimes so plugin-contributed skills,
 // MCP servers, hooks and tools are picked up by the next assembly.
 func (b *Plugin) refresh() error {
-	return b.core.RebuildRuntime(b.core.Shell.Context())
+	ctx := host.WithAssemblyReason(
+		b.core.Shell.Context(), host.ReasonPluginChange)
+	return b.core.RebuildRuntime(ctx)
 }
 
 // List returns every installed plugin.

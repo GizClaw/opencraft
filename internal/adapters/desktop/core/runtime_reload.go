@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
+
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
@@ -82,7 +85,8 @@ func (c *Core) ApplyDocumentReload(ctx context.Context) error {
 	if h == nil {
 		return c.RebuildRuntime(ctx)
 	}
-	if err := h.ReloadDocument(ctx); err == nil {
+	err := h.ReloadDocument(ctx)
+	if err == nil {
 		// The Host survives an in-place swap, but the document it serves
 		// changed, and everything the UI reads out of that document is
 		// now stale: the composer's model list and default reasoning
@@ -93,6 +97,16 @@ func (c *Core) ApplyDocumentReload(ctx context.Context) error {
 		c.EmitReady()
 		return nil
 	}
+	// The fallback is a full rebuild, which is orders of magnitude more
+	// expensive than the in-place swap. The reason the swap was refused
+	// (router unconfigured, sessions implementation changed, validation
+	// failure) used to be dropped on the floor, which left "why did a
+	// settings save reassemble everything" unanswerable.
+	telemetry.WarnErr(ctx,
+		"host: in-place document reload unavailable; rebuilding",
+		err,
+		otellog.String("reason", string(host.AssemblyReasonFrom(ctx))),
+		otellog.String("workspace", c.ActiveWorkDir()))
 	return c.RebuildRuntime(ctx)
 }
 
@@ -116,6 +130,7 @@ func (c *Core) rebuildAfterDrain(
 	if filepath.Clean(c.ActiveWorkDir()) != filepath.Clean(workDir) {
 		return
 	}
+	ctx = host.WithAssemblyReason(ctx, host.ReasonRetryAfterDrain)
 	if _, err := c.Runtime.Acquire(ctx, workDir, interact.Auto{}); err != nil {
 		return
 	}

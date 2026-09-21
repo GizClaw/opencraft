@@ -30,6 +30,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/gitx"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/shelldetect"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // Diagnostics exposes environment/health information.
@@ -160,7 +161,8 @@ func (b *Diagnostics) ResolvePath() (PathEnvironmentDTO, error) {
 	}
 	b.core.SetPathReport(resolved)
 	dto := b.pathEnvironmentDTO(resolved.Plan, resolved.Rejected, resolved.Missing)
-	if err := b.core.ApplyDocumentReload(ctx); err != nil {
+	reloadCtx := host.WithAssemblyReason(ctx, host.ReasonPathSave)
+	if err := b.core.ApplyDocumentReload(reloadCtx); err != nil {
 		flowtelemetry.WarnErr(ctx, "desktop diagnostics: runtime reload failed", err)
 		return dto, nil
 	}
