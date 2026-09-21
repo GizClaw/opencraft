@@ -6,7 +6,13 @@ runtime:
   # agent checkpoint store (one SQLite connection, one schema owner).
   checkpoint_store: sessions
   sessions:
-    idle_timeout: 10m
+    # How long an idle Session stays in memory before it is reclaimed. A
+    # live Session carries its tool catalog and attached MCP clients, so
+    # this is the knob that decides how much of the recently-opened
+    # conversations the process keeps resident. History itself lives in
+    # the sessions store below (resume: false), so reclaiming a Session
+    # costs a re-open, not context.
+    idle_timeout: 3m
     resume: false
   # Caller-owned host values injected by the engine at assembly (the
   # plugin read-side host, the agent-facing plugin installer and the

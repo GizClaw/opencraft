@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
@@ -278,6 +280,28 @@ func (r *Runtime) configureHost(h *host.Host) {
 	if fn != nil {
 		fn(h)
 	}
+	// hostConfigured is keyed by pointer, so an entry keeps its Host —
+	// and the entire runtime the Host owns, from the skills search index
+	// to the MCP clients — reachable for as long as the Runtime lives.
+	// Every workspace switch, settings save and plugin install assembles
+	// a new Host, so drop the marker when this one tears down.
+	go r.forgetHost(h)
+}
+
+// forgetHost drops the configure-once marker of a Host after teardown.
+// Hosts are closed by Manager.Invalidate (rebuild) or CancelAll/CloseAll
+// (shutdown), so the wait is bounded by the pooled Host's own lifetime.
+func (r *Runtime) forgetHost(h *host.Host) {
+	// WaitClosed only fails on a canceled context, and this wait has no
+	// deadline, so a failure is reported rather than treated as a reason
+	// to keep the marker.
+	if err := h.WaitClosed(context.Background()); err != nil {
+		flowtelemetry.WarnErr(context.Background(),
+			"runtime: wait for a retired host failed", err)
+	}
+	r.mu.Lock()
+	delete(r.hostConfigured, h)
+	r.mu.Unlock()
 }
 
 // Reload invalidates pooled hosts so the next Acquire rebuilds from

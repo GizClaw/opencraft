@@ -369,6 +369,104 @@ func TestGrepStopsAfterFileScanBudget(t *testing.T) {
 	}
 }
 
+// TestGrepSkipsBinaryAndOversizedBeforeReading pins what a grep costs
+// per file: the walk's own stat retires a file that is over the size
+// bound before its bytes are read, and binary content (a NUL byte in
+// the head) is skipped instead of being copied into a string and split
+// into lines. Reading a MiB of every bundle and asset under the
+// workspace only to discard it was the bulk of the 4.4GB of io.ReadAll
+// a heap profile showed under this tool.
+func TestGrepSkipsBinaryAndOversizedBeforeReading(t *testing.T) {
+	inner, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked := &trackingWorkspace{Workspace: inner}
+	tool, err := New(tracked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := inner.Write(context.Background(), "big.txt",
+		[]byte(strings.Repeat("x", maxGrepFileBytes+1))); err != nil {
+		t.Fatal(err)
+	}
+	if err := inner.Write(context.Background(), "bundle.wasm",
+		[]byte("\x00\x61\x73\x6dneedle")); err != nil {
+		t.Fatal(err)
+	}
+	if err := inner.Write(context.Background(), "asset.png",
+		[]byte("\x89PNG\x00\x00nothing here")); err != nil {
+		t.Fatal(err)
+	}
+	if err := inner.Write(context.Background(), "small.txt",
+		[]byte("needle\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := execute(t, tool.grep(), `{"pattern":"needle"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"skipped_large":1`) {
+		t.Errorf("grep skipped_large not reported: %s", got)
+	}
+	// The matching binary file is still reported — by path, not by
+	// line — and the non-matching one is not.
+	if !strings.Contains(got, `"binary_matches":["bundle.wasm"]`) {
+		t.Errorf("grep binary_matches not reported: %s", got)
+	}
+	if !strings.Contains(got, `"path":"small.txt"`) {
+		t.Errorf("grep missed the text file: %s", got)
+	}
+	// The oversized file is retired by its size, so only the two binary
+	// files and the text file are read.
+	if tracked.limitedReads != 3 {
+		t.Errorf("grep read %d files, want 3 (oversized skipped by stat)",
+			tracked.limitedReads)
+	}
+}
+
+// TestScanLinesAllocatesNothing pins the line scan itself: a file that
+// yields no match must not be copied into a string or split into a
+// slice of lines the way strings.Split(string(data), "\n") did.
+func TestScanLinesAllocatesNothing(t *testing.T) {
+	data := benchData()
+	allocs := testing.AllocsPerRun(10, func() {
+		scanLines(data, func(int, []byte) bool { return true })
+	})
+	if allocs > 0 {
+		t.Errorf("scanLines allocated %v times per pass, want 0", allocs)
+	}
+}
+
+// TestScanLinesMatchesSplitSemantics keeps the line numbering and the
+// trailing-empty-line behaviour identical to the strings.Split call it
+// replaced, including an empty file (one empty line) and a file that
+// ends with a newline (a final empty line).
+func TestScanLinesMatchesSplitSemantics(t *testing.T) {
+	cases := []struct {
+		in    string
+		lines []string
+	}{
+		{"", []string{""}},
+		{"a", []string{"a"}},
+		{"a\n", []string{"a", ""}},
+		{"a\nb", []string{"a", "b"}},
+		{"\n\n", []string{"", "", ""}},
+	}
+	for _, tc := range cases {
+		var got []string
+		scanLines([]byte(tc.in), func(_ int, line []byte) bool {
+			got = append(got, string(line))
+			return true
+		})
+		if strings.Join(got, "|") != strings.Join(tc.lines, "|") {
+			t.Errorf("scanLines(%q) = %q, want %q",
+				tc.in, got, tc.lines)
+		}
+	}
+}
+
 // helpers returning concrete tools -------------------------------------------
 
 func (t *Tool) read() execTool  { return &readFileTool{t.ws} }

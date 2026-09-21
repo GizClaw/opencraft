@@ -1,6 +1,11 @@
 package search
 
-import "testing"
+import (
+	"fmt"
+	"runtime"
+	"strings"
+	"testing"
+)
 
 func TestTokenize(t *testing.T) {
 	cases := []struct {
@@ -131,4 +136,40 @@ func TestDocFreqCountsDocOnceAcrossFields(t *testing.T) {
 	if got := ix.docFreq("beta"); got != 2 {
 		t.Errorf("docFreq(beta) = %d, want 2", got)
 	}
+}
+
+// TestIndexStaysFlat guards the postings representation. One Go map per
+// distinct term — the shape this replaced — costs ~200 bytes and one
+// live object each: this corpus (500 documents, ~900 distinct words,
+// ~15k postings) held 5,611 objects with per-term maps and holds ~1,000
+// with the flat term table, and the real 476-skill corpus went from
+// 0.93MB / 9,755 objects to 0.41MB / 2,859. The bound below fails
+// loudly if per-term maps come back.
+func TestIndexStaysFlat(t *testing.T) {
+	docs := make([]Doc, 0, 500)
+	for i := 0; i < 500; i++ {
+		var text strings.Builder
+		for j := 0; j < 30; j++ {
+			fmt.Fprintf(&text, "w%d ", (i*7+j*13)%900)
+		}
+		id := fmt.Sprintf("skill-%d", i)
+		docs = append(docs, Doc{ID: id, Name: id, Text: text.String()})
+	}
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	ix := NewIndex(docs)
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+
+	objects := int64(after.HeapObjects) - int64(before.HeapObjects)
+	if objects > 3000 {
+		t.Errorf("index holds %d live objects, want <= 3000: "+
+			"the postings went back to one map per term", objects)
+	}
+	if res := ix.Search("w42", 5); len(res) == 0 {
+		t.Errorf("Search(w42) = %v, want hits", res)
+	}
+	runtime.KeepAlive(ix)
 }
