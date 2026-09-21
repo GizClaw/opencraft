@@ -12,9 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reaches the model at the next tool-round boundary instead of waiting
   for the turn to end. Enter in the composer sends it
   (`Conversation.Steer`); the model reads it as a standalone user
-  message right after the round's tool results. Whatever a turn cannot
-  deliver comes back as a card with resend/dismiss instead of
-  disappearing with the conversation archive. (#181)
+  message right after the round's tool results, and several corrections
+  waiting at the same boundary arrive as one message. A boundary
+  injects at most one core-sized steer (32 KiB of text); a submit that
+  would exceed that is refused with the text left in the caller's
+  hands. Whatever a turn cannot deliver comes back as a card with
+  resend/dismiss instead of disappearing with the conversation archive,
+  and a turn result whose undelivered count cannot be read keeps every
+  such row rather than assuming delivery. (#181)
 - Unattended automations get a per-task run limit: `timeout` bounds one
   run (whole minutes, empty = the 15-minute default, at most 24h). A run
   that outlives it is cancelled, its record says `timeout` with the
@@ -43,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A correction typed while a scheduled automation runs in the open
+  workspace is reported like one typed into an interactive turn: the
+  automation's terminal event carries the undelivered-steer count, so
+  the text becomes a resend/dismiss card instead of vanishing from the
+  transcript on the next archive reconciliation. (#181)
+- A wait cancelled before its turn settled no longer crashes the turn
+  goroutine: the settle path tolerates a result-less wait, so the turn
+  still archives and the caller still sees the cancellation. (#181)
 - The `automation` tool's nested `task`/`schedule` schema now reaches the
   model intact. Nested properties were built as `ToolPropertyDef`
   values, whose schema fields are unexported, so each one marshalled as
