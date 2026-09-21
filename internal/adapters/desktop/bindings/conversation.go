@@ -3,6 +3,7 @@ package bindings
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -322,18 +323,33 @@ func resultErr(res *agent.Result) error {
 const steerPendingStateKey = "session.pending_steer"
 
 // pendingSteerCount reads the undelivered-steer count off a turn result.
-// Zero covers both "nothing was steered" and "everything was delivered".
-func pendingSteerCount(res *agent.Result) int {
+// A missing key is a known zero: core records the count only when
+// something is pending (recordPendingSteer in runtime/session/turn.go),
+// so absence means "everything made it". A key that is present with a
+// value this build cannot read is the opposite — the count exists but
+// is invisible here — and it is reported as unknown rather than as a
+// zero: the frontend treats an unknown count by keeping every steered
+// row, because reading a zero there would let archive reconciliation
+// drop the only copy of the user's text.
+func pendingSteerCount(res *agent.Result) (count int, known bool) {
 	if res == nil || res.State == nil {
-		return 0
+		return 0, true
 	}
-	switch v := res.State[steerPendingStateKey].(type) {
+	v, ok := res.State[steerPendingStateKey]
+	if !ok {
+		return 0, true
+	}
+	switch n := v.(type) {
 	case int:
-		return v
+		if n >= 0 {
+			return n, true
+		}
 	case float64:
-		return int(v)
+		if n >= 0 && n == math.Trunc(n) && n <= math.MaxInt32 {
+			return int(n), true
+		}
 	}
-	return 0
+	return 0, false
 }
 
 func (b *Conversation) waitTurn(
@@ -360,7 +376,15 @@ func (b *Conversation) waitTurn(
 		requestID, responseID,
 		lastAssistantOutput(res), finishedAt, durationMs,
 	)
-	end.SteerPending = pendingSteerCount(res)
+	pending, known := pendingSteerCount(res)
+	if !known {
+		flowtelemetry.Warn(context.WithoutCancel(ctx),
+			"conversation: undelivered steer count unreadable; "+
+				"the UI keeps every steered row",
+			otellog.String("run.id", run.RunID()))
+	}
+	end.SteerPending = pending
+	end.SteerPendingUnknown = !known
 	if res != nil {
 		if report, ok := worldstate.CompactionReportFromBoard(res.LastBoard); ok &&
 			!report.Empty() {

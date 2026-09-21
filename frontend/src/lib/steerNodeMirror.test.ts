@@ -15,10 +15,41 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const NODE_SOURCE = join(
+const NODES_DIR = join(
   REPO_ROOT,
-  'internal/foundation/config/assets/graphs/nodes/steer.js',
+  'internal/foundation/config/assets/graphs/nodes',
 );
+const NODE_SOURCE = join(NODES_DIR, 'steer.js');
+const COMPACT_SOURCE = join(NODES_DIR, 'compact.js');
+
+// The fold-in-flight gate is one bare string shared by two nodes: the
+// compact node raises it while a fold owns the channel tail and clears
+// it once the fold settled, and the steer node must read it — appending
+// mid-fold would read as a failed fold and cut the live messages out of
+// the channel. Both sides are derived from the node sources instead of
+// restated here, so a rename on either side fails the extraction rather
+// than silently opening the guard.
+const compactSource = readFileSync(COMPACT_SOURCE, 'utf8');
+const flagNames = (source: string, pattern: RegExp) =>
+  new Set([...source.matchAll(pattern)].map((m) => m[1]));
+const raised = flagNames(
+  compactSource,
+  /board\.setVar\(\s*"([^"]+)"\s*,\s*true\s*\)/g,
+);
+const cleared = flagNames(
+  compactSource,
+  /board\.setVar\(\s*"([^"]+)"\s*,\s*false\s*\)/g,
+);
+const readBack = flagNames(compactSource, /board\.getVar\(\s*"([^"]+)"\s*\)/g);
+// A gate that marks a span is raised, cleared and read back again; the
+// compact node has exactly one such flag.
+const foldGates = [...raised].filter(
+  (name) => cleared.has(name) && readBack.has(name),
+);
+const compactGate = foldGates.length === 1 ? foldGates[0] : undefined;
+const steerGate = /board\.getVar\(\s*"([^"]+)"\s*\)/.exec(
+  readFileSync(NODE_SOURCE, 'utf8'),
+)?.[1];
 
 interface WireMessage {
   role: string;
@@ -67,6 +98,14 @@ function runSteerNode({ vars = {}, channel = [], steered = [] }: RunOptions) {
 }
 
 describe('steer node delivers at the round boundary', () => {
+  it('reads the same fold-in-flight gate the compact node writes', () => {
+    // Both extractions above are renames-sensitive on purpose: if
+    // either node stops naming the gate the other reads, this fails
+    // instead of leaving the guard switched off.
+    expect(compactGate).toBeTruthy();
+    expect(steerGate).toBe(compactGate);
+  });
+
   it('appends every drained message in order after the tool result', () => {
     const { channel, drains } = runSteerNode({
       channel: [
@@ -105,7 +144,7 @@ describe('steer node delivers at the round boundary', () => {
 
   it('keeps the queue while a compaction fold is in flight', () => {
     const { channel, drains, left } = runSteerNode({
-      vars: { 'world.compact.pending': true },
+      vars: { [compactGate as string]: true },
       channel: [
         textMessage('user', 'ask'),
         { role: 'tool', content: { parts: [] } },

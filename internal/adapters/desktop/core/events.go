@@ -65,6 +65,11 @@ type TurnEndEvent struct {
 	// turn settles; the UI reads it to keep the optimistic steer rows it
 	// drew from silently vanishing with archive reconciliation.
 	SteerPending int `json:"steer_pending,omitempty"`
+	// SteerPendingUnknown says the count could not be read: the turn
+	// result carried a shape this build does not understand. The UI
+	// then keeps every steered row instead of reading a zero, which
+	// would let archive reconciliation drop the only copy of that text.
+	SteerPendingUnknown bool `json:"steer_pending_unknown,omitempty"`
 }
 
 // CompactionEvent mirrors worldstate.CompactionReport onto the wire.

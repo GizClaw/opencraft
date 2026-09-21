@@ -46,3 +46,53 @@ func TestTurnEndEventCarriesDurationMs(t *testing.T) {
 		})
 	}
 }
+
+func TestTurnEndEventSteerPendingWireShape(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	marshal := func(mutate func(*TurnEndEvent)) map[string]any {
+		t.Helper()
+		ev := NewTurnEnd(
+			"r-1", "s-1", "completed", "", "", "", "done", now, 10,
+		)
+		mutate(&ev)
+		raw, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	// A known zero is omitted: the frontend reads a missing field as
+	// "everything was delivered" and that is exactly what zero means.
+	got := marshal(func(*TurnEndEvent) {})
+	if _, present := got["steer_pending"]; present {
+		t.Fatalf("steer_pending present for a delivered turn: %v", got)
+	}
+	if _, present := got["steer_pending_unknown"]; present {
+		t.Fatalf("steer_pending_unknown present for a known count: %v", got)
+	}
+
+	// A nonzero count travels as itself, the unknown flag stays out.
+	got = marshal(func(ev *TurnEndEvent) { ev.SteerPending = 2 })
+	if v, ok := got["steer_pending"].(float64); !ok || v != 2 {
+		t.Fatalf("steer_pending = %v, want 2", got["steer_pending"])
+	}
+	if _, present := got["steer_pending_unknown"]; present {
+		t.Fatalf("steer_pending_unknown present for a known count: %v", got)
+	}
+
+	// An unreadable count travels as the unknown flag instead of a zero
+	// the UI would trust.
+	got = marshal(func(ev *TurnEndEvent) { ev.SteerPendingUnknown = true })
+	if v, ok := got["steer_pending_unknown"].(bool); !ok || !v {
+		t.Fatalf("steer_pending_unknown = %v, want true",
+			got["steer_pending_unknown"])
+	}
+	if _, present := got["steer_pending"]; present {
+		t.Fatalf("steer_pending present for an unknown count: %v", got)
+	}
+}

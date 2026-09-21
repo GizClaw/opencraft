@@ -136,8 +136,8 @@ export interface MessageView {
 // QueuedInput is the single draft a user staged while a turn is
 // starting or running. interrupt=false is the Tab queue: it fires
 // after the watched turn completes. interrupt=true is a barge-in send
-// that arrived before the awaited run had a run id, so it fires as
-// soon as that run starts (and barges it in).
+// (Cmd/Ctrl+Enter) that arrived before the awaited run had a run id,
+// so it fires as soon as that run starts (and barges it in).
 export interface QueuedInput {
   text: string;
   attachments: AttachmentView[];
@@ -148,6 +148,11 @@ export interface QueuedInput {
 // submission order (the engine's queue is FIFO). turn_end maps the
 // undelivered count the backend reports (steer_pending) onto the newest
 // entries: those rows never made it into the conversation.
+//
+// The entries live only until their run's turn_end classifies them. A
+// run whose terminal event never arrives (a lost event, a turn
+// superseded by a barge-in) leaves its entries behind; only that run's
+// turn_end ever reads them, so they stay inert.
 export interface QueuedSteer {
   runID: string;
   messageID: string;
@@ -189,6 +194,11 @@ export interface ConversationState {
   historyLoading?: boolean;
   // steerSent tracks steer rows still awaiting their run's turn_end;
   // undeliveredSteers keeps the ones the turn ended without delivering.
+  // A row leaves steerSent only on the matching turn_end, so a run whose
+  // turn_end never arrives (a dropped event, a turn superseded by a
+  // barge-in that settled on its own) keeps its row here until the
+  // archive reconciliation rebuilds the conversation; both lists are
+  // render-process state and start empty again after a reload.
   steerSent?: QueuedSteer[];
   undeliveredSteers?: UndeliveredSteer[];
 }
@@ -1030,7 +1040,9 @@ interface StoreState {
   send: (text: string, attachments?: AttachmentView[]) => Promise<void>;
   // sendInterrupt submits while a turn is running: the backend's
   // session start interrupts the active turn (barge-in) and starts
-  // the replacement as soon as the old one has been finalized.
+  // the replacement as soon as the old one has been finalized. The
+  // composer calls it for Cmd/Ctrl+Enter; the Stop button covers the
+  // plain interrupt, which carries no message.
   sendInterrupt: (
     text: string,
     attachments?: AttachmentView[],
@@ -1619,6 +1631,12 @@ export const useStore = create<StoreState>((set, get) => {
             // steer_pending counts the steered messages this turn ended
             // without delivering (absent or zero = everything made it).
             steer_pending?: number;
+            // Set when the backend could not read that count. It is not
+            // a zero: every steered row for the run is kept as a card,
+            // because the transcript rows are the only copy of that text
+            // and archive reconciliation rebuilds the turn from the
+            // archive, which never saw them.
+            steer_pending_unknown?: boolean;
           };
           const conv = ensureConversation(conversationID);
           if (!conv) break;
@@ -1652,10 +1670,12 @@ export const useStore = create<StoreState>((set, get) => {
             // it. Their text never reached the archive, so the rows come
             // out of the transcript and the text stays behind as a card —
             // otherwise archive reconciliation would silently drop it.
-            const pending = Math.max(0, data.steer_pending ?? 0);
             const tracked = (conv.steerSent ?? []).filter(
               (s) => s.runID === data.run_id,
             );
+            const pending = data.steer_pending_unknown
+              ? tracked.length
+              : Math.max(0, Math.floor(data.steer_pending ?? 0));
             const undelivered = pending > 0 ? tracked.slice(-pending) : [];
             const undeliveredIDs = new Set(undelivered.map((s) => s.messageID));
             const messages =
