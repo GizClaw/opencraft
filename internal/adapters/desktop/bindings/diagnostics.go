@@ -260,10 +260,6 @@ var (
 		metric.WithUnit("ms"),
 		metric.WithDescription(
 			"Renderer web vitals and navigation durations"))
-	frontendVitalsScore = octelemetry.MustFloat64Histogram(
-		"frontend.vitals.cls",
-		metric.WithUnit("1"),
-		metric.WithDescription("Renderer cumulative layout shift"))
 )
 
 // FrontendPerfSample is one renderer performance measurement.
@@ -274,10 +270,9 @@ type FrontendPerfSample struct {
 }
 
 // frontendDurationMetrics are the renderer samples recorded on the duration
-// histogram; everything else either maps to its own instrument or is only
-// logged so a compromised renderer cannot fabricate instrument names.
+// histogram; everything else is only logged so a compromised renderer cannot
+// fabricate instrument names.
 var frontendDurationMetrics = map[string]bool{
-	"ttfb":               true,
 	"fid":                true,
 	"lcp":                true,
 	"inp":                true,
@@ -307,10 +302,6 @@ func (b *Diagnostics) ReportFrontendPerf(samples []FrontendPerfSample) {
 			frontendVitalsDuration.Record(ctx, sample.Value,
 				metric.WithAttributes(
 					attribute.String("metric", sample.Name)))
-			continue
-		}
-		if sample.Name == "cls" {
-			frontendVitalsScore.Record(ctx, sample.Value)
 		}
 	}
 }

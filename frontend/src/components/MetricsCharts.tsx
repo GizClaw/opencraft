@@ -62,12 +62,12 @@ const METRICS: MetricDef[] = [
   },
   // Web-vitals series are running values: LCP is the largest paint so far
   // (in an SPA a later, bigger element keeps raising it), INP the worst
-  // interaction so far, CLS the shift accumulated since load, FID the one
-  // first input of the session. Their samples are states, not events.
+  // interaction so far, FID the one first input of the session. Their
+  // samples are states, not events. CLS is not charted: the shell's engine
+  // never reports layout shifts (see rum.ts).
   { name: 'frontend.lcp', section: 'frontend', unit: 'ms', aggregate: 'last' },
   { name: 'frontend.inp', section: 'frontend', unit: 'ms', aggregate: 'last' },
   { name: 'frontend.fid', section: 'frontend', unit: 'ms', aggregate: 'last' },
-  { name: 'frontend.cls', section: 'frontend', unit: '', aggregate: 'last' },
   // One sample per page load, so a bucket holds a handful of real
   // measurements rather than a running state.
   {

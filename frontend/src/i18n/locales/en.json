@@ -321,7 +321,7 @@
     "metricsRangeAll": "All",
     "metricsRefresh": "Refresh metrics",
     "metricsSectionFrontend": "Frontend experience",
-    "metricsSectionFrontendHint": "lcp / inp / cls / fid are the session's running values — largest paint so far, worst interaction so far, layout shift accumulated since load, and the one first input — not one measurement per event, which is why they step upwards. dom_content_loaded / load are measured once per page load.",
+    "metricsSectionFrontendHint": "lcp / inp / fid are the session's running values — largest paint so far, worst interaction so far, and the one first input — not one measurement per event, which is why they step upwards. dom_content_loaded / load are measured once per page load. cls is not collected: WebKit, the shell's engine on macOS and Linux, does not report layout shifts.",
     "metricsSectionProbe": "Renderer probe",
     "metricsSectionProbeHint": "Reported every 30 seconds while the sampler is on (Diagnostics > DEV tools). dom_nodes and conv_messages are the values at the moment of the report; frames is how many frames that window rendered; frame_max, flush_* and long_task* are the counts and worst values inside the window.",
     "metricsSectionGC": "Garbage collection",

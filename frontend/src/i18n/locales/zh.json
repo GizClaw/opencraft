@@ -321,7 +321,7 @@
     "metricsRangeAll": "全部",
     "metricsRefresh": "刷新指标",
     "metricsSectionFrontend": "前端体验",
-    "metricsSectionFrontendHint": "lcp / inp / cls / fid 是会话的进行值——到目前为止最大的绘制、最差的一次交互、从加载起累计的布局偏移、以及该会话唯一的一次首次输入——不是每次事件的测量值，所以曲线是阶梯向上的。dom_content_loaded / load 每次页面加载只测一次。",
+    "metricsSectionFrontendHint": "lcp / inp / fid 是会话的进行值——到目前为止最大的绘制、最差的一次交互、以及该会话唯一的一次首次输入——不是每次事件的测量值，所以曲线是阶梯向上的。dom_content_loaded / load 每次页面加载只测一次。cls 不采集：桌面壳在 macOS 与 Linux 上使用的 WebKit 不上报布局偏移。",
     "metricsSectionProbe": "渲染采样",
     "metricsSectionProbeHint": "采样开关打开时每 30 秒上报一次（设置 > 诊断 > DEV 工具）。dom_nodes / conv_messages 是上报那一刻的瞬时值；frames 是该窗口渲染的帧数；frame_max、flush_*、long_task* 是窗口内的计数与最差值。",
     "metricsSectionGC": "垃圾回收",
