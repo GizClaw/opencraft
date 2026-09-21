@@ -26,8 +26,9 @@ describe('timeoutDurationFromMinutes', () => {
     expect(timeoutDurationFromMinutes('')).toBe('');
     expect(timeoutDurationFromMinutes('15')).toBe('15m');
     expect(timeoutDurationFromMinutes('90')).toBe('90m');
-    expect(timeoutDurationFromMinutes(String(MAX_AUTOMATION_TIMEOUT_MINUTES)))
-      .toBe('1440m');
+    expect(
+      timeoutDurationFromMinutes(String(MAX_AUTOMATION_TIMEOUT_MINUTES)),
+    ).toBe('1440m');
   });
 
   it('refuses values the backend would reject', () => {

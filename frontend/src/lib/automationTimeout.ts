@@ -9,9 +9,7 @@ export const MAX_AUTOMATION_TIMEOUT_MINUTES = 24 * 60;
 // minutes the form edits. Anything unparsable reads as the empty
 // default; the backend rejects such values on save, so this only
 // covers rows written outside the form.
-export function timeoutMinutesFromDuration(
-  value: string | undefined,
-): string {
+export function timeoutMinutesFromDuration(value: string | undefined): string {
   const raw = (value ?? '').trim();
   if (raw === '') return '';
   const match = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(raw);
