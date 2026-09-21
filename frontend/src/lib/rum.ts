@@ -74,6 +74,12 @@ function reportNavigationTiming() {
   const nav = latestNavigation();
   if (!nav) return;
   for (const sample of navigationSamples(nav)) {
+    // One navigation is read up to four times (before load, right after it,
+    // a second later, and at hide): an unchanged value is not written again,
+    // so a page load contributes one sample per event.
+    const key = `nav:${sample.name}`;
+    if (lastValue.get(key) === sample.value) continue;
+    lastValue.set(key, sample.value);
     void send(sample);
   }
 }
