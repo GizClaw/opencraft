@@ -92,17 +92,29 @@ func (c *Core) applyPluginInferenceWrite(changed bool) error {
 
 // runtimeServesActiveWorkspace reports whether a live Host already
 // serves the active workspace, i.e. whether the assembled runtime in
-// use was built from the document on disk.
+// use was built from the document on disk — or is about to be rebuilt
+// from it. A Host that is stale but superseded counts as serving: the
+// replacement is already armed and reads the same document, so a write
+// that changed nothing has nothing left to ask for. Without this, a
+// plugin that re-submits its unchanged row set on every catalog sync
+// rebuilt once per row while the workspace drained, and each rebuild
+// armed another replacement for the same document.
 func (c *Core) runtimeServesActiveWorkspace() bool {
 	h := c.Runtime.Current()
-	if h == nil || h.IsStale() || h.IsClosing() {
+	if h == nil || h.IsClosing() {
 		return false
 	}
 	active := c.ActiveWorkDir()
 	if active == "" {
 		return true
 	}
-	return filepath.Clean(h.WorkDir()) == filepath.Clean(active)
+	if filepath.Clean(h.WorkDir()) != filepath.Clean(active) {
+		return false
+	}
+	if h.IsStale() {
+		return c.rebuildPendingFor(active)
+	}
+	return true
 }
 
 // RemovePluginInference removes every inference deployment owned by

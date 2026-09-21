@@ -821,6 +821,27 @@ export interface TelemetryExportStatus {
 }
 
 /**
+ * HTTPProbeStatus is the provider round-trip probe behind the DEV
+ * switch. It wraps the process HTTP transport so every provider call
+ * leaves two records — when the request left the process and when the
+ * response headers arrived — which is what splits a slow step into
+ * local assembly and provider time. env reports the
+ * OPENCRAFT_HTTP_PROBE override, and blocker names the MCP
+ * configuration that keeps the probe out (the streamable-HTTP MCP
+ * client cannot run under a wrapped transport).
+ */
+export interface HTTPProbeStatus {
+  /** The persisted DEV switch (desktop.json diagnostics.httpProbe). */
+  enabled: boolean;
+  /** OPENCRAFT_HTTP_PROBE forces the probe on. */
+  env: boolean;
+  /** Whether the transport is wrapped right now. */
+  active: boolean;
+  /** Why the probe is parked, when it is; empty otherwise. */
+  blocker: string;
+}
+
+/**
  * PathSegment is one entry of the process PATH the app runs with.
  * "prepend" is a directory the user configured, "inherited" is what the
  * app was launched with, and "candidate" is a standard install directory

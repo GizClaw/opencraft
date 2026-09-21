@@ -41,6 +41,13 @@ type Core struct {
 	// plugin inference writes, so a plugin that re-submits an unchanged
 	// row set does not rebuild the runtime per row (see inference.go).
 	pluginWrites pluginInferenceWrite
+	// rebuildMu guards rebuildPending, the set of workspaces whose
+	// deferred rebuild is already armed (see runtime_reload.go). Several
+	// reloads can invalidate one workspace while it drains; one armed
+	// replacement is enough, and arming one goroutine per invalidation
+	// made them all assemble at once when the drain finished.
+	rebuildMu      sync.Mutex
+	rebuildPending map[string]struct{}
 	// path holds the last process PATH resolution for the diagnostics
 	// view (see path_report.go).
 	path pathReport

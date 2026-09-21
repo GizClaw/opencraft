@@ -841,6 +841,24 @@ func (s *Shell) SetPerfProbe(enabled bool) error {
 	})
 }
 
+// HTTPProbe reports whether the provider round-trip probe is switched on
+// for this profile.
+func (s *Shell) HTTPProbe() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prefs.Diagnostics.HTTPProbe
+}
+
+// SetHTTPProbe persists the provider round-trip probe switch. Applying
+// it to the process transport stays with the caller (see
+// Core.SetHTTPProbe): the switch is remembered even while an HTTP MCP
+// server parks the probe, so the card never silently drops the choice.
+func (s *Shell) SetHTTPProbe(enabled bool) error {
+	return s.commit(func(p *DesktopPrefs) {
+		p.Diagnostics.HTTPProbe = enabled
+	})
+}
+
 // SetExecPool persists new pool settings and applies them to the live
 // pool. Existing children keep serving; only future leases and reaping
 // use the new values.

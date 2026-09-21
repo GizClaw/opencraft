@@ -65,6 +65,13 @@ type DiagnosticsPrefs struct {
 	// each sample and records it as a frontend.* metric. Off by default
 	// — it walks the DOM on every report.
 	PerfProbe bool `json:"perfProbe,omitempty"`
+	// HTTPProbe keeps the provider round-trip probe installed: the
+	// process HTTP transport is wrapped so one inference round trip
+	// leaves two records (request dispatched, response headers
+	// received) and a slow step splits into local assembly and provider
+	// time. Off by default — it doubles the log lines of every model
+	// call.
+	HTTPProbe bool `json:"httpProbe,omitempty"`
 }
 
 // ExecPrefs is the desktop preference section that configures the exec

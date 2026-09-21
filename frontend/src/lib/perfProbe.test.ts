@@ -23,6 +23,7 @@ vi.mock('./store', () => storeMock);
 import {
   installPerfProbe,
   perfProbeRunning,
+  reportPerfProbeNow,
   setPerfProbeEnabled,
   startPerfProbe,
   stopPerfProbe,
@@ -105,5 +106,69 @@ describe('perfProbe', () => {
     installPerfProbe();
     await vi.waitFor(() => expect(apiMock.perfProbe).toHaveBeenCalled());
     expect(perfProbeRunning()).toBe(false);
+  });
+
+  it('does not count time spent hidden as a dropped frame', async () => {
+    // A background window throttles animation frames, so the gap between
+    // two samples measures the throttle, not the renderer: the log's
+    // multi-minute frame_max samples were all hidden windows. The sampler
+    // has to pause with the page and drop its baseline.
+    let visibility: 'visible' | 'hidden' = 'visible';
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => visibility,
+    });
+    const scheduled = new Map<number, (now: number) => void>();
+    let nextHandle = 1;
+    vi.stubGlobal('requestAnimationFrame', (cb: (now: number) => void) => {
+      const handle = nextHandle++;
+      scheduled.set(handle, cb);
+      return handle;
+    });
+    const cancelled: number[] = [];
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
+      cancelled.push(handle);
+      scheduled.delete(handle);
+    });
+    const fireFrame = (now: number) => {
+      const next = [...scheduled.entries()].at(-1);
+      if (!next) throw new Error('no animation frame scheduled');
+      scheduled.delete(next[0]);
+      next[1](now);
+    };
+
+    const samples = async () => {
+      await reportPerfProbeNow();
+      const last = apiMock.reportFrontendPerf.mock.calls.at(-1);
+      const rows = last?.[0] as Array<{ name: string; value: number }>;
+      return new Map(rows.map((row) => [row.name, row.value]));
+    };
+
+    try {
+      startPerfProbe();
+      // One visible frame pair, 16ms apart.
+      fireFrame(1_000);
+      fireFrame(1_016);
+
+      visibility = 'hidden';
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(cancelled.length).toBeGreaterThan(0);
+      expect(scheduled.size).toBe(0);
+
+      // The window comes back a minute later: the first frame after the
+      // resume starts a fresh baseline instead of reporting the gap.
+      visibility = 'visible';
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(scheduled.size).toBe(1);
+      fireFrame(60_000);
+      fireFrame(60_016);
+
+      const reported = await samples();
+      expect(reported.get('frames')).toBe(2);
+      expect(reported.get('frame_max')).toBe(16);
+    } finally {
+      delete (document as unknown as { visibilityState?: string })
+        .visibilityState;
+    }
   });
 });

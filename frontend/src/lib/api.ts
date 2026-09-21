@@ -63,6 +63,7 @@ import type {
   WebSearchTestResult,
   ExecPool,
   Recovery,
+  HTTPProbeStatus,
   PathEnvironment,
   PolicyDecision,
   PetsSettings,
@@ -390,6 +391,15 @@ export const api = {
   // frontend.* metrics.
   perfProbe: () => Diagnostics.PerfProbe() as unknown as Promise<boolean>,
   setPerfProbe: (enabled: boolean) => Diagnostics.SetPerfProbe(enabled),
+  // httpProbe is the DEV switch for the provider round-trip probe: it
+  // records when a provider request leaves the process and when the
+  // response headers arrive ("httpprobe:" log lines), which is the split
+  // between local assembly and provider time that a per-turn latency
+  // number cannot show.
+  httpProbe: () =>
+    Diagnostics.HTTPProbe() as unknown as Promise<HTTPProbeStatus>,
+  setHTTPProbe: (enabled: boolean) =>
+    Diagnostics.SetHTTPProbe(enabled) as unknown as Promise<HTTPProbeStatus>,
   clearCaches: () =>
     Diagnostics.ClearCaches() as unknown as Promise<CacheClearResult>,
   repairConfigCompat: () =>

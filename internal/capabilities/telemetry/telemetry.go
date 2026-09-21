@@ -108,7 +108,8 @@ func InitOtel(ctx context.Context, opts TelemetryOptions) (shutdown func(context
 			return nil, fmt.Errorf("telemetry: log file: %w", err)
 		}
 		logOpts = append(logOpts,
-			telemetry.WithLogProcessor(log.NewBatchProcessor(exp)),
+			telemetry.WithLogProcessor(newGraphWarningFilter(
+				log.NewBatchProcessor(exp))),
 		)
 	}
 

@@ -27,25 +27,39 @@ type httpClient struct {
 }
 
 func newHTTPClient() *httpClient {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.MaxIdleConns = 10
-	tr.MaxIdleConnsPerHost = 4
-	tr.IdleConnTimeout = 90 * time.Second
-	tr.TLSHandshakeTimeout = 10 * time.Second
-	tr.ResponseHeaderTimeout = 30 * time.Second
 	return &httpClient{
 		// Fixed endpoints come from the deployment settings, so
 		// redirects are never needed; refusing them keeps a provider
 		// from rerouting a request (or its Authorization header)
 		// somewhere else.
 		client: &http.Client{
-			Transport: tr,
+			Transport: newTransport(),
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
 		},
 		userAgent: "OpenCraft/" + version.ServiceVersion,
 	}
+}
+
+// newTransport builds the pool-tuned transport this client uses: the
+// process transport cloned when it is the stdlib *http.Transport, and the
+// process transport itself when it is a wrapper (the diagnostic round-trip
+// probe, an SDK's tracing hook). Asserting *http.Transport would panic on
+// a wrapper, which the official provider SDKs guard the same way. The
+// per-call context deadline bounds a stuck request in both cases.
+func newTransport() http.RoundTripper {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultTransport
+	}
+	tr := base.Clone()
+	tr.MaxIdleConns = 10
+	tr.MaxIdleConnsPerHost = 4
+	tr.IdleConnTimeout = 90 * time.Second
+	tr.TLSHandshakeTimeout = 10 * time.Second
+	tr.ResponseHeaderTimeout = 30 * time.Second
+	return tr
 }
 
 // do runs one request and returns the bounded body, mapping HTTP
