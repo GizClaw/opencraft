@@ -1629,14 +1629,14 @@ export const useStore = create<StoreState>((set, get) => {
               notified?: boolean;
             };
             // steer_pending counts the steered messages this turn ended
-            // without delivering (absent or zero = everything made it).
-            steer_pending?: number;
-            // Set when the backend could not read that count. It is not
-            // a zero: every steered row for the run is kept as a card,
-            // because the transcript rows are the only copy of that text
-            // and archive reconciliation rebuilds the turn from the
-            // archive, which never saw them.
-            steer_pending_unknown?: boolean;
+            // without delivering. A zero is a real zero (everything made
+            // it); null — or the field missing entirely, which a producer
+            // this build does not know about would send — means the
+            // backend could not read the count, and every steered row for
+            // the run is kept as a card instead: the transcript rows are
+            // the only copy of that text and archive reconciliation
+            // rebuilds the turn from the archive, which never saw them.
+            steer_pending?: number | null;
           };
           const conv = ensureConversation(conversationID);
           if (!conv) break;
@@ -1673,9 +1673,11 @@ export const useStore = create<StoreState>((set, get) => {
             const tracked = (conv.steerSent ?? []).filter(
               (s) => s.runID === data.run_id,
             );
-            const pending = data.steer_pending_unknown
-              ? tracked.length
-              : Math.max(0, Math.floor(data.steer_pending ?? 0));
+            const rawPending = data.steer_pending;
+            const pending =
+              rawPending === null || rawPending === undefined
+                ? tracked.length
+                : Math.max(0, Math.floor(rawPending));
             const undelivered = pending > 0 ? tracked.slice(-pending) : [];
             const undeliveredIDs = new Set(undelivered.map((s) => s.messageID));
             const messages =

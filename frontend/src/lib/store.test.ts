@@ -2453,6 +2453,9 @@ describe('store: mid-turn steer', () => {
         run_id: 'r-run',
         conversation_id: 's-1',
         status: 'completed',
+        // A delivered turn reports a literal zero, not an absent field:
+        // absence now means the count could not be read.
+        steer_pending: 0,
       },
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2618,7 +2621,7 @@ describe('store: mid-turn steer', () => {
         run_id: 'r-run',
         conversation_id: 's-1',
         status: 'completed',
-        steer_pending_unknown: true,
+        steer_pending: null,
       },
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2633,6 +2636,32 @@ describe('store: mid-turn steer', () => {
       'first',
       'second',
     ]);
+  });
+
+  it('keeps every steered row when turn_end omits the count', async () => {
+    runningConversation();
+    await useStore.getState().steer('from an older producer');
+
+    // A producer that does not know the field must fail closed: the
+    // absent value is not a zero the transcript can be reconciled away
+    // against.
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual([
+      'from an older producer',
+    ]);
+    expect(conv.messages.some((m) => m.text === 'from an older producer')).toBe(
+      false,
+    );
   });
 
   it('resends a card as a new turn and drops it', async () => {
@@ -2713,6 +2742,7 @@ describe('store: mid-turn steer', () => {
           run_id: 'r-run',
           conversation_id: 's-1',
           status: 'completed',
+          steer_pending: 0,
         },
       });
       throw new Error('turn not found');

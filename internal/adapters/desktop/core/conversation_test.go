@@ -64,13 +64,33 @@ func TestConversationStateIsWorkspaceScoped(t *testing.T) {
 		t.Fatalf("workspace b picked up workspace a settings: %+v", c)
 	}
 
-	c.TrackRun(idA, "r-a")
-	c.TrackRun(idB, "r-b")
+	c.TrackRun(workA, idA, "r-a")
+	c.TrackRun(workB, idB, "r-b")
 	if got := c.ConversationForRun("r-a"); got != idA {
 		t.Fatalf("run r-a owned by %q, want %q", got, idA)
 	}
 	if got := c.ConversationForRun("r-b"); got != idB {
 		t.Fatalf("run r-b owned by %q, want %q", got, idB)
+	}
+	// The workspace a run belongs to is what routes a late action (a
+	// steer, a stop) to the right Host after a window switch.
+	if got := c.WorkspaceForRun("r-a"); got != workA {
+		t.Fatalf("run r-a workspace = %q, want %q", got, workA)
+	}
+	if got := c.WorkspaceForRun("r-b"); got != workB {
+		t.Fatalf("run r-b workspace = %q, want %q", got, workB)
+	}
+	if got := c.WorkspaceForRun("r-unknown"); got != "" {
+		t.Fatalf("unknown run workspace = %q, want empty", got)
+	}
+	c.ForgetConversation(idA)
+	if got := c.WorkspaceForRun("r-a"); got != "" {
+		t.Fatalf("run r-a workspace = %q after the conversation was "+
+			"forgotten, want empty", got)
+	}
+	if got := c.WorkspaceForRun("r-b"); got != workB {
+		t.Fatalf("forgetting one conversation dropped another "+
+			"conversation's run workspace: %q", got)
 	}
 }
 

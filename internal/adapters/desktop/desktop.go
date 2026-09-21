@@ -460,40 +460,20 @@ func (d *Desktop) runAutomation(
 	// happen before this returns.
 	res, waitErr := run.WaitBounded(ctx)
 	finishedAt, durationMs := run.FinishedTiming()
-	result := automations.RunResult{
-		ConversationID: contextID,
-		RunID:          runID,
-	}
-	status := agent.Status("unknown")
-	errText := ""
-	if res != nil {
-		status = res.Status
-		if res.Err != nil {
-			errText = res.Err.Error()
-		}
-	}
-	if waitErr != nil && errText == "" {
-		errText = waitErr.Error()
-	}
+	// One shared mapping classifies the settled pair (a completed status
+	// and no wait error = the run completed; anything else failed, for
+	// the manager to rewrite to a timeout when its deadline caused it).
+	outcome := automations.ClassifySettledRun(contextID, runID, res, waitErr)
+	result := outcome.Result
+	status, errText := outcome.Status, outcome.ErrorText
 	output := automationOutput(res)
-	if waitErr != nil {
-		result.Status = automations.RunFailed
-		result.Error = errText
-	} else {
-		if res != nil && status == agent.StatusCompleted {
-			result.Status = automations.RunCompleted
-		} else {
-			result.Status = automations.RunFailed
-			result.Error = errText
-		}
-	}
 	notify := !suppressAutomationNotify(task, result.Status, errText)
 	if current {
 		requestID, responseID := run.FinishedIDs()
 		end := core.NewTurnEnd(
 			runID, contextID, string(status), errText,
 			requestID, responseID, output,
-			finishedAt, durationMs,
+			finishedAt, durationMs, res,
 		)
 		class := host.ClassifyRunError(resErr(res), waitErr)
 		end.InterruptCause = class.InterruptCause

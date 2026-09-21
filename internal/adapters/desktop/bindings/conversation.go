@@ -3,7 +3,6 @@ package bindings
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -160,7 +159,7 @@ func (b *Conversation) StartTurn(
 			run, err := h.StartRun(ctx, opts)
 			if err == nil {
 				startedAt := time.Now().UTC()
-				b.core.Conversation.TrackRun(contextID, run.RunID())
+				b.core.Conversation.TrackRun(workDir, contextID, run.RunID())
 				b.core.Shell.Emit("status", core.StatusEvent{Busy: true})
 				go b.waitTurn(ctx, run, contextID)
 				return TurnStart{
@@ -316,42 +315,6 @@ func resultErr(res *agent.Result) error {
 	return res.Err
 }
 
-// steerPendingStateKey is the core session result-state key recording
-// how many steered messages a settled turn left undelivered. Reading it
-// here (rather than from an event) follows the core contract: run-end
-// is published before the turn settles, so only the result knows.
-const steerPendingStateKey = "session.pending_steer"
-
-// pendingSteerCount reads the undelivered-steer count off a turn result.
-// A missing key is a known zero: core records the count only when
-// something is pending (recordPendingSteer in runtime/session/turn.go),
-// so absence means "everything made it". A key that is present with a
-// value this build cannot read is the opposite — the count exists but
-// is invisible here — and it is reported as unknown rather than as a
-// zero: the frontend treats an unknown count by keeping every steered
-// row, because reading a zero there would let archive reconciliation
-// drop the only copy of the user's text.
-func pendingSteerCount(res *agent.Result) (count int, known bool) {
-	if res == nil || res.State == nil {
-		return 0, true
-	}
-	v, ok := res.State[steerPendingStateKey]
-	if !ok {
-		return 0, true
-	}
-	switch n := v.(type) {
-	case int:
-		if n >= 0 {
-			return n, true
-		}
-	case float64:
-		if n >= 0 && n == math.Trunc(n) && n <= math.MaxInt32 {
-			return int(n), true
-		}
-	}
-	return 0, false
-}
-
 func (b *Conversation) waitTurn(
 	ctx context.Context,
 	run *host.Run,
@@ -374,17 +337,14 @@ func (b *Conversation) waitTurn(
 	end := core.NewTurnEnd(
 		run.RunID(), contextID, status, errText,
 		requestID, responseID,
-		lastAssistantOutput(res), finishedAt, durationMs,
+		lastAssistantOutput(res), finishedAt, durationMs, res,
 	)
-	pending, known := pendingSteerCount(res)
-	if !known {
+	if end.SteerPending == nil {
 		flowtelemetry.Warn(context.WithoutCancel(ctx),
 			"conversation: undelivered steer count unreadable; "+
 				"the UI keeps every steered row",
 			otellog.String("run.id", run.RunID()))
 	}
-	end.SteerPending = pending
-	end.SteerPendingUnknown = !known
 	if res != nil {
 		if report, ok := worldstate.CompactionReportFromBoard(res.LastBoard); ok &&
 			!report.Empty() {
@@ -552,9 +512,9 @@ func (b *Conversation) SetSessionMode(mode string) error {
 
 // CancelTurn cancels one active run.
 func (b *Conversation) CancelTurn(runID string) error {
-	h := b.core.Runtime.Current()
-	if h == nil {
-		return fmt.Errorf("conversation: runtime is not ready")
+	h, err := b.runHost(b.core.Shell.Context(), runID)
+	if err != nil {
+		return err
 	}
 	return h.CancelRun(runID)
 }
@@ -565,11 +525,38 @@ func (b *Conversation) CancelTurn(runID string) error {
 // caller keeps its text and decides whether to interrupt, queue it for
 // the next turn, or surface the rejection.
 func (b *Conversation) Steer(runID, text string) error {
-	h := b.core.Runtime.Current()
-	if h == nil {
-		return fmt.Errorf("conversation: runtime is not ready")
+	h, err := b.runHost(b.core.Shell.Context(), runID)
+	if err != nil {
+		return err
 	}
 	return h.SteerRun(runID, text)
+}
+
+// runHost resolves the Host that owns one live run, for the actions a
+// window takes on a run it did not necessarily start in the workspace
+// it is showing. A run attributed to a conversation is served by the
+// workspace that conversation lives in — the workspace's pooled Host
+// when the window has left it, the same routing StartTurn uses — so a
+// steer or a stop reaches a turn the window moved away from instead of
+// dying on whatever Host happens to be current. A run this process did
+// not attribute (an automation task's run) falls back to the current
+// Host, which is the Host its runner acquired when the task's
+// workspace is the one on screen.
+func (b *Conversation) runHost(
+	ctx context.Context,
+	runID string,
+) (*host.Host, error) {
+	if workDir := b.core.Conversation.WorkspaceForRun(runID); workDir != "" {
+		if h := b.core.Runtime.Current(); h != nil &&
+			core.SameWorkspace(h.WorkDir(), workDir) {
+			return h, nil
+		}
+		return b.core.Runtime.HostInWorkspace(ctx, workDir)
+	}
+	if h := b.core.Runtime.Current(); h != nil {
+		return h, nil
+	}
+	return nil, errNotReady("conversation")
 }
 
 // ReplyPrompt answers one pending interaction.

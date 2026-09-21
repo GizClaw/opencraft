@@ -16,6 +16,7 @@ type Conversation struct {
 
 	byWID        map[string]*workspaceConv
 	runConvs     map[string]map[string]bool
+	runWorkspace map[string]string
 	defaultMode  sessions.Mode
 	defaultThink string
 }
@@ -34,6 +35,7 @@ func NewConversation() *Conversation {
 	return &Conversation{
 		byWID:        make(map[string]*workspaceConv),
 		runConvs:     make(map[string]map[string]bool),
+		runWorkspace: make(map[string]string),
 		defaultMode:  defaultMode,
 		defaultThink: defaultThink,
 	}
@@ -117,14 +119,29 @@ func (c *Conversation) Defaults() (sessions.Mode, string) {
 	return c.defaultMode, c.defaultThink
 }
 
-// TrackRun remembers one run id minted per conversation.
-func (c *Conversation) TrackRun(conversationID, runID string) {
+// TrackRun remembers one run id minted per conversation, together with
+// the workspace whose Host serves it. The workspace is what lets a
+// late action on the run (a steer, a stop) reach the Host that owns it
+// after the window moved to another workspace.
+func (c *Conversation) TrackRun(workDir, conversationID, runID string) {
 	c.mu.Lock()
 	if c.runConvs[conversationID] == nil {
 		c.runConvs[conversationID] = make(map[string]bool)
 	}
 	c.runConvs[conversationID][runID] = true
+	if workDir = strings.TrimSpace(workDir); workDir != "" {
+		c.runWorkspace[runID] = workDir
+	}
 	c.mu.Unlock()
+}
+
+// WorkspaceForRun returns the workspace whose Host owns runID, or ""
+// when this process did not mint the run from a conversation (an
+// automation task's run, named by its runner instead).
+func (c *Conversation) WorkspaceForRun(runID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.runWorkspace[runID]
 }
 
 // Runs returns the run ids attributed to one conversation.
@@ -155,6 +172,9 @@ func (c *Conversation) ConversationForRun(runID string) string {
 // deleted.
 func (c *Conversation) ForgetConversation(conversationID string) {
 	c.mu.Lock()
+	for runID := range c.runConvs[conversationID] {
+		delete(c.runWorkspace, runID)
+	}
 	delete(c.runConvs, conversationID)
 	c.mu.Unlock()
 }

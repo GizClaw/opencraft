@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/GizClaw/flowcraft/core/agent"
 )
 
 func TestTurnEndEventCarriesDurationMs(t *testing.T) {
@@ -18,7 +20,7 @@ func TestTurnEndEventCarriesDurationMs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := NewTurnEnd(
 				"r-1", "s-1", "completed", "", "req-1", "resp-1", "done",
-				now, tc.durationMs,
+				now, tc.durationMs, &agent.Result{},
 			)
 			raw, err := json.Marshal(ev)
 			if err != nil {
@@ -49,12 +51,11 @@ func TestTurnEndEventCarriesDurationMs(t *testing.T) {
 
 func TestTurnEndEventSteerPendingWireShape(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
-	marshal := func(mutate func(*TurnEndEvent)) map[string]any {
+	marshal := func(res *agent.Result) map[string]any {
 		t.Helper()
 		ev := NewTurnEnd(
-			"r-1", "s-1", "completed", "", "", "", "done", now, 10,
+			"r-1", "s-1", "completed", "", "", "", "done", now, 10, res,
 		)
-		mutate(&ev)
 		raw, err := json.Marshal(ev)
 		if err != nil {
 			t.Fatal(err)
@@ -66,33 +67,32 @@ func TestTurnEndEventSteerPendingWireShape(t *testing.T) {
 		return got
 	}
 
-	// A known zero is omitted: the frontend reads a missing field as
-	// "everything was delivered" and that is exactly what zero means.
-	got := marshal(func(*TurnEndEvent) {})
-	if _, present := got["steer_pending"]; present {
-		t.Fatalf("steer_pending present for a delivered turn: %v", got)
-	}
-	if _, present := got["steer_pending_unknown"]; present {
-		t.Fatalf("steer_pending_unknown present for a known count: %v", got)
+	// A delivered turn sends a literal zero, never an omitted field: the
+	// frontend treats an absent (or null) value as an unknown count, so
+	// "nothing pending" has to travel as itself.
+	got := marshal(&agent.Result{})
+	if v, ok := got["steer_pending"].(float64); !ok || v != 0 {
+		t.Fatalf("steer_pending = %v, want 0", got["steer_pending"])
 	}
 
-	// A nonzero count travels as itself, the unknown flag stays out.
-	got = marshal(func(ev *TurnEndEvent) { ev.SteerPending = 2 })
+	// A recorded count travels as itself.
+	got = marshal(&agent.Result{State: map[string]any{
+		"session.pending_steer": 2,
+	}})
 	if v, ok := got["steer_pending"].(float64); !ok || v != 2 {
 		t.Fatalf("steer_pending = %v, want 2", got["steer_pending"])
 	}
-	if _, present := got["steer_pending_unknown"]; present {
-		t.Fatalf("steer_pending_unknown present for a known count: %v", got)
-	}
 
-	// An unreadable count travels as the unknown flag instead of a zero
-	// the UI would trust.
-	got = marshal(func(ev *TurnEndEvent) { ev.SteerPendingUnknown = true })
-	if v, ok := got["steer_pending_unknown"].(bool); !ok || !v {
-		t.Fatalf("steer_pending_unknown = %v, want true",
-			got["steer_pending_unknown"])
+	// A count this build cannot read — like no result at all — travels
+	// as null instead of a zero the UI would trust.
+	got = marshal(&agent.Result{State: map[string]any{
+		"session.pending_steer": "2",
+	}})
+	if v, present := got["steer_pending"]; !present || v != nil {
+		t.Fatalf("steer_pending = %v (present %v), want null", v, present)
 	}
-	if _, present := got["steer_pending"]; present {
-		t.Fatalf("steer_pending present for an unknown count: %v", got)
+	got = marshal(nil)
+	if v, present := got["steer_pending"]; !present || v != nil {
+		t.Fatalf("steer_pending = %v (present %v), want null", v, present)
 	}
 }
