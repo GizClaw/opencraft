@@ -28,13 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interrupting it; Tab keeps the after-turn queue, a draft carrying
   attachments is refused with a hint rather than changed silently, and
   barge-in stays on the stop button. (#181)
-- Tools now ship a no-progress guard (`repeat`): the same call (tool
-  name plus canonicalized arguments) repeated back to back is refused on
-  its third consecutive occurrence with an actionable error, so an agent
-  that is spinning ends the turn by decision instead of burning
-  `policy.run_timeout` on the same no-op. Any different call resets the
-  streak, so read → edit → read → test workflows are untouched; polling
-  calls belong in the middleware's `exempt` list. (#181)
 - Automations that never set a run limit are now bounded by the
   15-minute default where previously only the assistant graph's
   one-hour run timeout applied, so a long-running task can end as
