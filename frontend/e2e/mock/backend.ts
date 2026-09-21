@@ -123,6 +123,7 @@ export function mockBackend(cfg?: MockConfig) {
     },
     Automation: {
       AutomationSessions: emptyList,
+      CancelRun: noop,
       Delete: noop,
       List: async () => config.automations ?? [],
       RunNow: noop,
@@ -599,6 +600,7 @@ export function mockBackend(cfg?: MockConfig) {
     AgentDetail: ['Agent', 'Detail'],
     AutomationRuns: ['Automation', 'Runs'],
     Automations: ['Automation', 'List'],
+    CancelAutomationRun: ['Automation', 'CancelRun'],
     CancelTurn: ['Conversation', 'CancelTurn'],
     ConfigState: ['Config', 'ConfigState'],
     ConfigStatus: ['Config', 'ConfigStatus'],

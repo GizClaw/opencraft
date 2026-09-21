@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bound, and the concurrency slot comes back once the turn settles. The
   editor gains a run-limit field and the run list a timeout badge.
   (#181)
+- A live scheduled run can be stopped from the automations panel:
+  `Automation.CancelRun` cancels the run context the manager owns, the
+  desktop runner's bounded wait turns that into the host's turn cancel,
+  and the record is written as `canceled` with no error text once the
+  turn settles (archive, memory commit, usage and the concurrency slot
+  all still run). The run list offers the action on a running row and
+  the task menu on a task whose run is live; the failure notification
+  policy stays quiet for a stop the user asked for.
 
 ### Changed
 

@@ -1187,6 +1187,7 @@
     "enabled": "Enabled",
     "next": "Next",
     "runNow": "Run now",
+    "cancelRun": "Cancel run",
     "more": "More actions",
     "pause": "Pause",
     "resume": "Enable",

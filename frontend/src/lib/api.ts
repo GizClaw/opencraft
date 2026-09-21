@@ -502,6 +502,7 @@ export const api = {
   setLanguage: (language: string) => Lifecycle.SetLanguage(language),
   deleteAutomation: (id: string) => Automation.Delete(id),
   runAutomationNow: (id: string) => Automation.RunNow(id),
+  cancelAutomationRun: (runId: string) => Automation.CancelRun(runId),
   automationRuns: (taskId: string) =>
     Automation.Runs(taskId) as unknown as Promise<AutomationRun[]>,
   automationSessions: (workspace: string) =>

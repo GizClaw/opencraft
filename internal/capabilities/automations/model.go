@@ -326,7 +326,11 @@ const (
 	// that used to finish suddenly stopped: the work was still going
 	// when the bound was reached.
 	RunTimeout RunStatus = "timeout"
-	RunSkipped RunStatus = "skipped"
+	// RunCanceled is a run the user stopped from the automations
+	// panel. Like RunTimeout it is kept apart from "failed": a
+	// deliberate stop is not a failure of the work.
+	RunCanceled RunStatus = "canceled"
+	RunSkipped  RunStatus = "skipped"
 )
 
 // Run is one execution record of a task.

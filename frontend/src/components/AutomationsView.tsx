@@ -15,6 +15,7 @@ import {
   Search,
   Settings2,
   Sparkles,
+  Square,
   Trash2,
   X,
   Zap,
@@ -301,6 +302,7 @@ export function AutomationsView() {
   const [historyFor, setHistoryFor] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [cancelingId, setCancelingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   // The three menus on this page — the model catalog, a row's actions and
@@ -428,6 +430,21 @@ export function AutomationsView() {
     }
   };
 
+  // cancelRun asks the backend to stop one live run. The record stays
+  // "running" until the turn settles, so the refresh here is only the
+  // first half: the automation_run event lands the settled status.
+  const cancelRun = async (run: AutomationRun) => {
+    setCancelingId(run.id);
+    try {
+      await api.cancelAutomationRun(run.id);
+      await loadAutomationRuns(run.task_id);
+    } catch (err) {
+      flash(String(err));
+    } finally {
+      setCancelingId(null);
+    }
+  };
+
   const toggleEnabled = async (task: AutomationTask) => {
     try {
       await api.saveAutomation({ ...task, enabled: !task.enabled });
@@ -472,8 +489,9 @@ export function AutomationsView() {
   };
 
   const historyRuns = historyFor ? (runs[historyFor] ?? []) : [];
-  const runningFor = (taskId: string) =>
-    (runs[taskId] ?? []).some((r) => r.status === 'running');
+  const activeRunFor = (taskId: string) =>
+    (runs[taskId] ?? []).find((r) => r.status === 'running');
+  const runningFor = (taskId: string) => activeRunFor(taskId) !== undefined;
 
   const filtered = automations.filter((task) => {
     if (filter === 'active' && !task.enabled) return false;
@@ -741,6 +759,22 @@ export function AutomationsView() {
                         {t('automations.runNow')}
                       </span>
                     </button>
+                    {activeRunFor(task.id) !== undefined && (
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setRowMenu(null);
+                          const run = activeRunFor(task.id);
+                          if (run) void cancelRun(run);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                      >
+                        <Square size={ICON.xs} className="shrink-0" />
+                        <span className="flex-1 text-left">
+                          {t('automations.cancelRun')}
+                        </span>
+                      </button>
+                    )}
                     <div className="my-1 border-t border-edge" />
                     <button
                       role="menuitem"
@@ -1153,6 +1187,24 @@ export function AutomationsView() {
                           {run.status}
                         </span>
                         <span className="text-dim">{fmtTime(run.at)}</span>
+                        <span className="flex-1" />
+                        {run.status === 'running' && (
+                          <button
+                            onClick={() => void cancelRun(run)}
+                            disabled={cancelingId === run.id}
+                            className="flex items-center gap-1 rounded-tight text-dim hover:text-fg disabled:opacity-40"
+                          >
+                            {cancelingId === run.id ? (
+                              <Loader2
+                                size={ICON.xs}
+                                className="animate-spin"
+                              />
+                            ) : (
+                              <Square size={ICON.xs} />
+                            )}
+                            {t('automations.cancelRun')}
+                          </button>
+                        )}
                       </div>
                       {run.duration_ms > 0 && (
                         <p className="text-micro text-dim">

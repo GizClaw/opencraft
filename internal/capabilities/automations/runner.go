@@ -24,11 +24,12 @@ type SettledRun struct {
 // run record and the terminal fields. It is the single mapping the
 // desktop runner and the host integration tests share: a run counts as
 // completed only when the wait returned without error *and* the engine
-// reported completion. That is the distinction the timeout handling
-// depends on — a run the manager's deadline cut short settles as
-// cancelled, must be recorded as failed here, and is rewritten to
-// RunTimeout by the manager afterwards; a runner that reported it as
-// completed would keep the record lying about what happened.
+// reported completion. That is the distinction the stop handling
+// depends on — a run the manager's deadline or a CancelRun cut short
+// settles as cancelled, must be recorded as failed here, and is
+// rewritten to RunTimeout / RunCanceled by the manager afterwards; a
+// runner that reported it as completed would keep the record lying
+// about what happened.
 func ClassifySettledRun(
 	conversationID, runID string, res *agent.Result, waitErr error,
 ) SettledRun {
