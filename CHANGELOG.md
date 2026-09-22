@@ -306,6 +306,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The file tools work on Windows again: `read_file`, `write_file`,
+  `list_dir`, `grep` and `glob` refused every nested path there.
+  `validatePath` compared `filepath.Clean(p)` against `p`, and on
+  Windows that rewrites `src/main.go` into backslashes, so the clean
+  check rejected the slash form the tools themselves emit — while the
+  backslash form is refused with a "use forward slashes" hint, leaving
+  no spelling that worked below the workspace root. Cleanliness is
+  judged with `path.Clean` now, and `list_dir`'s `max_depth` counts `/`
+  instead of the host separator (counting the separator reads every
+  walked path as depth 0, so the bound never trimmed). Windows CI runs
+  this package now, which is how it was found.
 - A process started in a turn's last poll gap is no longer invisible
   until the next message. The activity card's process section follows a
   hook that reads the conversation's sandboxed processes on open and
