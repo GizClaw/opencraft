@@ -202,6 +202,53 @@ describe('GitPanel', () => {
       expect(apiMock.gitDiff).toHaveBeenCalledWith('internal/a.go', true),
     );
     expect(await screen.findByText('new line')).toBeInTheDocument();
+    // Consumed: switching segments later must not replay the same diff.
+    expect(useStore.getState().viewers['s-1']?.gitPick).toBeUndefined();
+  });
+
+  it('opens the diff the file viewer handed over', async () => {
+    // The viewer's marks chip writes gitPick and switching the rail; the
+    // panel is what mounts next, so it has to honor the pick on arrival.
+    useStore.setState({
+      viewers: {
+        's-1': {
+          filesOpen: true,
+          panelMode: 'git',
+          fileTabs: [],
+          fileActive: null,
+          fileTreeDir: '.',
+          gitPick: { path: 'internal/a.go', nonce: 1 },
+        },
+      },
+    });
+    render(<GitPanel sessionID="s-1" />);
+    await waitFor(() =>
+      expect(apiMock.gitDiff).toHaveBeenCalledWith('internal/a.go', true),
+    );
+    expect(await screen.findByText('new line')).toBeInTheDocument();
+  });
+
+  it('says so when the handed-over file has no changes left', async () => {
+    useStore.setState({
+      viewers: {
+        's-1': {
+          filesOpen: true,
+          panelMode: 'git',
+          fileTabs: [],
+          fileActive: null,
+          fileTreeDir: '.',
+          gitPick: { path: 'gone.go', nonce: 1 },
+        },
+      },
+    });
+    render(<GitPanel sessionID="s-1" />);
+    await screen.findByText('internal/a.go');
+    await waitFor(() =>
+      expect(useStore.getState().toasts.map((toast) => toast.text)).toContain(
+        'That file has no changes to show anymore.',
+      ),
+    );
+    expect(apiMock.gitDiff).not.toHaveBeenCalled();
   });
 
   it('toggles staged and working-tree halves of a dual-state file', async () => {

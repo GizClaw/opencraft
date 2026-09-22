@@ -45,6 +45,7 @@ import {
 import { api } from '../lib/api';
 import { RefreshControl } from './RefreshControl';
 import { parseUnifiedDiff } from '../lib/diff';
+import { KIND_MARK, groupEntries, kindClass } from '../lib/gitKinds';
 import { useStore } from '../lib/store';
 import { useConversationState } from '../state/react';
 import { Events } from '@wailsio/runtime';
@@ -52,7 +53,6 @@ import { dateLabel } from '../lib/format';
 import type {
   GitBranch,
   GitChange,
-  GitChangeKind,
   GitDiff,
   GitLogEntry,
   GitRepo,
@@ -65,53 +65,6 @@ import { Popover } from './ui/Popover';
 import { Overlay } from './ui/Overlay';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { ICON } from './ui/icon';
-
-const KIND_MARK: Record<GitChangeKind, string> = {
-  added: 'A',
-  modified: 'M',
-  deleted: 'D',
-  renamed: 'R',
-  copied: 'C',
-  typechange: 'T',
-  untracked: '?',
-  unmerged: 'U',
-};
-
-function kindClass(kind: GitChangeKind): string {
-  switch (kind) {
-    case 'added':
-      return 'bg-ok/15 text-ok';
-    case 'deleted':
-      return 'bg-err/15 text-err';
-    case 'unmerged':
-      return 'bg-warn/15 text-warn';
-    case 'untracked':
-      return 'bg-dim/10 text-dim';
-    default:
-      return 'bg-accent/15 text-accent';
-  }
-}
-
-function groupEntries(entries: GitChange[]): {
-  staged: GitChange[];
-  unstaged: GitChange[];
-  untracked: GitChange[];
-  unmerged: GitChange[];
-} {
-  const groups = { staged: [], unstaged: [], untracked: [], unmerged: [] } as {
-    staged: GitChange[];
-    unstaged: GitChange[];
-    untracked: GitChange[];
-    unmerged: GitChange[];
-  };
-  for (const e of entries) {
-    if (e.unmerged) groups.unmerged.push(e);
-    else if (e.untracked) groups.untracked.push(e);
-    else if (e.staged) groups.staged.push(e);
-    else groups.unstaged.push(e);
-  }
-  return groups;
-}
 
 interface ConfirmSpec {
   title: string;
@@ -405,6 +358,27 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
     },
     [loadDiff, ordered],
   );
+
+  // A pick handed over by the file viewer's marks chip: the viewer owns
+  // the "open this file's diff" gesture, the panel owns the diff modal.
+  // The effect waits for the status snapshot so a pick that arrives
+  // before the first fetch still lands, then retires the pick — the
+  // panel unmounts whenever the rail shows the Files segment, and a
+  // kept pick would replay this diff on the next switch back.
+  const gitPick = useStore((s) => s.viewers[sessionID]?.gitPick);
+  const consumeGitPick = useStore((s) => s.consumeGitPick);
+  useEffect(() => {
+    if (!gitPick || !status) return;
+    consumeGitPick();
+    const entry = ordered.find((e) => e.path === gitPick.path);
+    if (!entry) {
+      // Committed, discarded or otherwise gone between the click and the
+      // snapshot arriving.
+      flash(t('git.marksGone'));
+      return;
+    }
+    void loadDiff(entry);
+  }, [gitPick, status, ordered, loadDiff, flash, t, consumeGitPick]);
 
   // ArrowUp/ArrowDown move between changed files. Escape is not here:
   // the shared overlay layer owns it from the commit the modal is on

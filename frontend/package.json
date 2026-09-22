@@ -27,6 +27,8 @@
     "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/lang-xml": "^6.1.0",
     "@codemirror/legacy-modes": "^6.5.4",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
     "@cordisjs/core": "^3.18.1",
     "@rive-app/canvas": "^2.42.0",
     "@tanstack/react-virtual": "^3.14.10",

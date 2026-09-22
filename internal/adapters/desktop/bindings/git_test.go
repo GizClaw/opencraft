@@ -233,3 +233,65 @@ func TestGitWriteOperations(t *testing.T) {
 		t.Fatalf("clean did not remove untracked.txt: %v", err)
 	}
 }
+
+func TestGitFileMarks(t *testing.T) {
+	root := t.TempDir()
+	initRepoInTest(t, root)
+	workspace := filepath.Join(root, "work")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeInTest(t, filepath.Join(workspace, "in.txt"), "a\nb\nc\n")
+	gitInTest(t, root, "add", "work/in.txt")
+	gitInTest(t, root, "commit", "-qm", "add in")
+	writeInTest(t, filepath.Join(workspace, "in.txt"), "a\nB\nc\n")
+
+	b := newGitBinding(t, workspace)
+	// The viewer hands over absolute targets; the workspace is a
+	// subdirectory of the repository, so the answer is repo-relative.
+	got, err := b.FileMarks(filepath.Join(workspace, "in.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.InRepo || got.Path != "work/in.txt" || got.Kind != "modified" {
+		t.Fatalf("FileMarks = %+v, want modified work/in.txt", got)
+	}
+	if len(got.Mods) != 1 || got.Mods[0].Start != 2 || got.Mods[0].Count != 1 {
+		t.Fatalf("marks = %+v, want one modified line at 2", got.Mods)
+	}
+	if got.Additions != 1 || got.Deletions != 1 || got.MtimeNS == 0 {
+		t.Fatalf("counts/stamp = +%d -%d mtime %d", got.Additions,
+			got.Deletions, got.MtimeNS)
+	}
+	// The relative form resolves under the workspace too.
+	if rel, err := b.FileMarks("in.txt"); err != nil || rel.Path != got.Path {
+		t.Fatalf("relative FileMarks = %+v, %v", rel, err)
+	}
+	// A clean file reports its path with no kind, not an error.
+	writeInTest(t, filepath.Join(workspace, "clean.txt"), "x\n")
+	gitInTest(t, root, "add", "work/clean.txt")
+	gitInTest(t, root, "commit", "-qm", "add clean")
+	clean, err := b.FileMarks(filepath.Join(workspace, "clean.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clean.Kind != "" || !clean.InRepo || clean.Path != "work/clean.txt" {
+		t.Fatalf("clean FileMarks = %+v", clean)
+	}
+	if _, err := b.FileMarks(filepath.Join(root, "keep.txt")); err == nil {
+		t.Fatal("FileMarks outside the workspace unexpectedly succeeded")
+	}
+}
+
+func TestGitFileMarksOutsideRepository(t *testing.T) {
+	workDir := t.TempDir()
+	writeInTest(t, filepath.Join(workDir, "note.txt"), "x\n")
+	b := newGitBinding(t, workDir)
+	got, err := b.FileMarks(filepath.Join(workDir, "note.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.InRepo || got.Kind != "" {
+		t.Fatalf("FileMarks outside a repository = %+v", got)
+	}
+}

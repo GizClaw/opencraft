@@ -26,6 +26,8 @@ export interface UISettings {
   fontScale: number;
   /** List dot-entries in the chat rail's workspace tree and quick-open. */
   showHiddenFiles: boolean;
+  /** Draw the file viewer's per-line git change marks. Defaults on. */
+  gitMarks: boolean;
 }
 
 export interface FontPreset {
@@ -91,6 +93,7 @@ export const DEFAULT_UI_SETTINGS: UISettings = {
   codeFontName: '',
   fontScale: DEFAULT_FONT_SCALE,
   showHiddenFiles: false,
+  gitMarks: true,
 };
 
 const UI_CACHE_KEY = 'opencraft.ui';
@@ -215,6 +218,9 @@ export function normalizeUISettings(raw: unknown): UISettings | null {
     // A hand-edited or older document has no switch; false keeps the
     // tree showing the tracked content only.
     showHiddenFiles: source.showHiddenFiles === true,
+    // This one is inverted: the marks are on by default, so only an
+    // explicit false (a user who turned them off) disables them.
+    gitMarks: source.gitMarks !== false,
   };
 }
 

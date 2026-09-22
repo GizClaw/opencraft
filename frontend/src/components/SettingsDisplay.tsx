@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Check,
   ChevronDown,
+  GitCompare,
   Languages,
   Monitor,
   Moon,
@@ -205,6 +206,29 @@ export function SettingsDisplay() {
                 icon: Monitor,
                 label: t('config.uiThemeAuto'),
               },
+            ]}
+          />
+        </div>
+      </div>
+      <div className="rounded-card border border-edge bg-panel2 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-title font-semibold">
+              <GitCompare size={ICON.md} className="text-accent" />
+              {t('config.uiGitMarks')}
+            </div>
+            <p className="mt-1 text-xs text-dim">
+              {t('config.uiGitMarksHint')}
+            </p>
+          </div>
+          <Segmented
+            value={uiSettings.gitMarks ? 'on' : 'off'}
+            onChange={(next) =>
+              persist({ ...uiSettings, gitMarks: next === 'on' })
+            }
+            options={[
+              { value: 'on', label: t('config.uiToggleOn') },
+              { value: 'off', label: t('config.uiToggleOff') },
             ]}
           />
         </div>

@@ -46,7 +46,19 @@ export interface MockConfig {
     media_type?: string;
     size?: number;
     text?: string;
+    // mtime_ns is the stamp the real binding carries; the viewer
+    // compares it with Git.FileMarks' to notice an out-of-band write.
+    mtime_ns?: number;
   };
+  // fileMarks is the Git.FileMarks answer: the viewer's rail chip and
+  // gutter read it, so a spec can hand over a changed file without a
+  // repository behind it. Left unset the call answers "not a repo".
+  fileMarks?: Record<string, unknown>;
+  // gitStatus is the Git.Status answer: the file tree's per-file badges
+  // and their folder roll-up read the whole-repository snapshot through
+  // it. Left unset the workspace answers as a repository with no
+  // changes.
+  gitStatus?: Record<string, unknown>;
   // Pet surface config: the pack list the renderer picks from, the
   // base64 .riv the asset channel serves, the window position a drag
   // anchors on, and the mount report the settings panel reads back.
@@ -407,6 +419,7 @@ export function mockBackend(cfg?: MockConfig) {
               media_type: config.viewerFile.media_type ?? '',
               kind: 'text' as const,
               text: config.viewerFile.text ?? '',
+              mtime_ns: config.viewerFile.mtime_ns ?? 1,
             }
           : { kind: 'meta' as const, size: 0 },
       RenderPatch: emptyList,
@@ -433,6 +446,20 @@ export function mockBackend(cfg?: MockConfig) {
       Reveal: noop,
       SaveArtifactAs: async () => '',
       Search: emptyList,
+    },
+    Git: {
+      // The viewer's marks chip and gutter call FileMarks on every open
+      // tab; specs that do not configure it see a clean, repo-less
+      // answer, which is what the rest of the rail already assumes.
+      FileMarks: async () =>
+        config.fileMarks ?? { in_repo: false, mtime_ns: 0, size: 0 },
+      Status: async () => ({
+        root: config.workspace ?? '/workspace',
+        workspace: config.workspace ?? '/workspace',
+        truncated: false,
+        entries: [],
+        ...(config.gitStatus ?? {}),
+      }),
     },
     Lifecycle: {
       GetCloseToTray: async () => true,
