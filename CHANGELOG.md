@@ -244,6 +244,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same guard the official provider SDKs use, and the fetcher's default
   client leaves `Transport` nil so its requests stay visible to the
   probe.
+- The macOS traffic lights stay on the chat header. The 4pt nudge that
+  lines the three window buttons up with the 44pt header strip ran once
+  per page load and resolved its target as "the first window the app
+  owns", so any frame change AppKit re-laid out (a resize, the zoom
+  button, leaving fullscreen) dropped them back to its 26pt default
+  until the next load. The nudge now takes the main window's native
+  handle from the Wails window and is re-applied from a window-layout
+  observer, skipped while fullscreen so macOS keeps its own placement
+  there.
 
 ## [0.5.3] - 2026-09-17
 

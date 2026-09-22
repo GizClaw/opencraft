@@ -183,8 +183,13 @@ func main() {
 		func() { d.RequestQuit() },
 	)
 
-	// macOS polish (traffic-light alignment, scroll elasticity) after the
-	// first page load; no-op on Windows/Linux.
+	// macOS polish (traffic-light alignment, scroll elasticity). The buttons
+	// exist before the first page load, so the style is applied right away and
+	// again after every load - that is the last layout pass of the startup
+	// sequence, and the one that decides where the buttons come to rest
+	// (mac_window_darwin.go keeps them there across resizes). No-op on
+	// Windows/Linux.
+	applyOpenCraftWindowStyle(mainW)
 	registerOpenCraftWindowStyleRefresh(mainW)
 
 	if err := app.Run(); err != nil {
