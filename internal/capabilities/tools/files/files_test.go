@@ -12,16 +12,34 @@ import (
 
 func newTestTool(t *testing.T) (*Tool, workspace.Workspace) {
 	t.Helper()
-	root := t.TempDir()
-	ws, err := workspace.NewLocalWorkspace(root)
-	if err != nil {
-		t.Fatalf("workspace: %v", err)
-	}
+	ws := newTestWorkspace(t)
 	tool, err := New(ws)
 	if err != nil {
 		t.Fatalf("files.New: %v", err)
 	}
 	return tool, ws
+}
+
+// newTestWorkspace roots a LocalWorkspace in a temp dir and closes it
+// before that directory is removed.
+//
+// The top-level workspace pins its root with an open directory handle
+// (core's os.Root) and only Close releases it; Windows refuses to remove
+// a directory while such a handle is live, which shows up as a TempDir
+// cleanup failure rather than as a test failure. t.Cleanup runs in LIFO
+// order, so registering the close after TempDir is what runs it first.
+func newTestWorkspace(t *testing.T) *workspace.LocalWorkspace {
+	t.Helper()
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := ws.Close(); err != nil {
+			t.Errorf("close workspace: %v", err)
+		}
+	})
+	return ws
 }
 
 func writeTree(t *testing.T, ws workspace.Workspace, files map[string]string) {
@@ -329,10 +347,7 @@ func (w *trackingWorkspace) ReadLimited(
 }
 
 func TestReadFileUsesLimitedRead(t *testing.T) {
-	inner, err := workspace.NewLocalWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	inner := newTestWorkspace(t)
 	tracked := &trackingWorkspace{Workspace: inner}
 	tool, err := New(tracked)
 	if err != nil {
@@ -355,10 +370,7 @@ func TestReadFileUsesLimitedRead(t *testing.T) {
 }
 
 func TestGrepUsesLimitedReadAndSkipsLargeFiles(t *testing.T) {
-	inner, err := workspace.NewLocalWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	inner := newTestWorkspace(t)
 	tracked := &trackingWorkspace{Workspace: inner}
 	tool, err := New(tracked)
 	if err != nil {
@@ -392,10 +404,7 @@ func TestGrepStopsAfterFileScanBudget(t *testing.T) {
 	maxGrepFiles = 10
 	t.Cleanup(func() { maxGrepFiles = old })
 
-	inner, err := workspace.NewLocalWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	inner := newTestWorkspace(t)
 	tool, err := New(inner)
 	if err != nil {
 		t.Fatal(err)
@@ -424,10 +433,7 @@ func TestGrepStopsAfterFileScanBudget(t *testing.T) {
 // workspace only to discard it was the bulk of the 4.4GB of io.ReadAll
 // a heap profile showed under this tool.
 func TestGrepSkipsBinaryAndOversizedBeforeReading(t *testing.T) {
-	inner, err := workspace.NewLocalWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	inner := newTestWorkspace(t)
 	tracked := &trackingWorkspace{Workspace: inner}
 	tool, err := New(tracked)
 	if err != nil {

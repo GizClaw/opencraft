@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/message"
-	"github.com/GizClaw/flowcraft/core/workspace"
 )
 
 // TestReadFileResultJSONRoundTrip guards the tool result serialization:
@@ -27,10 +26,7 @@ func TestReadFileResultJSONRoundTrip(t *testing.T) {
 		"\"\n" + // literal quote inside the content
 		"trailing\n"
 
-	ws, err := workspace.NewLocalWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	ws := newTestWorkspace(t)
 	if err := ws.Write(context.Background(), "x.diff", []byte(diff)); err != nil {
 		t.Fatal(err)
 	}
