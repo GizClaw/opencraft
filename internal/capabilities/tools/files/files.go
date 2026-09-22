@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -792,7 +793,11 @@ func validatePath(p string) error {
 	if strings.Contains(p, "\\") {
 		return errdefs.Validationf("files: backslash in path %q rejected; use forward slashes", p)
 	}
-	if filepath.Clean(p) != p || p == ".." || strings.HasPrefix(p, "../") {
+	// Cleanliness is judged on the workspace namespace, which is
+	// slash-separated on every platform: filepath.Clean rewrites
+	// "src/main.go" into backslashes on Windows, which would reject
+	// every nested path the tools exist to accept.
+	if path.Clean(p) != p || p == ".." || strings.HasPrefix(p, "../") {
 		return errdefs.Validationf("files: path %q must be clean and relative", p)
 	}
 	for _, seg := range strings.Split(p, "/") {
