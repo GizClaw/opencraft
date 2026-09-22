@@ -110,7 +110,12 @@ func (g *Gate) markReady() {
 	g.readyOnce.Do(func() { close(g.ready) })
 }
 
-// HoldNext returns a gate applied to the next completion request.
+// HoldNext returns a gate applied to the next completion request. The
+// gate is single-use, so a hold that no request consumes stays armed for
+// whichever request comes next: a test that arms one for a turn a
+// deadline can cut before its call goes out has to wait for Ready (or
+// release it) before another turn can start, or that turn's call takes
+// the hold and never gets an answer.
 func (s *Server) HoldNext() *Gate {
 	g := newGate()
 	s.mu.Lock()

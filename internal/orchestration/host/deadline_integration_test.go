@@ -105,7 +105,16 @@ func TestAutomationDeadlineMarksTimeoutAndFreesSlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attach automation store: %v", err)
 	}
-	cut := saveHostAutomationTask(t, store, "cut-short", "250ms")
+	// The bound has to outlast the turn's own start: prompt assembly plus
+	// the first inference call reaching the provider takes ~100ms under
+	// -race here (the hop is I/O-bound, so one P does not change it) and
+	// several times that on a loaded runner. A bound the call can miss is
+	// not just a tighter test, it is a different one: the hold below is
+	// then still armed when the deadline fires, and the task queued behind
+	// this one takes it instead - its run never settles, and the failure
+	// reads as "the queued task never finished" instead of "the deadline
+	// beat the call". That is what a 250ms bound did on CI.
+	cut := saveHostAutomationTask(t, store, "cut-short", "2s")
 	queued := saveHostAutomationTask(t, store, "behind-it", "30s")
 
 	started := make(chan string, 4)
@@ -147,6 +156,12 @@ func TestAutomationDeadlineMarksTimeoutAndFreesSlot(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("the cut-short run never reached the host")
 	}
+	// The hold is armed for exactly one request, the cut-short turn's
+	// first inference call, and that is what keeps the turn live when the
+	// deadline fires. Wait for it before queueing the task behind it -
+	// every other gate user in this package does, and the hold no request
+	// consumes is never released by the deadline.
+	waitSteerGate(t, hold)
 	// Limit 1: this one only gets to run once the cut-short run settled.
 	if err := m.RunNow(queued.ID); err != nil {
 		t.Fatalf("queue the second task: %v", err)
