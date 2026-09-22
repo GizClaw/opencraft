@@ -53,12 +53,25 @@ func TestHunkMismatchExplainsWhy(t *testing.T) {
 	}
 }
 
+// memWorkspace roots a LocalWorkspace in a temp dir and closes it before
+// that directory is removed.
+//
+// The top-level workspace pins its root with an open directory handle
+// (core's os.Root) and only Close releases it; Windows refuses to remove
+// a directory while such a handle is live, which shows up as a TempDir
+// cleanup failure rather than as a test failure. t.Cleanup runs in LIFO
+// order, so registering the close after TempDir is what runs it first.
 func memWorkspace(t *testing.T) workspace.Workspace {
 	t.Helper()
 	ws, err := workspace.NewLocalWorkspace(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := ws.Close(); err != nil {
+			t.Errorf("close workspace: %v", err)
+		}
+	})
 	return ws
 }
 
@@ -154,6 +167,14 @@ func TestApplyRejectsUnsafePaths(t *testing.T) {
 	for _, patch := range []string{
 		"*** Begin Patch\n*** Add File: /etc/passwd\n+x\n*** End Patch\n",
 		"*** Begin Patch\n*** Add File: ../escape.txt\n+x\n*** End Patch\n",
+		// The traversal and absolute forms spelled for Windows, plus the
+		// root-relative and UNC ones. Folding the separator is what makes
+		// these fail on Windows, where filepath.Clean leaves "..\x"
+		// looking like an ordinary name.
+		"*** Begin Patch\n*** Add File: ..\\escape.txt\n+x\n*** End Patch\n",
+		"*** Begin Patch\n*** Add File: a\\..\\..\\escape.txt\n+x\n*** End Patch\n",
+		"*** Begin Patch\n*** Delete File: \\escape.txt\n*** End Patch\n",
+		"*** Begin Patch\n*** Add File: \\\\server\\share\\escape.txt\n+x\n*** End Patch\n",
 	} {
 		if _, err := Parse(patch); err == nil {
 			t.Fatalf("expected parse error for %q", patch)
@@ -161,6 +182,45 @@ func TestApplyRejectsUnsafePaths(t *testing.T) {
 	}
 	if _, err := Apply(ctx, ws, []*op{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestValidatePathJudgesTheSlashNamespace pins both sides of the rule:
+// a traversal or an absolute path is refused whichever separator spells
+// it, and a plain Windows-style relative path still parses.
+//
+// The acceptance half is deliberate. Folding the separator is for
+// judging only; a patch naming src\main.go keeps working on Windows,
+// where the workspace reads the backslash as a separator itself. The
+// hardening refuses escapes, not a spelling that already resolved.
+func TestValidatePathJudgesTheSlashNamespace(t *testing.T) {
+	rejected := []string{
+		"..",
+		"../escape.txt",
+		"a/../../escape.txt",
+		`..\escape.txt`,
+		`..\..\escape.txt`,
+		`a\..\..\escape.txt`,
+		"/etc/passwd",
+		`\escape.txt`,
+		`\\server\share\escape.txt`,
+		`src/..\..\escape.txt`,
+	}
+	for _, p := range rejected {
+		if err := validatePath(p); err == nil {
+			t.Errorf("validatePath(%q) = nil, want rejection", p)
+		}
+	}
+	accepted := []string{
+		"a.txt",
+		"src/main.go",
+		`src\main.go`,
+		`nested\deep/file.go`,
+	}
+	for _, p := range accepted {
+		if err := validatePath(p); err != nil {
+			t.Errorf("validatePath(%q) = %v, want accept", p, err)
+		}
 	}
 }
 

@@ -256,6 +256,24 @@ jobs:
       - name: Exec tools (windows)
         run: go test -count=1 ./internal/capabilities/tools/exec ./internal/foundation/utils/shelldetect
         shell: pwsh
+      # Workspace paths are slash-separated on every platform, and this is
+      # the lane where getting that wrong shows: list_dir's depth
+      # arithmetic reads every path as depth 0 if it counts the host
+      # separator, so max_depth stops trimming. The rest of the file
+      # tools are covered by the full suite on linux, but a
+      # separator-shaped bug only fails here.
+      - name: File tools (windows)
+        run: go test -count=1 ./internal/capabilities/tools/files
+        shell: pwsh
+      # The patch engine is the other place that judges a path with
+      # filepath: on Windows "..\x" is what filepath.Clean produces for
+      # "../x", so a traversal check spelled against the host separator
+      # goes blind exactly where it is needed. The drive and UNC forms
+      # below are absolute only to Windows, so this lane is the only one
+      # that can run the assertions.
+      - name: Patch engine (windows)
+        run: go test -count=1 ./internal/foundation/utils/patch
+        shell: pwsh
       - name: Compile check (sandbox/desktop/sessions/secrets)
         run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktop ./internal/capabilities/sessions ./internal/capabilities/secrets
         shell: pwsh

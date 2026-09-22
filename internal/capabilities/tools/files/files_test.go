@@ -12,16 +12,34 @@ import (
 
 func newTestTool(t *testing.T) (*Tool, workspace.Workspace) {
 	t.Helper()
-	root := t.TempDir()
-	ws, err := workspace.NewLocalWorkspace(root)
-	if err != nil {
-		t.Fatalf("workspace: %v", err)
-	}
+	ws := newTestWorkspace(t)
 	tool, err := New(ws)
 	if err != nil {
 		t.Fatalf("files.New: %v", err)
 	}
 	return tool, ws
+}
+
+// newTestWorkspace roots a LocalWorkspace in a temp dir and closes it
+// before that directory is removed.
+//
+// The top-level workspace pins its root with an open directory handle
+// (core's os.Root) and only Close releases it; Windows refuses to remove
+// a directory while such a handle is live, which shows up as a TempDir
+// cleanup failure rather than as a test failure. t.Cleanup runs in LIFO
+// order, so registering the close after TempDir is what runs it first.
+func newTestWorkspace(t *testing.T) *workspace.LocalWorkspace {
+	t.Helper()
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := ws.Close(); err != nil {
+			t.Errorf("close workspace: %v", err)
+		}
+	})
+	return ws
 }
 
 func writeTree(t *testing.T, ws workspace.Workspace, files map[string]string) {
@@ -205,6 +223,53 @@ func TestListDirOnFileRejected(t *testing.T) {
 	}
 }
 
+// TestListDirMaxDepthOnNestedDirs pins the depth arithmetic on the
+// workspace-path convention: a nested directory is deeper than its parent
+// on every platform, so max_depth trims it. Counting the host separator
+// would read every path as depth 0 and this walk would run to the leaf.
+func TestListDirMaxDepthOnNestedDirs(t *testing.T) {
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{
+		"top.txt":                "top",
+		"src/one.go":             "package src",
+		"src/deep/two.go":        "package deep",
+		"src/deep/more/three.go": "package more",
+	})
+	got, err := execute(t, tool.list(), `{"path":".","recursive":true,"max_depth":1}`)
+	if err != nil {
+		t.Fatalf("list_dir: %v", err)
+	}
+	for _, want := range []string{"top.txt", "src/one.go", "src/deep/two.go"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("list_dir max_depth=1 missing %s: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "three.go") {
+		t.Errorf("list_dir max_depth=1 walked into depth 2: %s", got)
+	}
+}
+
+// TestDepthBelowOnWorkspacePaths is the same contract at the arithmetic
+// level, for the root-relative and subdirectory-relative forms.
+func TestDepthBelowOnWorkspacePaths(t *testing.T) {
+	for _, tc := range []struct {
+		root, path string
+		want       int
+	}{
+		{".", "a.go", 0},
+		{".", "src/a.go", 1},
+		{".", "src/deep/a.go", 2},
+		{"src", "src/a.go", 0},
+		{"src", "src/deep/a.go", 1},
+		{"src/", "src/deep/a.go", 1},
+	} {
+		if got := depthBelow(tc.root, tc.path); got != tc.want {
+			t.Errorf("depthBelow(%q, %q) = %d, want %d",
+				tc.root, tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestGrepFixedRegexAndCase(t *testing.T) {
 	tool, _ := newTestTool(t)
 	writeTree(t, tool.ws, map[string]string{
@@ -282,10 +347,7 @@ func (w *trackingWorkspace) ReadLimited(
 }
 
 func TestReadFileUsesLimitedRead(t *testing.T) {
-	inner, err := workspace.NewLocalWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	inner := newTestWorkspace(t)
 	tracked := &trackingWorkspace{Workspace: inner}
 	tool, err := New(tracked)
 	if err != nil {
@@ -308,10 +370,7 @@ func TestReadFileUsesLimitedRead(t *testing.T) {
 }
 
 func TestGrepUsesLimitedReadAndSkipsLargeFiles(t *testing.T) {
-	inner, err := workspace.NewLocalWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	inner := newTestWorkspace(t)
 	tracked := &trackingWorkspace{Workspace: inner}
 	tool, err := New(tracked)
 	if err != nil {
@@ -345,10 +404,7 @@ func TestGrepStopsAfterFileScanBudget(t *testing.T) {
 	maxGrepFiles = 10
 	t.Cleanup(func() { maxGrepFiles = old })
 
-	inner, err := workspace.NewLocalWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	inner := newTestWorkspace(t)
 	tool, err := New(inner)
 	if err != nil {
 		t.Fatal(err)
@@ -377,10 +433,7 @@ func TestGrepStopsAfterFileScanBudget(t *testing.T) {
 // workspace only to discard it was the bulk of the 4.4GB of io.ReadAll
 // a heap profile showed under this tool.
 func TestGrepSkipsBinaryAndOversizedBeforeReading(t *testing.T) {
-	inner, err := workspace.NewLocalWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	inner := newTestWorkspace(t)
 	tracked := &trackingWorkspace{Workspace: inner}
 	tool, err := New(tracked)
 	if err != nil {

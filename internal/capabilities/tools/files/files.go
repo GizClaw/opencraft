@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -751,12 +752,16 @@ func (t *globTool) execute(ctx context.Context, arguments string) (string, error
 var errStopWalk = errors.New("files: stop walk")
 
 // depthBelow returns p's depth below root (0 for direct children).
+//
+// The walk hands back workspace paths, which are slash-separated on every
+// platform, so depth counts "/" and never the host separator: with
+// filepath.Separator every Windows path would read as depth 0.
 func depthBelow(root, p string) int {
 	if root == "." {
-		return strings.Count(p, string(filepath.Separator))
+		return strings.Count(p, "/")
 	}
 	rel := strings.TrimPrefix(p, strings.TrimSuffix(root, "/")+"/")
-	return strings.Count(rel, string(filepath.Separator))
+	return strings.Count(rel, "/")
 }
 
 // validateFilePath rejects "..", ".", and empty paths for file
@@ -788,7 +793,11 @@ func validatePath(p string) error {
 	if strings.Contains(p, "\\") {
 		return errdefs.Validationf("files: backslash in path %q rejected; use forward slashes", p)
 	}
-	if filepath.Clean(p) != p || p == ".." || strings.HasPrefix(p, "../") {
+	// Cleanliness is judged on the workspace namespace, which is
+	// slash-separated on every platform: filepath.Clean rewrites
+	// "src/main.go" into backslashes on Windows, which would reject
+	// every nested path the tools exist to accept.
+	if path.Clean(p) != p || p == ".." || strings.HasPrefix(p, "../") {
 		return errdefs.Validationf("files: path %q must be clean and relative", p)
 	}
 	for _, seg := range strings.Split(p, "/") {

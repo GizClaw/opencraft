@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -211,18 +212,34 @@ func Parse(patch string) ([]*op, error) {
 	return nil, errdefs.Validationf("apply_patch: missing End Patch marker")
 }
 
-func validatePath(path string) error {
-	if path == "" {
+// validatePath rejects paths that do not name a file inside the target.
+//
+// Paths are judged in the workspace namespace, which is slash-separated
+// on every platform: the codex envelope and `git diff` are both written
+// that way, and the host applier converts with filepath.FromSlash.
+// Backslashes are folded to slashes before judging, because Windows also
+// reads them as separators: filepath.Clean turns "../x" into "..\x"
+// there, so a check spelled against the host separator misses on the one
+// platform it exists to protect. Folding also refuses "..\x" on hosts
+// where a backslash is an ordinary character, which keeps one patch from
+// naming two different files on two platforms.
+//
+// Both readings of "absolute" are refused: a leading slash (path.IsAbs)
+// is absolute on every platform, while Windows drive and UNC forms are
+// only absolute to filepath.IsAbs.
+func validatePath(p string) error {
+	if p == "" {
 		return errdefs.Validationf("apply_patch: empty file path")
 	}
-	if filepath.IsAbs(path) {
+	slashed := strings.ReplaceAll(p, `\`, "/")
+	if path.IsAbs(slashed) || filepath.IsAbs(p) {
 		return errdefs.Validationf(
-			"apply_patch: absolute path %q is not allowed", path)
+			"apply_patch: absolute path %q is not allowed", p)
 	}
-	clean := filepath.Clean(path)
+	clean := path.Clean(slashed)
 	if clean == ".." || strings.HasPrefix(clean, "../") {
 		return errdefs.Validationf(
-			"apply_patch: path %q escapes the workspace", path)
+			"apply_patch: path %q escapes the workspace", p)
 	}
 	return nil
 }
