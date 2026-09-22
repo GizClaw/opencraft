@@ -992,6 +992,61 @@ body.oc-resizing * {
   overflow: auto;
 }
 
+/* Git change marks in the file preview: a strip left of the line
+   numbers (order:-1 on the flex gutter row) carrying one bar per
+   changed line - green for inserted, blue for replaced - plus a red
+   wedge at the edge of a deletion gap, because a removed line has no
+   row to sit on. The tones are the app's ok/accent/err tokens, the
+   same ones the Git panel's kind badges use. The gutter only exists
+   while a file has marks at all, so a clean file keeps its old
+   layout. */
+.oc-editor-host .cm-gutter.oc-git-marks {
+  order: -1;
+  width: 11px;
+}
+
+.oc-editor-host .cm-gutter.oc-git-marks .cm-gutterElement {
+  display: flex;
+  justify-content: center;
+}
+
+.oc-gm {
+  position: relative;
+  width: 3px;
+  height: 100%;
+  border-radius: 1px;
+}
+
+.oc-gm-add {
+  background: var(--color-ok);
+}
+
+.oc-gm-mod {
+  background: var(--color-accent);
+}
+
+/* The wedge hangs off the line that follows the deleted run (top), or
+   off the file's last line when the run ends the file (bottom). */
+.oc-gm-del-top::before,
+.oc-gm-del-bottom::after {
+  content: '';
+  position: absolute;
+  /* Slightly wider than the bar: a bare 3px wedge reads as a dot. */
+  inset-inline: -1px;
+  height: 5px;
+  background: var(--color-err);
+}
+
+.oc-gm-del-top::before {
+  top: 0;
+  clip-path: polygon(50% 100%, 0 0, 100% 0);
+}
+
+.oc-gm-del-bottom::after {
+  bottom: 0;
+  clip-path: polygon(50% 0, 0 100%, 100% 100%);
+}
+
 /* PDF preview: page rows are laid out by the virtualizer in PdfPane;
    this file only pins the sheet look. display:block on the canvas
    removes the inline baseline whitespace that used to show up as a

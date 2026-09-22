@@ -59,6 +59,11 @@ type UIPrefs struct {
 	// tree and quick-open search. Off by default: a fresh workspace
 	// reads as its tracked content, not as .git and editor litter.
 	ShowHiddenFiles bool `json:"showHiddenFiles,omitempty"`
+	// GitMarks draws the per-line git change marks in the file viewer.
+	// It is a pointer because the switch defaults to ON: an absent
+	// field (every document written before the marks existed) means
+	// enabled, and only an explicit false turns the marks off.
+	GitMarks *bool `json:"gitMarks,omitempty"`
 }
 
 // defaultUIPrefs returns the appearance defaults written on first run.

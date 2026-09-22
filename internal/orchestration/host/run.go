@@ -210,11 +210,6 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	h.fireUserPromptSubmit(ctx, contextID, opts.Message.Content.Text())
 
 	requestedAt := time.Now().UTC()
-	manifest, manifestErr := manifestSnapshot(ctx, h.workDir)
-	if manifestErr != nil {
-		telemetry.WarnErr(ctx, "host: workspace manifest snapshot failed", manifestErr)
-		manifest = nil
-	}
 
 	key := coresession.Key{AgentID: "assistant", ContextID: contextID}
 	lease, err := ctrl.Runtime().Sessions().Open(ctx, key)
@@ -310,7 +305,6 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		usageHours: make(map[string]ocsessions.Usage),
 		notify:     opts.OnUsage,
 		onSteer:    opts.OnSteerPending,
-		manifest:   manifest,
 		backend:    opts.Backend,
 	}
 	h.mu.Lock()
@@ -572,17 +566,6 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		host.recordTurnEnd(
 			persistCtx, detail.contextID, r.RunID(),
 			typ, string(status), errText, turnUsage)
-		if store != nil && detail.manifest != nil {
-			if after, snapErr := manifestSnapshot(persistCtx, host.workDir); snapErr == nil {
-				docs := diffDocumentArtifacts(detail.manifest, after)
-				if len(docs) > 0 {
-					_, appendErr := store.AppendTurnArtifacts(
-						detail.contextID, r.RunID(), docs)
-					telemetry.WarnErr(persistCtx, "host: append turn artifacts failed",
-						appendErr)
-				}
-			}
-		}
 		if !r.skipAutoTitle {
 			host.launchAutoTitle(context.WithoutCancel(ctx), detail.contextID)
 		}

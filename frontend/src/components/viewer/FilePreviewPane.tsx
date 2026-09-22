@@ -1,4 +1,12 @@
-import { Component, lazy, Suspense, useEffect, useState } from 'react';
+import {
+  Component,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { File as FileGlyph, Loader2 } from 'lucide-react';
@@ -6,7 +14,7 @@ import i18n from '../../i18n';
 import { api } from '../../lib/api';
 import { reportFrontendError } from '../../lib/frontendErrors';
 import { useStore } from '../../lib/store';
-import type { FilePreview, FileTab } from '../../lib/types';
+import type { FilePreview, FileTab, GitFileMarks } from '../../lib/types';
 import { Markdown } from '../Markdown';
 import { ICON } from '../ui/icon';
 
@@ -69,6 +77,20 @@ export function dirOfPath(rel: string): string {
   return i < 0 ? '.' : rel.slice(0, i);
 }
 
+// sameBody reports whether two previews render the same thing, ignoring
+// the modification stamp. Comparing the bodies is what keeps a reload
+// from re-creating the document (and losing the reader's scroll) when
+// the file was only touched, not changed.
+function sameBody(a: FilePreview, b: FilePreview): boolean {
+  return (
+    a.kind === b.kind &&
+    a.text === b.text &&
+    a.data_url === b.data_url &&
+    a.stream_url === b.stream_url &&
+    !!a.too_large === !!b.too_large
+  );
+}
+
 // FilePreviewPane renders one file's preview payload: markdown, source
 // code, image, video, PDF, or the meta fallback. It is the shared body
 // of two hosts — the chat rail's viewer tabs and the preview dialog —
@@ -76,8 +98,14 @@ export function dirOfPath(rel: string): string {
 export function FilePreviewPane({
   tab,
   onOpen,
+  marks = null,
 }: {
   tab: FileTab;
+  // marks carries the git change snapshot of the file AND its on-disk
+  // modification stamp, which is how the pane notices that the file
+  // changed underneath it. Null (the preview dialog) keeps the pane
+  // read-once.
+  marks?: GitFileMarks | null;
   // onOpen routes document links inside a rendered markdown file. The
   // chat rail opens them as another viewer tab; the dialog opens them
   // as another page of the same dialog.
@@ -88,24 +116,70 @@ export function FilePreviewPane({
   const [error, setError] = useState('');
   const [showMd, setShowMd] = useState(isMarkdownFile(tab.name));
   const [videoFailed, setVideoFailed] = useState(false);
+  const loadSeq = useRef(0);
+
+  // load reads the file. `silent` is the background path: the payload
+  // swaps in place under the existing render (no spinner, no cleared
+  // error) and an unchanged body keeps the previous object, so the
+  // editor is not told to replace text that is already on screen.
+  const load = useCallback(async (path: string, silent: boolean) => {
+    const id = (loadSeq.current += 1);
+    if (!silent) {
+      setPreview(null);
+      setError('');
+      setVideoFailed(false);
+    }
+    try {
+      const p = await api.readPreview(path);
+      if (id !== loadSeq.current) return;
+      setPreview((prev) => {
+        if (silent && prev && sameBody(prev, p)) {
+          // Same content, new stamp: adopt the stamp so the next marks
+          // refresh does not read the file again.
+          return { ...prev, mtime_ns: p.mtime_ns, size: p.size };
+        }
+        return p;
+      });
+      setError('');
+    } catch (err) {
+      if (id !== loadSeq.current) return;
+      setError(String(err));
+    }
+  }, []);
 
   useEffect(() => {
-    let live = true;
-    setPreview(null);
-    setError('');
-    setVideoFailed(false);
-    void api
-      .readPreview(tab.path)
-      .then((p) => {
-        if (live) setPreview(p);
-      })
-      .catch((err) => {
-        if (live) setError(String(err));
-      });
-    return () => {
-      live = false;
-    };
-  }, [tab.path]);
+    void load(tab.path, false);
+  }, [load, tab.path]);
+
+  // A marks payload that carries a different stamp than the preview
+  // means the file was rewritten since it was read — the agent editing
+  // the file the reader has open, or an external editor. Reload it, so
+  // the body follows the disk. A payload the viewer cannot stamp (an
+  // older host, a tab without marks) keeps the tab-switch semantics
+  // instead. A *missing* stamp on an otherwise stamped file means the
+  // stat started failing — the file was deleted or moved, and the read
+  // that follows is what turns that into the pane's error state.
+  //
+  // reloadedFor remembers which stamp was already answered for, so a
+  // failed read (the deleted file above) is not retried in a loop, and
+  // a host that never stamps its payloads costs one extra read per
+  // payload instead of one per poll.
+  const reloadedFor = useRef('');
+  useEffect(() => {
+    if (!preview?.mtime_ns) return;
+    const key = marks ? `${marks.mtime_ns}:${marks.size}` : 'unstamped';
+    if (reloadedFor.current === key) return;
+    if (
+      marks?.mtime_ns &&
+      marks.mtime_ns === preview.mtime_ns &&
+      marks.size === preview.size
+    ) {
+      reloadedFor.current = key;
+      return;
+    }
+    reloadedFor.current = key;
+    void load(tab.path, true);
+  }, [load, marks, marks?.mtime_ns, marks?.size, preview, tab.path]);
 
   if (error) {
     return <FileMetaPane tab={tab} message={error} showMetaActions />;
@@ -158,6 +232,7 @@ export function FilePreviewPane({
             name={tab.name}
             sourceView={isMarkdownFile(tab.name)}
             onSource={() => setShowMd(true)}
+            marks={marks}
           />
         </Suspense>
       </LazyBoundary>

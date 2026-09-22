@@ -460,51 +460,6 @@ func (s *Store) takeArtifacts(id string) []Artifact {
 	return list
 }
 
-// AppendTurnArtifacts merges artifacts into the archived turn that
-// carried runID (falling back to the most recent turn).
-func (s *Store) AppendTurnArtifacts(
-	id, runID string, artifacts []Artifact,
-) ([]Artifact, error) {
-	if err := requireID(id); err != nil {
-		return nil, err
-	}
-	if len(artifacts) == 0 {
-		return nil, nil
-	}
-	raw, ok, err := s.db.ArchiveTurnArtifacts(context.Background(), id, runID)
-	if err != nil || !ok {
-		return nil, err
-	}
-	var merged []Artifact
-	if err := json.Unmarshal(raw, &merged); err != nil {
-		return nil, err
-	}
-	for _, artifact := range artifacts {
-		idx := -1
-		for i := range merged {
-			if merged[i].Path == artifact.Path {
-				idx = i
-				break
-			}
-		}
-		if idx >= 0 {
-			merged[idx].Bytes = artifact.Bytes
-			continue
-		}
-		merged = append(merged, artifact)
-	}
-	out, err := json.Marshal(merged)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.db.UpdateArchiveTurnArtifacts(
-		context.Background(), id, runID, out,
-	); err != nil {
-		return nil, err
-	}
-	return merged, nil
-}
-
 // SaveAttachment copies one user attachment into the session dir.
 func (s *Store) SaveAttachment(id, kind, srcPath string) (string, error) {
 	if err := requireID(id); err != nil {

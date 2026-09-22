@@ -180,6 +180,7 @@ describe('normalizeUISettings', () => {
       codeFontName: '',
       fontScale: MAX_FONT_SCALE,
       showHiddenFiles: false,
+      gitMarks: true,
     });
   });
 
@@ -194,6 +195,20 @@ describe('normalizeUISettings', () => {
       DEFAULT_UI_SETTINGS,
     );
     expect(normalizeUISettings({ showHiddenFiles: null })).toEqual(
+      DEFAULT_UI_SETTINGS,
+    );
+  });
+
+  it('keeps the git-marks switch on unless it is explicitly off', () => {
+    // The marks are a default-on surface: every document written before
+    // the switch existed (no field at all) stays enabled.
+    expect(normalizeUISettings({ gitMarks: false })).toEqual({
+      ...DEFAULT_UI_SETTINGS,
+      gitMarks: false,
+    });
+    expect(normalizeUISettings({})).toEqual(DEFAULT_UI_SETTINGS);
+    // A hand-edited string is not a deliberate off.
+    expect(normalizeUISettings({ gitMarks: 'no' })).toEqual(
       DEFAULT_UI_SETTINGS,
     );
   });

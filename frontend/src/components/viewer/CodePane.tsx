@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import CodeMirror from '@uiw/react-codemirror';
 import { EditorView } from '@codemirror/view';
@@ -21,6 +21,13 @@ import { toml } from '@codemirror/legacy-modes/mode/toml';
 import type { Extension } from '@codemirror/state';
 import { Eye } from 'lucide-react';
 import { ICON } from '../ui/icon';
+import {
+  classifyMarks,
+  layoutSignature,
+  lineCountOf,
+} from '../../lib/fileMarks';
+import type { GitFileMarks } from '../../lib/types';
+import { marksGutter } from './gitMarksGutter';
 
 // Viewer theme: match the chat's small mono text instead of the editor
 // defaults (which inherit the UI base and look bulky). Both values are
@@ -130,15 +137,69 @@ export function CodePane({
   name,
   sourceView = false,
   onSource,
+  marks = null,
 }: {
   text: string;
   name: string;
   sourceView?: boolean;
   onSource?: () => void;
+  // marks draws the git change gutter. Null keeps the pane bare, which
+  // is what the non-git hosts (the preview dialog) pass.
+  marks?: GitFileMarks | null;
 }) {
   const { t } = useTranslation();
   const lang = useMemo(() => languageFor(name), [name]);
   const light = document.documentElement.classList.contains('theme-light');
+
+  // The gutter is derived from the text on screen, so a range the
+  // binding reported for a newer revision can never paint a wrong line.
+  const layout = useMemo(
+    () => classifyMarks(marks, lineCountOf(text)),
+    [marks, text],
+  );
+  const layoutKey = useMemo(() => layoutSignature(layout), [layout]);
+  const marksExt = useMemo(
+    () =>
+      marksGutter(layout, (tone, delTop, delBottom) => {
+        const parts: string[] = [];
+        if (tone === 'add') parts.push(t('files.marksAddedLine'));
+        if (tone === 'mod') parts.push(t('files.marksModifiedLine'));
+        if (delTop + delBottom > 0) {
+          parts.push(t('files.deletedLines', { count: delTop + delBottom }));
+        }
+        return parts.join(' · ');
+      }),
+    // layoutKey stands in for the layout: a new marks payload that
+    // classifies to the same lines must not reconfigure the editor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layoutKey, t],
+  );
+  const extensions = useMemo(() => {
+    const list: Extension[] = [];
+    if (lang) list.push(lang);
+    list.push(viewerTheme, ...marksExt);
+    return list;
+  }, [lang, marksExt]);
+
+  // A silent reload replaces the text in place; the reader's scroll
+  // position has to survive it. The scroller is CodeMirror's own, so
+  // its offset is captured as the user scrolls and restored after the
+  // document was swapped.
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const scrolled = useRef({ top: 0, left: 0 });
+  const lastText = useRef(text);
+  // A passive effect, not a layout one: CodeMirror swaps the document in
+  // its own effect, and React flushes a child's effects before the
+  // parent's, so this already sees the new text in place.
+  useEffect(() => {
+    const scroller = hostRef.current?.querySelector('.cm-scroller');
+    if (!scroller) return;
+    if (lastText.current === text) return;
+    lastText.current = text;
+    scroller.scrollTop = scrolled.current.top;
+    scroller.scrollLeft = scrolled.current.left;
+  }, [text]);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {sourceView && onSource && (
@@ -150,12 +211,20 @@ export function CodePane({
           {t('files.previewRendered')}
         </button>
       )}
-      <div className="oc-editor-host min-h-0 flex-1 overflow-hidden">
+      <div
+        ref={hostRef}
+        className="oc-editor-host min-h-0 flex-1 overflow-hidden"
+        onScrollCapture={(event) => {
+          const el = event.target as HTMLElement;
+          if (!el.classList.contains('cm-scroller')) return;
+          scrolled.current = { top: el.scrollTop, left: el.scrollLeft };
+        }}
+      >
         <CodeMirror
           value={text}
           height="100%"
           theme={light ? 'light' : 'dark'}
-          extensions={lang ? [lang, viewerTheme] : [viewerTheme]}
+          extensions={extensions}
           readOnly
           basicSetup={{
             foldGutter: true,

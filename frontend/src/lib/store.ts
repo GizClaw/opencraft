@@ -66,6 +66,12 @@ export interface FileViewerState {
   // panelMode picks which right-rail view is active: the file browser
   // or the repository Git panel.
   panelMode: 'files' | 'git';
+  // gitPick is a one-shot handoff from the viewer's marks chip to the
+  // Git panel: the repo-relative path to reveal, plus a nonce so the
+  // same pick can be handed over twice without the panel re-opening on
+  // every refresh. The panel consumes it (consumeGitPick) so switching
+  // segments later does not re-open the same diff.
+  gitPick?: { path: string; nonce: number };
   fileTabs: FileTab[];
   fileActive: string | null;
   fileTreeDir: string;
@@ -80,6 +86,10 @@ function viewerDefaults(): FileViewerState {
     fileTreeDir: '.',
   };
 }
+
+// gitPickNonce numbers the viewer → Git panel handoffs. A counter (not
+// a timestamp) so two clicks in the same millisecond stay distinct.
+let gitPickNonce = 0;
 
 // AssistantItem preserves the stream arrival order of one assistant
 // block (reasoning trace, tool call, or text), so renderers can show
@@ -1194,6 +1204,8 @@ interface StoreState {
   closeFileTab: (key: string) => void;
   activateFileTab: (key: string) => void;
   setPanelMode: (mode: 'files' | 'git') => void;
+  focusGitPath: (path: string) => void;
+  consumeGitPick: () => void;
   showFileDir: (rel: string) => void;
   // newEmptyTab opens a blank placeholder tab with the file tree
   // visible, so the user can pick a file without an extra "+" row.
@@ -2809,6 +2821,19 @@ export const useStore = create<StoreState>((set, get) => {
       viewerPatch(activeConversationID(), { fileActive: key }),
     setPanelMode: (mode) =>
       viewerPatch(activeConversationID(), { panelMode: mode }),
+    // focusGitPath is the viewer's marks chip: switch the rail to the
+    // Git segment and ask the panel to open this file's diff. The
+    // nonce makes a second click on the same file a fresh handoff.
+    focusGitPath: (path) =>
+      viewerPatch(activeConversationID(), {
+        panelMode: 'git',
+        gitPick: { path, nonce: (gitPickNonce += 1) },
+      }),
+    // consumeGitPick retires a handoff the panel has already answered:
+    // the panel is unmounted whenever the rail shows the Files segment,
+    // so without this a later switch back to Git would replay the pick.
+    consumeGitPick: () =>
+      viewerPatch(activeConversationID(), { gitPick: undefined }),
     showFileDir: (rel) =>
       viewerPatch(activeConversationID(), {
         fileTreeDir: rel || '.',

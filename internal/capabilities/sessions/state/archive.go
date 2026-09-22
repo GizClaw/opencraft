@@ -754,26 +754,6 @@ func (s *Store) ArchiveTurnArtifacts(
 	return []byte(raw), true, nil
 }
 
-// UpdateArchiveTurnArtifacts replaces one turn's artifacts JSON.
-func (s *Store) UpdateArchiveTurnArtifacts(
-	ctx context.Context, conversationID, runID string, artifacts []byte,
-) error {
-	if runID == "" {
-		return fmt.Errorf("state: run id is required")
-	}
-	if len(artifacts) == 0 {
-		artifacts = []byte("[]")
-	}
-	_, err := s.db.SQLDB().ExecContext(ctx, `
-		UPDATE archive_turns SET artifacts_json = ?
-		WHERE conversation_id = ? AND run_id = ?`,
-		string(artifacts), conversationID, runID)
-	if err != nil {
-		return fmt.Errorf("state: update turn artifacts: %w", err)
-	}
-	return nil
-}
-
 // DeleteConversationRows removes every state row owned by one
 // conversation. Memory rows live in the same workspace DB and are
 // registered by internal/foundation/compat; they are removed here too so

@@ -117,16 +117,7 @@ func Status(ctx context.Context, root string, opts StatusOptions) StatusResult {
 	if root == "" {
 		return StatusResult{}
 	}
-	out, truncated := RunBounded(ctx, root, opts.MaxBytes, 10*time.Second,
-		"-c", "core.quotepath=false",
-		"status", "--porcelain=v2", "-z", "--untracked-files=normal")
-	if out == "" {
-		return StatusResult{Truncated: truncated}
-	}
-	entries := parsePorcelainV2(out, opts.MaxEntries)
-	if len(entries) >= opts.MaxEntries {
-		truncated = true
-	}
+	entries, truncated := statusEntries(ctx, root, opts.MaxBytes, opts.MaxEntries)
 	// Numeric line counts come from two bounded numstat passes. A
 	// failed count pass degrades to zeroes instead of failing the
 	// whole snapshot.
@@ -145,6 +136,30 @@ func Status(ctx context.Context, root string, opts StatusOptions) StatusResult {
 		e.Deletions = c.deleted + cc.deleted
 	}
 	return StatusResult{Entries: entries, Truncated: truncated}
+}
+
+// statusEntries returns the bounded porcelain v2 snapshot on its own,
+// without the numstat count passes Status layers on top.
+func statusEntries(
+	ctx context.Context,
+	root string,
+	maxBytes int64,
+	maxPaths int,
+) ([]Entry, bool) {
+	if root == "" || maxBytes <= 0 || maxPaths <= 0 {
+		return nil, false
+	}
+	out, truncated := RunBounded(ctx, root, maxBytes, 10*time.Second,
+		"-c", "core.quotepath=false",
+		"status", "--porcelain=v2", "-z", "--untracked-files=normal")
+	if out == "" {
+		return nil, truncated
+	}
+	entries := parsePorcelainV2(out, maxPaths)
+	if len(entries) >= maxPaths {
+		truncated = true
+	}
+	return entries, truncated
 }
 
 // parsePorcelainV2 converts NUL-separated porcelain v2 records into

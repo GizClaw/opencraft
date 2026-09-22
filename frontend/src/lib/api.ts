@@ -41,6 +41,7 @@ import type {
   GitHubPull,
   GitHubReviewThread,
   GitHubTimelineItem,
+  GitFileMarks,
   GitLogEntry,
   GitRepo,
   GitStatus,
@@ -156,6 +157,16 @@ function toGitCommitFiles(dto: gen.GitCommitFilesDTO): GitCommitFiles {
   };
 }
 
+function toGitFileMarks(dto: gen.GitFileMarksDTO): GitFileMarks {
+  return {
+    ...dto,
+    kind: dto.kind ? gitChangeKindOf(dto.kind) : undefined,
+    adds: dto.adds ?? [],
+    mods: dto.mods ?? [],
+    dels: dto.dels ?? [],
+  };
+}
+
 function pullStateOf(state: string): GitHubPull['state'] {
   switch (state) {
     case 'open':
@@ -251,6 +262,16 @@ export const api = {
   gitBranches: async (): Promise<GitBranch[]> => (await Git.Branches()) ?? [],
   gitDiff: async (path: string, cached: boolean): Promise<GitDiff> =>
     Git.Diff(path, cached),
+  // gitFileMarks returns the per-line change marks of one file for the
+  // viewer's gutter. The generated DTO is the source of truth for the
+  // shape; only the kind (an open string on the Go side) is narrowed.
+  gitFileMarks: async (path: string): Promise<GitFileMarks | null> => {
+    const dto = await Git.FileMarks(path);
+    // The Playwright mock answers undefined for services a spec does not
+    // stub; that is "no marks", not a crash.
+    if (!dto || typeof dto.in_repo !== 'boolean') return null;
+    return toGitFileMarks(dto);
+  },
   gitCommitFiles: async (oid: string): Promise<GitCommitFiles> =>
     toGitCommitFiles(await Git.CommitFiles(oid)),
   gitCommitDiff: async (oid: string, path: string): Promise<GitDiff> =>
