@@ -39,6 +39,7 @@ describe('latestPlan', () => {
   it('returns the snapshot of a completed plan call', () => {
     const m = msg('m', [planCall('p', validArgs)]);
     expect(latestPlan([m])).toEqual({
+      id: 'p',
       plan: {
         explanation: 'fix the bug',
         items: [{ step: 'repro' }, { step: 'patch' }],
@@ -58,9 +59,12 @@ describe('latestPlan', () => {
       plan: [{ step: 'v2' }],
     });
     const newer = msg('m2', [planCall('p2', newerArgs)]);
-    expect(latestPlan([older, newer])?.plan).toEqual({
-      items: [{ step: 'v2' }],
-    });
+    const state = latestPlan([older, newer]);
+    expect(state?.plan).toEqual({ items: [{ step: 'v2' }] });
+    // The id is the newest call's: a revision of that plan is content
+    // arriving in the checklist the reader already has a fold for, while
+    // another call is a new one (see PlanSection).
+    expect(state?.id).toBe('p2');
   });
 
   it('falls back to the previous valid snapshot when the newest call has empty args', () => {
@@ -72,6 +76,10 @@ describe('latestPlan', () => {
       items: [{ step: 'repro' }, { step: 'patch' }],
     });
     expect(state?.live).toBe(true);
+    // The fallback is the previous snapshot's content, but the plan is
+    // the streaming call: its id opens the section for the checklist
+    // about to arrive.
+    expect(state?.id).toBe('p2');
   });
 
   it('falls back when the newest args are malformed JSON', () => {
@@ -95,6 +103,7 @@ describe('latestPlan', () => {
   it('returns an empty placeholder plan when only the live call exists', () => {
     const m = msg('m', [planCall('p', '', 'running')]);
     expect(latestPlan([m])).toEqual({
+      id: 'p',
       plan: { items: [] },
       live: true,
     });

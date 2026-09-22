@@ -34,8 +34,8 @@ export interface ActivityThink {
 const MAX_PROCESS_ROWS = 4;
 
 /**
- * ActivityCard is the conversation's live activity overlay, pinned to
- * the top-left of the chat area: the current plan, the model's latest
+ * ActivityCard is the conversation's activity panel, pinned to the
+ * top-left of the chat area: the current plan, the model's latest
  * thought, and what this conversation's sandboxed processes are
  * printing.
  * It is an overlay, not a row above the transcript — a docked card
@@ -43,12 +43,17 @@ const MAX_PROCESS_ROWS = 4;
  * it and take that height from the conversation for as long as the card
  * lives.
  *
- * The card has no dismissal of its own and no close button: the chat
- * pane mounts it only while the work it reports is real (a turn in
- * flight, or a process still running — see ChatView), and inside that
- * lifetime how long a section keeps its content is the section's own
- * business. Nothing here outlives the activity, so there is nothing to
- * close.
+ * The card belongs to the conversation, not to the work: a turn ending
+ * does not take it down, so the plan the model finished and the last
+ * thought stay where they were instead of going with the turn that
+ * produced them. What it does not paint is a card with nothing to
+ * report — no plan, no thought, no running process — so that is the one
+ * state it renders nothing in, and a conversation that never had any of
+ * the three starts without it. Inside that lifetime how long a section
+ * keeps its content is the section's own business; the card renders no
+ * dismissal either, because there is nothing to close: what it holds is
+ * the conversation's own account of its work, and the pane that mounts
+ * it is what ends it.
  *
  * What the card does have is one fold, at its top: the header is a
  * button that folds the whole card down to itself, and the dot goes on
@@ -58,26 +63,30 @@ const MAX_PROCESS_ROWS = 4;
  * the way the sections' folds belong to them: nothing that arrives
  * re-opens it — a plan revision, the next thought and the next process
  * all land in a folded card without a sound — and it lasts as long as
- * the card does, so the next turn opens unfolded. Unfolding brings the
- * body back at the sections' own defaults, because a folded card
- * renders no body for a fold made inside it to survive in.
+ * the card does: the reader's fold survives the next turn the way a
+ * section's does, and what unfolds the card is the reader, or the
+ * conversation change that remounts it. Unfolding brings the body back
+ * at the sections' own defaults, because a folded card renders no body
+ * for a fold made inside it to survive in.
  *
  * The sections share one rhythm: each is toggleable by hand, and no
  * update re-opens one — a plan revision, a new thought and a new process
  * all arrive without moving a section the reader folded. What still
  * folds itself away is finished content: a completed plan is long and
- * stale the moment its last step is done. The thought and the process
- * output are the other way round — both open on first sight and stay as
- * the reader leaves them, because they are themselves what the reader
- * came to watch, and that a thought stopped growing is not the reader
- * saying they are done with it. The process section is about running
- * work and nothing else: a process that stopped has no activity left to
- * report, so its row — and with it the exit status and the output it
- * printed — leaves at the next read, and the transcript is
- * what keeps the record. The feed goes on reporting a stopped process for
- * a while; that is the feed's read, not what the card shows. Nothing here
- * acts on the sandbox: process output is read-only, and acting on a
- * process stays in the transcript's own session cards.
+ * stale the moment its last step is done, and a later update_plan call
+ * is a new checklist rather than a revision, so it opens at its own
+ * default. The thought and the process output are the other way round —
+ * both open on first sight and stay as the reader leaves them, because
+ * they are themselves what the reader came to watch, and that a thought
+ * stopped growing is not the reader saying they are done with it. The
+ * process section is about running work and nothing else: a process
+ * that stopped has no activity left to report, so its row — and with it
+ * the exit status and the output it printed — leaves at the next read
+ * while the card stays for whatever else it holds, and the transcript
+ * is what keeps the record. The feed goes on reporting a stopped
+ * process for a while; that is the feed's read, not what the card
+ * shows. Nothing here acts on the sandbox: process output is read-only,
+ * and acting on a process stays in the transcript's own session cards.
  */
 export function ActivityCard({
   plan,
@@ -99,8 +108,11 @@ export function ActivityCard({
   const running = processes.filter((p) => p.running);
   const live =
     Boolean(plan?.live) || Boolean(think?.live) || running.length > 0;
-  // A read that holds nothing but stopped processes has nothing to report:
-  // the overlay renders nothing instead of an empty card.
+  // Nothing to report — a conversation that never planned, never reasoned
+  // and has nothing running (and a read that holds only stopped
+  // processes): the card paints nothing rather than an empty shell. This
+  // is the only state it is absent in; the moment one of the three
+  // arrives it is there, and it stays when that work stops.
   if (plan === null && thinkText === '' && running.length === 0) {
     return null;
   }
@@ -139,7 +151,9 @@ export function ActivityCard({
         /* The card scrolls as a whole; the two streaming sections cap
            themselves so neither can push the others out of the card. */
         <div className="min-h-0 flex-1 divide-y divide-edge overflow-y-auto">
-          {plan && <PlanSection plan={plan.plan} live={plan.live} />}
+          {plan && (
+            <PlanSection id={plan.id} plan={plan.plan} live={plan.live} />
+          )}
           {thinkText !== '' && (
             <ThinkSection
               id={think?.id ?? ''}
@@ -196,17 +210,36 @@ function SectionHeader({
 
 // PlanSection is the conversation's current plan: a checklist that
 // starts expanded while work is left and folds itself away once every
-// step is done. A plan revision never re-opens it — the checklist is
-// content, and its fold state belongs to the reader. An empty plan is
-// the "loading" placeholder the update_plan call resolves into.
-function PlanSection({ plan, live }: { plan: PlanSnapshot; live: boolean }) {
+// step is done. A revision of that plan never re-opens it — the
+// checklist is content, and its fold state belongs to the reader — but
+// a new update_plan call is a new checklist, and it opens at its own
+// default: the card outlives the turn now, so the section cannot lean
+// on a fresh mount to do that. An empty plan is the "loading"
+// placeholder the update_plan call resolves into.
+function PlanSection({
+  id,
+  plan,
+  live,
+}: {
+  id: string;
+  plan: PlanSnapshot;
+  live: boolean;
+}) {
   const { t } = useTranslation();
   const done = plan.items.filter((s) => s.status === 'completed').length;
   const complete = plan.items.length > 0 && done === plan.items.length;
   const [open, setOpen] = useState(!complete);
+  const planId = useRef(id);
   useEffect(() => {
+    if (planId.current !== id) {
+      // A new plan call: the section starts over at its default.
+      planId.current = id;
+      setOpen(!complete);
+      return;
+    }
+    // The same plan: completion is the only thing that folds it.
     if (complete) setOpen(false);
-  }, [complete]);
+  }, [id, complete]);
   return (
     <div data-testid="plan-section">
       <SectionHeader

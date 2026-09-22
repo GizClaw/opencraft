@@ -1958,19 +1958,13 @@ export function ChatView() {
   const stage = turnState?.name === 'running' ? turnState.stage : '';
   // The activity card's three inputs: the plan (above), the newest
   // reasoning block, and the conversation's sandboxed processes. Its
-  // fold states are the card's own business (see ActivityCard); its
-  // lifetime is the activity below — a card the reader folded is still
-  // up, reporting from its header, so the fold changes nothing here.
+  // fold states are the card's own business (see ActivityCard).
   const thinkBlock = useMemo(() => latestThink(messages), [messages]);
+  // The feed is read while there is something to follow — a turn, or a
+  // process of this conversation — but that is the read policy, not the
+  // card's lifetime: the card stays once a turn has given it a plan or a
+  // thought to report (see ActivityCard).
   const processes = useProcessTail(current, busy);
-  // activityOpen is the card's whole lifetime: a turn in flight, or a
-  // process of this conversation still running after it (an
-  // exec_session server outlives the turn that started it). Everything
-  // else — a completed plan, the last thought, a stopped process's tail
-  // — belongs to the transcript, and an overlay that outlived the work
-  // would sit over the conversation with nothing left to report. That is
-  // also why there is no close button: nothing here needs closing.
-  const activityOpen = busy || processes.some((p) => p.running);
   const setThink = useStore((s) => s.setThink);
   const model = current ? (conv?.model ?? '') : draftModel;
   const setModel = useStore((s) => s.setModel);
@@ -3296,21 +3290,26 @@ export function ChatView() {
               revision={turnArtifacts}
             />
           )}
-          {activityOpen && (
-            <ActivityCard
-              plan={planState}
-              think={
-                thinkBlock
-                  ? {
-                      id: thinkBlock.id,
-                      text: thinkBlock.text,
-                      live: stage === 'reasoning',
-                    }
-                  : null
-              }
-              processes={processes}
-            />
-          )}
+          {/* The card is the conversation's, not the turn's: it is
+              mounted for as long as the conversation is the focused one,
+              and it paints itself away only while it has nothing to
+              report. The key is what makes the reader's folds the
+              conversation's — switching sessions starts the card over,
+              while a turn ending leaves it exactly where it is. */}
+          <ActivityCard
+            key={current}
+            plan={planState}
+            think={
+              thinkBlock
+                ? {
+                    id: thinkBlock.id,
+                    text: thinkBlock.text,
+                    live: stage === 'reasoning',
+                  }
+                : null
+            }
+            processes={processes}
+          />
           {/* The composer floats over the transcript rather than taking a
               row below it, so the conversation keeps the whole column and
               the card reads as lifted off it. Nothing is painted around
