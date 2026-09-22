@@ -317,6 +317,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of the host separator (counting the separator reads every
   walked path as depth 0, so the bound never trimmed). Windows CI runs
   this package now, which is how it was found.
+- `apply_patch` no longer judges a patch path with the host separator.
+  On Windows `filepath.Clean` rewrites `../x` into `..\x`, so the
+  `../`-prefix check never matched there: a patch spelling an escape the
+  Windows way passed the parser and was only stopped by the layer below
+  (the workspace's own traversal check, or `pathsafe.RelRef` in the host
+  applier). Paths are judged in the workspace namespace now — backslashes
+  folded, `path.Clean`, and both readings of absolute: a leading slash
+  everywhere, plus the drive and UNC forms only Windows reads that way —
+  so a traversal is refused by the parser, with the parser's message,
+  whichever separator spells it, and on every platform. Folding is
+  for judging only: a plain Windows-style relative path keeps resolving,
+  since the workspace reads the backslash as a separator itself. Windows
+  CI runs the package's path tests, including the drive and UNC forms
+  that only exist there.
 - A process started in a turn's last poll gap is no longer invisible
   until the next message. The activity card's process section follows a
   hook that reads the conversation's sandboxed processes on open and
