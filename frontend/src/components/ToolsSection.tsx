@@ -377,9 +377,9 @@ export function ToolsSection() {
         <input
           aria-label={label}
           type={field.kind === 'string' ? 'text' : 'number'}
-          placeholder={
-            documented ? `${providerDefault} (${documented})` : providerDefault
-          }
+          // The documented default is on the row's own line, so the
+          // placeholder stays short enough to read inside the control.
+          placeholder={providerDefault}
           value={value === undefined ? '' : String(value)}
           min={field.min ?? undefined}
           max={field.max ?? undefined}
@@ -408,7 +408,10 @@ export function ToolsSection() {
       >
         <div className="min-w-0 flex-1">
           <span className="block truncate text-xs text-fg">{label}</span>
-          <span className="block truncate font-mono text-micro text-dim">
+          {/* The name, the provider's vocabulary and the documented
+              default wrap instead of truncating: a cut line hides
+              exactly the value the row exists to name. */}
+          <span className="block break-words font-mono text-micro text-dim">
             {field.name}
             {hint && <span className="ml-1.5 text-faint">· {hint}</span>}
             {defaultHint && (
@@ -421,7 +424,7 @@ export function ToolsSection() {
             </span>
           )}
         </div>
-        <div className="w-40 shrink-0 self-center">{control}</div>
+        <div className="w-52 shrink-0 self-center">{control}</div>
       </div>
     );
   };
@@ -526,13 +529,18 @@ export function ToolsSection() {
   ) => {
     const instances = view?.instances ?? [];
     const Icon = tool === 'image' ? ImageIcon : Film;
+    // The dialog opens from inside the settings panel, and that panel
+    // clips its own overflow: a provider with a long vocabulary would
+    // lose its header and save bar behind the clip. Portal it out, and
+    // give the control column enough room for the provider-default label.
     return (
       <Modal
         open
         onClose={() => setOpenTool(null)}
         title={title(tool)}
         icon={Icon}
-        width="38rem"
+        width="42rem"
+        portal
         footer={
           <SaveBar
             saved={saved === tool}

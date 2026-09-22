@@ -306,6 +306,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A generation tool's dialog no longer opens inside the settings panel
+  it was launched from. The panel clips its own overflow, and its
+  entrance animation — like every panel's, drawer's, popover's and
+  toast's — filled forwards, which leaves the element with an identity
+  matrix rather than no transform at all: a transformed panel is a
+  containing block for its own `position: fixed` descendants, so the
+  dialog was laid out against the panel and cut off by it. ByteDance's
+  ten dotted knobs made that plain, and the header and the save bar were
+  the two things the clip ate first. Entrance animations fill backwards
+  now, so the settled panel carries no transform, and the dialogs the
+  settings panel opens (the image and video tool cards, web search, an
+  MCP server) are portalled to the document body. The tool dialog also
+  grew to 42rem with a wrapping name line, so a vocabulary like
+  `optimize_prompt.thinking · auto · enabled · disabled` and its
+  provider-default control are read in full instead of truncated.
 - The file tools work on Windows again: `read_file`, `write_file`,
   `list_dir`, `grep` and `glob` refused every nested path there.
   `validatePath` compared `filepath.Clean(p)` against `p`, and on

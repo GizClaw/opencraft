@@ -102,24 +102,33 @@
   --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
   --animate-scrim-in: oc-scrim-in 160ms var(--ease-out-soft) both;
   --animate-scrim-out: oc-scrim-out 120ms ease-in both;
-  --animate-panel-in: oc-panel-in 160ms var(--ease-out-soft) both;
+  /* Entrance animations fill backwards, never forwards: a filled
+     transform animation leaves the element with an identity matrix
+     instead of `none`, which turns every panel — and every drawer,
+     popover and toast — into a containing block for its `position:
+     fixed` descendants. The settled state then comes from the element's
+     own style, which is also where a reduced-motion user lands (the
+     media query shrinks the duration to 0.001ms rather than removing
+     the animation). */
+  --animate-panel-in: oc-panel-in 160ms var(--ease-out-soft) backwards;
   --animate-panel-out: oc-panel-out 120ms ease-in both;
-  --animate-drawer-in: oc-drawer-in 180ms var(--ease-out-soft) both;
+  --animate-drawer-in: oc-drawer-in 180ms var(--ease-out-soft) backwards;
   --animate-drawer-out: oc-drawer-out 130ms ease-in both;
-  --animate-popover-in: oc-popover-in 130ms var(--ease-out-soft) both;
+  --animate-popover-in: oc-popover-in 130ms var(--ease-out-soft) backwards;
   --animate-popover-out: oc-popover-out 100ms ease-in both;
-  --animate-toast-in: oc-toast-in 180ms var(--ease-out-soft) both;
+  --animate-toast-in: oc-toast-in 180ms var(--ease-out-soft) backwards;
   --animate-toast-out: oc-toast-out 140ms ease-in both;
   /* Chat header state motion. The title bar is the one strip in the
      content column that moves, and only ever to report the run: it
      rises in when a conversation opens (rise-in), a new title or stage
      name replaces the old one in place (swap-in), and a live run drags
      a strip of accent light across the header's bottom edge
-     (run-sweep). All three are entry animations with `both` fill, so a
-     reduced-motion user still lands on the settled state; the sweep,
-     which has no settled state, simply ends off-screen. */
-  --animate-rise-in: oc-rise-in 180ms var(--ease-out-soft) both;
-  --animate-swap-in: oc-swap-in 140ms var(--ease-out-soft) both;
+     (run-sweep). The first two are entry animations like the ones
+     above, so they fill backwards for the same reason: a reduced-motion
+     user still lands on the settled state; the sweep, which has no
+     settled state, simply ends off-screen. */
+  --animate-rise-in: oc-rise-in 180ms var(--ease-out-soft) backwards;
+  --animate-swap-in: oc-swap-in 140ms var(--ease-out-soft) backwards;
   --animate-run-sweep: oc-run-sweep 1.6s ease-in-out infinite;
 
   @keyframes oc-scrim-in {

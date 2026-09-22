@@ -227,6 +227,7 @@ function MCPDetailDialog({
     <Overlay
       open
       onClose={onClose}
+      portal
       ariaLabel={
         isNew ? t('config.mcpAdd') : row.name.trim() || t('config.mcpName')
       }

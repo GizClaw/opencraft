@@ -188,6 +188,7 @@ export function WebSearchSection() {
         title={t('config.webSearchTitle')}
         icon={Globe}
         width="38rem"
+        portal
         bodyClassName="p-0"
         footer={
           <SaveBar
