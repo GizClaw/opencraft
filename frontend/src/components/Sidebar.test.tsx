@@ -161,6 +161,31 @@ describe('Sidebar workspace history', () => {
     expect(rowButton.querySelectorAll('svg')).toHaveLength(1);
   });
 
+  it('folds a workspace past the 4-row preview behind "More sessions"', async () => {
+    const rows = [1, 2, 3, 4, 5, 6].map((n) => meta(`s-${n}`, `session ${n}`));
+    apiMock.listSessionsInWorkspace.mockResolvedValue(rows);
+    render(<Sidebar isMac={false} />);
+
+    const more = await screen.findByTestId('more-sessions');
+    for (const n of [1, 2, 3, 4]) {
+      expect(screen.getByText(`session ${n}`)).toBeInTheDocument();
+    }
+    for (const n of [5, 6]) {
+      expect(screen.queryByText(`session ${n}`)).not.toBeInTheDocument();
+    }
+    expect(within(more).getByText('+2')).toBeInTheDocument();
+
+    // "More sessions" swaps the preview window for the whole list; the
+    // row goes away because nothing is folded any more.
+    fireEvent.click(more);
+    await waitFor(() =>
+      expect(screen.queryByTestId('more-sessions')).not.toBeInTheDocument(),
+    );
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      expect(screen.getByText(`session ${n}`)).toBeInTheDocument();
+    }
+  });
+
   it('leads with the active workspace even when the backend ranks it lower', async () => {
     // History is still [A, B] from the backend: A was the last one
     // recorded, so its last_opened is newer. The user has just switched

@@ -146,6 +146,11 @@ type HistoryItem =
 
 const expandedStorageKey = 'oc.sidebarExpandedWorkspaces';
 
+// sessionPreviewCount is how many of a workspace's stored sessions the
+// sidebar lists before folding the rest behind "More sessions". Running
+// sessions are not counted against it.
+const sessionPreviewCount = 4;
+
 function readExpandedWorkspaces(): Set<string> {
   try {
     const raw = window.localStorage.getItem(expandedStorageKey);
@@ -188,7 +193,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const [wsLists, setWsLists] = useState<Record<string, SessionMeta[]>>({});
   const [wsLoading, setWsLoading] = useState<Record<string, boolean>>({});
   // showAllSessions keeps one per-workspace flag for expanding past the
-  // default 10 most recent sessions inline.
+  // default session preview inline.
   const [showAllSessions, setShowAllSessions] = useState<Set<string>>(
     () => new Set(),
   );
@@ -460,7 +465,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
 
   // resetWorkspaceSessions returns one workspace to the preview window:
   // called when its node is collapsed or removed, so a later expansion
-  // shows the 10 newest rows plus "More sessions" again instead of every
+  // shows the newest rows plus "More sessions" again instead of every
   // session the workspace ever had.
   const resetWorkspaceSessions = (workspacePath: string) => {
     setShowAllSessions((prev) => {
@@ -820,7 +825,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       const storedCount = Math.max(0, rows.length - runningCount);
       const visibleStored = showAllSessions.has(w.path)
         ? storedCount
-        : Math.min(storedCount, 10);
+        : Math.min(storedCount, sessionPreviewCount);
       const visible = rows.slice(0, runningCount + visibleStored);
       if (visible.length === 0) {
         items.push({

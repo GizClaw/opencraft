@@ -283,6 +283,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-lay-out the card's largest text block ten times a second. The
   answer's own words keep the fast beat, and prose joining a thought
   pulls the queued commit in rather than waiting out the slower one.
+- The sidebar folds a workspace's session list at four rows instead of
+  ten. Ten rows per workspace is most of the sidebar's height once two or
+  three workspaces are open, which pushes the collapsed nodes — the map
+  of where the reader was — off the bottom, and the rows a workspace
+  hides are one click away behind "More sessions" anyway. What the
+  preview counts is unchanged: rows for running sessions are still added
+  on top of it, so a workspace with a live turn shows the turn plus four
+  stored rows, and "More sessions" still counts only the stored rows it
+  folds away.
 
 ### Fixed
 
