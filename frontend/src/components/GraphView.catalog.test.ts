@@ -9,8 +9,8 @@
 // This test pins both directions against the compaction node, whose knobs are
 // the ones users actually tune (folding thresholds and budgets). It reads the
 // catalog from its own module, not from GraphView: importing the component
-// would load `@wailsio/runtime`, whose drag module keeps a 50ms poll alive
-// past a short-lived test environment.
+// would mount the editor's canvas and load the wails runtime for a test that
+// only compares config keys.
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

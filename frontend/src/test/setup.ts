@@ -3,6 +3,28 @@ import { cleanup } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 import '../i18n';
 
+// The wails runtime is stubbed for the whole suite.
+//
+// Importing `@wailsio/runtime` starts its drag module's 50ms poll against
+// `window`. A test file that finishes inside that first tick leaves the poll
+// pending past the environment's teardown, and the callback throws before it
+// reaches its own `clearInterval` - so it keeps throwing every tick instead
+// of stopping. Vitest reports those as uncaught errors and exits 1 although
+// every test passed, blaming whichever file was running (that is how the
+// suite went red on a PR that only moved two fuzz paths, run 35705541020).
+// jsdom has no Go side to talk to, so the package is inert here; tests that
+// need event plumbing mock it themselves.
+vi.mock('@wailsio/runtime', () => ({
+  Events: { On: () => () => {} },
+  Window: {
+    IsMaximised: async () => false,
+    ToggleMaximise: async () => {},
+    Minimise: async () => {},
+  },
+  System: { Environment: async () => ({ OS: '', Debug: false }) },
+  setTransport: () => {},
+}));
+
 afterEach(() => {
   cleanup();
 });
