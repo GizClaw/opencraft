@@ -63,6 +63,30 @@ function assistantTurn(): MessageView[] {
   ];
 }
 
+// thoughtTranscript is a settled turn whose answer streamed a reasoning
+// block: the one thing the activity card holds on to by itself.
+function thoughtTranscript(id: string, thought: string): MessageView[] {
+  return [
+    {
+      id: `${id}-ask`,
+      role: 'user',
+      text: 'go',
+      items: [],
+      attachments: [],
+    },
+    {
+      id: `${id}-answer`,
+      role: 'assistant',
+      text: '',
+      items: [
+        { kind: 'text', id: `${id}-text`, text: 'working on it' },
+        { kind: 'reasoning', id: `${id}-think`, text: thought },
+      ],
+      attachments: [],
+    },
+  ];
+}
+
 function setConversation(
   messages: MessageView[],
   turnArtifacts: TurnArtifacts[] = [],
@@ -2664,12 +2688,13 @@ describe('ChatView header', () => {
   });
 });
 
-// The activity card is the live overlay of the work under way: the pane
-// mounts it exactly as long as a turn runs or one of the conversation's
-// processes does. That lifetime is why it carries no close button — an
-// overlay that outlived its activity would cover the conversation with
-// nothing left to report, and the transcript is what keeps the record.
-describe('ChatView activity card lifetime', () => {
+// The card belongs to the conversation rather than to the work: a turn
+// ending does not take it down, and what it does not paint is a card with
+// nothing to report. Both halves are the pane's: it mounts the card
+// (keyed by the conversation, so switching sessions starts the reader's
+// folds over) and the card itself decides whether it has anything to
+// show.
+describe('ChatView activity card', () => {
   const runningProcess: SandboxProcess = {
     process_id: 'p-1',
     argv: ['npm', 'run', 'dev'],
@@ -2683,7 +2708,7 @@ describe('ChatView activity card lifetime', () => {
     seq: 30,
   };
 
-  it('mounts the card with the turn and unmounts it with the turn', () => {
+  it('keeps the card up after the turn it reported', () => {
     setConversation(assistantTurn());
     const actor = stateRoot.registry.get('s-1');
     actor?.send({ type: 'SEND_STARTED' });
@@ -2709,13 +2734,16 @@ describe('ChatView activity card lifetime', () => {
       'Weighing the layout.',
     );
 
-    // The turn ends and the card goes with it. The thought stays in the
-    // store — a transcript is what keeps it — but nothing in the overlay
-    // is still happening, and nothing closed it.
+    // The turn ends and the card stays: the thought it was reporting is
+    // still the newest thing the conversation has to show, so nothing
+    // about the card was tied to the turn.
     act(() => {
       actor?.send({ type: 'TURN_ENDED', runID: 'r-1', status: 'completed' });
     });
-    expect(screen.queryByTestId('activity-card')).toBeNull();
+    expect(screen.getByTestId('activity-card')).toBeInTheDocument();
+    expect(screen.getByTestId('think-body')).toHaveTextContent(
+      'Weighing the layout.',
+    );
     expect(screen.getByText('working on it')).toBeInTheDocument();
   });
 
@@ -2732,7 +2760,7 @@ describe('ChatView activity card lifetime', () => {
     expect(within(card).getByText('running')).toBeInTheDocument();
   });
 
-  it('leaves the card down for a process that already stopped', async () => {
+  it('paints nothing for a conversation whose only process has stopped', async () => {
     apiMock.processes.mockResolvedValue([
       {
         ...runningProcess,
@@ -2748,11 +2776,59 @@ describe('ChatView activity card lifetime', () => {
     render(<ChatView />);
 
     // The turn is in flight and the feed reports a process that has
-    // already ended: a stopped process is not activity, so the overlay
-    // renders nothing instead of an empty card — how the command ended
-    // is the transcript's record.
+    // already ended: a stopped process is not content, so with no plan
+    // and no thought the card paints nothing instead of an empty shell —
+    // how the command ended is the transcript's record.
     await act(async () => {});
     expect(apiMock.processes).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId('activity-card')).toBeNull();
+  });
+
+  it('starts the folds over when the conversation changes', () => {
+    setConversation(thoughtTranscript('a', 'First conversation.'));
+    render(<ChatView />);
+    fireEvent.click(screen.getByTestId('activity-card-header'));
+    expect(screen.getByTestId('activity-card')).toHaveAttribute(
+      'data-folded',
+      'true',
+    );
+
+    // Another conversation: the card is the conversation's, and so are
+    // its folds — the reader meets the next session with it unfolded
+    // rather than with a fold they made somewhere else.
+    act(() => {
+      stateRoot.sendFocus({ type: 'OPEN_SESSION', id: 's-2' });
+    });
+    const request = stateRoot.focusSnapshot.context.request;
+    act(() => {
+      stateRoot.registry
+        .ensure('s-2', { workspaceGeneration: stateRoot.generation() })
+        ?.send({ type: 'NEW_CHAT_READY' });
+      stateRoot.sendFocus({
+        type: 'OPEN_SUCCEEDED',
+        request,
+        sessionID: 's-2',
+      });
+      useStore.setState({
+        conversations: {
+          's-2': {
+            messages: thoughtTranscript('b', 'Second conversation.'),
+            turnArtifacts: [],
+            mode: 'workspace',
+            think: 'medium',
+            model: '',
+            pendingInteracts: [],
+          },
+        },
+      });
+    });
+
+    expect(screen.getByTestId('activity-card')).toHaveAttribute(
+      'data-folded',
+      'false',
+    );
+    expect(screen.getByTestId('think-body')).toHaveTextContent(
+      'Second conversation.',
+    );
   });
 });

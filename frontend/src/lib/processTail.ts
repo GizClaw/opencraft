@@ -67,6 +67,10 @@ async function readSnapshot(
  * server started by exec_session outlives the turn). Once neither is
  * true, the last poll is the last read.
  *
+ * That pacing is the feed's, not the card's: the activity card stays up
+ * after a turn ends (see ActivityCard), and what a stopped feed costs is
+ * the next row, not the card.
+ *
  * The feed is a per-generation resource, so a runtime reload (a
  * settings save, a plugin install) answers with an empty list: the
  * generation that started those processes is gone, and so are they.
@@ -98,9 +102,9 @@ export function useProcessTail(
   // The turn's last read. Everything below exists only while a turn
   // runs or a process is already known to run, so a process that starts
   // inside the final poll gap would otherwise be missed for good: no
-  // read follows, the card that follows this hook leaves with the turn,
-  // and the server stays invisible until the next message. A running
-  // answer here hands the conversation to the idle pace below.
+  // read follows, and the server's row stays invisible until the next
+  // read — a new turn, or the conversation reopening. A running answer
+  // here hands the conversation to the idle pace below.
   useEffect(() => {
     const wasRunning = lastTurn.current;
     lastTurn.current = turnRunning;

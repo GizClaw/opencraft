@@ -498,13 +498,14 @@ test('activity card lifetime', async ({ page }) => {
   await expect(page.getByTestId('process-section')).toHaveCount(0);
   await expect(page.getByTestId('activity-card')).toBeVisible();
 
-  // The turn ends, and with nothing running the card's lifetime is over:
-  // the corner goes back to the transcript.
+  // The turn ends and the card stays: it belongs to the conversation, so
+  // the plan and the last thought it reported are still the newest thing
+  // it has to show, and the corner is the card's now.
   await emit('opencraft:ui', {
     type: 'turn_end',
     data: { run_id: 'r-1', conversation_id: 's-1', status: 'completed' },
   });
-  await expect(page.getByTestId('activity-card')).toHaveCount(0);
+  await expect(page.getByTestId('activity-card')).toBeVisible();
   await page.waitForTimeout(300);
   await shot(page, '41c-activity-card-after-work');
 });

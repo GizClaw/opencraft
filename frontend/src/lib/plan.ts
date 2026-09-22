@@ -13,6 +13,11 @@ export interface PlanSnapshot {
 export interface PlanPanelState {
   plan: PlanSnapshot;
   live: boolean;
+  // id is the newest update_plan call's item id. A new call is a new
+  // checklist — the card's plan section opens it at its own default —
+  // while a revision of the same call is content arriving in the plan
+  // the reader already has a fold for.
+  id: string;
 }
 
 const isPlanCall = (
@@ -52,16 +57,16 @@ export function planNeedsRefresh(
 // it falls back to the previous valid snapshot while still reflecting
 // the running state, so the panel never drops the live indicator.
 export function latestPlan(messages: MessageView[]): PlanPanelState | null {
-  // last holds the newest update_plan call's run state; lastValid holds
-  // the most recent parseable non-empty snapshot.
-  let last: { live: boolean } | null = null;
+  // last holds the newest update_plan call's identity and run state;
+  // lastValid holds the most recent parseable non-empty snapshot.
+  let last: { id: string; live: boolean } | null = null;
   let lastValid: PlanSnapshot | null = null;
   for (const msg of messages) {
     for (const item of msg.items) {
       if (item.kind !== 'tool_call' || item.tool.name !== 'update_plan') {
         continue;
       }
-      last = { live: item.tool.status === 'running' };
+      last = { id: item.id, live: item.tool.status === 'running' };
       let args: Record<string, unknown> | null = null;
       try {
         const v: unknown = JSON.parse(item.tool.args);
@@ -83,6 +88,7 @@ export function latestPlan(messages: MessageView[]): PlanPanelState | null {
   // falls back to the previous valid snapshot, or an empty placeholder
   // if there is none, keeping the live run state either way.
   return {
+    id: last.id,
     plan: lastValid ?? {
       items: [],
     },

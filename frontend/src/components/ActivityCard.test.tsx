@@ -6,6 +6,7 @@ import type { PlanPanelState } from '../lib/plan';
 import type { SandboxProcess } from '../lib/types';
 
 const plan: PlanPanelState = {
+  id: 'plan-1',
   plan: {
     items: [
       { step: 'Read code', status: 'completed' },
@@ -248,6 +249,7 @@ describe('ActivityCard', () => {
     rerender(
       <ActivityCard
         plan={{
+          id: 'plan-1',
           plan: {
             items: [
               { step: 'Read code', status: 'completed' },
@@ -288,6 +290,35 @@ describe('ActivityCard', () => {
       'aria-expanded',
       'false',
     );
+  });
+
+  it('opens the next plan call after the reader folded the last one', () => {
+    const { rerender } = render(
+      <ActivityCard plan={plan} think={null} processes={[]} />,
+    );
+    fireEvent.click(screen.getByTestId('plan-section-header'));
+    expect(screen.queryByText('Rewrite')).toBeNull();
+
+    // The next turn writes a plan of its own: another update_plan call is
+    // a new checklist, not a revision of the folded one, so the section
+    // opens at its default instead of hiding the new plan behind the
+    // reader's fold (the card is no longer remounted between turns).
+    rerender(
+      <ActivityCard
+        plan={{
+          id: 'plan-2',
+          plan: { items: [{ step: 'Ship the panel', status: 'pending' }] },
+          live: true,
+        }}
+        think={null}
+        processes={[]}
+      />,
+    );
+    expect(screen.getByTestId('plan-section-header')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(screen.getByText('Ship the panel')).toBeInTheDocument();
   });
 
   it('shows a running process with the tail of the selected one', () => {

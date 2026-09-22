@@ -224,33 +224,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#190)
 - The top-left corner of the chat pane is one activity card instead of a
   plan panel: the current plan, the model's latest thought, and what the
-  conversation's sandboxed processes print. The card's lifetime is the
-  work it reports: the pane mounts it while a turn is in flight or one of
-  the conversation's processes still runs, and it leaves on its own once
-  neither does — which is why there is no close button, and why a
-  finished plan, the last thought and a stopped process's tail are the
-  transcript's to keep afterwards. Inside that life each section folds
-  itself when its content is done — a completed plan — while the thought
-  and the process output open on first sight and stay as the reader
-  leaves them, because they are themselves what the reader came to
-  watch, and no update re-opens one the reader folded: a plan revision,
-  a new thought and a new process all arrive without moving a section
-  that was closed by hand. The card itself folds the same way:
+  conversation's sandboxed processes print. The card belongs to the
+  conversation rather than to the work: a turn ending does not take it
+  down, so the plan the model finished and the last thought stay where
+  they were, and the one state it paints nothing in is having nothing to
+  report at all — no plan, no thought, no running process — which is why
+  a fresh conversation starts without it. There is no close button
+  either: the card is the conversation's read-out and it goes when the
+  conversation does. Inside that life each section folds itself when its
+  content is done — a completed plan, where a later plan call is a new
+  checklist that opens at its default — while the thought and the
+  process output open on first sight and stay as the reader leaves them,
+  because they are themselves what the reader came to watch, and no
+  update re-opens one the reader folded: a plan revision, a new thought
+  and a new process all arrive without moving a section that was closed
+  by hand. The card itself folds the same way:
   its header is one button that folds the whole overlay down to itself
   — and shrinks it to the header's own width — while the dot goes on
   pulsing in it, so the corner comes back without losing the report
   that work is running; nothing that arrives re-opens a folded card
-  either, and unfolding brings the body back at the sections' own
-  defaults, because a folded card renders no body for a fold made
-  inside it to survive in. The process section is about live work: it
-  lists the processes still running (newest first, four rows plus the
-  selected one) with the tail of the selected one, and a process that
-  stops drops off the card at the next read — the exit status and the
-  output it printed are the transcript's record. Output is shown as
-  the process wrote it: nothing is redacted and nothing is inferred,
-  which is also why the card offers no actions — stopping a process
-  stays a tool decision the model makes, and the transcript's own
-  session cards remain the place to act on one.
+  either — the reader's folds last as long as the conversation, since it
+  is a session change rather than a turn that remounts the card — and
+  unfolding brings the body back at the sections' own defaults, because
+  a folded card renders no body for a fold made inside it to survive in.
+  The process section is about live work: it lists the processes still
+  running (newest first, four rows plus the selected one) with the tail
+  of the selected one, and a process that stops drops off the card at
+  the next read — the exit status and the output it printed are the
+  transcript's record. Output is shown as the process wrote it: nothing
+  is redacted and nothing is inferred, which is also why the card offers
+  no actions — stopping a process stays a tool decision the model makes,
+  and the transcript's own session cards remain the place to act on one.
 - A conversation's sandboxed processes are readable while they run, not
   only after the model reads them. A new `opencraft.processes` resource
   taps every session the sandbox runner starts inside a session run
@@ -289,10 +293,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session whose row landed after the turn's final read (the sandbox
   registers it at Start, and a turn can end right after its own tool
   call returns) left nothing behind to read again: nothing running was
-  known, the card went with the turn, and the still-running server
-  stayed out of sight. The hook now also reads once on the turn's
-  falling edge — the row is always there by then — and a running answer
-  hands the conversation to the idle pace from there.
+  known, the feed stopped reading, and the still-running server stayed
+  out of sight until the next turn. The hook now also reads once on the
+  turn's falling edge — the row is always there by then — and a running
+  answer hands the conversation to the idle pace from there.
 - A sandboxed session read that stopped at its own request deadline
   reported the child's wire error (`execd: read: deadline_exceeded:
   request deadline exceeded`) instead of a timeout: the request deadline

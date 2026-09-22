@@ -88,13 +88,13 @@ const exited = {
   seq: 52,
 };
 
-// The card is the live overlay of the work under way: the pane mounts it
-// exactly as long as a turn runs or one of the conversation's processes
-// does, and nothing else takes it down. That lifetime is why it has no
-// close button — an overlay that outlived its activity would cover the
-// conversation with nothing left to report.
+// The card belongs to the conversation, not to the work: once it has
+// something to report — a plan, a thought, a running process — it stays,
+// and a turn ending does not take it down. What it never paints is a
+// card with nothing to report, which is the only state it is absent in
+// (and why it carries no close button: there is nothing to close).
 
-test('shows the model thinking while it reasons, then leaves with the turn', async ({
+test('shows the model thinking while it reasons, and keeps it after the turn', async ({
   page,
 }) => {
   await startChat(page);
@@ -107,8 +107,26 @@ test('shows the model thinking while it reasons, then leaves with the turn', asy
     'Weighing the two layouts. The overlay wins.',
   );
 
-  // The turn ends and the card goes with it: the overlay reports work in
-  // flight, and it is not a second place to read the transcript from.
+  // The turn ends and the card stays where it stands: the thought is
+  // still the newest thing the conversation has to report, and the card
+  // is read beside the transcript, not instead of it.
+  await endTurn(page);
+  await expect(page.getByTestId('activity-card')).toBeVisible();
+  await expect(page.getByTestId('think-section-header')).toHaveText('Thinking');
+  await expect(page.getByTestId('think-body')).toHaveText(
+    'Weighing the two layouts. The overlay wins.',
+  );
+});
+
+test('paints nothing for a conversation with nothing to report', async ({
+  page,
+}) => {
+  await startChat(page);
+  // A turn that reasons nothing and plans nothing: there is no plan, no
+  // thought and no process, so the card has nothing to hold and does not
+  // paint an empty shell — a fresh conversation starts without it.
+  await expect(page.getByTestId('activity-card')).toHaveCount(0);
+
   await endTurn(page);
   await expect(page.getByTestId('activity-card')).toHaveCount(0);
 });
@@ -213,13 +231,16 @@ test('drops a stopped process while the card reports the rest of the turn', asyn
     'Watching the dev server.',
   );
 
-  // The turn ends with nothing running: no activity is left, so the card
-  // leaves — nobody closed it.
+  // The turn ends with nothing running: the row is gone, and the card
+  // stays for the thought — nobody closed it.
   await endTurn(page);
-  await expect(card).toHaveCount(0);
+  await expect(card).toBeVisible();
+  await expect(card.getByTestId('think-body')).toHaveText(
+    'Watching the dev server.',
+  );
 });
 
-test('stays for a process that outlives its turn, and leaves with it', async ({
+test('stays for a process that outlives its turn, until it stops', async ({
   page,
 }) => {
   await startChat(page);
@@ -245,7 +266,9 @@ test('stays for a process that outlives its turn, and leaves with it', async ({
     { timeout: 15_000 },
   );
 
-  // Then the server exits: the last thing that reported work is gone.
+  // Then the server exits: the card is left with nothing to report (no
+  // plan, no thought, no process), which is the one state it does not
+  // paint in.
   await setProcesses(page, [exited]);
   await expect(card).toHaveCount(0, { timeout: 15_000 });
 });
