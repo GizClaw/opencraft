@@ -1140,6 +1140,8 @@
     "completed": "Completed with no output",
     "cancelled": "Cancelled",
     "answered": "Answered",
+    "answeredCount_one": "{{count}} choice",
+    "answeredCount_other": "{{count}} choices",
     "waitingAnswer": "Waiting for your answer…",
     "question": "Question",
     "answer": "Answer",

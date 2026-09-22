@@ -406,6 +406,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the next block) ended is parsed the moment it stops growing. Only the
   block still being written stays plain text, which is what keeps a
   half-written `#` from being re-parsed on every delta.
+- An `ask_user` card's header no longer loses its question to a long
+  answer. The answer chip only ever grew — a multi-choice answer joined
+  its option texts — and the question was the one part of the row that
+  could give way, so three options of ordinary length squeezed it to
+  nothing and painted both past the card edge, with no ellipsis anywhere
+  because nothing was capped. A multi-choice answer is now named by its
+  count (`✓ 3 choices`), the chip is capped to its share of the row and
+  truncates, and the answer it had to shorten is one hover away and
+  spelled out in the expanded body, where every option is still listed
+  with the ticked ones marked.
 
 ## [0.5.3] - 2026-09-17
 

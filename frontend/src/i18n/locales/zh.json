@@ -1140,6 +1140,8 @@
     "completed": "已完成，无输出",
     "cancelled": "已取消",
     "answered": "已回答",
+    "answeredCount_one": "已选 {{count}} 项",
+    "answeredCount_other": "已选 {{count}} 项",
     "waitingAnswer": "等待你的回答…",
     "question": "问题",
     "answer": "回答",
