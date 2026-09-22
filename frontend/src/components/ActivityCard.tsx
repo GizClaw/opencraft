@@ -65,13 +65,15 @@ const MAX_PROCESS_ROWS = 4;
  * The sections share one rhythm: each is toggleable by hand, and no
  * update re-opens one — a plan revision, a new thought and a new process
  * all arrive without moving a section the reader folded. What still
- * folds itself away is finished content: a completed plan and a thought
- * the model has acted on are long and stale the moment they are done,
- * while process output opens on first sight and stays as the reader
- * leaves it, because that tail is itself the result. The process section
- * is about running work and nothing else: a process that stopped has no
- * activity left to report, so its row — and with it the exit status and
- * the output it printed — leaves at the next read, and the transcript is
+ * folds itself away is finished content: a completed plan is long and
+ * stale the moment its last step is done. The thought and the process
+ * output are the other way round — both open on first sight and stay as
+ * the reader leaves them, because they are themselves what the reader
+ * came to watch, and that a thought stopped growing is not the reader
+ * saying they are done with it. The process section is about running
+ * work and nothing else: a process that stopped has no activity left to
+ * report, so its row — and with it the exit status and the output it
+ * printed — leaves at the next read, and the transcript is
  * what keeps the record. The feed goes on reporting a stopped process for
  * a while; that is the feed's read, not what the card shows. Nothing here
  * acts on the sandbox: process output is read-only, and acting on a
@@ -274,12 +276,16 @@ function PlanSection({ plan, live }: { plan: PlanSnapshot; live: boolean }) {
   );
 }
 
-// ThinkSection is the model's latest reasoning block. Reasoning is the
-// longest text the card holds and stops being the interesting part the
-// moment the model acts on it, so the section opens with the live block
-// and folds away to its header once the thought is done — while keeping
-// that last block, which is what the card is for. A block that streams
-// in later does not re-open a folded section.
+// ThinkSection is the model's latest reasoning block. The section opens
+// with the block and stays as the reader leaves it: a thought is the
+// model's own account of what it is doing, and a block that stops
+// growing is still the newest thing the card has to show — the reader
+// folds it when they are done with it, not when the stream moves on.
+// It opens by default rather than with `live`, because the card mounts
+// before a turn's first token: a block that starts streaming later
+// would otherwise find the section closed for the rest of the card's
+// life. `live` is a read-out here, not a fold — it drives the spinner
+// and the title.
 function ThinkSection({
   id,
   text,
@@ -290,10 +296,7 @@ function ThinkSection({
   live: boolean;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(live);
-  useEffect(() => {
-    if (!live) setOpen(false);
-  }, [live]);
+  const [open, setOpen] = useState(true);
   // The revision tracks the stream (its length) as well as the block, so
   // every token re-pins the block while it is live.
   const tail = useStickyTail(`${id}|${open ? '1' : '0'}|${text.length}`);

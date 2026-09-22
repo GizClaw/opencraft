@@ -230,10 +230,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   neither does — which is why there is no close button, and why a
   finished plan, the last thought and a stopped process's tail are the
   transcript's to keep afterwards. Inside that life each section folds
-  itself when its content is done (a completed plan, a thought the model
-  has acted on), and no update re-opens one the reader folded: a plan
-  revision, a new thought and a new process all arrive without moving a
-  section that was closed by hand. The card itself folds the same way:
+  itself when its content is done — a completed plan — while the thought
+  and the process output open on first sight and stay as the reader
+  leaves them, because they are themselves what the reader came to
+  watch, and no update re-opens one the reader folded: a plan revision,
+  a new thought and a new process all arrive without moving a section
+  that was closed by hand. The card itself folds the same way:
   its header is one button that folds the whole overlay down to itself
   — and shrinks it to the header's own width — while the dot goes on
   pulsing in it, so the corner comes back without losing the report
