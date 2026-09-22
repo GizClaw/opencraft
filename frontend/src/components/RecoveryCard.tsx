@@ -73,12 +73,14 @@ export function RecoveryCard() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-dim">
-        {report.ran
-          ? t('config.diagRecoveryLast', {
-              at: formatDateTime(report.at ?? ''),
-              recovered: report.recovered,
-            })
-          : t('config.diagRecoveryNone')}
+        {report.workspace_holder
+          ? t('config.diagRecoveryHeld', { holder: report.workspace_holder })
+          : report.ran
+            ? t('config.diagRecoveryLast', {
+                at: formatDateTime(report.at ?? ''),
+                recovered: report.recovered,
+              })
+            : t('config.diagRecoveryNone')}
       </p>
       {report.workspace && (
         <>

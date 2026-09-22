@@ -10,7 +10,7 @@ import (
 
 func TestAutomationHostLifecycle(t *testing.T) {
 	ctx := context.Background()
-	r := NewRuntime(t.TempDir(), t.TempDir())
+	r := NewRuntime(t.TempDir(), t.TempDir(), "")
 	if err := r.OpenUserDB(ctx); err != nil {
 		t.Fatalf("open user db: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestAutomationHostLifecycle(t *testing.T) {
 }
 
 func TestAutomationHostRequiresOpenUserDB(t *testing.T) {
-	r := NewRuntime(t.TempDir(), t.TempDir())
+	r := NewRuntime(t.TempDir(), t.TempDir(), "")
 	host := NewAutomationHost(r)
 	if _, err := host.AutomationsList(context.Background()); err == nil {
 		t.Fatal("list before OpenUserDB must fail")

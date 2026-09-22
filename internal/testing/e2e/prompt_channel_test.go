@@ -37,6 +37,7 @@ func TestBasePromptReachesProviderAsFirstSystemMessage(t *testing.T) {
 		WorkDir:   workDir,
 		ConfigDir: configDir,
 		Prompt:    "hello",
+		Quiet:     true,
 	})
 	if err != nil {
 		t.Fatalf("headless.Run: %v", err)

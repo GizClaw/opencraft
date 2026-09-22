@@ -17,9 +17,11 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop"
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
+	otellog "go.opentelemetry.io/otel/log"
 )
 
 //go:embed all:frontend/dist
@@ -39,19 +41,21 @@ func main() {
 		os.Exit(headless.Main(os.Args[2:]))
 	}
 
-	d, err := desktop.New(desktop.Options{
-		UserDir: os.Getenv("V3_USER_DIR"),
-		DataDir: os.Getenv("V3_DATA_DIR"),
-	})
+	// Resolve the two roots and the single-instance identity before any
+	// machinery starts: application.New performs the single-instance
+	// check, and the desktop composition must not run before it, or a
+	// second instance would seed directories and logs on its way to
+	// exiting.
+	launch, err := config.ResolveLaunch(os.Args[1:], os.Getenv)
 	if err != nil {
 		log.Fatalf("opencraft: %v", err)
 	}
-	d.SetDialogIcon(trayIcon)
 
 	var shell *desktop.Shell
+	var d *desktop.Desktop
 
-	app := application.New(application.Options{
-		Name:        "OpenCraft",
+	appOpts := application.Options{
+		Name:        launch.AppName,
 		Description: "A local-first work partner built on flowcraft",
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -60,25 +64,62 @@ func main() {
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
 		Linux: application.LinuxOptions{
-			ProgramName: "OpenCraft",
+			ProgramName: launch.AppName,
 		},
-		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID: "com.GizClaw.opencraft",
+		ShouldQuit: func() bool {
+			// The desktop composition is built after application.New
+			// (so a rejected second instance never touches the state
+			// root); a quit request arriving in that window finds no
+			// Desktop yet and is allowed.
+			if d == nil {
+				return true
+			}
+			return d.QuitAllowed()
+		},
+	}
+	if launch.SingleInstance {
+		appOpts.SingleInstance = &application.SingleInstanceOptions{
+			// The id is derived from the canonical state root, so two
+			// instances of one root are mutually exclusive while a dev
+			// profile (another root) runs side by side.
+			UniqueID: launch.InstanceID,
+			// A rejected second instance is a mistake (or a stale
+			// launcher), never a silent success.
+			ExitCode: 1,
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				telemetry.Info(context.Background(),
 					fmt.Sprintf("desktop: second instance args=%v workingDir=%s",
-						data.Args, data.WorkingDir))
+						data.Args, data.WorkingDir),
+					otellog.String("profile", launch.Profile),
+					otellog.String("state_root", launch.DataDir),
+					otellog.String("app_home", launch.AppHome))
 				desktop.ShowMainWindow(shell)
 			},
-		},
-		ShouldQuit: func() bool {
-			return d.QuitAllowed()
-		},
+		}
+	} else {
+		log.Printf("opencraft: %s runs without the single-instance lock "+
+			"(state_root=%s); a second scheduler on the same root is on you",
+			launch.AppName, launch.DataDir)
+	}
+	app := application.New(appOpts)
+
+	d, err = desktop.New(desktop.Options{
+		WorkDir:    launch.WorkDir,
+		UserDir:    launch.ConfigDir,
+		DataDir:    launch.DataDir,
+		AppHome:    launch.AppHome,
+		AppName:    launch.AppName,
+		Profile:    launch.Profile,
+		InstanceID: launch.InstanceID,
 	})
+	if err != nil {
+		log.Fatalf("opencraft: %v", err)
+	}
+	d.SetDialogIcon(trayIcon)
 
 	mainW := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:      "main",
-		Title:     "OpenCraft",
+		Title:     launch.AppName,
 		Width:     1440,
 		Height:    900,
 		MinWidth:  1024,
@@ -142,8 +183,13 @@ func main() {
 		func() { d.RequestQuit() },
 	)
 
-	// macOS polish (traffic-light alignment, scroll elasticity) after the
-	// first page load; no-op on Windows/Linux.
+	// macOS polish (traffic-light alignment, scroll elasticity). The buttons
+	// exist before the first page load, so the style is applied right away and
+	// again after every load - that is the last layout pass of the startup
+	// sequence, and the one that decides where the buttons come to rest
+	// (mac_window_darwin.go keeps them there across resizes). No-op on
+	// Windows/Linux.
+	applyOpenCraftWindowStyle(mainW)
 	registerOpenCraftWindowStyleRefresh(mainW)
 
 	if err := app.Run(); err != nil {

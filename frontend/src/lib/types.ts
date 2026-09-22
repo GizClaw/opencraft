@@ -903,6 +903,11 @@ export interface Recovery {
   archived: number;
   discarded: number;
   skipped_live: number;
+  /**
+   * The live process holding this workspace's lock, when another one does:
+   * no pass ran here and the checkpoints wait for the next owner.
+   */
+  workspace_holder?: string;
   failed: number;
   pending: number;
   /** Every row of the checkpoint table. */
@@ -922,6 +927,12 @@ export interface DiagnosticsReport {
   arch: string;
   work_dir: string;
   user_dir: string;
+  /** State root: sessions, user.db, logs, cache (one GUI per root). */
+  data_dir?: string;
+  /** Shared content/credential root (keyring, plugins, agents). */
+  app_home?: string;
+  /** State-root profile name; empty is the default instance. */
+  profile?: string;
   config_valid: boolean;
   config_error?: string;
   inference_configured: boolean;

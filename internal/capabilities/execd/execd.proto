@@ -101,6 +101,13 @@ message SandboxPolicy {
   repeated string env_allow = 2;
   map<string, string> env_inject = 3;
   bool env_allow_set = 4;
+  // cache_dir is the sandbox scratch root (Go/tmp build caches) of this
+  // binding. The parent resolves it from the state root
+  // (${ocraft:CACHE}); the child never guesses a user directory of its
+  // own, so a dev-profile parent cannot make the child write into the
+  // installed app's cache. Empty falls back to the historical
+  // <user data root>/cache.
+  string cache_dir = 5;
 }
 
 message Bind {

@@ -64,6 +64,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   place. It parks itself while an HTTP MCP server is configured (that
   client cannot run under a wrapped transport) and says so on the card,
   and `OPENCRAFT_HTTP_PROBE` still forces it on over the switch.
+- A second instance can run next to the installed app: `--profile <name>`
+  (`OPENCRAFT_PROFILE`) keeps the shared *app home* — `config/`,
+  `keyring/`, `plugins/`, `agents/`, user skills — and moves the *state
+  root* to `~/.opencraft-<name>`, so a dev copy inherits the user's
+  configuration, credentials and plugins while its sessions, `user.db`,
+  logs and caches stay its own. `--data-dir DIR` moves both roots (the
+  self-contained instance CI and e2e want), `--app-home DIR` moves only
+  the content root, and `--config-dir DIR` alone keeps the historical
+  `opencraft run --config` rule: the state root becomes the config
+  directory's parent. The embedded deploy document resolves content
+  through a new `${ocraft:APP_HOME}` value (`${ocraft:DATA_DIR}` keeps
+  only state semantics; a contract test pins both halves), the execd
+  child resolves no user directory of its own — the sandbox cache root
+  travels with the bind request — and every root fallback that used to
+  happen silently now logs. The single-instance id is derived from the
+  canonical state root (`com.GizClaw.opencraft.d<hex12>`) instead of the
+  product name, so one state root keeps exactly one GUI process while
+  different roots coexist; a rejected second instance exits 1 instead of
+  silently exiting 0, `OPENCRAFT_NO_SINGLE_INSTANCE=1` deliberately
+  allows two GUIs on one root, and `desktop.New` runs *after*
+  `application.New` so the loser of that race never seeds a directory or
+  a log line on its way out. The profile shows up where a user sees it:
+  the window title, the tray tooltip and a Settings ▸ Diagnostics card
+  naming the profile, the state root and the app home. (#190)
 
 ### Changed
 
@@ -153,6 +177,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than the renderer — the multi-second `frame_max` samples in the log
   were all background windows. Hiding drops the baseline and resuming
   starts a new one, so `frame_max` only describes visible rendering.
+- Crash recovery defers to a live sibling process instead of guessing
+  from timestamps: the first assembly of a workspace takes a
+  non-blocking advisory lock (`<state root>/workspaces/<id>/live.lock` —
+  flock on Unix, a `LockFileEx` range on Windows, dropped by the kernel
+  when the holder dies) and a process that finds another one holding it
+  runs no pass at all. Every checkpoint it can see is either that
+  process's live work or a leftover it deliberately left, so they wait
+  for the next start that owns the workspace; the lock file names the
+  holder, which is what the diagnostics card and the assembly log
+  report. This closes the cross-process case the start-time heuristic
+  could not answer, and it matters because `opencraft run` shares the
+  state root of a running desktop app by design. A filesystem where the
+  lock cannot be taken at all fails open with a warning: a broken lock
+  must not silently disable recovery. (#190)
+- `engine.BuildRuntime` refuses to assemble without a workspace layout.
+  The fallback it used to take resolved the global user data directory,
+  which silently assembled a workspace against whatever state root the
+  process happened to have instead of the one it was launched with.
+  (#190)
 
 ### Fixed
 
@@ -201,6 +244,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same guard the official provider SDKs use, and the fetcher's default
   client leaves `Transport` nil so its requests stay visible to the
   probe.
+- The macOS traffic lights stay on the chat header. The 4pt nudge that
+  lines the three window buttons up with the 44pt header strip ran once
+  per page load and resolved its target as "the first window the app
+  owns", so any frame change AppKit re-laid out (a resize, the zoom
+  button, leaving fullscreen) dropped them back to its 26pt default
+  until the next load. The nudge now takes the main window's native
+  handle from the Wails window and is re-applied from a window-layout
+  observer, skipped while fullscreen so macOS keeps its own placement
+  there.
 
 ## [0.5.3] - 2026-09-17
 

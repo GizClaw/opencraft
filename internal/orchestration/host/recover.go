@@ -57,6 +57,11 @@ type RecoveryReport struct {
 	// SkippedLive counts checkpoints written after this process started:
 	// a sibling process may still own the run, so the pass leaves them.
 	SkippedLive int
+	// WorkspaceHolder names the live process that owns this workspace,
+	// when another process held its advisory lock and this one therefore
+	// ran no pass at all (see claimWorkspaceLock). Empty means this
+	// process owns the workspace.
+	WorkspaceHolder string
 	// Failed counts checkpoints whose recovery write failed. They stay
 	// in the store for the next pass.
 	Failed int
@@ -121,6 +126,7 @@ func (h *Host) recoverInterruptedRuns(ctx context.Context) {
 			otellog.Int("archived_leftovers", report.Archived),
 			otellog.Int("discarded", report.Discarded),
 			otellog.Int("skipped_live", report.SkippedLive),
+			otellog.String("workspace_holder", report.WorkspaceHolder),
 			otellog.Int("failed", report.Failed),
 			otellog.Int("pending", report.Pending))
 	}

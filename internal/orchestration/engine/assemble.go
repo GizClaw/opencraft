@@ -63,6 +63,12 @@ type Options struct {
 	// WorkBase is the sandbox/workspace root. Defaults to the current
 	// working directory (where opencraft was invoked).
 	WorkBase string
+	// AppHome is the shared content and credential root the deploy
+	// document resolves ${ocraft:APP_HOME} to (keyring, plugins,
+	// agents, user skills, hooks.json). Empty falls back to the
+	// configuration directory's parent, which is the historical
+	// single-root layout (~/.opencraft/config -> ~/.opencraft).
+	AppHome string
 	// usageObserver receives every reported inference usage (including
 	// the model actually invoked), with the run context so callers can
 	// attribute usage to the owning turn. Nil disables observation.
@@ -119,6 +125,12 @@ func WithWorkBase(dir string) Option {
 	return func(o *Options) { o.WorkBase = dir }
 }
 
+// WithAppHome overrides the shared content/credential root the deploy
+// document resolves ${ocraft:APP_HOME} to.
+func WithAppHome(dir string) Option {
+	return func(o *Options) { o.AppHome = dir }
+}
+
 // WithUsageObserver installs a usage-report observer. The callback runs
 // on the engine's goroutine and must be non-blocking.
 func WithUsageObserver(fn func(context.Context, inference.Usage)) Option {
@@ -172,6 +184,7 @@ func ocraftResolver(o *Options, dataDir, cacheDir string) *resource.ReferenceRes
 		"WORKDIR":  o.WorkBase,
 		"CACHE":    cacheDir,
 		"DATA_DIR": dataDir,
+		"APP_HOME": o.AppHome,
 	}
 	if o.WorkspaceLayout != nil {
 		values["WORKSPACE_DIR"] = o.WorkspaceLayout.Root
@@ -219,6 +232,13 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			return nil, fmt.Errorf("engine: workdir: %w", err)
 		}
 	}
+	if o.AppHome == "" {
+		// The historical single-root layout: ~/.opencraft/config is the
+		// config directory and ~/.opencraft the content root that
+		// carries keyring/, plugins/ and agents/. The desktop passes the
+		// resolved root explicitly (it can differ from the state root).
+		o.AppHome = filepath.Dir(o.ConfigBase)
+	}
 	// Inference wiring is generated into the user configuration layer,
 	// so nothing declares the router before the setup page runs. Say
 	// that plainly instead of letting the graph fail on a missing
@@ -241,25 +261,19 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	if doc, err = withVideoHints(doc); err != nil {
 		return nil, err
 	}
-	dataDir := ""
-	if o.WorkspaceLayout != nil {
-		dataDir = o.WorkspaceLayout.DataDir
+	// The layout is required for everything below: the state-resolved
+	// path values and the cache directory this assembly creates. A
+	// missing layout used to fall back to the global user data root,
+	// which silently assembled a workspace against the wrong root.
+	if o.WorkspaceLayout == nil {
+		return nil, fmt.Errorf("engine: workspace layout is required")
 	}
-	if dataDir == "" {
-		var err error
-		dataDir, err = config.UserDataDir()
-		if err != nil {
-			return nil, err
-		}
-	}
+	dataDir := o.WorkspaceLayout.DataDir
 	cacheDir := filepath.Join(dataDir, "cache")
 	for _, sub := range []string{"go", "tmp"} {
 		if err := os.MkdirAll(filepath.Join(cacheDir, sub), 0o755); err != nil {
 			return nil, err
 		}
-	}
-	if o.WorkspaceLayout == nil {
-		return nil, fmt.Errorf("engine: workspace layout is required")
 	}
 
 	loader := resource.NewLoader(

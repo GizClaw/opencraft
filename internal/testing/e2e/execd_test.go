@@ -58,8 +58,10 @@ func TestBinaryRunExecCommandThroughExecd(t *testing.T) {
 	cmd := exec.Command(bin, "run", "--json",
 		"--workdir", workDir, "--config", configDir,
 		"--prompt", "run the echo command")
-	// The forked execd child resolves ~/.opencraft from HOME, so the run
-	// stays isolated from the developer's real profile.
+	// HOME decides the roots the parent resolves (--config moves the
+	// state root with it), so the run stays isolated from the
+	// developer's real profile - and the forked child inherits the
+	// already-resolved cache root through the bind request.
 	cmd.Env = append(os.Environ(), "HOME="+home)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

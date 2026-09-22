@@ -5,6 +5,16 @@ vars:
   BIN_DIR: "bin"
   PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "npm"}}'
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+  # Profile the dev task runs as. The dev copy keeps the app home
+  # (~/.opencraft: config, keyring, plugins, agents) and moves the state
+  # root to ~/.opencraft-dev, so it inherits the installed app's settings
+  # and credentials while its sessions, user.db and logs stay its own —
+  # which is what lets `wails3 task dev` run next to the installed app.
+  # `wails3 task dev DEV_PROFILE=other` picks another profile; running
+  # against the installed app's own roots means the installed app must be
+  # closed first (one GUI process per state root), e.g. `wails3 task run`
+  # after a plain `wails3 task build`.
+  DEV_PROFILE: '{{.DEV_PROFILE | default "dev"}}'
   # Target OS for build/package/run. Defaults to the host OS, and is overridden
   # by `wails3 build GOOS=...` (or the GOOS env var) for cross-compilation. The
   # tasks below dispatch to the matching platform Taskfile via this variable.
@@ -34,6 +44,12 @@ tasks:
 
   dev:
     summary: Runs the application in development mode
+    # The whole dev chain (wails3 build, the vite server, the run task)
+    # inherits this, so one variable decides the instance the window runs
+    # as. A second dev instance needs another profile and another
+    # WAILS_VITE_PORT.
+    env:
+      OPENCRAFT_PROFILE: '{{.DEV_PROFILE}}'
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 

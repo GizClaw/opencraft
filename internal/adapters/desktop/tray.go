@@ -22,6 +22,16 @@ type desktopTray struct {
 
 // SetupTray builds the system tray. onShow/onQuit are provided by the entry
 // point so tray actions go through the same v3 lifecycle as window controls.
+// appTooltip names the instance in the tray: the resolved product name
+// ("OpenCraft (dev)") when the launcher set one, the localized base name
+// otherwise.
+func (d *Desktop) appTooltip(fallback string) string {
+	if d != nil && d.appName != "" {
+		return d.appName
+	}
+	return fallback
+}
+
 func (d *Desktop) SetupTray(
 	app *application.App,
 	icon []byte,
@@ -29,6 +39,7 @@ func (d *Desktop) SetupTray(
 	onQuit func(),
 ) {
 	texts := d.core.Shell.Texts()
+	tooltip := d.appTooltip(texts.TrayTooltip)
 	menu := app.NewMenu()
 	versionItem := menu.Add(
 		fmt.Sprintf(texts.VersionFormat, version.ServiceVersion))
@@ -39,7 +50,7 @@ func (d *Desktop) SetupTray(
 	aboutItem.SetTooltip(texts.VersionTooltip)
 	menu.AddSeparator()
 	showItem := menu.Add(texts.Show)
-	showItem.SetTooltip(texts.TrayTooltip)
+	showItem.SetTooltip(tooltip)
 	showItem.OnClick(func(*application.Context) {
 		if onShow != nil {
 			onShow()
@@ -47,7 +58,7 @@ func (d *Desktop) SetupTray(
 	})
 	menu.AddSeparator()
 	quitItem := menu.Add(texts.Quit)
-	quitItem.SetTooltip(texts.TrayTooltip)
+	quitItem.SetTooltip(tooltip)
 	quitItem.OnClick(func(*application.Context) {
 		if onQuit != nil {
 			onQuit()
@@ -56,7 +67,7 @@ func (d *Desktop) SetupTray(
 
 	tray := app.SystemTray.New()
 	tray.SetIcon(icon)
-	tray.SetTooltip(texts.TrayTooltip)
+	tray.SetTooltip(tooltip)
 	tray.SetMenu(menu)
 
 	t := &desktopTray{
@@ -76,13 +87,14 @@ func (t *desktopTray) refresh() {
 		return
 	}
 	texts := t.desktop.core.Shell.Texts()
-	t.tray.SetTooltip(texts.TrayTooltip)
+	tooltip := t.desktop.appTooltip(texts.TrayTooltip)
+	t.tray.SetTooltip(tooltip)
 	t.version.SetLabel(fmt.Sprintf(texts.VersionFormat, version.ServiceVersion))
 	t.version.SetTooltip(texts.VersionTooltip)
 	t.about.SetLabel(texts.About)
 	t.about.SetTooltip(texts.VersionTooltip)
 	t.show.SetLabel(texts.Show)
-	t.show.SetTooltip(texts.TrayTooltip)
+	t.show.SetTooltip(tooltip)
 	t.quit.SetLabel(texts.Quit)
-	t.quit.SetTooltip(texts.TrayTooltip)
+	t.quit.SetTooltip(tooltip)
 }

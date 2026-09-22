@@ -3047,6 +3047,24 @@ export function ConfigPage() {
                         <br />
                         {diag.user_dir}
                       </p>
+                      {/* The two roots behind this window. A dev profile
+                          shares the config dir and app home with the
+                          installed app and owns another state root, so
+                          "which instance am I looking at" is answered
+                          here instead of by guessing from the paths. */}
+                      {diag.data_dir && (
+                        <p className="mt-1 text-micro text-faint">
+                          {t('config.diagProfile')}:{' '}
+                          {diag.profile || t('config.diagProfileDefault')}
+                        </p>
+                      )}
+                      {diag.data_dir && (
+                        <p className="mt-0.5 break-all font-mono text-micro text-faint">
+                          {t('config.diagStateRoot')}: {diag.data_dir}
+                          <br />
+                          {t('config.diagAppHome')}: {diag.app_home}
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}

@@ -82,6 +82,22 @@ describe('RecoveryCard', () => {
     ).toBeInTheDocument();
   });
 
+  it('names the live process holding the workspace', async () => {
+    apiMock.recovery.mockResolvedValue({
+      ...REPORT,
+      ran: false,
+      workspace_holder: 'pid 4242 (gui)',
+    });
+
+    render(<RecoveryCard />);
+
+    expect(
+      await screen.findByText(
+        'Another live process owns this workspace (pid 4242 (gui)); this process ran no recovery.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('reports a binding failure instead of a clean bill of health', async () => {
     apiMock.recovery.mockRejectedValue(new Error('store busy'));
 
