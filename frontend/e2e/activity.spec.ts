@@ -57,6 +57,15 @@ const reason = (text: string) => ({
   },
 });
 
+const say = (text: string) => ({
+  type: 'stream',
+  data: {
+    run_id: 'r-1',
+    conversation_id: 's-1',
+    delta: { type: 'part', part: { type: 'text', text } },
+  },
+});
+
 const running = {
   process_id: 'p-1',
   argv: ['npm', 'run', 'dev'],
@@ -98,11 +107,38 @@ test('shows the model thinking while it reasons, then leaves with the turn', asy
     'Weighing the two layouts. The overlay wins.',
   );
 
-  // The turn ends and the card goes with it: a thought the model has
-  // acted on is finished activity, and the overlay is not a second place
-  // to read the transcript from.
+  // The turn ends and the card goes with it: the overlay reports work in
+  // flight, and it is not a second place to read the transcript from.
   await endTurn(page);
   await expect(page.getByTestId('activity-card')).toHaveCount(0);
+});
+
+test('keeps the thought after the model moves on to the answer', async ({
+  page,
+}) => {
+  await startChat(page);
+  await emit(page, reason('Reading the two error paths first.'));
+  await expect(page.getByTestId('think-body')).toHaveText(
+    'Reading the two error paths first.',
+  );
+
+  // The answer starts streaming: the block is done, and the card reports
+  // that (the ellipsis and the spinner go) without folding the thought
+  // away — it is the model's own account of the work, and the section
+  // stays as the reader leaves it.
+  await emit(page, say('The first path returns early.'));
+  await expect(page.getByTestId('think-section-header')).toHaveText('Thinking');
+  await expect(page.getByTestId('think-body')).toHaveText(
+    'Reading the two error paths first.',
+  );
+  await expect(page.getByTestId('think-section-header')).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  );
+
+  // And it is still the reader's to fold.
+  await page.getByTestId('think-section-header').click();
+  await expect(page.getByTestId('think-body')).toHaveCount(0);
 });
 
 // The card's one control sits at its top: the header folds the whole

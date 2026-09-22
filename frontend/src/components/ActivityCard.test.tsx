@@ -166,7 +166,7 @@ describe('ActivityCard', () => {
     ).toBeInTheDocument();
   });
 
-  it('folds the thought away to its header once reasoning ends', () => {
+  it('keeps the thought open once reasoning ends', () => {
     const { rerender } = render(
       <ActivityCard
         plan={null}
@@ -177,10 +177,36 @@ describe('ActivityCard', () => {
     expect(screen.getByTestId('think-body')).toBeInTheDocument();
 
     rerender(<ActivityCard plan={null} think={think} processes={[]} />);
-    // The block is kept (that is what "keep the last thought" means) but
-    // its body folds to one row.
+    // Reasoning ending is the model moving on, not the reader: the
+    // section reports it (the ellipsis and the spinner go) and the block
+    // stays where it is, readable.
     expect(screen.getByText('Thinking')).toBeInTheDocument();
+    expect(screen.getByTestId('think-body')).toHaveTextContent(think.text);
+    expect(screen.getByTestId('think-section-header')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('shows a thought that starts after the card mounted', () => {
+    const { rerender } = render(
+      <ActivityCard plan={plan} think={null} processes={[]} />,
+    );
     expect(screen.queryByTestId('think-body')).toBeNull();
+
+    // The card mounts with the turn and the turn's first token arrives
+    // later: the block opens rather than landing behind a fold the reader
+    // never made.
+    rerender(
+      <ActivityCard
+        plan={plan}
+        think={{ id: 'think-2', text: 'Weighing the layouts.', live: true }}
+        processes={[]}
+      />,
+    );
+    expect(screen.getByTestId('think-body')).toHaveTextContent(
+      'Weighing the layouts.',
+    );
   });
 
   it('keeps a thought the reader folded folded when another block streams', () => {
