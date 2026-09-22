@@ -3,6 +3,7 @@ package execd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -273,8 +274,45 @@ func TestSessionSignalInterrupts(t *testing.T) {
 	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if _, err := session.Wait(waitCtx); err != nil {
-		t.Fatalf("wait after signal: %v", err)
+		t.Fatalf("wait after signal: %v (the process outlived it: %s)",
+			err, processSnapshot(session.PID()))
 	}
+}
+
+// processSnapshot reports how the interrupted process looked when the
+// wait gave up: its group and state, and on Linux the signal mask bits
+// that decide whether an interrupt can ever land.
+//
+// A timeout alone cannot say which way a SIGINT to the process group
+// fails to end a `/bin/sleep`. The signal may have gone to a group the
+// process is not in (`pgid` next to `pid`), the process may have exec'd
+// with SIGINT ignored or blocked (`sigIgn`/`sigBlk`, bit 0x2), a SIGINT
+// may be waiting unread (`sigPnd`), or the process may already be a
+// zombie nobody reaped (`stat` Z, which points at the exit path instead
+// of the signal). CI is the only place this reproduces so far, so the
+// failure carries its own evidence instead of another rerun.
+func processSnapshot(pid int) string {
+	parts := []string{fmt.Sprintf("pid=%d", pid)}
+	out, err := exec.Command("ps", "-o", "ppid=,pgid=,stat=,command=", "-p",
+		strconv.Itoa(pid)).Output()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		parts = append(parts, "ps: process gone")
+	} else {
+		parts = append(parts, "ps: "+strings.Join(strings.Fields(string(out)), " "))
+	}
+	if data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "status")); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			switch fields[0] {
+			case "SigPnd:", "ShdPnd:", "SigBlk:", "SigIgn:", "SigCgt:":
+				parts = append(parts, fields[0]+" "+fields[1])
+			}
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 // TestSessionResizeOnTTY pins the resize RPC on a real pty session.
