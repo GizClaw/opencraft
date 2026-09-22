@@ -3,10 +3,9 @@
 //
 // This lives apart from GraphView.tsx on purpose. It is data, not view: the
 // contract test that keeps it honest (GraphView.catalog.test.ts) compares it
-// against the node scripts' `cfg.*` reads, and importing the component module
-// would pull in `@wailsio/runtime`, whose drag module starts a 50ms poll that
-// outlives a short-lived test environment (`window is not defined` after
-// teardown). A pure module keeps both directions checkable.
+// against the node scripts' `cfg.*` reads, and the component module would drag
+// in the editor's canvas and the wails runtime, neither of which that test
+// needs. A pure module keeps both directions checkable.
 //
 // The catalog is hand-maintained and the node scripts are the only readers of
 // most of these keys: a key a node does not read is a silent no-op for whoever
