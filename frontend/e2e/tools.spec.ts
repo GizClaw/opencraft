@@ -36,6 +36,58 @@ const STATE = {
   video: { instances: [] },
 };
 
+// TALL_STATE is the bytedance image vocabulary: ten knobs with dotted
+// names, which is more than the settings panel is tall. The dialog it
+// opens must stay inside the window anyway.
+const TALL_STATE = {
+  image: {
+    instances: [
+      {
+        id: 'bytedance-sso-images',
+        label: 'ByteDance',
+        impl: 'bytedance',
+        managed: false,
+        fields: [
+          {
+            name: 'guidance_scale',
+            kind: 'float',
+            min: 0,
+            exclusive_min: true,
+          },
+          { name: 'watermark', kind: 'bool' },
+          {
+            name: 'optimize_prompt.mode',
+            kind: 'enum',
+            values: ['standard', 'fast'],
+          },
+          {
+            name: 'optimize_prompt.thinking',
+            kind: 'enum',
+            values: ['auto', 'enabled', 'disabled'],
+          },
+          { name: 'sequential', kind: 'bool' },
+          { name: 'sequential_max_images', kind: 'int', min: 1, max: 15 },
+          {
+            name: 'size_token',
+            kind: 'enum',
+            values: ['1k', '1.5k', '2k', '3k', '4k', 'adaptive'],
+          },
+          { name: 'web_search', kind: 'bool' },
+          { name: 'layer_decomposition', kind: 'bool' },
+          {
+            name: 'background',
+            kind: 'enum',
+            values: ['transparent', 'opaque'],
+          },
+        ],
+        values: {},
+        presets: [{ id: 'no_watermark', fields: { watermark: false } }],
+      },
+    ],
+  },
+  video: { instances: [] },
+};
+
 test('edits a generation tool from the tools tab', async ({ page }) => {
   await page.addInitScript(
     mockBackend as never,
@@ -112,6 +164,35 @@ test('edits a generation tool from the tools tab', async ({ page }) => {
     )
     .toBe('high');
   await expect(dialog.getByText('Saved')).toBeVisible();
+});
+
+test('keeps a tall provider vocabulary inside the window', async ({ page }) => {
+  await page.addInitScript(
+    mockBackend as never,
+    {
+      handlers: {
+        'Config.ToolOptions': `async () => (${JSON.stringify(TALL_STATE)})`,
+      },
+    } as never,
+  );
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'Tools' }).click();
+  await page.getByText('Image generation', { exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Image generation' });
+  await expect(dialog).toBeVisible();
+  // The dialog is taller than the settings panel it opens from, so the
+  // panel used to clip its own header and its first rows away. Every
+  // landmark has to be fully on screen, not merely in the DOM.
+  await expect(
+    dialog.getByRole('heading', { name: 'Image generation' }),
+  ).toBeInViewport({ ratio: 0.9 });
+  await expect(dialog.getByText('Guidance scale')).toBeInViewport({
+    ratio: 0.9,
+  });
+  await expect(
+    dialog.getByRole('button', { name: 'Save & apply' }),
+  ).toBeInViewport();
 });
 
 test('configures web search from the tools tab', async ({ page }) => {
