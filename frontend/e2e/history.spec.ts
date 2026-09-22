@@ -107,7 +107,7 @@ test('collapsing a workspace folds an expanded session list back', async ({
   page,
 }) => {
   const WS = '/Users/me/projects/opencraft';
-  // Twelve sessions: the sidebar previews the ten newest and offers the
+  // Twelve sessions: the sidebar previews the four newest and offers the
   // rest behind "More sessions".
   const sessions = Array.from({ length: 12 }, (_, i) => ({
     id: `s-${i}`,
@@ -127,7 +127,7 @@ test('collapsing a workspace folds an expanded session list back', async ({
   const more = page.getByTestId('more-sessions');
   const header = page.locator(`[data-tip="${WS}"]`);
 
-  await expect(rows).toHaveCount(10);
+  await expect(rows).toHaveCount(4);
   await expect(more).toBeVisible();
 
   await more.click();
@@ -140,7 +140,7 @@ test('collapsing a workspace folds an expanded session list back', async ({
   await expect(rows).toHaveCount(0);
 
   await header.click();
-  await expect(rows).toHaveCount(10);
+  await expect(rows).toHaveCount(4);
   await expect(more).toBeVisible();
 });
 
