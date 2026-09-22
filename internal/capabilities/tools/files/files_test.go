@@ -205,6 +205,53 @@ func TestListDirOnFileRejected(t *testing.T) {
 	}
 }
 
+// TestListDirMaxDepthOnNestedDirs pins the depth arithmetic on the
+// workspace-path convention: a nested directory is deeper than its parent
+// on every platform, so max_depth trims it. Counting the host separator
+// would read every path as depth 0 and this walk would run to the leaf.
+func TestListDirMaxDepthOnNestedDirs(t *testing.T) {
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{
+		"top.txt":                "top",
+		"src/one.go":             "package src",
+		"src/deep/two.go":        "package deep",
+		"src/deep/more/three.go": "package more",
+	})
+	got, err := execute(t, tool.list(), `{"path":".","recursive":true,"max_depth":1}`)
+	if err != nil {
+		t.Fatalf("list_dir: %v", err)
+	}
+	for _, want := range []string{"top.txt", "src/one.go", "src/deep/two.go"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("list_dir max_depth=1 missing %s: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "three.go") {
+		t.Errorf("list_dir max_depth=1 walked into depth 2: %s", got)
+	}
+}
+
+// TestDepthBelowOnWorkspacePaths is the same contract at the arithmetic
+// level, for the root-relative and subdirectory-relative forms.
+func TestDepthBelowOnWorkspacePaths(t *testing.T) {
+	for _, tc := range []struct {
+		root, path string
+		want       int
+	}{
+		{".", "a.go", 0},
+		{".", "src/a.go", 1},
+		{".", "src/deep/a.go", 2},
+		{"src", "src/a.go", 0},
+		{"src", "src/deep/a.go", 1},
+		{"src/", "src/deep/a.go", 1},
+	} {
+		if got := depthBelow(tc.root, tc.path); got != tc.want {
+			t.Errorf("depthBelow(%q, %q) = %d, want %d",
+				tc.root, tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestGrepFixedRegexAndCase(t *testing.T) {
 	tool, _ := newTestTool(t)
 	writeTree(t, tool.ws, map[string]string{

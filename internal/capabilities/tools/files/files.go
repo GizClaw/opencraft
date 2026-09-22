@@ -751,12 +751,16 @@ func (t *globTool) execute(ctx context.Context, arguments string) (string, error
 var errStopWalk = errors.New("files: stop walk")
 
 // depthBelow returns p's depth below root (0 for direct children).
+//
+// The walk hands back workspace paths, which are slash-separated on every
+// platform, so depth counts "/" and never the host separator: with
+// filepath.Separator every Windows path would read as depth 0.
 func depthBelow(root, p string) int {
 	if root == "." {
-		return strings.Count(p, string(filepath.Separator))
+		return strings.Count(p, "/")
 	}
 	rel := strings.TrimPrefix(p, strings.TrimSuffix(root, "/")+"/")
-	return strings.Count(rel, string(filepath.Separator))
+	return strings.Count(rel, "/")
 }
 
 // validateFilePath rejects "..", ".", and empty paths for file

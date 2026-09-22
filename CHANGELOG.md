@@ -99,6 +99,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- flowcraft core moves to v0.4.8, closing an interrupt that could
+  silently do nothing: a sandbox session is spawned with the signal mask
+  cleared on a pinned thread and restored afterwards, so a child no
+  longer inherits a blocked SIGINT and `Session.Signal(Interrupt)` ends
+  the process instead of leaving the signal pending forever (that was
+  the intermittent `wait after signal: deadline exceeded` the execd
+  suite hit). Walk and Glob hand back slash-separated workspace paths on
+  every platform, which is the form this repository's tools and desktop
+  bindings already emit; `list_dir`'s depth arithmetic follows it now
+  (it counted the host separator, which on Windows would have read every
+  path as depth 0 and let `max_depth` walk to the leaf).
 - flowcraft core moves to v0.4.7, carrying the narrow board channel
   reads this repository's hot paths asked for: Go gains
   `Board.ChannelLen`/`LastMessage`/`ChannelTail`/`ChannelView` and a
