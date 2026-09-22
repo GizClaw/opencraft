@@ -567,3 +567,129 @@ describe('ApplyPatchView', () => {
     expect(screen.getByRole('button', { name: 'a.txt' })).toBeInTheDocument();
   });
 });
+
+// The ask card's header row is one line: an icon, the question, the
+// answer, a chevron. The answer used to be unbounded — a multi-choice
+// answer joined its option texts, and three long ones made a chip wider
+// than the card, which squeezed the question to nothing and painted both
+// past the edge. The chip is capped and shortened now, and what it had to
+// shorten stays reachable: on hover, and in the expanded body.
+describe('AskUserView', () => {
+  const OPTIONS = [
+    'Merge #197 (the flake it fixes is the one that turns main red)',
+    'Give TestSessionSignalInterrupts a timeout self-diagnosis (dump child /proc/<pid>/status)',
+    'Track the execd flake down: rebuild the Linux environment with bwrap + sudo',
+    'Add fuzz failure notifications to the release workflow',
+    'Leave all of it for now, I will look at #197 first',
+  ];
+
+  function ask(overrides: Partial<ToolView> = {}) {
+    return tool({
+      name: 'ask_user',
+      args: JSON.stringify({
+        question: 'What next? (#197 all green pending merge, the execd flake)',
+        kind: 'select',
+        multiple: true,
+        options: OPTIONS,
+      }),
+      ...overrides,
+    });
+  }
+
+  it('names a multi-choice answer by its count, not by the option texts', () => {
+    render(
+      <ToolCard
+        tool={ask({
+          result: JSON.stringify({
+            cancelled: false,
+            choice: '',
+            choices: OPTIONS.slice(0, 3),
+            other: '',
+            text: '',
+          }),
+        })}
+      />,
+    );
+
+    const chip = screen.getByText('✓ 3 choices');
+    // The question keeps its place in the row; the chip is capped so it
+    // cannot take the row from it (the geometry itself is asserted in
+    // e2e/chat.spec.ts, where a real layout can be measured).
+    expect(chip.className).toMatch(/max-w-\[/);
+    expect(chip.className).toContain('truncate');
+    expect(
+      screen.getByText(/What next\? \(#197 all green pending merge/),
+    ).toBeInTheDocument();
+    // Nothing is lost: the chip names what the joined texts said.
+    expect(chip).toHaveAttribute('data-tip', OPTIONS.slice(0, 3).join(', '));
+  });
+
+  it('keeps a long single answer, shortened on the chip and whole on hover', () => {
+    const answer =
+      'Give TestSessionSignalInterrupts a timeout self-diagnosis (dump the child /proc/<pid>/status SigBlk + ps process group, so the next red CI carries its own evidence)';
+    render(
+      <ToolCard
+        tool={ask({
+          result: JSON.stringify({
+            cancelled: false,
+            choice: answer,
+            choices: [],
+            other: '',
+            text: '',
+          }),
+        })}
+      />,
+    );
+
+    const chip = screen.getByText(`✓ ${answer}`);
+    expect(chip).toHaveAttribute('data-tip', answer);
+    expect(chip.className).toMatch(/max-w-\[/);
+  });
+
+  it('names a written answer over the ticked options', () => {
+    render(
+      <ToolCard
+        tool={ask({
+          result: JSON.stringify({
+            cancelled: false,
+            choice: '',
+            choices: OPTIONS.slice(0, 2),
+            other: 'take the first two, I will read the rest later',
+            text: '',
+          }),
+        })}
+      />,
+    );
+    expect(
+      screen.getByText('✓ take the first two, I will read the rest later'),
+    ).toBeInTheDocument();
+  });
+
+  it('spells the multi-choice answer out once the card is expanded', async () => {
+    const user = userEvent.setup();
+    const chosen = OPTIONS.slice(0, 3);
+    render(
+      <ToolCard
+        tool={ask({
+          result: JSON.stringify({
+            cancelled: false,
+            choice: '',
+            choices: chosen,
+            other: '',
+            text: '',
+          }),
+        })}
+      />,
+    );
+    await user.click(screen.getByText('✓ 3 choices'));
+    // Every option is listed, the ticked ones marked as chosen, and the
+    // answer line repeats them in full — the chip's count is a summary,
+    // not the only place the answer exists.
+    for (const option of OPTIONS) {
+      expect(screen.getAllByText(option).length).toBeGreaterThan(0);
+    }
+    expect(
+      screen.getByText(chosen.join(', '), { exact: false }),
+    ).toBeInTheDocument();
+  });
+});

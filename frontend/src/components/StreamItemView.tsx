@@ -3,10 +3,12 @@ import { itemText, useStore, type AssistantItem } from '../lib/store';
 import { Markdown } from './Markdown';
 import { ApplyPatchView, ToolCard, WriteView } from './ToolCard';
 
-// AssistantText renders one assistant text block. While the message is
-// still streaming it stays plain text: a half-written `#` or `**` would
+// AssistantText renders one assistant text block. The block the model is
+// still writing stays plain text: a half-written `#` or `**` would
 // otherwise be parsed as a heading/mark on every delta and make the font
-// size jump around. Completed messages render markdown once.
+// size jump around. A block that has stopped growing renders markdown —
+// parsed once, and the memo below keeps it out of every later delta of
+// the block that followed it.
 const AssistantText = memo(function AssistantText({
   text,
   streaming,
@@ -29,7 +31,11 @@ const AssistantText = memo(function AssistantText({
 });
 
 // StreamItemView renders one assistant stream item in the full chat
-// transcript style.
+// transcript style. streaming marks the one item the model is still
+// writing (the message's trailing block, while its turn runs); every
+// other item is settled and renders its final form. That is what makes
+// a text block a tool call ended flip to markdown as the call arrives
+// instead of at the turn end.
 export const StreamItemView = memo(function StreamItemView({
   item,
   streaming = false,
