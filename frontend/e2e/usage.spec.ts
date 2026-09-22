@@ -36,9 +36,14 @@ const SUMMARY = [
   },
 ];
 
+// The trend defaults to the last seven local days (ConfigPage's
+// resolveUsageRange), so the fixture rows carry a day offset from
+// "today" instead of a fixed date: absolute dates age out of the
+// default window and the chart falls back to its empty state, which is
+// the one thing this spec must not measure.
 const AGGREGATE = [
   {
-    time: '2026-09-09',
+    days_ago: 6,
     input_tokens: 36826157,
     output_tokens: 588306,
     cache_read_tokens: 35753984,
@@ -46,7 +51,7 @@ const AGGREGATE = [
     reasoning_tokens: 455316,
   },
   {
-    time: '2026-09-10',
+    days_ago: 4,
     input_tokens: 88548587,
     output_tokens: 606934,
     cache_read_tokens: 87210496,
@@ -54,7 +59,7 @@ const AGGREGATE = [
     reasoning_tokens: 370754,
   },
   {
-    time: '2026-09-15',
+    days_ago: 1,
     input_tokens: 2349504,
     output_tokens: 33326,
     cache_read_tokens: 2283904,
@@ -69,7 +74,20 @@ const AGGREGATE = [
 function seriesHandler(points: unknown) {
   return `async (model) => {
     window.__seriesModel = model;
-    return model === '' ? ${JSON.stringify(points)} : [];
+    if (model !== '') return [];
+    // dayKey mirrors the day buckets the chart zero-fills, and it is
+    // resolved in the page so the rows follow the browser's own clock.
+    const dayKey = (ago) => {
+      const d = new Date();
+      d.setDate(d.getDate() - ago);
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + m + '-' + day;
+    };
+    return ${JSON.stringify(points)}.map(({ days_ago, ...rest }) => ({
+      ...rest,
+      time: dayKey(days_ago),
+    }));
   }`;
 }
 
