@@ -395,6 +395,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it, while the panel's own list keeps scrolling itself as before.
   Hover hints are pinned to a control the same way and now follow the
   same rule instead of vanishing whenever anything in the window moved.
+- A text block the model had finished writing no longer sits on screen in
+  raw markdown until its turn ends. The transcript chose between plain
+  text and markdown once per message, with a flag that meant "this turn's
+  answer is still streaming", so every block of a running turn rendered
+  its markers literally: `## Plan` stayed `## Plan`, and the heading font
+  arrived only when the whole turn settled and the pane re-laid itself
+  out. The flag now marks the one item it was meant for — the message's
+  trailing block, while its turn runs — so a block that a tool call (or
+  the next block) ended is parsed the moment it stops growing. Only the
+  block still being written stays plain text, which is what keeps a
+  half-written `#` from being re-parsed on every delta.
 
 ## [0.5.3] - 2026-09-17
 

@@ -2526,6 +2526,72 @@ describe('ChatView user bubbles', () => {
   });
 });
 
+// A turn's text arrives in blocks, and a block ends the moment a tool
+// call (or the next block) starts. Only the block the model is still
+// writing is unfinished text; the ones behind it are settled markdown
+// and used to sit there raw (`## Plan` on screen, heading font nowhere)
+// until the whole turn ended.
+describe('ChatView streamed markdown', () => {
+  function streamingTurn(): MessageView[] {
+    return [
+      {
+        id: 'm-user',
+        role: 'user',
+        text: 'go',
+        items: [],
+        attachments: [],
+      },
+      {
+        id: 'm-answer',
+        role: 'assistant',
+        text: '',
+        items: [
+          { kind: 'text', id: 'i-1', text: '## Plan\n\n- first step' },
+          {
+            kind: 'tool_call',
+            id: 'p-1',
+            tool: {
+              id: 'call-1',
+              name: 'exec_command',
+              args: '{"command":"ls"}',
+              status: 'done',
+              result: '{"exit_code":0,"stdout":"","stderr":""}',
+            },
+          },
+          { kind: 'text', id: 'i-2', text: '## Still writing' },
+        ],
+        attachments: [],
+      },
+    ];
+  }
+
+  it('parses a settled block while the turn is still running', () => {
+    setConversation(streamingTurn(), [
+      { id: 'turn-1', start: 0, docs: [], runID: 'r-1' },
+    ]);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    // The tool call ended this block: it is no longer growing, so its
+    // markdown is what the reader sees.
+    expect(screen.getByRole('heading', { name: 'Plan' })).toBeInTheDocument();
+    // The trailing block is the one still being written: plain text, or
+    // a half-arrived `##` would re-parse on every delta.
+    expect(screen.queryByRole('heading', { name: 'Still writing' })).toBeNull();
+    expect(screen.getByText('## Still writing')).toBeInTheDocument();
+
+    // The turn ending does not change what either block is.
+    act(() => {
+      actor?.send({ type: 'TURN_ENDED', runID: 'r-1', status: 'completed' });
+    });
+    expect(screen.getByRole('heading', { name: 'Plan' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Still writing' }),
+    ).toBeInTheDocument();
+  });
+});
+
 // The header is the pane's title bar, read top to bottom: whose
 // conversation this is, then the policy it runs under and the weight it
 // already carries, with whatever the turn is doing pinned right.

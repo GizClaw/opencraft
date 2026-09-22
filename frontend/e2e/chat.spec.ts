@@ -376,3 +376,79 @@ test('reads the collapsed tool group header left to right', async ({
   expect(tail).toBeGreaterThanOrEqual(0);
   expect(tail).toBeLessThan(16);
 });
+
+// A turn's answer arrives in blocks: text, a tool call, more text. Only
+// the block the model is still writing is unfinished text; the ones a
+// tool call ended are settled, and their markdown is what the reader
+// should see while the rest of the turn runs. The transcript used to hold
+// every block of a running turn as raw text — `## Plan` sat on screen
+// with its hashes for the rest of the turn, then re-laid out at the end.
+test('parses a settled block while the turn is still running', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    startTurn: { run_id: 'r-1', context_id: 's-1' },
+  });
+  await page.goto('/');
+  await typeComposerMessage(page, 'make a plan');
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  const emit = (data: unknown) =>
+    page.evaluate(
+      (d) =>
+        (window as never as { __emit: (n: string, v: unknown) => void }).__emit(
+          'opencraft:ui',
+          d,
+        ),
+      data,
+    );
+  const delta = (part: unknown) =>
+    emit({
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: { type: 'part', part },
+      },
+    });
+
+  await delta({ type: 'text', text: '## Plan\n\n- first step' });
+  // The block is still the one being written: hashes stay hashes.
+  await expect(page.getByText('## Plan')).toBeVisible();
+
+  await delta({
+    type: 'tool_call',
+    call: { id: 'call-1', name: 'exec_command', arguments: { command: 'ls' } },
+  });
+  // The call landed: the card is what the next delta settles.
+  await expect(page.getByText('$ ls')).toBeVisible();
+  await delta({
+    type: 'tool_result',
+    result: {
+      call_id: 'call-1',
+      content: {
+        parts: [
+          { type: 'text', text: '{"exit_code":0,"stdout":"","stderr":""}' },
+        ],
+      },
+      is_error: false,
+    },
+  });
+  await delta({ type: 'text', text: '## Still writing' });
+
+  // The call ended the first block, so it reads as markdown now; the
+  // trailing block is the live one and stays raw until the turn ends.
+  await expect(page.getByRole('heading', { name: 'Plan' })).toBeVisible();
+  await expect(page.getByText('## Still writing')).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Still writing' }),
+  ).toHaveCount(0);
+
+  await emit({
+    type: 'turn_end',
+    data: { run_id: 'r-1', conversation_id: 's-1', status: 'completed' },
+  });
+  await expect(
+    page.getByRole('heading', { name: 'Still writing' }),
+  ).toBeVisible();
+});

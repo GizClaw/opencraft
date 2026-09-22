@@ -856,6 +856,12 @@ const MessageRow = memo(function MessageRow({
   // instead of leaving an empty row in the transcript.
   const groups = groupToolCalls(msg.items);
   if (groups.length === 0) return null;
+  // Only the block the model is still writing renders as plain text. A
+  // block a tool call ended is folded by the store, but one that merely
+  // stopped receiving deltas (reasoning, a plan call, another block of
+  // its own) is only recognizable by position: the live block is the
+  // message's trailing item.
+  const liveTail = streaming ? msg.items[msg.items.length - 1] : undefined;
   return (
     <div
       data-msg-index={msgIndex}
@@ -871,17 +877,17 @@ const MessageRow = memo(function MessageRow({
       {groups.map((group, gi) => {
         if (Array.isArray(group)) {
           return group.length === 1 ? (
-            <StreamItemView
-              key={group[0].id}
-              item={group[0]}
-              streaming={streaming}
-            />
+            <StreamItemView key={group[0].id} item={group[0]} />
           ) : (
             <ToolGroupView key={`group-${gi}`} tools={group} />
           );
         }
         return (
-          <StreamItemView key={group.id} item={group} streaming={streaming} />
+          <StreamItemView
+            key={group.id}
+            item={group}
+            streaming={group === liveTail}
+          />
         );
       })}
       {showActions && (
