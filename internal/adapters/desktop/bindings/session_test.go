@@ -6,8 +6,52 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
+
+func TestProcessViewShape(t *testing.T) {
+	started := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	code := 3
+	view := toProcessView(sandbox.Process{
+		ID:             "p-1",
+		ConversationID: "s-1",
+		Argv:           []string{"npm", "run", "build"},
+		Workdir:        "/ws",
+		TTY:            true,
+		PID:            99,
+		StartedAt:      started,
+		Running:        false,
+		ExitCode:       &code,
+		ExitReason:     "exited",
+		Tail:           "built\n",
+		Truncated:      true,
+		Seq:            6,
+	})
+	if view.ProcessID != "p-1" || view.PID != 99 || view.TTY != true {
+		t.Fatalf("identity fields = %+v", view)
+	}
+	if view.StartedAt != "2026-09-04T12:00:00Z" {
+		t.Fatalf("started_at = %q, want RFC3339 UTC", view.StartedAt)
+	}
+	if view.ExitCode == nil || *view.ExitCode != 3 || view.Running {
+		t.Fatalf("exit fields = %+v", view)
+	}
+	if !view.Truncated || view.Seq != 6 || view.Tail != "built\n" {
+		t.Fatalf("tail fields = %+v", view)
+	}
+	// The DTO carries its own argv slice: mutating it must not reach
+	// back into the feed's snapshot.
+	view.Argv[0] = "changed"
+	raw, err := json.Marshal(view)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"process_id":"p-1"`) ||
+		!strings.Contains(string(raw), `"exit_code":3`) {
+		t.Fatalf("process view json = %s", raw)
+	}
+}
 
 func TestSessionMetaJSONShape(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)

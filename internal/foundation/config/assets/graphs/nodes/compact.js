@@ -422,12 +422,12 @@ if (board.getVar("world.compact.pending")) {
     }
     rebuilt.push(patch.message);
     // Write the side channel first: if the process dies between the two
-    // writes the archive sees a duplicate, never a lost message.
+    // writes the archive sees a duplicate, never a lost message. The
+    // batch lands in one appendChannel call (core >= v0.4.7 takes an
+    // array): reading the archive back per fold projected a channel
+    // this node only ever appends to.
     if (moved.length > 0) {
-      board.setChannel(
-        ARCHIVE_CHANNEL,
-        (board.channel(ARCHIVE_CHANNEL) || []).concat(moved)
-      );
+      board.appendChannel(ARCHIVE_CHANNEL, moved);
     }
     board.setChannel(board.MAIN_CHANNEL, rebuilt);
     board.setVar("world.compact.summary_text", messageText(patch.message));
@@ -457,9 +457,11 @@ if (board.getVar("world.compact.pending")) {
   board.setVar("world.compact.fold_start", 0);
   board.setVar("world.compact.fold_end", -1);
   board.setVar("tool_pending", false);
-  // The channel the llm node is about to see is settled here (a fold just
-  // rewrote it, or the failed attempt left it as it was).
-  channel = board.channel(board.MAIN_CHANNEL) || [];
+  // The channel the llm node is about to see is settled here: the write
+  // above (rebuilt, or base for a failed fold) decides it, and only its
+  // length is read below. Keep the array that was just written instead
+  // of projecting the whole channel back for one number.
+  channel = applied ? rebuilt : base;
   stampAnchor();
   return;
 }

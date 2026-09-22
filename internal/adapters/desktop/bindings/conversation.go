@@ -133,6 +133,17 @@ func (b *Conversation) StartTurn(
 		OnUsage: func(_ context.Context, usage inference.Usage) {
 			b.core.Shell.Emit("usage", core.NewUsageEvent(usage))
 		},
+		// A boundary that takes steered messages reports how many are
+		// still waiting: the transcript flips those rows to delivered
+		// right away instead of holding them at "waiting for the next
+		// step" until the turn ends.
+		OnSteerPending: func(_ context.Context, runID string, pending int) {
+			b.core.Shell.Emit("steer_pending", core.SteerPendingEvent{
+				RunID:          runID,
+				ConversationID: contextID,
+				SteerPending:   pending,
+			})
+		},
 	}
 	// A Host rebuild can retire the current Host between the frontend
 	// send and StartRun. Those lifecycle guards run before any turn

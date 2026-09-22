@@ -3,6 +3,7 @@ package execd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"os/exec"
 	"strings"
@@ -751,6 +752,34 @@ func TestEmptyWriteIDIsNotDeduped(t *testing.T) {
 // TestQuietReadReturnsEmptySuccess pins the documented remote read
 // semantics: a wait window that lapses with no output answers with an
 // empty, non-EOF result the caller polls again from.
+// TestSessionReadReportsWindowExpiryAsATimeout pins the error a windowed
+// read leaves behind. The child answers a request that hit its own
+// deadline with a wire deadline_exceeded code, and a caller — the
+// process feed above all — has to see the same "no output yet" the
+// local backend produces, not a hard error it would treat as a dead
+// session and stop reading from.
+func TestSessionReadReportsWindowExpiryAsATimeout(t *testing.T) {
+	runner := testRunner(t)
+	ctx := context.Background()
+	sess, err := runner.Start(ctx, sandbox.SessionSpec{
+		Argv: []string{"/bin/sh", "-c", "sleep 30"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	readCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	out, err := sess.Read(readCtx, 0, 4096)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("read error = %v, want context.DeadlineExceeded", err)
+	}
+	if len(out.Chunks) != 0 || out.EOF {
+		t.Fatalf("output = %+v, want the empty window result", out)
+	}
+}
+
 func TestQuietReadReturnsEmptySuccess(t *testing.T) {
 	client, _ := testPair(t)
 	ctx := context.Background()

@@ -174,6 +174,76 @@ func TestSteerDeliveredAtToolBoundary(t *testing.T) {
 	}
 }
 
+// TestSteerPendingReportedWhileTheTurnRuns pins the live half of the
+// steer bookkeeping a UI leans on: a boundary that takes steered
+// messages reports how many are still waiting while the turn is in
+// flight, so an interjection does not have to sit at "waiting for the
+// next step" until turn_end carries the settled count.
+func TestSteerPendingReportedWhileTheTurnRuns(t *testing.T) {
+	provider := fakeprovider.New(t,
+		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+			Name:      "write_file",
+			Arguments: `{"file_path":"steer.txt","content":"steer\n"}`,
+		}}},
+		fakeprovider.Reply{Text: "done"},
+	)
+	hold := provider.HoldNext()
+	defer hold.Release()
+
+	h, ctx := steerHost(t, provider)
+	type report struct {
+		runID   string
+		pending int
+	}
+	reports := make(chan report, 8)
+	run, err := h.StartRun(ctx, host.RunOptions{
+		Message: message.NewTextMessage(message.RoleUser, "write steer.txt"),
+		// The observer is the UI's live view of delivery; it needs the
+		// stream wrapper to run, which a sink turns on.
+		Sink: discardSink(),
+		OnSteerPending: func(_ context.Context, runID string, pending int) {
+			reports <- report{runID: runID, pending: pending}
+		},
+		SkipAutoTitle: true,
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	waitSteerGate(t, hold)
+	if err := h.SteerRun(
+		run.RunID(), "actually, use notes/steer.txt",
+	); err != nil {
+		t.Fatalf("steer run: %v", err)
+	}
+	hold.Release()
+
+	// The report arrives before the run's own end reaches its caller:
+	// the boundary drained the queue, and the round it opened is already
+	// streaming.
+	var got report
+	select {
+	case got = <-reports:
+	case <-time.After(steerGateTimeout):
+		t.Fatal("the boundary took the steer but no report reached the observer")
+	}
+	if got.runID != run.RunID() {
+		t.Fatalf("report run id = %q, want %q", got.runID, run.RunID())
+	}
+	if got.pending != 0 {
+		t.Fatalf("report pending = %d, want 0 (every steer was taken)", got.pending)
+	}
+	if _, err := run.Wait(ctx); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+	// One report per drain: the ledger is reconciled, not re-reported on
+	// every delta that follows.
+	select {
+	case extra := <-reports:
+		t.Fatalf("unexpected extra report %+v", extra)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 // TestSteerRunRejections pins the host surface's refusal behavior: an
 // unknown run, an empty message, and a full turn queue are all reported
 // to the caller, and every message the turn did accept still reaches the

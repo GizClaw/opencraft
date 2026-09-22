@@ -7,12 +7,13 @@ import (
 )
 
 // Register adds opencraft's sandbox resource factories: the artifact
-// sink, the shared observing workspace, the mode-aware HostSandbox
-// runner, and the HostWorkspace — to r.
+// sink, the process feed, the shared observing workspace, the mode-aware
+// HostSandbox runner, and the HostWorkspace — to r.
 func Register(r *resource.Registry) error {
 	return errors.Join(
 		registerNetPolicy(r),
 		r.Register(ArtifactObserverFactory{}),
+		r.Register(ProcessFeedFactory{}),
 		r.Register(ObservingWorkspaceFactory{}),
 		r.Register(HostSandboxFactory{}),
 		r.Register(HostWorkspaceFactory{}),

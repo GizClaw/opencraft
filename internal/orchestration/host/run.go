@@ -46,6 +46,13 @@ type RunOptions struct {
 	QueueSize int
 	// OnUsage receives inference usage attributed to this run.
 	OnUsage func(context.Context, inference.Usage)
+	// OnSteerPending is called when a round boundary takes steered
+	// messages out of this run's queue, with the run id and how many
+	// steered messages are still waiting for the next boundary. It is
+	// what lets a UI say an interjection was delivered while the turn is
+	// still running instead of at its end; the settled turn result stays
+	// the authority on what never made it (see PendingSteer).
+	OnSteerPending func(ctx context.Context, runID string, pending int)
 	// Backend answers interactive prompts for this run. When nil the
 	// Host's fallback backend applies, so UI and automation turns can
 	// share one runtime with different prompt policies.
@@ -302,6 +309,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		contextID:  contextID,
 		usageHours: make(map[string]ocsessions.Usage),
 		notify:     opts.OnUsage,
+		onSteer:    opts.OnSteerPending,
 		manifest:   manifest,
 		backend:    opts.Backend,
 	}

@@ -77,6 +77,21 @@ type TurnEndEvent struct {
 	SteerPending *int `json:"steer_pending"`
 }
 
+// SteerPendingEvent reports how many mid-turn steered messages a run
+// still has waiting for a round boundary — the live counterpart of the
+// count turn_end carries, emitted whenever a boundary takes messages out
+// of the queue. It is what lets the transcript flip an interjection note
+// to delivered while the turn is still running; turn_end stays the
+// authority on what never made it.
+type SteerPendingEvent struct {
+	RunID          string `json:"run_id"`
+	ConversationID string `json:"conversation_id"`
+	// SteerPending is the number of steered messages still waiting for
+	// the run's next boundary. Zero means a boundary has taken every
+	// interjection the run was handed.
+	SteerPending int `json:"steer_pending"`
+}
+
 // CompactionEvent mirrors worldstate.CompactionReport onto the wire.
 type CompactionEvent struct {
 	// Folds is the number of successful folds in the turn.

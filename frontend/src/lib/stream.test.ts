@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { coalesceStreamEvents, groupToolCalls, isPlanCall } from './stream';
+import {
+  coalesceStreamEvents,
+  groupToolCalls,
+  isPlanCall,
+  streamFlushInterval,
+  STREAM_REASONING_FLUSH_INTERVAL_MS,
+  STREAM_TEXT_FLUSH_INTERVAL_MS,
+} from './stream';
 import type { AssistantItem } from './store';
 import type { UIEvent } from './types';
 
@@ -96,6 +103,48 @@ describe('isPlanCall', () => {
     expect(isPlanCall(planCall('{}'))).toBe(true);
     expect(isPlanCall(tool('x', 'exec_command'))).toBe(false);
     expect(isPlanCall(text('t'))).toBe(false);
+  });
+});
+
+describe('streamFlushInterval', () => {
+  const delta = (part: unknown): UIEvent => ({
+    type: 'stream',
+    data: {
+      conversation_id: 's-1',
+      run_id: 'r-1',
+      delta: { type: 'part', part },
+    },
+  });
+  const reasoningEvent = (body: string) =>
+    delta({ type: 'reasoning', text: body });
+  const textEvent = (body: string) => delta({ type: 'text', text: body });
+
+  it('gives a reasoning-only queue the calmer cadence', () => {
+    expect(streamFlushInterval([reasoningEvent('a')])).toBe(
+      STREAM_REASONING_FLUSH_INTERVAL_MS,
+    );
+    expect(
+      streamFlushInterval([reasoningEvent('a'), reasoningEvent('b')]),
+    ).toBe(STREAM_REASONING_FLUSH_INTERVAL_MS);
+  });
+
+  it('keeps the visible-text cadence for prose', () => {
+    expect(streamFlushInterval([textEvent('a')])).toBe(
+      STREAM_TEXT_FLUSH_INTERVAL_MS,
+    );
+  });
+
+  it('never slows a queue that carries more than a thought', () => {
+    expect(streamFlushInterval([reasoningEvent('a'), textEvent('b')])).toBe(
+      STREAM_TEXT_FLUSH_INTERVAL_MS,
+    );
+    expect(
+      streamFlushInterval([reasoningEvent('a'), delta({ type: 'tool_call' })]),
+    ).toBe(STREAM_TEXT_FLUSH_INTERVAL_MS);
+  });
+
+  it('falls back to the text cadence for an empty queue', () => {
+    expect(streamFlushInterval([])).toBe(STREAM_TEXT_FLUSH_INTERVAL_MS);
   });
 });
 

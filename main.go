@@ -12,12 +12,14 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop"
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/guilock"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -42,14 +44,15 @@ func main() {
 	}
 
 	// Resolve the two roots and the single-instance identity before any
-	// machinery starts: application.New performs the single-instance
-	// check, and the desktop composition must not run before it, or a
+	// machinery starts: the GUI lock below settles the single-instance
+	// question, and the desktop composition must not run before it, or a
 	// second instance would seed directories and logs on its way to
 	// exiting.
 	launch, err := config.ResolveLaunch(os.Args[1:], os.Getenv)
 	if err != nil {
 		log.Fatalf("opencraft: %v", err)
 	}
+	guiLock := takeGUILock(launch)
 
 	var shell *desktop.Shell
 	var d *desktop.Desktop
@@ -77,11 +80,17 @@ func main() {
 			return d.QuitAllowed()
 		},
 	}
-	if launch.SingleInstance {
+	// The shell's single-instance options stay enabled next to the GUI
+	// lock, but only as a second, opportunistic gate: they speak
+	// different protocols ($TMPDIR flock plus a distributed notification
+	// on macOS, a D-Bus name on Linux, a named mutex on Windows) that
+	// older builds of this repository still use, so keeping them catches
+	// a mix of generations. The guarantee itself is the lock.
+	if launch.SingleInstance && shellSingleInstanceUsable() {
 		appOpts.SingleInstance = &application.SingleInstanceOptions{
-			// The id is derived from the canonical state root, so two
-			// instances of one root are mutually exclusive while a dev
-			// profile (another root) runs side by side.
+			// The id is derived from the canonical state root: builds of
+			// one root lineage share it, a dev profile (another root)
+			// does not.
 			UniqueID: launch.InstanceID,
 			// A rejected second instance is a mistake (or a stale
 			// launcher), never a silent success.
@@ -96,10 +105,6 @@ func main() {
 				desktop.ShowMainWindow(shell)
 			},
 		}
-	} else {
-		log.Printf("opencraft: %s runs without the single-instance lock "+
-			"(state_root=%s); a second scheduler on the same root is on you",
-			launch.AppName, launch.DataDir)
 	}
 	app := application.New(appOpts)
 
@@ -183,6 +188,24 @@ func main() {
 		func() { d.RequestQuit() },
 	)
 
+	// A raise from a rejected launch becomes a window activation: the
+	// treatment tray clicks and Dock reopens get, plus the log line
+	// second-instance launches have always produced. Serving starts here,
+	// once the window and shell exist, and lasts for the life of the
+	// process.
+	if guiLock != nil {
+		guiLock.Serve(context.Background(), func(attempt guilock.Launch) {
+			telemetry.Info(context.Background(),
+				fmt.Sprintf("desktop: second instance args=%v workingDir=%s",
+					attempt.Args, attempt.WorkingDir),
+				otellog.Int("pid", attempt.PID),
+				otellog.String("profile", launch.Profile),
+				otellog.String("state_root", launch.DataDir),
+				otellog.String("app_home", launch.AppHome))
+			desktop.ShowMainWindow(shell)
+		})
+	}
+
 	// macOS polish (traffic-light alignment, scroll elasticity). The buttons
 	// exist before the first page load, so the style is applied right away and
 	// again after every load - that is the last layout pass of the startup
@@ -195,4 +218,87 @@ func main() {
 	if err := app.Run(); err != nil {
 		log.Fatalf("opencraft: %v", err)
 	}
+	if guiLock != nil {
+		// Hand the state root over instead of leaving the last holder's
+		// record behind; the kernel would do it on exit anyway.
+		if err := guiLock.Release(); err != nil {
+			log.Printf("opencraft: releasing the single-instance lock failed: %v", err)
+		}
+	}
+}
+
+// takeGUILock settles the single-instance question for this state root
+// (one GUI per root, enforced by guilock). It returns the held lock, or
+// nil when this process deliberately runs without one. A rejected second
+// instance never returns: it asks the holder to come to the front, says
+// one line on stderr and exits 1.
+func takeGUILock(launch config.Launch) *guilock.Lock {
+	if !launch.SingleInstance {
+		log.Printf("opencraft: %s runs without the single-instance lock "+
+			"(state_root=%s); a second scheduler on the same root is on you",
+			launch.AppName, launch.DataDir)
+		return nil
+	}
+	lock, err := guilock.Acquire(context.Background(), launch.DataDir, launch.InstanceID)
+	if err == nil {
+		return lock
+	}
+	if info, held := guilock.IsHeld(err); held {
+		raiseErr := guilock.RequestRaise(context.Background(), launch.DataDir, launch.InstanceID,
+			guilock.Launch{PID: os.Getpid(), Args: os.Args[1:], WorkingDir: launchWorkDir()})
+		log.Fatalf("%s", secondInstanceLine(launch, info, raiseErr == nil))
+	}
+	// A lock that cannot be taken must not keep the user out of their own
+	// app: fail open, loudly, and let the workspace lock guard the data.
+	log.Printf("opencraft: single-instance lock unavailable (%v); "+
+		"continuing without it", err)
+	return nil
+}
+
+// secondInstanceLine is the one line a rejected launch leaves behind: who
+// holds the state root, what happened to its window, and how to override.
+func secondInstanceLine(launch config.Launch, info guilock.Info, raised bool) string {
+	holder := "holder unknown"
+	var parts []string
+	if info.PID > 0 {
+		parts = append(parts, fmt.Sprintf("pid %d", info.PID))
+	}
+	if info.Version != "" {
+		parts = append(parts, "v"+info.Version)
+	}
+	if info.Started != "" {
+		parts = append(parts, "started "+info.Started)
+	}
+	if len(parts) > 0 {
+		holder = strings.Join(parts, ", ")
+	}
+	fate := "its window did not come to the front"
+	if raised {
+		fate = "asked it to show its window"
+	}
+	return fmt.Sprintf("opencraft: state root %s is already held by another instance (%s); %s; "+
+		"exiting (OPENCRAFT_NO_SINGLE_INSTANCE=1 runs a second one anyway)",
+		launch.DataDir, holder, fate)
+}
+
+// launchWorkDir is the working directory of this rejected launch, for the
+// holder's log line.
+func launchWorkDir() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+// shellSingleInstanceUsable reports whether the Wails single-instance
+// machinery may be handed to application.New. On Linux it claims a
+// session-bus name and takes the whole app down when there is no bus
+// (containers, CI); the GUI lock is the guarantee, so the shell option is
+// dropped there instead of the app.
+func shellSingleInstanceUsable() bool {
+	if runtime.GOOS != "linux" {
+		return true
+	}
+	return os.Getenv("DBUS_SESSION_BUS_ADDRESS") != ""
 }

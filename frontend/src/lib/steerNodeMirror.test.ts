@@ -80,6 +80,11 @@ function runSteerNode({ vars = {}, channel = [], steered = [] }: RunOptions) {
     MAIN_CHANNEL: 'main',
     getVar: (key: string) => vars[key],
     channel: (_kind: string) => channel,
+    // The node reads the tail through lastMessage (core >= v0.4.7), so
+    // the stub exposes the same surface: a copy of the last entry, or
+    // null on an empty channel.
+    lastMessage: (_kind: string) =>
+      channel.length > 0 ? channel[channel.length - 1] : null,
     appendChannel: (_kind: string, message: WireMessage) => {
       channel.push(message);
     },

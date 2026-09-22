@@ -68,3 +68,60 @@ test('long inline code and URLs wrap inside the transcript column', async ({
   await expect(page.getByText('core v0.4.5')).toBeVisible();
   await expect(page.getByText('测试全绿', { exact: false })).toBeVisible();
 });
+
+// The user bubble's half of the same promise. The pill is a shrink-wrapped
+// flex item, so its width is fit-content — and fit-content's floor is the
+// longest unbreakable run in the text, which `break-word` does not lower.
+// One pasted token longer than the 80% cap (a hash, a key, a queryless
+// path) used to pin the pill to its own width and, because the row is
+// right-aligned, slide the beginning of the message under the viewport:
+// invisible, and no scrollbar reaches it.
+test('a single unbreakable run stays inside the user bubble', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 980, height: 720 });
+  const run = `sha256-${'aB3x9Z'.repeat(70)}`;
+  await page.addInitScript(mockBackend as never, {
+    listSessions: [
+      {
+        id: 's-run',
+        title: 'Unbreakable',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-02T00:00:00Z',
+        messages: 1,
+        total_tokens: 0,
+      },
+    ],
+    sessionTurns: [
+      {
+        seq: 1,
+        at: '2026-01-01T00:00:00Z',
+        artifacts: [],
+        messages: [
+          { role: 'user', content: { parts: [{ type: 'text', text: run }] } },
+        ],
+      },
+    ],
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Unbreakable' }).click();
+
+  const bubble = page.locator('.user-bubble-md');
+  await expect(bubble).toBeVisible();
+  const scroller = page.getByTestId('chat-scroll');
+  const [bubbleBox, scrollBox] = await Promise.all([
+    bubble.boundingBox(),
+    scroller.boundingBox(),
+  ]);
+  // Both edges of the pill sit inside the column, and the run wrapped
+  // instead of being squeezed onto one clipped line.
+  expect(bubbleBox!.x).toBeGreaterThanOrEqual(scrollBox!.x - 1);
+  expect(bubbleBox!.x + bubbleBox!.width).toBeLessThanOrEqual(
+    scrollBox!.x + scrollBox!.width + 1,
+  );
+  expect(bubbleBox!.height).toBeGreaterThan(40);
+  // And the wrapped pill adds no sideways scroll of its own.
+  await expect
+    .poll(() => scroller.evaluate((el) => el.scrollWidth - el.clientWidth))
+    .toBeLessThanOrEqual(1);
+});

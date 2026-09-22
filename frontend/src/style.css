@@ -645,11 +645,66 @@ body.oc-resizing * {
   margin-bottom: 0;
 }
 
-/* Inline code already sits on the bubble's accent tint; a second accent
-   chip on top of it washes out, so it reads as a neutral code chip. */
-.user-bubble-md :not(pre) > code {
-  background: var(--color-panel2);
-  border-color: var(--color-edge);
+/* The user bubble is the transcript's one tinted surface, and its blocks
+   used to be borrowed from the assistant's, drawn for bare text on the
+   page canvas. Page surfaces land on a tint by accident: the inline chip
+   resolved to 1.03:1 against the fill in the dark theme and to a second
+   accent layer in the light one, table and `hr` hairlines to 1.05:1, and
+   a link to 3.6:1 — `--color-accent` over its own tint, a ratio no theme
+   can fix while the text keeps borrowing the canvas palette.
+   So the bubble owns four rungs, all mixed from the theme's existing
+   tokens (no per-theme values, no second palette):
+     fill    the accent over the canvas — the message surface
+     inset   the same tint pulled back toward the canvas, i.e. the canvas
+             showing through a block, instead of a grey that happens to
+             land on the tint's lightness (chip, fence, quote, table head)
+     accent  the accent rung that still reads on the fill (link, quote
+             rail)
+     line    the hairline that outlines one of those blocks
+   Each rule below is scoped `.user-bubble` so it outranks the generic
+   `.prose-chat` block rules further down; those carry the same
+   specificity as a bare `.user-bubble-md …` selector and win on source
+   order, which is how this chip's first override became dead CSS. */
+.user-bubble {
+  --bubble-fill: color-mix(in srgb, var(--color-accent) 15%, var(--color-bg));
+  --bubble-inset: color-mix(in srgb, var(--color-accent) 5%, var(--color-bg));
+  --bubble-accent: color-mix(in srgb, var(--color-accent) 70%, var(--color-fg));
+  --bubble-line: color-mix(in srgb, var(--color-fg) 15%, var(--bubble-fill));
+  /* Opaque on purpose: a translucent fill would tie every rung above to
+     whatever surface the bubble happens to sit on. */
+  background: var(--bubble-fill);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--bubble-fill));
+}
+
+.user-bubble .user-bubble-md a {
+  color: var(--bubble-accent);
+}
+
+.user-bubble .user-bubble-md :not(pre) > code,
+.user-bubble .user-bubble-md pre,
+.user-bubble .user-bubble-md blockquote,
+.user-bubble .user-bubble-md table th,
+.user-bubble .user-bubble-md tbody tr:nth-child(even) {
+  background: var(--bubble-inset);
+}
+
+.user-bubble .user-bubble-md pre,
+.user-bubble .user-bubble-md hr,
+.user-bubble .user-bubble-md table th,
+.user-bubble .user-bubble-md table td {
+  border-color: var(--bubble-line);
+}
+
+.user-bubble .user-bubble-md blockquote {
+  border-left-color: var(--bubble-accent);
+}
+
+/* The inline chip stays neutral: a second accent chip inside the tint
+   washes out, so it is the inset rung, a hairline and body text. The
+   quote keeps `--color-dim`, which clears AA on the inset in both
+   themes. */
+.user-bubble .user-bubble-md :not(pre) > code {
+  border: 1px solid var(--bubble-line);
   color: var(--color-fg);
 }
 

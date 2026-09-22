@@ -96,12 +96,23 @@ export function Popover({
       if (anchor?.contains(target)) return;
       onClose();
     };
-    // A scroll or resize invalidates the measured anchor. The panel's own
-    // list scrolls independently — resting a trackpad on it must not
-    // close the menu it is scrolling.
+    // A scroll or resize invalidates the measured anchor, but only a
+    // scroll that can move it counts. The panel's own list scrolls
+    // independently — resting a trackpad on it must not close the menu
+    // it is scrolling — and a scroller the anchor is not inside moved
+    // nothing this menu is placed against: the chat transcript, the
+    // activity card's tails and every other pane that scrolls on its own
+    // used to dismiss any open menu anywhere in the app.
     const onScroll = (event: Event) => {
       const target = event.target;
-      if (target instanceof Node && panelRef.current?.contains(target)) return;
+      if (target instanceof Node) {
+        if (panelRef.current?.contains(target)) return;
+        const pageScroll =
+          target === document ||
+          target === document.documentElement ||
+          target === document.body;
+        if (!pageScroll && !target.contains(anchor)) return;
+      }
       onClose();
     };
     document.addEventListener('mousedown', onPointerDown);

@@ -3,6 +3,40 @@ import type { StreamDelta, UIEvent } from './types';
 
 export type ToolCallItem = Extract<AssistantItem, { kind: 'tool_call' }>;
 
+// The two stream cadences. A queue of deltas is committed at most once
+// per interval, so one number decides how live streaming feels and how
+// much work a token burst costs.
+//
+// Visible text keeps 100ms: flushing every animation frame redraws the
+// transcript ~60 times a second for prose nobody reads that fast, and
+// ten updates a second still looks like a stream.
+//
+// A queue that holds nothing but reasoning is a different case and gets
+// its own, calmer beat. Nothing in the transcript renders reasoning —
+// the activity card's thought block is the only reader, and it shows a
+// tail meant to be skimmed as a summary rather than read token by token.
+// Those commits are not free either: the block is the largest text the
+// card lays out, and every commit re-pins its scroller. Four updates a
+// second is still more than anyone reads; 250ms keeps a long thinking
+// phase from doing the work of a visible answer.
+export const STREAM_TEXT_FLUSH_INTERVAL_MS = 100;
+export const STREAM_REASONING_FLUSH_INTERVAL_MS = 250;
+
+// streamFlushInterval picks the cadence for the deltas waiting to be
+// committed. Mixed queues (a thought and then prose, or a tool call
+// arriving mid-reasoning) take the text cadence: the answer's own words
+// must never be the slow part.
+export function streamFlushInterval(events: UIEvent[]): number {
+  if (events.length === 0) return STREAM_TEXT_FLUSH_INTERVAL_MS;
+  const reasoningOnly = events.every((ev) => {
+    const delta = (ev.data as { delta?: StreamDelta }).delta;
+    return delta?.type === 'part' && delta.part?.type === 'reasoning';
+  });
+  return reasoningOnly
+    ? STREAM_REASONING_FLUSH_INTERVAL_MS
+    : STREAM_TEXT_FLUSH_INTERVAL_MS;
+}
+
 // update_plan renders once in the top-left plan panel instead of as
 // transcript/stream cards, so its calls are dropped everywhere else.
 export function isPlanCall(item: AssistantItem): boolean {

@@ -29,6 +29,12 @@ export interface MockConfig {
   workspaces?: unknown[];
   sessionTurns?: unknown[];
   automations?: unknown[];
+  // processes is the Session.Processes answer: the sandboxed child
+  // processes of the conversation with their output tails. A spec that
+  // needs the feed to change over time (a tail that grows, a process
+  // that exits, a second process appearing) replaces the handler through
+  // window.__ocMockByModule.Session.Processes.
+  processes?: unknown[];
   // viewerFile drives File.ResolveTarget/ReadPreview for the file
   // viewer e2e flows. Handlers are plain data so the config survives
   // addInitScript serialization.
@@ -546,6 +552,7 @@ export function mockBackend(cfg?: MockConfig) {
         config.listSessions ??
         [],
       Rename: noop,
+      Processes: async () => config.processes ?? [],
       // Turns mirrors the paged binding: newest `limit` turns older than
       // `beforeSeq` (limit <= 0 keeps the whole fixture). Fixtures without
       // a seq are treated as older history so they survive paging.

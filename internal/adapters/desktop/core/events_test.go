@@ -96,3 +96,28 @@ func TestTurnEndEventSteerPendingWireShape(t *testing.T) {
 		t.Fatalf("steer_pending = %v (present %v), want null", v, present)
 	}
 }
+
+func TestSteerPendingEventWireShape(t *testing.T) {
+	raw, err := json.Marshal(SteerPendingEvent{
+		RunID:          "r-1",
+		ConversationID: "s-1",
+		SteerPending:   0,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	// The live count is read by the same reconciliation as the one
+	// turn_end carries, so it travels under the same key and a drained
+	// queue sends a literal zero rather than omitting the field.
+	v, ok := got["steer_pending"].(float64)
+	if !ok || v != 0 {
+		t.Fatalf("steer_pending = %v (%s), want 0", got["steer_pending"], raw)
+	}
+	if got["run_id"] != "r-1" || got["conversation_id"] != "s-1" {
+		t.Fatalf("ids = %v/%v, want r-1/s-1", got["run_id"], got["conversation_id"])
+	}
+}

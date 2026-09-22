@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/message"
+	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 	"github.com/GizClaw/flowcraft/core/tool"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -104,6 +105,25 @@ func visibleBytes(session tool.Session) int64 {
 // the assistant's tool assembly.
 func buildEmbeddedToolAssembly(t *testing.T) *tool.Assembly {
 	t.Helper()
+	rt, _ := buildEmbeddedRuntime(t)
+	value, ok := rt.Resource("tools")
+	if !ok {
+		t.Fatal("tools resource missing")
+	}
+	asm, ok := value.(*tool.Assembly)
+	if !ok {
+		t.Fatalf("tools resource is %T", value)
+	}
+	return asm
+}
+
+// buildEmbeddedRuntime assembles the embedded deploy document into a
+// runtime over a temp workspace, with the sandbox forced local and the
+// migrated session store returned so tests can seed session state.
+func buildEmbeddedRuntime(
+	t *testing.T,
+) (*runtimecore.Runtime, *ocsessions.Store) {
+	t.Helper()
 	work := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -149,14 +169,5 @@ func buildEmbeddedToolAssembly(t *testing.T) *tool.Assembly {
 		t.Fatalf("BuildRuntime: %v", err)
 	}
 	t.Cleanup(func() { _ = rt.Close() })
-
-	value, ok := rt.Resource("tools")
-	if !ok {
-		t.Fatal("tools resource missing")
-	}
-	asm, ok := value.(*tool.Assembly)
-	if !ok {
-		t.Fatalf("tools resource is %T", value)
-	}
-	return asm
+	return rt, store
 }

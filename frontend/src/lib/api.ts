@@ -69,6 +69,7 @@ import type {
   PetsSettings,
   ProviderView,
   ReplyRequest,
+  SandboxProcess,
   SandboxProbeResult,
   SearchFileHit,
   SessionDefaults,
@@ -212,6 +213,11 @@ export const api = {
   currentSession: () => Conversation.CurrentSession(),
   activeRun: async (id: string) =>
     ({ run_id: await Session.ActiveRun(id) }) as ActiveRunDTO,
+  // processes returns the conversation's sandboxed child processes with
+  // their output tails. Read-only and additive: polling the same
+  // conversation returns the same rows plus whatever arrived since.
+  processes: (conversationID: string) =>
+    Session.Processes(conversationID) as unknown as Promise<SandboxProcess[]>,
   resumeSession: async (id: string) => {
     await Conversation.ResumeSession(id);
     return {

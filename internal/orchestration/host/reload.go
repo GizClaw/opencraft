@@ -125,6 +125,7 @@ func (h *Host) onRuntimeReload(
 	h.rebindAgents(ctx)
 	h.refreshHooks(ctx)
 	h.rebindArtifactObserver()
+	h.rebindProcessFeed()
 }
 
 // rebindAgents points the new generation's agentlifecycle resource at
@@ -159,6 +160,24 @@ func (h *Host) rebindAgents(ctx context.Context) {
 		telemetry.Warn(ctx,
 			"host: agentlifecycle resource missing after runtime reload")
 	}
+}
+
+// rebindProcessFeed points the Host at the new generation's sandbox
+// process feed. A reload therefore starts on an empty feed: the
+// retiring generation's feed (and the sessions it tapped) closes with
+// its runtime.
+func (h *Host) rebindProcessFeed() {
+	rt := h.Controller().Runtime()
+	if rt == nil {
+		return
+	}
+	if value, ok := rt.Resource("processes"); ok {
+		if feed, ok := value.(*sandbox.ProcessFeed); ok && feed != nil {
+			h.procs.Store(feed)
+			return
+		}
+	}
+	h.procs.Store(nil)
 }
 
 // refreshHooks points the Host's cached hooks manager at the new

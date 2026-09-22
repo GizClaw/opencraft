@@ -63,6 +63,10 @@ type HostSandbox struct {
 	// the sandbox" rules. Nil when the exec policy does not implement
 	// EscalationRules (tests, embedded hosts).
 	escalation EscalationRules
+	// procs taps every session started inside a conversation so the UI
+	// can show the process tail. Nil when the deployment does not
+	// declare the feed resource (embedded/headless test hosts).
+	procs *ProcessFeed
 }
 
 // Unconfined reports whether the session in ctx runs unconfined
@@ -89,6 +93,18 @@ func (h *HostSandbox) Capabilities() coresandbox.Capabilities {
 }
 
 func (h *HostSandbox) Start(
+	ctx context.Context,
+	spec coresandbox.SessionSpec,
+) (coresandbox.Session, error) {
+	sess, err := h.start(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+	return h.procs.Tap(ctx, spec, sess), nil
+}
+
+// start picks the chain for this request and spawns the session.
+func (h *HostSandbox) start(
 	ctx context.Context,
 	spec coresandbox.SessionSpec,
 ) (coresandbox.Session, error) {
@@ -254,6 +270,9 @@ func (HostSandboxFactory) Spec() resource.Spec {
 			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: true},
 			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
 			{Name: "netpolicy", Type: NetPolicyResourceKind, Required: false},
+			// Optional: the conversation-scoped process tap. Without
+			// it sessions run exactly as before, untapped.
+			{Name: "processes", Type: ProcessFeedResourceKind, Required: false},
 		},
 	}
 }
@@ -288,6 +307,12 @@ func (HostSandboxFactory) New(
 		in, "opencraft sandbox", "sessions")
 	if err != nil {
 		return nil, err
+	}
+	var feed *ProcessFeed
+	if dep, ok := in.Dep("processes"); ok {
+		if f, ok := dep.(*ProcessFeed); ok {
+			feed = f
+		}
 	}
 	// The configured exec network posture becomes the runner default:
 	// WithDefaults pins Net onto every call, so deny-all / allow-list /
@@ -387,5 +412,6 @@ func (HostSandboxFactory) New(
 		confined:   confined,
 		unconfined: unconfined,
 		escalation: escalationRules,
+		procs:      feed,
 	}, nil
 }

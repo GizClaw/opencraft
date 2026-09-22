@@ -72,6 +72,11 @@ func (prepareFactory) New(ctx context.Context, in resource.Input) (any, error) {
 			return nil, errdefs.Validationf(
 				"media: request and previous board are required")
 		}
+		// Channel() hands back a copy, and this hook edits the first
+		// message in place before writing the channel back. A view
+		// would edit board storage directly, which the board contract
+		// forbids ("a message on a channel is immutable"): keep the
+		// copy.
 		channel := prev.Channel(agent.MainChannel)
 		// seedBoard appends the user's request as channel[0] before
 		// the preparer chain runs, so the first message is the turn

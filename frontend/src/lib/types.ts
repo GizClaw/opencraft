@@ -298,6 +298,28 @@ export interface SessionImportDTO {
   turns: number;
 }
 
+// SandboxProcess mirrors bindings.ProcessView: one child process the
+// conversation started in the sandbox, with a bounded tail of its
+// output (stdout/stderr merged in arrival order). The activity card
+// polls this list; Seq only moves when new output arrived.
+export interface SandboxProcess {
+  process_id: string;
+  argv: string[];
+  workdir?: string;
+  tty: boolean;
+  pid: number;
+  started_at: string;
+  running: boolean;
+  // exit_code is only set for a process that exited; a killed or
+  // released session reports exit_reason instead.
+  exit_code?: number;
+  exit_reason?: string;
+  tail: string;
+  // truncated reports that tail is a suffix, not the whole output.
+  truncated: boolean;
+  seq: number;
+}
+
 export interface WorkspaceMeta {
   id: string;
   path: string;

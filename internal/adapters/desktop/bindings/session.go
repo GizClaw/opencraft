@@ -12,6 +12,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
+	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
@@ -514,4 +515,65 @@ func (b *Session) ActiveRun(conversationID string) string {
 		}
 	}
 	return ""
+}
+
+// ProcessView is the UI-facing snapshot of one sandboxed child process
+// of a conversation: what the sandbox started, and the bounded tail of
+// its output. Reads are additive — polling returns the same tail plus
+// whatever arrived since, and Seq only moves when output did, so a
+// poller can skip untouched rows.
+type ProcessView struct {
+	// ProcessID is the sandbox session id (exec_session's process_id).
+	ProcessID string   `json:"process_id"`
+	Argv      []string `json:"argv"`
+	Workdir   string   `json:"workdir,omitempty"`
+	TTY       bool     `json:"tty"`
+	PID       int      `json:"pid"`
+	StartedAt string   `json:"started_at"`
+	Running   bool     `json:"running"`
+	// ExitCode is set once the process exited normally. A killed,
+	// released, or evicted process reports no code.
+	ExitCode   *int   `json:"exit_code,omitempty"`
+	ExitReason string `json:"exit_reason,omitempty"`
+	// Tail is the merged stdout/stderr/pty suffix, at most 16 KiB.
+	Tail string `json:"tail"`
+	// Truncated reports that the tail is not the whole output (the
+	// process printed more, or the backend dropped bytes the feed had
+	// not read yet).
+	Truncated bool  `json:"truncated"`
+	Seq       int64 `json:"seq"`
+}
+
+// Processes returns the sandboxed processes the given conversation
+// started on the current runtime, oldest first. The running processes
+// run in the sandbox, not in the app; the list is the read-only view
+// the activity card polls.
+func (b *Session) Processes(conversationID string) []ProcessView {
+	h := b.core.Runtime.Current()
+	if h == nil {
+		return []ProcessView{}
+	}
+	procs := h.Processes(conversationID)
+	out := make([]ProcessView, 0, len(procs))
+	for _, p := range procs {
+		out = append(out, toProcessView(p))
+	}
+	return out
+}
+
+func toProcessView(p sandbox.Process) ProcessView {
+	return ProcessView{
+		ProcessID:  p.ID,
+		Argv:       append([]string{}, p.Argv...),
+		Workdir:    p.Workdir,
+		TTY:        p.TTY,
+		PID:        p.PID,
+		StartedAt:  p.StartedAt.UTC().Format(time.RFC3339),
+		Running:    p.Running,
+		ExitCode:   p.ExitCode,
+		ExitReason: p.ExitReason,
+		Tail:       p.Tail,
+		Truncated:  p.Truncated,
+		Seq:        p.Seq,
+	}
 }

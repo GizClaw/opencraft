@@ -69,8 +69,11 @@ function boardStub(main: BoardMessage[], vars: Vars = {}) {
     setChannel: (name: string, next: BoardMessage[]) => {
       channels[name] = next;
     },
-    appendChannel: (name: string, msg: BoardMessage) => {
-      channels[name] = [...(channels[name] ?? []), msg];
+    // Mirrors core's appendChannel bridge: one message object, or an
+    // array of them appended as one batch.
+    appendChannel: (name: string, msg: BoardMessage | BoardMessage[]) => {
+      const batch = Array.isArray(msg) ? msg : [msg];
+      channels[name] = [...(channels[name] ?? []), ...batch];
     },
   };
   return { board, store, channels };

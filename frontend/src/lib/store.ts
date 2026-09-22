@@ -9,8 +9,9 @@ import {
   type UISettings,
 } from './appearance';
 import { sanitizeToolResult } from './ansi';
+import { COMPACT_SUMMARY_PREFIX } from './compact';
 import { followLinkTarget } from './linkTarget';
-import { coalesceStreamEvents } from './stream';
+import { coalesceStreamEvents, streamFlushInterval } from './stream';
 import { toolResultImages, toolResultText, type ToolImage } from './toolresult';
 import type {
   AgentSummary,
@@ -131,6 +132,116 @@ export interface MessageView {
   // attachments renders user message media: images above the bubble,
   // other files in a floating list below it.
   attachments: AttachmentView[];
+  // steer marks a user row that was interjected into a running turn
+  // instead of opening one. It is the row's whole lifecycle, so the
+  // transcript can render the state the row is in rather than a bubble
+  // that reads like a new turn:
+  //
+  //   pending      handed to the run, not picked up at a round
+  //                boundary yet;
+  //   delivered    a boundary took it, and the archive has it too (a
+  //                resumed session tags archived rows the same way);
+  //   undelivered  the turn ended without taking it. Nothing appended
+  //                the text to the conversation, so this row is the
+  //                only copy and it keeps its resend/discard actions.
+  //
+  // Absent on every row that opened its turn, and on rows a resumed
+  // session cannot tell apart (see historyToMessages).
+  steer?: SteerState;
+}
+
+// SteerState is where a mid-turn interjection stands. See
+// MessageView.steer for the three states.
+export type SteerState = 'pending' | 'delivered' | 'undelivered';
+
+// QueuedSteer tracks an optimistic steer row handed to a live run, in
+// submission order (the engine's queue is FIFO). turn_end maps the
+// undelivered count the backend reports (steer_pending) onto the newest
+// entries and stamps every tracked row with its final state.
+//
+// The entries live only until their run's turn_end classifies them. A
+// run whose terminal event never arrives (a lost event, a turn
+// superseded by a barge-in) leaves its entries behind; the next
+// turn_end in that conversation settles those rows as undelivered, so
+// no row claims delivery is still coming for a run that is gone.
+export interface QueuedSteer {
+  runID: string;
+  messageID: string;
+  text: string;
+}
+
+// carryUndeliveredSteers picks the interjection rows a turn ended
+// without delivering and appends them to a transcript rebuilt from the
+// archive. They are not in the archive (nothing appended their text to
+// the conversation), so carrying them over is what keeps the only copy
+// of the words; dropping them would drop the text.
+//
+// A row whose text the rebuilt transcript already holds as a delivered
+// interjection is dropped instead: that shape comes from a boundary
+// that did take the message while the run's terminal event was lost, so
+// the settle-on-drop below guessed wrong and the archive is the truth.
+function carryUndeliveredSteers(
+  messages: MessageView[] | undefined,
+  rebuilt: MessageView[],
+): MessageView[] {
+  const delivered = new Set(
+    rebuilt.filter((m) => m.steer === 'delivered').map((m) => m.text),
+  );
+  return (messages ?? []).filter(
+    (m) => m.steer === 'undelivered' && !delivered.has(m.text),
+  );
+}
+
+// capUndeliveredSteers bounds the number of undelivered steer rows one
+// conversation keeps. Each one is the only copy of its text; a
+// conversation that keeps producing them should still not grow without
+// bound, so the oldest are dropped (the same policy the old card list
+// used).
+function capUndeliveredSteers(messages: MessageView[]): MessageView[] {
+  let count = 0;
+  for (const m of messages) {
+    if (m.steer === 'undelivered') count += 1;
+  }
+  if (count <= MAX_UNDELIVERED_STEERS) return messages;
+  let drop = count - MAX_UNDELIVERED_STEERS;
+  const dropped = new Set<string>();
+  for (const m of messages) {
+    if (drop === 0) break;
+    if (m.steer === 'undelivered') {
+      dropped.add(m.id);
+      drop -= 1;
+    }
+  }
+  return messages.filter((m) => !dropped.has(m.id));
+}
+
+// settleSteerDelivery marks the interjection rows a round boundary has
+// taken as delivered, without waiting for the run's turn_end. The
+// engine's steer queue is FIFO and the backend reports how many of a
+// run's messages are still waiting (steer_pending), so the oldest
+// (sent - waiting) rows are the ones the boundary carried into the
+// conversation.
+//
+// The rows left waiting keep their pending state: the live count says
+// nothing about why a message is still queued, and only the turn's end
+// classifies what never made it (see the turn_end handler). The rows
+// this settles leave steerSent, which is exactly what that handler
+// reconciles.
+function settleSteerDelivery(
+  conv: ConversationState,
+  runID: string,
+  pending: number,
+): Partial<ConversationState> | null {
+  const tracked = (conv.steerSent ?? []).filter((s) => s.runID === runID);
+  const taken = tracked.length - Math.max(0, Math.floor(pending));
+  if (taken <= 0) return null;
+  const ids = new Set(tracked.slice(0, taken).map((s) => s.messageID));
+  return {
+    messages: conv.messages.map((m) =>
+      ids.has(m.id) ? { ...m, steer: 'delivered' } : m,
+    ),
+    steerSent: (conv.steerSent ?? []).filter((s) => !ids.has(s.messageID)),
+  };
 }
 
 // QueuedInput is the single draft a user staged while a turn is
@@ -142,30 +253,6 @@ export interface QueuedInput {
   text: string;
   attachments: AttachmentView[];
   interrupt: boolean;
-}
-
-// QueuedSteer tracks an optimistic steer row handed to a live run, in
-// submission order (the engine's queue is FIFO). turn_end maps the
-// undelivered count the backend reports (steer_pending) onto the newest
-// entries: those rows never made it into the conversation.
-//
-// The entries live only until their run's turn_end classifies them. A
-// run whose terminal event never arrives (a lost event, a turn
-// superseded by a barge-in) leaves its entries behind; only that run's
-// turn_end ever reads them, so they stay inert.
-export interface QueuedSteer {
-  runID: string;
-  messageID: string;
-  text: string;
-}
-
-// UndeliveredSteer is a mid-turn message the turn ended without
-// delivering. Its text never entered the archive (nothing appended it
-// to the conversation), so the transcript keeps it as its own card
-// until the user resends it as a regular turn or drops it.
-export interface UndeliveredSteer {
-  id: string;
-  text: string;
 }
 
 // ConversationState is the live UI state of one conversation. Each
@@ -193,14 +280,13 @@ export interface ConversationState {
   historyHasMore?: boolean;
   historyLoading?: boolean;
   // steerSent tracks steer rows still awaiting their run's turn_end;
-  // undeliveredSteers keeps the ones the turn ended without delivering.
-  // A row leaves steerSent only on the matching turn_end, so a run whose
-  // turn_end never arrives (a dropped event, a turn superseded by a
-  // barge-in that settled on its own) keeps its row here until the
-  // archive reconciliation rebuilds the conversation; both lists are
-  // render-process state and start empty again after a reload.
+  // the rows themselves carry the state the end stamps on them
+  // (MessageView.steer). A row leaves the list once its state is
+  // settled, so the list holds exactly the rows a still-running turn was
+  // handed, and it is render-process state that starts empty again after
+  // a reload. Rows the archive cannot see (undelivered ones) are carried
+  // across transcript rebuilds — see carryUndeliveredSteers.
   steerSent?: QueuedSteer[];
-  undeliveredSteers?: UndeliveredSteer[];
 }
 
 export type ToastKind = 'info' | 'warning';
@@ -299,16 +385,6 @@ export function streamFlushStats(): {
     max: sorted[sorted.length - 1],
   };
 }
-
-// STREAM_FLUSH_INTERVAL_MS is how long stream deltas coalesce before the
-// transcript commits. Flushing every animation frame redraws the
-// transcript ~60 times a second for text nobody reads that fast; 100ms
-// keeps streaming smooth while cutting the per-flush render work by
-// about six. The first delta after an idle moment still commits on the
-// next frame, and any non-stream event (turn_end, interact, artifacts)
-// flushes the queue synchronously first, so state never waits on the
-// timer.
-const STREAM_FLUSH_INTERVAL_MS = 100;
 
 // capConversation trims the oldest messages past the in-memory cap and
 // re-bases per-turn artifact strip indexes onto the trimmed array. The
@@ -525,15 +601,30 @@ function historyPartsToAttachments(parts: HistoryPart[]): AttachmentView[] {
   return out;
 }
 
-// historyToMessages converts stored flowcraft messages back into the
-// live MessageView shape: user text, then assistant messages with the
-// same ordered blocks (reasoning, tool calls, text) the stream
-// produces. Text-bearing assistant replies keep their own row so a
-// long history stays cheap to render; tool-only rounds (which produce
-// no visible separator) are appended to the previous assistant row so
-// resumed sessions do not show a stack of repeated tool group cards.
+// historyToMessages converts one archived turn's stored flowcraft
+// messages back into the live MessageView shape: user text, then
+// assistant messages with the same ordered blocks (reasoning, tool
+// calls, text) the stream produces. Text-bearing assistant replies keep
+// their own row so a long history stays cheap to render; tool-only
+// rounds (which produce no visible separator) are appended to the
+// previous assistant row so resumed sessions do not show a stack of
+// repeated tool group cards.
+//
+// A user row past the turn's first one is a steer the turn's boundary
+// delivered: the only user messages a turn's archive holds are the ask
+// that opened it plus whatever the steer node appended mid-turn (tools
+// -> steer -> compact in the assistant graph), and a resume has to keep
+// rendering those as interjections instead of as new turns. Two guards
+// keep the inference honest: compaction summaries are user-role context
+// rows, not the user speaking, and a boundary only appends after a tool
+// result, so a steer always follows an assistant round. A batch the
+// boundary merged into one message (several parts in one user message)
+// comes back as one row: the archive keeps the merge, so the split is
+// not recoverable here.
 const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
   const messages: MessageView[] = [];
+  let sawAsk = false;
+  let sawAssistant = false;
   // byCallID indexes the tool calls seen so far so a tool_result is O(1)
   // to attach. Scanning the accumulated list (the old `.find`) made
   // resuming a session quadratic in its number of tool calls, which is
@@ -549,12 +640,21 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
         .filter((p): p is { type: 'text'; text?: string } => p.type === 'text')
         .map((p) => p.text ?? '')
         .join('');
+      let steer: SteerState | undefined;
+      if (!text.startsWith(COMPACT_SUMMARY_PREFIX)) {
+        if (!sawAsk) {
+          sawAsk = true;
+        } else if (sawAssistant) {
+          steer = 'delivered';
+        }
+      }
       messages.push({
         id: newID('msg'),
         role: 'user',
         text,
         items: [],
         attachments: historyPartsToAttachments(parts),
+        steer,
       });
       continue;
     }
@@ -573,6 +673,7 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
       }
       continue;
     }
+    sawAssistant = true;
     const hasVisibleText = parts.some(
       (p) => p.type === 'text' && Boolean((p as { text?: string }).text),
     );
@@ -1060,9 +1161,9 @@ interface StoreState {
   // whether the conversation took the text over (steered, resent, or
   // carded), which is when the caller clears its draft.
   steer: (text: string, attachments?: AttachmentView[]) => Promise<boolean>;
-  // resendSteer turns an undelivered steer card into a regular turn
+  // resendSteer turns an undelivered steer row into a regular turn
   // (staging it behind a running turn like a Tab draft); dismissSteer
-  // drops the card.
+  // drops the row and with it the only copy of its text.
   resendSteer: (id: string) => Promise<void>;
   dismissSteer: (id: string) => void;
   // queueInput stages the single draft that fires after the current
@@ -1174,8 +1275,11 @@ export const useStore = create<StoreState>((set, get) => {
   let pendingStreamEvents: UIEvent[] = [];
   let streamFlushRAF: number | null = null;
   let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  // lastStreamFlushAt paces stream commits; see STREAM_FLUSH_INTERVAL_MS.
+  // lastStreamFlushAt paces stream commits (see stream.ts for the two
+  // cadences); streamFlushDeadline is when the armed handle hands the
+  // queue to the store.
   let lastStreamFlushAt = 0;
+  let streamFlushDeadline = 0;
   // Session switches must land on the backend in the same order the
   // user requested them. Without this queue, an older resumeSession
   // can finish after a newer NewChat and move the backend context back
@@ -1617,6 +1721,24 @@ export const useStore = create<StoreState>((set, get) => {
           });
           break;
         }
+        case 'steer_pending': {
+          // A round boundary drained the run's steer queue: the rows it
+          // carried are delivered now, while the turn keeps running.
+          const data = ev.data as {
+            run_id?: string;
+            steer_pending?: number;
+          };
+          if (!data.run_id || typeof data.steer_pending !== 'number') break;
+          const conv = get().conversations[conversationID];
+          if (!conv) break;
+          const patch = settleSteerDelivery(
+            conv,
+            data.run_id,
+            data.steer_pending,
+          );
+          if (patch) updateConv(conversationID, patch);
+          break;
+        }
         case 'turn_end': {
           const data = ev.data as {
             run_id?: string;
@@ -1638,14 +1760,24 @@ export const useStore = create<StoreState>((set, get) => {
             // it); null — or the field missing entirely, which a producer
             // this build does not know about would send — means the
             // backend could not read the count, and every steered row for
-            // the run is kept as a card instead: the transcript rows are
-            // the only copy of that text and archive reconciliation
+            // the run is marked undelivered instead: the transcript rows
+            // are the only copy of that text and archive reconciliation
             // rebuilds the turn from the archive, which never saw them.
             steer_pending?: number | null;
           };
           const conv = ensureConversation(conversationID);
           if (!conv) break;
           const finishedAt = data.finished_at || new Date().toISOString();
+          const endingRun = data.run_id ?? '';
+          // Which run the conversation is on right now. The actor has not
+          // consumed this terminal event yet (the data layer runs first),
+          // so what this names is either the ending run itself or the
+          // replacement a barge-in started — and the rows handed to that
+          // replacement are still waiting for a boundary of their own.
+          const liveRunID = (
+            stateRoot.registry.get(conversationID)?.getSnapshot().context as
+              { currentRunID?: string } | undefined
+          )?.currentRunID;
           set((state) => {
             const runConvs = { ...state.runConvs };
             delete runConvs[data.run_id ?? ''];
@@ -1672,11 +1804,12 @@ export const useStore = create<StoreState>((set, get) => {
             );
             // Steer bookkeeping: the run's steered messages are FIFO, so
             // the undelivered ones are the newest entries registered for
-            // it. Their text never reached the archive, so the rows come
-            // out of the transcript and the text stays behind as a card —
-            // otherwise archive reconciliation would silently drop it.
+            // it. Their text never reached the archive, so the rows stay
+            // in the transcript — marked as undelivered, with their
+            // resend/discard actions — instead of being dropped by the
+            // archive reconciliation that follows this event.
             const tracked = (conv.steerSent ?? []).filter(
-              (s) => s.runID === data.run_id,
+              (s) => s.runID === endingRun,
             );
             const rawPending = data.steer_pending;
             const pending =
@@ -1684,21 +1817,30 @@ export const useStore = create<StoreState>((set, get) => {
                 ? tracked.length
                 : Math.max(0, Math.floor(rawPending));
             const undelivered = pending > 0 ? tracked.slice(-pending) : [];
-            const undeliveredIDs = new Set(undelivered.map((s) => s.messageID));
+            const states = new Map<string, SteerState>();
+            for (const s of tracked) states.set(s.messageID, 'delivered');
+            for (const s of undelivered) states.set(s.messageID, 'undelivered');
+            // A row handed to a run that is neither the one that just
+            // ended nor the live one can never be classified anymore: its
+            // terminal event was dropped, or a barge-in replaced the turn
+            // before that run reported. Settling it as undelivered is the
+            // honest answer — the archive keeps the text of everything a
+            // boundary did take, and a rebuild retags those rows — where
+            // leaving it pending would promise a boundary that never
+            // comes.
+            for (const s of conv.steerSent ?? []) {
+              if (s.runID === endingRun || s.runID === liveRunID) continue;
+              states.set(s.messageID, 'undelivered');
+            }
             const messages =
-              undeliveredIDs.size > 0
-                ? conv.messages.filter((m) => !undeliveredIDs.has(m.id))
+              states.size > 0
+                ? capUndeliveredSteers(
+                    conv.messages.map((m) => {
+                      const next = states.get(m.id);
+                      return next ? { ...m, steer: next } : m;
+                    }),
+                  )
                 : conv.messages;
-            const undeliveredSteers =
-              undelivered.length > 0
-                ? [
-                    ...(conv.undeliveredSteers ?? []),
-                    ...undelivered.map((s) => ({
-                      id: newID('steer'),
-                      text: s.text,
-                    })),
-                  ].slice(-MAX_UNDELIVERED_STEERS)
-                : conv.undeliveredSteers;
             return {
               runConvs,
               conversations: {
@@ -1708,9 +1850,8 @@ export const useStore = create<StoreState>((set, get) => {
                   messages,
                   turnArtifacts,
                   steerSent: (conv.steerSent ?? []).filter(
-                    (s) => s.runID !== data.run_id,
+                    (s) => !states.has(s.messageID),
                   ),
-                  undeliveredSteers,
                 }),
               },
             };
@@ -1915,10 +2056,20 @@ export const useStore = create<StoreState>((set, get) => {
   };
 
   const scheduleStreamFlush = () => {
-    if (streamFlushRAF !== null || streamFlushTimer !== null) return;
     const flush = () => flushPendingStreams();
-    const sinceLast = performance.now() - lastStreamFlushAt;
-    if (sinceLast >= STREAM_FLUSH_INTERVAL_MS) {
+    const now = performance.now();
+    const interval = streamFlushInterval(pendingStreamEvents);
+    const dueAt = lastStreamFlushAt + interval;
+    if (streamFlushRAF !== null || streamFlushTimer !== null) {
+      // A handle is already armed. Only a queue that wants an earlier
+      // commit than that handle carries may pull it in — prose arriving
+      // in the middle of a reasoning burst, or a tool call landing on
+      // the same beat; a queue that wants a later one never pushes it
+      // out, so nothing waiting is delayed past its own cadence.
+      if (dueAt >= streamFlushDeadline) return;
+      clearStreamFlushHandles();
+    }
+    if (now >= dueAt) {
       // The queue has been idle: commit on the next frame so the first
       // delta of a burst lands immediately instead of waiting out the
       // interval.
@@ -1927,9 +2078,11 @@ export const useStore = create<StoreState>((set, get) => {
           ? requestAnimationFrame(flush)
           : null;
       if (streamFlushRAF === null) streamFlushTimer = setTimeout(flush, 0);
+      streamFlushDeadline = now;
       return;
     }
-    streamFlushTimer = setTimeout(flush, STREAM_FLUSH_INTERVAL_MS - sinceLast);
+    streamFlushTimer = setTimeout(flush, dueAt - now);
+    streamFlushDeadline = dueAt;
   };
 
   // retainLiveConversations drops transcripts that are neither focused
@@ -2010,12 +2163,24 @@ export const useStore = create<StoreState>((set, get) => {
         const rebuilt = historyTurnsToState([turn]);
         const archived = rebuilt.turnArtifacts[0];
         if (!archived) return stateNow;
+        // The archive never saw a steer the turn ended without
+        // delivering, so the rows carrying that text travel with the
+        // rebuild: they are the only copy. The archived copy of the
+        // delivered ones comes back tagged by historyToMessages.
+        const carried = carryUndeliveredSteers(
+          conv.messages.slice(start),
+          rebuilt.messages,
+        );
         return {
           conversations: {
             ...stateNow.conversations,
             [conversationID]: capConversation({
               ...conv,
-              messages: [...conv.messages.slice(0, start), ...rebuilt.messages],
+              messages: [
+                ...conv.messages.slice(0, start),
+                ...rebuilt.messages,
+                ...carried,
+              ],
               turnArtifacts: [
                 ...conv.turnArtifacts.slice(0, idx),
                 { ...archived, start },
@@ -2352,6 +2517,11 @@ export const useStore = create<StoreState>((set, get) => {
         text: trimmed,
         items: [],
         attachments: [],
+        // The row is stamped before the RPC so the transcript shows it as
+        // an interjection from the first paint: it never looked like a
+        // new turn, and turn_end only settles which of the two final
+        // states it reaches.
+        steer: 'pending',
       };
       // Draw the optimistic row and register it before the RPC: turn_end
       // can settle while the submission is still in flight, and it
@@ -2368,25 +2538,28 @@ export const useStore = create<StoreState>((set, get) => {
         return true;
       } catch {
         const convNow = get().conversations[convID];
-        const stillDrawn = (convNow?.messages ?? []).some(
-          (m) => m.id === row.id,
-        );
+        const drawn = (convNow?.messages ?? []).find((m) => m.id === row.id);
         const patch: Partial<ConversationState> = {
           steerSent: (convNow?.steerSent ?? []).filter(
             (s) => s.messageID !== row.id,
           ),
         };
-        if (stillDrawn) {
+        // Only the row still waiting for a boundary is pulled back out. A
+        // row turn_end settled belongs to the conversation (the archive
+        // has the text, or the row keeps it as undelivered), and one a
+        // transcript rebuild replaced is archived text too: neither is
+        // this submission's to take back.
+        const waiting = drawn?.steer === 'pending';
+        if (waiting) {
           patch.messages = (convNow?.messages ?? []).filter(
             (m) => m.id !== row.id,
           );
         }
         updateConv(convID, patch);
-        if (!stillDrawn) {
+        if (!waiting) {
           // The run's turn_end settled while this submission was in
-          // flight and already pulled the row out; the conversation owns
-          // the text now (either the archive has it or it became an
-          // undelivered card).
+          // flight; the conversation owns the text now (either the
+          // archive has it or the row is marked undelivered).
           return true;
         }
         const after = conversationTurnState(convID);
@@ -2411,29 +2584,28 @@ export const useStore = create<StoreState>((set, get) => {
       const convID = activeConversationID();
       const conv = convID ? get().conversations[convID] : undefined;
       if (!convID || !conv) return;
-      const card = (conv.undeliveredSteers ?? []).find((s) => s.id === id);
-      if (!card) return;
+      const row = conv.messages.find(
+        (m) => m.id === id && m.steer === 'undelivered',
+      );
+      if (!row) return;
       const turn = conversationTurnState(convID);
       const busy = turn.name === 'starting' || turn.name === 'running';
       // A live turn takes the text the way a Tab draft would; only drop
-      // the card once it is actually staged.
-      if (busy && !get().queueInput(card.text, [])) return;
+      // the row once it is actually staged.
+      if (busy && !get().queueInput(row.text, [])) return;
       updateConv(convID, {
-        undeliveredSteers: (conv.undeliveredSteers ?? []).filter(
-          (s) => s.id !== id,
-        ),
+        messages: conv.messages.filter((m) => m.id !== id),
       });
-      if (!busy) await startTurnFor(convID, card.text, []);
+      if (!busy) await startTurnFor(convID, row.text, []);
     },
 
     dismissSteer: (id) => {
       const convID = activeConversationID();
       const conv = convID ? get().conversations[convID] : undefined;
       if (!convID || !conv) return;
-      if (!(conv.undeliveredSteers ?? []).some((s) => s.id === id)) return;
       updateConv(convID, {
-        undeliveredSteers: (conv.undeliveredSteers ?? []).filter(
-          (s) => s.id !== id,
+        messages: conv.messages.filter(
+          (m) => !(m.id === id && m.steer === 'undelivered'),
         ),
       });
     },
@@ -2753,6 +2925,7 @@ export const useStore = create<StoreState>((set, get) => {
       const context = actor?.getSnapshot().context as {
         lastHydrateRequest?: number;
       };
+      const before = get().conversations[id];
       const request = (context?.lastHydrateRequest ?? 0) + 1;
       const generation = stateRoot.generation();
       actor?.send({ type: 'HYDRATE_REQUESTED', request, generation });
@@ -2767,7 +2940,13 @@ export const useStore = create<StoreState>((set, get) => {
               mode: state.conversations[id]?.mode ?? 'workspace',
               think: state.conversations[id]?.think ?? 'medium',
               model: state.conversations[id]?.model ?? '',
-              messages: page.messages,
+              // Undelivered steer rows never entered the archive, so a
+              // rebuild from archived turns has to carry them over: they
+              // are the only copy of their text.
+              messages: [
+                ...page.messages,
+                ...carryUndeliveredSteers(before?.messages, page.messages),
+              ],
               turnArtifacts: page.turnArtifacts,
               historySeq: page.historySeq,
               historyHasMore: page.historyHasMore,
@@ -2885,7 +3064,13 @@ export const useStore = create<StoreState>((set, get) => {
           (actorValue?.turn === 'running' || actorValue?.turn === 'starting');
         const mergedMessages = keepLive
           ? [...messages, ...existing.messages]
-          : messages;
+          : [
+              // Undelivered steer rows are not in the archive, so they
+              // travel across the rebuild explicitly (see
+              // carryUndeliveredSteers).
+              ...messages,
+              ...carryUndeliveredSteers(existing?.messages, messages),
+            ];
         set((state) => ({
           toolsView: null,
           conversations: {
