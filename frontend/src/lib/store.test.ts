@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { COMPACT_SUMMARY_PREFIX } from './compact';
 import type { MessageView } from './store';
 import type { WorkspaceMeta } from './types';
 import { stateRoot } from '../state/app';
@@ -1284,6 +1285,91 @@ describe('store: send and stream', () => {
     ]);
   });
 
+  // The two cadences (see stream.ts): a queue that holds nothing but
+  // reasoning waits for its own, calmer beat, and prose joining that
+  // queue pulls the commit in to the text beat instead of waiting it out.
+  describe('stream cadence', () => {
+    // The cadence is measured from the last commit, so the test has to
+    // pin that commit rather than inherit one: `stamp()` folds one
+    // delta through the queue synchronously, which is what a flush does
+    // at the end of a burst. The clock is fake, so the stamp is the fake
+    // time and every wait below is exact.
+    const startRun = () => {
+      stateRoot.registry
+        .get('s-1')
+        ?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+      useStore.setState({ runConvs: { 'r-1': 's-1' } });
+      const handle = useStore.getState().handleEvent;
+      const stream = (kind: 'text' | 'reasoning', text: string) =>
+        handle({
+          type: 'stream',
+          data: {
+            run_id: 'r-1',
+            conversation_id: 's-1',
+            delta: { type: 'part', part: { type: kind, text } },
+          },
+        });
+      stream('reasoning', 'baseline');
+      useStore.getState().flushStreams();
+      return stream;
+    };
+
+    it('holds a reasoning-only burst past the text cadence', () => {
+      vi.useFakeTimers();
+      try {
+        const stream = startRun();
+        let storeUpdates = 0;
+        const unsubscribe = useStore.subscribe(() => {
+          storeUpdates += 1;
+        });
+        stream('reasoning', 'weighing the two layouts');
+        vi.advanceTimersByTime(150);
+        expect(storeUpdates).toBe(0);
+        vi.advanceTimersByTime(150);
+        unsubscribe();
+        expect(storeUpdates).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('commits prose on the text cadence when it joins a thought', () => {
+      vi.useFakeTimers();
+      try {
+        const stream = startRun();
+        const committed = () => {
+          const items = useStore
+            .getState()
+            .conversations['s-1']!.messages.at(-1)!.items;
+          const last = items.at(-1);
+          return last?.kind === 'text' ? last.text : undefined;
+        };
+        stream('reasoning', 'weighing');
+        vi.advanceTimersByTime(40);
+        stream('text', 'the answer is 42');
+        // A reasoning-only queue would still be waiting here: its own
+        // beat is 250ms, this queue's is 100ms from the last commit.
+        vi.advanceTimersByTime(50);
+        expect(committed()).toBeUndefined();
+        vi.advanceTimersByTime(20);
+        expect(committed()).toBe('the answer is 42');
+        const items = useStore
+          .getState()
+          .conversations['s-1']!.messages.at(-1)!.items;
+        // The two reasoning deltas are one block: the thought folds into
+        // itself, the prose opens the next item.
+        expect(items.map((item) => item.kind)).toEqual(['reasoning', 'text']);
+        const thought = items[0];
+        expect(thought.kind).toBe('reasoning');
+        expect(itemText(thought as { text: string; chunks?: string[] })).toBe(
+          'baselineweighing',
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it('stress-flushes a large burst as one transcript update', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     const handle = useStore.getState().handleEvent;
@@ -2421,7 +2507,34 @@ describe('store: mid-turn steer', () => {
     return actor;
   }
 
-  it('draws the optimistic row and registers it for the run', async () => {
+  /** steerRows lists the interjection rows of a conversation. */
+  function steerRows(conversationID = 's-1') {
+    return (
+      useStore.getState().conversations[conversationID]?.messages ?? []
+    ).filter((m) => m.steer);
+  }
+
+  function endTurn(runID: string, steerPending?: number | null) {
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: runID,
+        conversation_id: 's-1',
+        status: 'completed',
+        ...(steerPending === undefined ? {} : { steer_pending: steerPending }),
+      },
+    });
+  }
+
+  /** reportPending is the live count a round boundary sends mid-turn. */
+  function reportPending(runID: string, pending: number) {
+    useStore.getState().handleEvent({
+      type: 'steer_pending',
+      data: { run_id: runID, conversation_id: 's-1', steer_pending: pending },
+    });
+  }
+
+  it('draws the optimistic row as a queued interjection', async () => {
     runningConversation();
 
     const ok = await useStore.getState().steer('mid-turn note');
@@ -2433,6 +2546,9 @@ describe('store: mid-turn steer', () => {
     expect(conv.messages.at(-1)).toMatchObject({
       role: 'user',
       text: 'mid-turn note',
+      // The row never looked like a turn opener: it is stamped before the
+      // RPC, so the transcript shows what it is from the first paint.
+      steer: 'pending',
     });
     expect(conv.steerSent).toEqual([
       {
@@ -2443,48 +2559,85 @@ describe('store: mid-turn steer', () => {
     ]);
   });
 
-  it('keeps delivered rows through turn_end', async () => {
+  it('stamps delivered rows through turn_end', async () => {
     runningConversation();
     await useStore.getState().steer('kept');
 
-    useStore.getState().handleEvent({
-      type: 'turn_end',
-      data: {
-        run_id: 'r-run',
-        conversation_id: 's-1',
-        status: 'completed',
-        // A delivered turn reports a literal zero, not an absent field:
-        // absence now means the count could not be read.
-        steer_pending: 0,
-      },
-    });
+    endTurn('r-run', 0);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.messages.some((m) => m.text === 'kept')).toBe(true);
+    // The row stays in place: the archive has the text too, so the
+    // settled state is the only thing that changes.
+    expect(conv.messages.at(-1)).toMatchObject({
+      text: 'kept',
+      steer: 'delivered',
+    });
     expect(conv.steerSent ?? []).toEqual([]);
-    expect(conv.undeliveredSteers ?? []).toEqual([]);
   });
 
-  it('turns an undelivered steer into a card at turn_end', async () => {
+  it('flips a taken interjection while the turn is still running', async () => {
+    runningConversation();
+    await useStore.getState().steer('first');
+    await useStore.getState().steer('second');
+
+    // A boundary drained one message: rows are FIFO, so the oldest is the
+    // one it carried, and the row still queued keeps waiting for a
+    // boundary of its own instead of being guessed at.
+    reportPending('r-run', 1);
+    expect(steerRows().map((m) => [m.text, m.steer])).toEqual([
+      ['first', 'delivered'],
+      ['second', 'pending'],
+    ]);
+    // The settled row leaves the pending list, which is exactly what
+    // turn_end reconciles — the ending must not reclassify it.
+    expect(
+      (useStore.getState().conversations['s-1'].steerSent ?? []).map(
+        (s) => s.text,
+      ),
+    ).toEqual(['second']);
+
+    // The turn then ends without reaching another boundary: what the
+    // boundary took stays delivered, what waited is undelivered.
+    endTurn('r-run', 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(steerRows().map((m) => [m.text, m.steer])).toEqual([
+      ['first', 'delivered'],
+      ['second', 'undelivered'],
+    ]);
+  });
+
+  it('never un-settles a delivered row when a count moves back up', async () => {
+    runningConversation();
+    await useStore.getState().steer('first');
+    reportPending('r-run', 0);
+    await useStore.getState().steer('second');
+
+    // The count now covers only the row that is really still queued: a
+    // report can never reach back and un-deliver what a boundary carried.
+    reportPending('r-run', 1);
+    expect(steerRows().map((m) => [m.text, m.steer])).toEqual([
+      ['first', 'delivered'],
+      ['second', 'pending'],
+    ]);
+  });
+
+  it('marks an undelivered steer in place at turn_end', async () => {
     runningConversation();
     await useStore.getState().steer('lost note');
+    const rowID = useStore.getState().conversations['s-1'].messages.at(-1)?.id;
 
-    useStore.getState().handleEvent({
-      type: 'turn_end',
-      data: {
-        run_id: 'r-run',
-        conversation_id: 's-1',
-        status: 'completed',
-        steer_pending: 1,
-      },
-    });
+    endTurn('r-run', 1);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.messages.some((m) => m.text === 'lost note')).toBe(false);
-    expect(conv.undeliveredSteers).toHaveLength(1);
-    expect(conv.undeliveredSteers?.[0].text).toBe('lost note');
+    // Still a transcript row — not a card that lost its place — so the
+    // text the archive never saw stays exactly where it was typed.
+    expect(conv.messages.at(-1)).toMatchObject({
+      id: rowID,
+      text: 'lost note',
+      steer: 'undelivered',
+    });
     expect(conv.steerSent ?? []).toEqual([]);
   });
 
@@ -2493,229 +2646,210 @@ describe('store: mid-turn steer', () => {
     await useStore.getState().steer('first');
     await useStore.getState().steer('second');
 
-    useStore.getState().handleEvent({
-      type: 'turn_end',
-      data: {
-        run_id: 'r-run',
-        conversation_id: 's-1',
-        status: 'completed',
-        steer_pending: 1,
-      },
-    });
+    endTurn('r-run', 1);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const conv = useStore.getState().conversations['s-1'];
-    expect(conv.messages.some((m) => m.text === 'first')).toBe(true);
-    expect(conv.messages.some((m) => m.text === 'second')).toBe(false);
-    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual(['second']);
+    const rows = steerRows();
+    expect(rows.map((m) => [m.text, m.steer])).toEqual([
+      ['first', 'delivered'],
+      ['second', 'undelivered'],
+    ]);
   });
 
-  it('keeps the undelivered card when turn_end wins the race and the RPC rejects', async () => {
+  it('keeps the undelivered row when turn_end wins the race and the RPC rejects', async () => {
     runningConversation();
     apiMock.steerTurn.mockImplementation(async () => {
-      useStore.getState().handleEvent({
-        type: 'turn_end',
-        data: {
-          run_id: 'r-run',
-          conversation_id: 's-1',
-          status: 'completed',
-          steer_pending: 1,
-        },
-      });
+      endTurn('r-run', 1);
       throw new Error('turn not found');
     });
 
     const ok = await useStore.getState().steer('raced note');
 
-    // The turn settled mid-submission: the row is already a card, so a
-    // late rejection must neither clear it nor start a fresh turn.
+    // The turn settled mid-submission: the row is already marked
+    // undelivered, so a late rejection must not pull it back out or
+    // start a fresh turn (the text would then be sent twice).
     expect(ok).toBe(true);
     expect(apiMock.startTurn).not.toHaveBeenCalled();
-    const conv = useStore.getState().conversations['s-1'];
-    expect(conv.messages.some((m) => m.text === 'raced note')).toBe(false);
-    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual(['raced note']);
+    expect(steerRows().map((m) => [m.text, m.steer])).toEqual([
+      ['raced note', 'undelivered'],
+    ]);
     expect(useStore.getState().toasts).toHaveLength(0);
   });
 
   it('does not duplicate the steer row when turn_end and the RPC both land', async () => {
     runningConversation();
     apiMock.steerTurn.mockImplementation(async () => {
-      useStore.getState().handleEvent({
-        type: 'turn_end',
-        data: {
-          run_id: 'r-run',
-          conversation_id: 's-1',
-          status: 'completed',
-          steer_pending: 1,
-        },
-      });
+      endTurn('r-run', 1);
     });
 
     expect(await useStore.getState().steer('raced note')).toBe(true);
 
-    // Exactly one copy of the text: out of the transcript, into a card,
-    // with the registration for the run cleared.
+    // Exactly one copy of the text, marked undelivered, with the
+    // registration for the run cleared.
     const conv = useStore.getState().conversations['s-1'];
     expect(conv.messages.filter((m) => m.text === 'raced note')).toHaveLength(
-      0,
+      1,
     );
-    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual(['raced note']);
+    expect(conv.messages.find((m) => m.text === 'raced note')?.steer).toBe(
+      'undelivered',
+    );
     expect(conv.steerSent ?? []).toEqual([]);
     expect(useStore.getState().toasts).toHaveLength(0);
   });
 
-  it('caps the undelivered cards at the newest twenty', async () => {
+  it('caps the undelivered rows at the newest twenty', async () => {
     runningConversation();
     for (let i = 0; i < 25; i += 1) {
       await useStore.getState().steer(`note ${i}`);
     }
 
-    useStore.getState().handleEvent({
-      type: 'turn_end',
-      data: {
-        run_id: 'r-run',
-        conversation_id: 's-1',
-        status: 'completed',
-        steer_pending: 25,
-      },
-    });
+    endTurn('r-run', 25);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const conv = useStore.getState().conversations['s-1'];
-    const cards = conv.undeliveredSteers ?? [];
-    expect(cards).toHaveLength(20);
-    expect(cards[0].text).toBe('note 5');
-    expect(cards[19].text).toBe('note 24');
+    const rows = steerRows();
+    expect(rows).toHaveLength(20);
+    expect(rows[0].text).toBe('note 5');
+    expect(rows[19].text).toBe('note 24');
+    expect(rows.every((m) => m.steer === 'undelivered')).toBe(true);
   });
 
   it('treats a pending count above the local rows as bounded, not phantom', async () => {
     runningConversation();
     await useStore.getState().steer('only one');
 
-    useStore.getState().handleEvent({
-      type: 'turn_end',
-      data: {
-        run_id: 'r-run',
-        conversation_id: 's-1',
-        status: 'completed',
-        steer_pending: 5,
-      },
-    });
+    endTurn('r-run', 5);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // A count larger than what this client registered (another window,
-    // a lost row) still only converts what exists.
-    const conv = useStore.getState().conversations['s-1'];
-    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual(['only one']);
-    expect(conv.messages.some((m) => m.text === 'only one')).toBe(false);
+    // A count larger than what this client registered (another window, a
+    // lost row) still only settles what exists.
+    expect(steerRows().map((m) => [m.text, m.steer])).toEqual([
+      ['only one', 'undelivered'],
+    ]);
   });
 
-  it('keeps every steered row when the backend cannot read the count', async () => {
+  it('settles every steered row when the backend cannot read the count', async () => {
     runningConversation();
     await useStore.getState().steer('first');
     await useStore.getState().steer('second');
 
-    useStore.getState().handleEvent({
-      type: 'turn_end',
-      data: {
-        run_id: 'r-run',
-        conversation_id: 's-1',
-        status: 'completed',
-        steer_pending: null,
-      },
-    });
+    endTurn('r-run', null);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     // Unknown is not zero: the rows are the only copy of that text, so
-    // all of them become cards instead of being reconciled away.
-    const conv = useStore.getState().conversations['s-1'];
-    expect(
-      conv.messages.some((m) => m.text === 'first' || m.text === 'second'),
-    ).toBe(false);
-    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual([
-      'first',
-      'second',
+    // all of them settle as undelivered instead of being reconciled away.
+    expect(steerRows().map((m) => [m.text, m.steer])).toEqual([
+      ['first', 'undelivered'],
+      ['second', 'undelivered'],
     ]);
   });
 
-  it('keeps every steered row when turn_end omits the count', async () => {
+  it('settles every steered row when turn_end omits the count', async () => {
     runningConversation();
     await useStore.getState().steer('from an older producer');
 
     // A producer that does not know the field must fail closed: the
     // absent value is not a zero the transcript can be reconciled away
     // against.
-    useStore.getState().handleEvent({
-      type: 'turn_end',
-      data: {
-        run_id: 'r-run',
-        conversation_id: 's-1',
-        status: 'completed',
-      },
-    });
+    endTurn('r-run');
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const conv = useStore.getState().conversations['s-1'];
-    expect(conv.undeliveredSteers?.map((s) => s.text)).toEqual([
-      'from an older producer',
+    expect(steerRows().map((m) => [m.text, m.steer])).toEqual([
+      ['from an older producer', 'undelivered'],
     ]);
-    expect(conv.messages.some((m) => m.text === 'from an older producer')).toBe(
-      false,
+  });
+
+  it('settles a row whose run never reported back at all', async () => {
+    runningConversation('r-old');
+    await useStore.getState().steer('orphan note');
+    expect(steerRows().map((m) => m.steer)).toEqual(['pending']);
+
+    // The superseded run's terminal event is lost: its row would claim a
+    // delivery is still coming forever. The next turn_end in that
+    // conversation settles it.
+    const actor = runningConversation('r-new');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-new' });
+    endTurn('r-new', 0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(steerRows().map((m) => [m.text, m.steer])).toEqual([
+      ['orphan note', 'undelivered'],
+    ]);
+    expect(useStore.getState().conversations['s-1'].steerSent ?? []).toEqual(
+      [],
     );
   });
 
-  it('resends a card as a new turn and drops it', async () => {
+  it('leaves a row of a live run alone when another run ends', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-new' });
+    // r-old is still registered as live: its terminal event has not
+    // landed even though the conversation already moved on to r-new.
+    useStore.setState({
+      runConvs: { 'r-old': 's-1', 'r-new': 's-1' },
+    });
+    await useStore.getState().steer('waiting note');
+
+    // The row belongs to r-new, which is still waiting for its own
+    // boundary, so r-old's turn_end must not settle it.
+    endTurn('r-old', 0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(steerRows().map((m) => [m.text, m.steer])).toEqual([
+      ['waiting note', 'pending'],
+    ]);
+  });
+
+  it('resends an undelivered row as a new turn and drops it', async () => {
     runningConversation();
     await useStore.getState().steer('lost note');
-    useStore.getState().handleEvent({
-      type: 'turn_end',
-      data: {
-        run_id: 'r-run',
-        conversation_id: 's-1',
-        status: 'completed',
-        steer_pending: 1,
-      },
-    });
+    endTurn('r-run', 1);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const card =
-      useStore.getState().conversations['s-1'].undeliveredSteers?.[0];
-    expect(card).toBeDefined();
+    const row = steerRows()[0];
+    expect(row).toBeDefined();
     apiMock.startTurn.mockResolvedValue({
       run_id: 'r-new',
       context_id: 's-1',
     });
 
-    await useStore.getState().resendSteer(card!.id);
+    await useStore.getState().resendSteer(row.id);
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.undeliveredSteers ?? []).toEqual([]);
+    expect(steerRows()).toEqual([]);
     expect(conv.messages.at(-1)).toMatchObject({
       role: 'user',
       text: 'lost note',
     });
+    expect(conv.messages.at(-1)?.steer).toBeUndefined();
     expect(useStore.getState().runConvs['r-new']).toBe('s-1');
   });
 
-  it('drops a card without sending', async () => {
+  it('drops an undelivered row without sending', async () => {
     runningConversation();
     await useStore.getState().steer('lost note');
-    useStore.getState().handleEvent({
-      type: 'turn_end',
-      data: {
-        run_id: 'r-run',
-        conversation_id: 's-1',
-        status: 'completed',
-        steer_pending: 1,
-      },
-    });
+    endTurn('r-run', 1);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const card =
-      useStore.getState().conversations['s-1'].undeliveredSteers?.[0];
+    const row = steerRows()[0];
 
-    useStore.getState().dismissSteer(card!.id);
+    useStore.getState().dismissSteer(row.id);
 
-    const conv = useStore.getState().conversations['s-1'];
-    expect(conv.undeliveredSteers ?? []).toEqual([]);
+    expect(steerRows()).toEqual([]);
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+  });
+
+  it('never resends a delivered row', async () => {
+    runningConversation();
+    await useStore.getState().steer('delivered note');
+    endTurn('r-run', 0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const row = steerRows()[0];
+
+    await useStore.getState().resendSteer(row.id);
+    useStore.getState().dismissSteer(row.id);
+
+    // A delivered interjection is conversation history: it is not
+    // the user's to drop from the transcript (the archive has it).
+    expect(steerRows().map((m) => m.steer)).toEqual(['delivered']);
     expect(apiMock.startTurn).not.toHaveBeenCalled();
   });
 
@@ -2734,17 +2868,12 @@ describe('store: mid-turn steer', () => {
   });
 
   it('falls back to a normal send when the turn ended before the rejection', async () => {
-    runningConversation();
+    const actor = runningConversation();
     apiMock.steerTurn.mockImplementation(async () => {
-      useStore.getState().handleEvent({
-        type: 'turn_end',
-        data: {
-          run_id: 'r-run',
-          conversation_id: 's-1',
-          status: 'completed',
-          steer_pending: 0,
-        },
-      });
+      // The run's terminal event never arrived; the conversation reached
+      // its idle state another way (a cancel that settled locally).
+      actor?.send({ type: 'TURN_ENDED', runID: 'r-run', status: 'completed' });
+      useStore.setState({ runConvs: {} });
       throw new Error('turn not found');
     });
     apiMock.startTurn.mockResolvedValue({
@@ -2758,6 +2887,12 @@ describe('store: mid-turn steer', () => {
     expect(apiMock.startTurn).toHaveBeenCalledTimes(1);
     const conv = useStore.getState().conversations['s-1'];
     expect(conv.messages.filter((m) => m.text === 'late note')).toHaveLength(1);
+    expect(conv.messages.at(-1)).toMatchObject({
+      text: 'late note',
+    });
+    // The row was pulled back out of the transcript and re-sent as the
+    // turn the user meant, not left as an interjection nothing owns.
+    expect(conv.messages.at(-1)?.steer).toBeUndefined();
     expect(useStore.getState().runConvs['r-fallback']).toBe('s-1');
     expect(useStore.getState().toasts).toHaveLength(0);
   });
@@ -2778,5 +2913,273 @@ describe('store: mid-turn steer', () => {
       false,
     );
     expect(apiMock.steerTurn).not.toHaveBeenCalled();
+  });
+});
+
+describe('store: steered rows across transcript rebuilds', () => {
+  function runningConversation(runID = 'r-run') {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID });
+    useStore.setState({ runConvs: { [runID]: 's-1' } });
+    return actor;
+  }
+
+  it('tags an archived mid-turn user row as a delivered steer', async () => {
+    apiMock.resumeSession.mockResolvedValue({
+      session_id: 's-archive',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      {
+        seq: 1,
+        at: '2026-09-03T00:00:00Z',
+        status: 'succeeded',
+        messages: [
+          {
+            role: 'user',
+            content: { parts: [{ type: 'text', text: 'the question' }] },
+          },
+          {
+            role: 'assistant',
+            content: { parts: [{ type: 'text', text: 'starting on it' }] },
+          },
+          {
+            role: 'tool',
+            content: {
+              parts: [
+                {
+                  type: 'tool_result',
+                  result: {
+                    call_id: 'c-1',
+                    content: [{ type: 'text', text: 'ok' }],
+                  },
+                },
+              ],
+            },
+          },
+          // The steer node appends the interjection as a plain user
+          // message at the round boundary: it is the second user row of
+          // the turn, and a resume has to keep rendering it as one.
+          {
+            role: 'user',
+            content: { parts: [{ type: 'text', text: 'also check the docs' }] },
+          },
+          {
+            role: 'assistant',
+            content: { parts: [{ type: 'text', text: 'done' }] },
+          },
+        ],
+        artifacts: [],
+      },
+    ]);
+
+    await useStore.getState().resume('s-archive');
+
+    const conv = useStore.getState().conversations['s-archive'];
+    const rows = conv.messages.filter((m) => m.role === 'user');
+    expect(rows.map((m) => [m.text, m.steer ?? 'ask'])).toEqual([
+      ['the question', 'ask'],
+      ['also check the docs', 'delivered'],
+    ]);
+  });
+
+  it('does not tag a second turn, a summary, or a steer that precedes the reply', async () => {
+    apiMock.resumeSession.mockResolvedValue({
+      session_id: 's-archive',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      {
+        seq: 1,
+        at: '2026-09-03T00:00:00Z',
+        status: 'succeeded',
+        messages: [
+          // A compaction summary is user-role context, not the user
+          // speaking, and a world-state row ahead of the ask must not
+          // consume the "first user row" slot either.
+          {
+            role: 'user',
+            content: {
+              parts: [
+                {
+                  type: 'text',
+                  text: `${COMPACT_SUMMARY_PREFIX}\nfolded history`,
+                },
+              ],
+            },
+          },
+          {
+            role: 'user',
+            content: { parts: [{ type: 'text', text: 'first question' }] },
+          },
+          {
+            role: 'assistant',
+            content: { parts: [{ type: 'text', text: 'first answer' }] },
+          },
+        ],
+        artifacts: [],
+      },
+      {
+        seq: 2,
+        at: '2026-09-03T00:01:00Z',
+        status: 'succeeded',
+        messages: [
+          {
+            role: 'user',
+            content: { parts: [{ type: 'text', text: 'second question' }] },
+          },
+          {
+            role: 'assistant',
+            content: { parts: [{ type: 'text', text: 'second answer' }] },
+          },
+        ],
+        artifacts: [],
+      },
+    ]);
+
+    await useStore.getState().resume('s-archive');
+
+    const rows = useStore
+      .getState()
+      .conversations['s-archive'].messages.filter((m) => m.role === 'user');
+    expect(rows.every((m) => m.steer === undefined)).toBe(true);
+  });
+
+  it('carries undelivered rows across a transcript rebuild', async () => {
+    runningConversation();
+    await useStore.getState().steer('lost note');
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+        steer_pending: 1,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The archive cannot hold that text (nothing appended it), so a
+    // rebuild from archived turns has to carry the row over: it is the
+    // only copy.
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'the question', 'the answer'),
+    ]);
+    await useStore.getState().retryTranscript('s-1');
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.at(-1)).toMatchObject({
+      role: 'user',
+      text: 'lost note',
+      steer: 'undelivered',
+    });
+    // The archived turn is back too: the carried row is appended after
+    // the rebuilt transcript, not instead of it. Assistant text lives in
+    // the message's items, so it is read through itemText.
+    expect(
+      conv.messages
+        .flatMap((m) => m.items)
+        .filter(
+          (it): it is Extract<MessageView['items'][number], { kind: 'text' }> =>
+            it.kind === 'text',
+        )
+        .map((it) => itemText(it)),
+    ).toContain('the answer');
+  });
+
+  it('carries undelivered rows across a resume hydration', async () => {
+    runningConversation();
+    await useStore.getState().steer('lost note');
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-run',
+        conversation_id: 's-1',
+        status: 'completed',
+        steer_pending: 1,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    apiMock.resumeSession.mockResolvedValue({
+      session_id: 's-1',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'the question', 'the answer'),
+    ]);
+    useStore.setState({ workspace: '/tmp/other' });
+    await useStore.getState().resume('s-1');
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.at(-1)).toMatchObject({
+      text: 'lost note',
+      steer: 'undelivered',
+    });
+  });
+
+  it('does not print a carried row the archive already holds', async () => {
+    runningConversation();
+    await useStore.getState().steer('taken note');
+    // The boundary did take this message, but the run's own terminal
+    // event was lost: the conversation moved on to a replacement run,
+    // whose turn_end settles the row as undelivered (nothing left to
+    // classify it with) and carries it as the only copy of the text.
+    runningConversation('r-new');
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-new',
+        conversation_id: 's-1',
+        status: 'completed',
+        steer_pending: 0,
+      },
+    });
+    const steers = () =>
+      useStore.getState().conversations['s-1'].messages.filter((m) => m.steer);
+    expect(steers().map((m) => m.steer)).toEqual(['undelivered']);
+
+    // A rebuild that finds the same text archived as a delivered
+    // interjection is the truth: the carried row would print the words
+    // twice.
+    apiMock.sessionTurns.mockResolvedValue([
+      {
+        seq: 1,
+        at: '2026-09-03T00:00:00Z',
+        status: 'succeeded',
+        messages: [
+          {
+            role: 'user',
+            content: { parts: [{ type: 'text', text: 'the question' }] },
+          },
+          {
+            role: 'assistant',
+            content: { parts: [{ type: 'text', text: 'working on it' }] },
+          },
+          {
+            role: 'user',
+            content: { parts: [{ type: 'text', text: 'taken note' }] },
+          },
+          {
+            role: 'assistant',
+            content: { parts: [{ type: 'text', text: 'done' }] },
+          },
+        ],
+        artifacts: [],
+      },
+    ]);
+    await useStore.getState().retryTranscript('s-1');
+
+    const rows = useStore
+      .getState()
+      .conversations['s-1'].messages.filter((m) => m.text === 'taken note');
+    expect(rows.map((m) => m.steer)).toEqual(['delivered']);
   });
 });

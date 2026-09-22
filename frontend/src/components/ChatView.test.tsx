@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
 import { stateRoot } from '../state/app';
 import type { MessageView, TurnArtifacts } from '../lib/store';
-import type { SessionMeta } from '../lib/types';
+import type { SandboxProcess, SessionMeta } from '../lib/types';
 import { ChatView } from './ChatView';
 
 const apiMock = vi.hoisted(() => ({
@@ -25,6 +25,7 @@ const apiMock = vi.hoisted(() => ({
   startTurn: vi.fn(),
   steerTurn: vi.fn(),
   cancelTurn: vi.fn(async () => undefined),
+  processes: vi.fn(async () => [] as SandboxProcess[]),
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
@@ -37,6 +38,29 @@ function manyMessages(n: number): MessageView[] {
     items: [],
     attachments: [],
   }));
+}
+
+// assistantTurn is a running turn's transcript so far: the ask that
+// opened it and the answer the user interrupts mid-flight.
+function assistantTurn(): MessageView[] {
+  return [
+    {
+      id: 'm-ask',
+      role: 'user',
+      text: 'start the refactor',
+      items: [],
+      attachments: [],
+    },
+    {
+      id: 'm-answer',
+      role: 'assistant',
+      text: 'working on it',
+      // Assistant text lives in items: the row renders the ordered
+      // blocks, and a message with no blocks folds away to nothing.
+      items: [{ kind: 'text', id: 'i-answer', text: 'working on it' }],
+      attachments: [],
+    },
+  ];
 }
 
 function setConversation(
@@ -70,6 +94,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiMock.workspace.mockResolvedValue('/tmp/w');
   apiMock.steerTurn.mockResolvedValue(undefined);
+  // clearAllMocks keeps implementations, so the feed's default answer is
+  // restored here rather than left over from the test before.
+  apiMock.processes.mockResolvedValue([]);
 });
 
 describe('ChatView transcript windowing', () => {
@@ -462,8 +489,93 @@ describe('ChatView transcript windowing', () => {
     );
   });
 
-  it('shows an undelivered steer as a card that can resend it', async () => {
-    setConversation([], []);
+  it('renders a mid-turn interjection as a note, not as a new turn', async () => {
+    // A running turn with an answer already streamed in: the note has to
+    // land between the ask and the continuation, in the position the
+    // user typed it, rather than reading as a second user turn.
+    setConversation(assistantTurn(), [
+      { id: 't-1', start: 0, docs: [], runID: 'r-old' },
+    ]);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    render(<ChatView />);
+
+    // Mid-turn typing steers instead of interrupting.
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('also check the docs');
+    await userEvent.keyboard('{Enter}');
+    await vi.waitFor(() =>
+      expect(apiMock.steerTurn).toHaveBeenCalledWith(
+        'r-old',
+        'also check the docs',
+      ),
+    );
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+
+    // The row is drawn as an interjection from the first paint: it says
+    // that it is waiting for the next step and it never wears the
+    // accent bubble the transcript wraps around a turn the user opened.
+    const note = await screen.findByTestId('steer-note');
+    expect(note).toHaveAttribute('data-steer-state', 'pending');
+    expect(
+      within(note).getByText(/waiting for the next step/i),
+    ).toBeInTheDocument();
+    expect(within(note).getByText('also check the docs')).toBeInTheDocument();
+    // The ask is the only bubble in the transcript: the interjection
+    // never wears the accent fill that means "I started this turn".
+    expect(note.querySelector('.user-bubble-md')).toBeNull();
+    expect(document.querySelectorAll('.user-bubble-md')).toHaveLength(1);
+
+    // Position is the transcript's own order: ask, then the answer so
+    // far, then the interjection.
+    const scroller = screen.getByTestId('chat-scroll');
+    const order = Array.from(scroller.querySelectorAll('[data-msg-index]')).map(
+      (el) => el.getAttribute('data-msg-index'),
+    );
+    expect(order).toEqual(['0', '1', '2']);
+    expect(within(scroller).getByText('working on it')).toBeInTheDocument();
+  });
+
+  it('stamps the note delivered when the run picked it up', async () => {
+    setConversation(assistantTurn(), [
+      { id: 't-1', start: 0, docs: [], runID: 'r-old' },
+    ]);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    render(<ChatView />);
+
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('also check the docs');
+    await userEvent.keyboard('{Enter}');
+    await screen.findByTestId('steer-note');
+
+    // steer_pending 0 is a real zero: a boundary read the queue, so the
+    // note settles into its plain state and offers no actions.
+    await act(async () => {
+      useStore.getState().handleEvent({
+        type: 'turn_end',
+        data: {
+          run_id: 'r-old',
+          conversation_id: 's-1',
+          status: 'completed',
+          steer_pending: 0,
+        },
+      });
+    });
+    const note = await screen.findByTestId('steer-note');
+    expect(note).toHaveAttribute('data-steer-state', 'delivered');
+    expect(
+      within(note).queryByRole('button', { name: 'Send as a new turn' }),
+    ).not.toBeInTheDocument();
+    expect(within(note).getByText('also check the docs')).toBeInTheDocument();
+  });
+
+  it('keeps an undelivered interjection in place with its actions', async () => {
+    setConversation(assistantTurn(), [
+      { id: 't-1', start: 0, docs: [], runID: 'r-old' },
+    ]);
     const actor = stateRoot.registry.get('s-1');
     actor?.send({ type: 'SEND_STARTED' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
@@ -473,20 +585,15 @@ describe('ChatView transcript windowing', () => {
     });
     render(<ChatView />);
 
-    // Mid-turn typing steers instead of interrupting.
     await userEvent.setup().click(screen.getByRole('textbox'));
     await userEvent.keyboard('changed my mind');
     await userEvent.keyboard('{Enter}');
-    await vi.waitFor(() =>
-      expect(apiMock.steerTurn).toHaveBeenCalledWith(
-        'r-old',
-        'changed my mind',
-      ),
-    );
-    expect(apiMock.startTurn).not.toHaveBeenCalled();
+    await screen.findByTestId('steer-note');
 
-    // The turn ends without picking the steer up: the optimistic row
-    // gives way to a card so the text is still visible.
+    // The turn ends without reaching the boundary a steer is delivered
+    // at. The text never entered the conversation, so the note stays —
+    // in its transcript position, marked, and with the actions that
+    // keep the text from being lost.
     await act(async () => {
       useStore.getState().handleEvent({
         type: 'turn_end',
@@ -498,13 +605,19 @@ describe('ChatView transcript windowing', () => {
         },
       });
     });
-    const card = await screen.findByTestId('steer-undelivered');
-    expect(within(card).getByText('changed my mind')).toBeInTheDocument();
+    const note = await screen.findByTestId('steer-note');
+    expect(note).toHaveAttribute('data-steer-state', 'undelivered');
+    expect(within(note).getByText('changed my mind')).toBeInTheDocument();
     const scroller = screen.getByTestId('chat-scroll');
-    expect(within(scroller).queryByText('changed my mind')).toBeInTheDocument();
+    // It sits after the answer it missed, which is where the user saw
+    // it land — not stacked among the turn's other rows.
+    const order = Array.from(scroller.querySelectorAll('[data-msg-index]')).map(
+      (el) => el.getAttribute('data-msg-index'),
+    );
+    expect(order).toEqual(['0', '1', '2']);
 
-    // Copying is not a decision: the text can leave the card without
-    // committing to another turn, and the card stays put.
+    // Copying is not a decision: the text can leave the note without
+    // committing to another turn, and the note stays put.
     // The stub goes in after setup(): userEvent.setup() installs its own
     // clipboard mock on navigator and would otherwise swallow the call.
     const user = userEvent.setup();
@@ -513,21 +626,57 @@ describe('ChatView transcript windowing', () => {
       configurable: true,
       value: { writeText },
     });
-    await user.click(within(card).getByRole('button', { name: 'Copy text' }));
+    await user.click(within(note).getByRole('button', { name: 'Copy text' }));
     await vi.waitFor(() =>
       expect(
-        within(card).getByRole('button', { name: 'Copied' }),
+        within(note).getByRole('button', { name: 'Copied' }),
       ).toBeInTheDocument(),
     );
     expect(writeText).toHaveBeenCalledWith('changed my mind');
-    expect(screen.getByTestId('steer-undelivered')).toBeInTheDocument();
+    expect(screen.getByTestId('steer-note')).toBeInTheDocument();
 
-    // Resending turns the card into a regular turn and drops it.
+    // Resending sends the text as a turn of its own and drops the note.
     await userEvent
       .setup()
-      .click(within(card).getByRole('button', { name: 'Send as a new turn' }));
+      .click(within(note).getByRole('button', { name: 'Send as a new turn' }));
     await vi.waitFor(() => expect(apiMock.startTurn).toHaveBeenCalled());
-    expect(screen.queryByTestId('steer-undelivered')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('steer-note')).not.toBeInTheDocument();
+  });
+
+  it('drops an undelivered interjection without sending it', async () => {
+    setConversation(assistantTurn(), [
+      { id: 't-1', start: 0, docs: [], runID: 'r-old' },
+    ]);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    render(<ChatView />);
+
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('never mind');
+    await userEvent.keyboard('{Enter}');
+    await screen.findByTestId('steer-note');
+    await act(async () => {
+      useStore.getState().handleEvent({
+        type: 'turn_end',
+        data: {
+          run_id: 'r-old',
+          conversation_id: 's-1',
+          status: 'completed',
+          steer_pending: null,
+        },
+      });
+    });
+
+    // null means the backend could not read the count, so the row is
+    // kept as undelivered rather than claimed delivered.
+    const note = await screen.findByTestId('steer-note');
+    expect(note).toHaveAttribute('data-steer-state', 'undelivered');
+    await userEvent
+      .setup()
+      .click(within(note).getByRole('button', { name: 'Discard' }));
+    expect(screen.queryByTestId('steer-note')).not.toBeInTheDocument();
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
   });
 
   it('renders recognizable badges for common document attachments', async () => {
@@ -2512,5 +2661,98 @@ describe('ChatView header', () => {
     expect(stop).toHaveAttribute('data-status', 'canceled');
     expect(stop).toHaveTextContent('Reply cancelled');
     expect(stop.className).toContain('text-dim');
+  });
+});
+
+// The activity card is the live overlay of the work under way: the pane
+// mounts it exactly as long as a turn runs or one of the conversation's
+// processes does. That lifetime is why it carries no close button — an
+// overlay that outlived its activity would cover the conversation with
+// nothing left to report, and the transcript is what keeps the record.
+describe('ChatView activity card lifetime', () => {
+  const runningProcess: SandboxProcess = {
+    process_id: 'p-1',
+    argv: ['npm', 'run', 'dev'],
+    workdir: '/tmp/w',
+    tty: false,
+    pid: 4242,
+    started_at: '2026-01-01T00:00:00Z',
+    running: true,
+    tail: 'VITE ready in 412 ms\n',
+    truncated: false,
+    seq: 30,
+  };
+
+  it('mounts the card with the turn and unmounts it with the turn', () => {
+    setConversation(assistantTurn());
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    act(() => {
+      useStore.getState().handleEvent({
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: {
+            type: 'part',
+            part: { type: 'reasoning', text: 'Weighing the layout.' },
+          },
+        },
+      });
+      useStore.getState().flushStreams();
+    });
+    expect(screen.getByTestId('activity-card')).toBeInTheDocument();
+    expect(screen.getByTestId('think-body')).toHaveTextContent(
+      'Weighing the layout.',
+    );
+
+    // The turn ends and the card goes with it. The thought stays in the
+    // store — a transcript is what keeps it — but nothing in the overlay
+    // is still happening, and nothing closed it.
+    act(() => {
+      actor?.send({ type: 'TURN_ENDED', runID: 'r-1', status: 'completed' });
+    });
+    expect(screen.queryByTestId('activity-card')).toBeNull();
+    expect(screen.getByText('working on it')).toBeInTheDocument();
+  });
+
+  it('mounts the card for a process that runs on after its turn', async () => {
+    apiMock.processes.mockResolvedValue([runningProcess]);
+    setConversation(assistantTurn());
+    render(<ChatView />);
+
+    // No turn is running here: a server an earlier turn started is
+    // activity in its own right, so the card reports it and follows it
+    // until it stops.
+    const card = await screen.findByTestId('activity-card');
+    expect(within(card).getByText('npm run dev')).toBeInTheDocument();
+    expect(within(card).getByText('running')).toBeInTheDocument();
+  });
+
+  it('leaves the card down for a process that already stopped', async () => {
+    apiMock.processes.mockResolvedValue([
+      {
+        ...runningProcess,
+        running: false,
+        exit_code: 0,
+        exit_reason: 'exited',
+      },
+    ]);
+    setConversation(assistantTurn());
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    // The turn is in flight and the feed reports a process that has
+    // already ended: a stopped process is not activity, so the overlay
+    // renders nothing instead of an empty card — how the command ended
+    // is the transcript's record.
+    await act(async () => {});
+    expect(apiMock.processes).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('activity-card')).toBeNull();
   });
 });

@@ -72,6 +72,7 @@ import type { AttachmentDTO, AttachmentView } from '../lib/types';
 import type {
   AssistantItem,
   MessageView,
+  SteerState,
   ToolView,
   TurnArtifacts,
   TurnDoc,
@@ -91,10 +92,12 @@ import {
   type MarkdownComposerHandle,
 } from './MarkdownComposer';
 import { Markdown } from './Markdown';
-import { PlanPanel } from './PlanPanel';
+import { ActivityCard } from './ActivityCard';
 import { ToolCard, toolActivityDetail } from './ToolCard';
 import { StreamItemView } from './StreamItemView';
 import { latestPlan, planNeedsRefresh } from '../lib/plan';
+import { latestThink } from '../lib/think';
+import { useProcessTail } from '../lib/processTail';
 import { groupToolCalls, type ToolCallItem } from '../lib/stream';
 import { useToolElapsedLabel, workedForLabel } from '../lib/toolTiming';
 import { ICON } from './ui/icon';
@@ -180,10 +183,12 @@ function failedSteps(tools: ToolCallItem[]): ToolView[] {
 // long the step has taken. It walks the tail of the transcript only —
 // the call in flight always belongs to the last turn, and the walk stops
 // at the user message that opened it, so a long session costs nothing
-// per stream flush.
+// per stream flush. Interjections are walked past: they are the user
+// speaking inside the turn, not a boundary between turns, and the call
+// in flight is newer than every one of them.
 function liveStep(messages: MessageView[]): ToolView | null {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') return null;
+    if (messages[i].role === 'user' && !messages[i].steer) return null;
     const tools = messages[i].items.filter(
       (item): item is ToolCallItem => item.kind === 'tool_call',
     );
@@ -499,26 +504,44 @@ function TurnEndNotice({
   );
 }
 
-// UndeliveredSteerCard shows a mid-turn message whose turn ended before
-// the engine drained it (for example a pure text answer that never
-// reaches the round boundary a steer is delivered at). The text was
-// never appended to the conversation, so this card is the only place it
-// still exists: the user either sends it as a regular turn or drops it.
-function UndeliveredSteerCard({
+// SteerNote renders a mid-turn interjection: a message the user sent
+// while the reply was running, which the turn picks up at its next round
+// boundary (tools -> steer in the assistant graph) instead of opening a
+// turn of its own.
+//
+// It deliberately does not render as a user bubble. The right-aligned
+// accent bubble is the transcript's word for "I started this turn", and
+// an interjection is the opposite: something said inside one. The note
+// hangs off a rail on the reader's side instead, so the run it
+// interrupted keeps reading as one unit with the reply continuing below
+// it, and the user's own words stay exactly where they were typed.
+//
+// The state is the row's own lifecycle (MessageView.steer), spelled out
+// in words because the difference is invisible otherwise — a queued
+// interjection and a delivered one look the same until a boundary reads
+// the queue:
+//
+//   pending      handed to the run, waiting for that boundary
+//   delivered    a boundary took it; the archive has it too
+//   undelivered  the turn ended without taking it. Nothing appended the
+//                text to the conversation, so this row is the only copy
+//                and it offers resend / copy / discard.
+function SteerNote({
   text,
+  state,
   onResend,
   onDismiss,
 }: {
   text: string;
-  onResend: () => void;
-  onDismiss: () => void;
+  state: SteerState;
+  onResend?: () => void;
+  onDismiss?: () => void;
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
-  // The card is the only copy of this text — it never entered the
-  // conversation, and the transcript row it came from is gone — so
-  // there is always a way to take the text elsewhere (send it from a
-  // different client, keep it in a note) before dismissing the card.
+  const openFileTarget = useStore((s) => s.openFileTarget);
+  // An undelivered row is the only copy of its text, so taking it out of
+  // the app is a visible action rather than a hover affordance.
   const copyText = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -528,45 +551,86 @@ function UndeliveredSteerCard({
       // clipboard unavailable
     }
   };
+  // Surfaces pick a rung — a translucent fill reads differently on
+  // every parent, which is the whole reason the ladder exists — so the
+  // states differ by the rail and by the words, not by an alpha. The
+  // rail is the part that carries the state: tentative while the note
+  // waits for a boundary, solid once one took it, warn when the turn
+  // ended without one.
+  const skin =
+    state === 'undelivered'
+      ? 'border-warn/40 bg-warn/10'
+      : 'border-edge bg-panel2';
+  const rail =
+    state === 'undelivered'
+      ? 'border-l-warn'
+      : state === 'pending'
+        ? 'border-l-accent/40'
+        : 'border-l-accent';
+  const label =
+    state === 'undelivered'
+      ? t('chat.steerUndelivered')
+      : state === 'pending'
+        ? t('chat.steerPending')
+        : t('chat.steerDelivered');
   return (
     <div
-      data-testid="steer-undelivered"
-      role="status"
-      className="flex items-start gap-3 rounded-card border border-warn/40 bg-warn/10 px-4 py-3 text-sm"
+      data-testid="steer-note"
+      data-steer-state={state}
+      role={state === 'undelivered' ? 'status' : undefined}
+      className={`flex w-fit max-w-[85%] flex-col gap-1 rounded-card rounded-l-none border border-l-2 px-3 py-2 text-sm ${skin} ${rail}`}
     >
-      <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-control border border-warn/30 bg-warn/10 text-warn">
-        <CornerDownRight size={ICON.sm} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="font-medium text-fg">{t('chat.steerUndelivered')}</p>
-        <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-dim">
-          {text}
-        </p>
-        <div className="mt-2 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onResend}
-            className="rounded-control border border-edge bg-panel px-2.5 py-1 text-xs text-fg transition-colors hover:bg-panel2"
-          >
-            {t('chat.steerResend')}
-          </button>
-          <button
-            type="button"
-            onClick={() => void copyText()}
-            aria-label={copied ? t('chat.copied') : t('chat.copyText')}
-            className="flex items-center rounded-control border border-edge bg-panel px-2 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
-          >
-            {copied ? <Check size={ICON.xs} /> : <Copy size={ICON.xs} />}
-          </button>
-          <button
-            type="button"
-            onClick={onDismiss}
-            className="rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
-          >
-            {t('chat.steerDismiss')}
-          </button>
-        </div>
+      <div
+        className={`flex items-center gap-1.5 text-xs ${
+          state === 'undelivered' ? 'text-warn' : 'text-dim'
+        }`}
+      >
+        <CornerDownRight size={ICON.xs} className="shrink-0" />
+        <span>{label}</span>
+        {state === 'pending' && (
+          <Loader2 size={ICON.xs} className="shrink-0 animate-spin" />
+        )}
       </div>
+      {/* The note is not a bubble, so it takes the plain chat prose (an
+          accent-tinted code chip reads on the card rung) plus the hard
+          breaks the composer records. */}
+      <div className="prose-chat whitespace-pre-wrap">
+        <Markdown
+          text={text}
+          onOpen={(href, base) => void openFileTarget(href, base ?? '')}
+        />
+      </div>
+      {state === 'undelivered' && (
+        <>
+          <p className="text-xs leading-relaxed text-dim">
+            {t('chat.steerUndeliveredDetail')}
+          </p>
+          <div className="mt-1 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onResend}
+              className="rounded-control border border-edge bg-panel px-2.5 py-1 text-xs text-fg transition-colors hover:bg-panel2"
+            >
+              {t('chat.steerResend')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void copyText()}
+              aria-label={copied ? t('chat.copied') : t('chat.copyText')}
+              className="flex items-center rounded-control border border-edge bg-panel px-2 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
+            >
+              {copied ? <Check size={ICON.xs} /> : <Copy size={ICON.xs} />}
+            </button>
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
+            >
+              {t('chat.steerDismiss')}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -657,6 +721,8 @@ const MessageRow = memo(function MessageRow({
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const openFileTarget = useStore((s) => s.openFileTarget);
+  const resendSteer = useStore((s) => s.resendSteer);
+  const dismissSteer = useStore((s) => s.dismissSteer);
   if (msg.role === 'user') {
     if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
       return (
@@ -666,6 +732,33 @@ const MessageRow = memo(function MessageRow({
           turnIndex={turnIndex}
           turnStart={turnStart}
         />
+      );
+    }
+    // An interjection renders as a note, not as the bubble that opened a
+    // turn: same row, different thing said.
+    if (msg.steer) {
+      return (
+        <div
+          data-msg-index={msgIndex}
+          data-turn-index={turnIndex >= 0 ? turnIndex : undefined}
+          data-turn-start={turnStart ? 'true' : undefined}
+          className="flex justify-start pl-2"
+        >
+          <SteerNote
+            text={msg.text}
+            state={msg.steer}
+            onResend={
+              msg.steer === 'undelivered'
+                ? () => void resendSteer(msg.id)
+                : undefined
+            }
+            onDismiss={
+              msg.steer === 'undelivered'
+                ? () => dismissSteer(msg.id)
+                : undefined
+            }
+          />
+        </div>
       );
     }
     const attachments = msg.attachments ?? [];
@@ -686,8 +779,18 @@ const MessageRow = memo(function MessageRow({
               ))}
             </div>
           )}
+          {/* The pill is a flex item of a shrink-wrapped column, so its own
+              width is fit-content, and fit-content's floor is the longest
+              unbreakable run in the text — a floor `overflow-wrap:
+              break-word` does not lower. One long token (a pasted URL, hash
+              or path) would pin the pill to that width and slide its left
+              edge under the viewport; the wrapper's 80% cap bounds only the
+              wrapper. Capping the pill gives the text a definite line box,
+              which is where break-word finally does its job. */}
+          {/* The pill's fill, border and the block surfaces inside it come
+              from the `.user-bubble` ladder in style.css. */}
           {msg.text && (
-            <div className="rounded-card rounded-br-tight border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm">
+            <div className="user-bubble max-w-full rounded-card rounded-br-tight border px-4 py-2.5 text-sm">
               <div className="prose-chat user-bubble-md text-sm">
                 <Markdown
                   text={msg.text}
@@ -1278,9 +1381,26 @@ const TurnBlock = memo(function TurnBlock({
   onEditResend,
 }: TurnBlockProps) {
   const [processOpen, setProcessOpen] = useState(false);
-  const userRows = rows.filter((row) => row.msg.role === 'user');
+  // Interjections are user rows too, but they do not open the turn: they
+  // are the user speaking inside it. Splitting them out is what lets the
+  // block keep them in place (below the folded work, above the reply
+  // that continues after them) instead of stacking them as if each one
+  // had started a turn.
+  const askRows = rows.filter(
+    (row) => row.msg.role === 'user' && !row.msg.steer,
+  );
+  const steerRows = rows.filter((row) => Boolean(row.msg.steer));
   const assistantRows = rows.filter((row) => row.msg.role === 'assistant');
   const finalRow = assistantRows[assistantRows.length - 1];
+  // An undelivered interjection is appended after the reply it missed,
+  // so it renders below it; everything else was answered by the rounds
+  // that follow it in the transcript.
+  const answeredSteers = finalRow
+    ? steerRows.filter((row) => row.i < finalRow.i)
+    : steerRows;
+  const trailingSteers = finalRow
+    ? steerRows.filter((row) => row.i > finalRow.i)
+    : [];
   const processRows = finalRow
     ? assistantRows.filter(
         (row) => row.i < finalRow.i && groupToolCalls(row.msg.items).length > 0,
@@ -1372,17 +1492,22 @@ const TurnBlock = memo(function TurnBlock({
 
   return (
     <div data-turn-index={turnIdx} className="space-y-2">
-      {userRows.map((row) => renderRow(row, false, false))}
+      {askRows.map((row) => renderRow(row, false, false))}
       {running ? (
         <>
           <TurnStatusLine running />
-          {assistantRows.map((row, ai) =>
-            renderRow(
-              row,
-              ai === assistantRows.length - 1,
-              row === finalRow && lastAssistantStreaming,
-            ),
-          )}
+          {/* Everything is expanded while the turn runs, so the rows
+              render in transcript order: an interjection sits exactly
+              where it was typed, with the reply continuing under it. */}
+          {rows
+            .filter((row) => row.msg.role === 'assistant' || row.msg.steer)
+            .map((row) =>
+              renderRow(
+                row,
+                row === finalRow,
+                row === finalRow && lastAssistantStreaming,
+              ),
+            )}
         </>
       ) : (
         <>
@@ -1421,14 +1546,20 @@ const TurnBlock = memo(function TurnBlock({
             processOpen &&
             processRows.map((row) => renderRow(row, false, false))
           )}
-          {finalRow && (
-            <>
-              {showTurnHeader && (
-                <div aria-hidden="true" className="h-px bg-edge" />
-              )}
-              {renderRow(finalRow, true, false)}
-            </>
+          {/* Interjections stay visible when the work folds away: they
+              are the user's own words, never a step to collapse. Ones
+              the turn answered land between the folded work and the
+              reply; one typed after the reply was finished stays below
+              it, which is where the user saw it land. The rule under
+              the folded work stays above them for the same reason: it
+              closes the collapsed steps, and an interjection is not
+              one of those. */}
+          {finalRow && showTurnHeader && (
+            <div aria-hidden="true" className="h-px bg-edge" />
           )}
+          {answeredSteers.map((row) => renderRow(row, false, false))}
+          {finalRow && renderRow(finalRow, true, false)}
+          {trailingSteers.map((row) => renderRow(row, false, false))}
         </>
       )}
       {footer}
@@ -1789,29 +1920,13 @@ export function ChatView() {
     planCacheRef.current = { messages, plan };
     return plan;
   }, [messages]);
-  const [planDismissed, setPlanDismissed] = useState(false);
-  const planItemsKey = planState
-    ? planState.plan.items.map((s) => `${s.status}|${s.step}`).join('\n')
-    : '';
-  // A dismissed plan panel reappears as soon as fresh live progress
-  // arrives, so collapsing it never hides a running plan.
-  useEffect(() => {
-    if (planState?.live) setPlanDismissed(false);
-    // planItemsKey is the stable identity of the plan content; the
-    // live flag is checked separately because a new running update
-    // must also resurface the panel.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planItemsKey, planState?.live]);
   const configured = useStore((s) => s.configured);
   const workspace = useStore((s) => s.workspace);
   const status = useStore((s) => s.status);
   const pendingInteracts = conv?.pendingInteracts ?? [];
   const queued = conv?.queued;
-  const undeliveredSteers = conv?.undeliveredSteers ?? [];
   const send = useStore((s) => s.send);
   const steer = useStore((s) => s.steer);
-  const resendSteer = useStore((s) => s.resendSteer);
-  const dismissSteer = useStore((s) => s.dismissSteer);
   const toast = useStore((s) => s.toast);
   const queueInput = useStore((s) => s.queueInput);
   const clearQueued = useStore((s) => s.clearQueued);
@@ -1841,6 +1956,21 @@ export function ChatView() {
   const setMode = useStore((s) => s.setMode);
   const think = current ? (conv?.think ?? sessionDefaults.think) : draftThink;
   const stage = turnState?.name === 'running' ? turnState.stage : '';
+  // The activity card's three inputs: the plan (above), the newest
+  // reasoning block, and the conversation's sandboxed processes. Its
+  // fold states are the card's own business (see ActivityCard); its
+  // lifetime is the activity below — a card the reader folded is still
+  // up, reporting from its header, so the fold changes nothing here.
+  const thinkBlock = useMemo(() => latestThink(messages), [messages]);
+  const processes = useProcessTail(current, busy);
+  // activityOpen is the card's whole lifetime: a turn in flight, or a
+  // process of this conversation still running after it (an
+  // exec_session server outlives the turn that started it). Everything
+  // else — a completed plan, the last thought, a stopped process's tail
+  // — belongs to the transcript, and an overlay that outlived the work
+  // would sit over the conversation with nothing left to report. That is
+  // also why there is no close button: nothing here needs closing.
+  const activityOpen = busy || processes.some((p) => p.running);
   const setThink = useStore((s) => s.setThink);
   const model = current ? (conv?.model ?? '') : draftModel;
   const setModel = useStore((s) => s.setModel);
@@ -1972,10 +2102,11 @@ export function ChatView() {
   const draftComposer = useStore((s) => s.draftComposer);
   // resumeTarget finds the user message that opened the newest turn: the
   // words "continue" sends again and "edit & resend" restores into the
-  // composer. Compaction summaries are prepended context, not the user's
-  // own message, so they are skipped. It reads the live refs instead of
-  // taking the message as an argument, which keeps the callbacks stable:
-  // TurnBlock is memoized on them.
+  // composer. Compaction summaries are prepended context and an
+  // interjection was said inside the turn rather than opening it, so
+  // both are skipped. It reads the live refs instead of taking the
+  // message as an argument, which keeps the callbacks stable: TurnBlock
+  // is memoized on them.
   const resumeTarget = useCallback((): MessageView | undefined => {
     const turns = turnArtifactsRef.current;
     const msgs = messagesRef.current;
@@ -1985,6 +2116,7 @@ export function ChatView() {
       const msg = msgs[i];
       if (msg?.role !== 'user') continue;
       if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) continue;
+      if (msg.steer) continue;
       return msg;
     }
     return undefined;
@@ -3154,21 +3286,6 @@ export function ChatView() {
                 ))}
               </div>
             )}
-            {/* Undelivered steers render outside the transcript branches:
-                the turn that dropped them may have left no messages at all,
-                and the cards are the only copy of their text. */}
-            {undeliveredSteers.length > 0 && (
-              <div className="max-w-4xl mx-auto mt-4 space-y-4">
-                {undeliveredSteers.map((item) => (
-                  <UndeliveredSteerCard
-                    key={item.id}
-                    text={item.text}
-                    onResend={() => void resendSteer(item.id)}
-                    onDismiss={() => dismissSteer(item.id)}
-                  />
-                ))}
-              </div>
-            )}
           </div>
           {!filesOpen && (
             <MessagePeek
@@ -3179,11 +3296,19 @@ export function ChatView() {
               revision={turnArtifacts}
             />
           )}
-          {planState && !planDismissed && (
-            <PlanPanel
-              plan={planState.plan}
-              live={planState.live}
-              onClose={() => setPlanDismissed(true)}
+          {activityOpen && (
+            <ActivityCard
+              plan={planState}
+              think={
+                thinkBlock
+                  ? {
+                      id: thinkBlock.id,
+                      text: thinkBlock.text,
+                      live: stage === 'reasoning',
+                    }
+                  : null
+              }
+              processes={processes}
             />
           )}
           {/* The composer floats over the transcript rather than taking a

@@ -187,6 +187,7 @@ export function routeBackendEvent(ev: UIEvent, deps: EventRouterDeps) {
     case 'stream':
     case 'artifact':
     case 'interact':
+    case 'steer_pending':
     case 'turn_end':
     case 'automation_run_started': {
       const data = ev.data as {

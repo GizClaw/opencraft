@@ -560,9 +560,28 @@ func (s *remoteSession) Read(
 		WaitMs:    defaultReadWaitMs,
 	})
 	if err != nil {
-		return sandbox.SessionOutput{}, err
+		return sandbox.SessionOutput{}, sessionReadError(err)
 	}
 	return s.foldRead(resp), nil
+}
+
+// sessionReadError reports a read that stopped at its own request
+// deadline the way the local backend does. An expired window is not a
+// failure: it means "no output yet", and the caller re-polls from the
+// cursor it kept. Without this translation the wire's
+// deadline_exceeded/canceled codes would reach a polling reader as hard
+// errors — and a reader like the process feed, which stops an entry on
+// an error it does not recognize, would freeze the tail of a silent
+// process instead of asking again.
+func sessionReadError(err error) error {
+	switch {
+	case IsCode(err, CodeDeadlineExceeded):
+		return context.DeadlineExceeded
+	case IsCode(err, CodeCanceled):
+		return context.Canceled
+	default:
+		return err
+	}
 }
 
 func (s *remoteSession) Write(ctx context.Context, data []byte) error {

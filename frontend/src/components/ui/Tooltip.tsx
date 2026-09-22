@@ -15,6 +15,8 @@ import { createPortal } from 'react-dom';
 // Hints appear after a short hover intent, immediately on keyboard focus,
 // and never while a pointer is dragging. The layer is pointer-events-none
 // so it cannot swallow the click that belongs to the control underneath.
+// A scroll takes a hint down only when it moved the control the hint is
+// placed against.
 const HOVER_DELAY_MS = 320;
 const GAP = 6; // px between the anchor and the hint
 const PAD = 8; // px kept between the hint and the window edge;
@@ -29,6 +31,10 @@ export function TooltipLayer() {
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const timer = useRef<number | null>(null);
+  // The control a hint is pinned to, set as soon as one is scheduled: a
+  // scroll has to ask whether it moved what is on screen, and that
+  // includes the hint still waiting out its hover delay.
+  const anchorRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const cancel = () => {
@@ -39,6 +45,7 @@ export function TooltipLayer() {
     };
     const hide = () => {
       cancel();
+      anchorRef.current = null;
       setHint(null);
       setPos(null);
     };
@@ -46,6 +53,7 @@ export function TooltipLayer() {
       const text = anchor.dataset.tip ?? '';
       if (text === '') return;
       cancel();
+      anchorRef.current = anchor;
       timer.current = window.setTimeout(() => {
         timer.current = null;
         setHint({ text, anchor });
@@ -90,7 +98,26 @@ export function TooltipLayer() {
     document.addEventListener('focusout', onFocusOut);
     document.addEventListener('pointerdown', hide, true);
     document.addEventListener('keydown', hide, true);
-    window.addEventListener('scroll', hide, true);
+    // A scroll invalidates the hint only when it moved the anchor: the
+    // page itself, or a container the anchor is inside. Every other pane
+    // that scrolls on its own — the transcript following a turn, the
+    // activity card re-pinning its thought and process tails as they
+    // stream — used to wipe a hint anywhere in the app, and a pointer
+    // resting on a control cannot scroll the pane that control sits in.
+    const onScroll = (event: Event) => {
+      const anchor = anchorRef.current;
+      if (anchor === null) return;
+      const target = event.target;
+      if (target instanceof Node) {
+        const pageScroll =
+          target === document ||
+          target === document.documentElement ||
+          target === document.body;
+        if (!pageScroll && !target.contains(anchor)) return;
+      }
+      hide();
+    };
+    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('blur', hide);
     return () => {
       cancel();
@@ -100,7 +127,7 @@ export function TooltipLayer() {
       document.removeEventListener('focusout', onFocusOut);
       document.removeEventListener('pointerdown', hide, true);
       document.removeEventListener('keydown', hide, true);
-      window.removeEventListener('scroll', hide, true);
+      window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('blur', hide);
     };
   }, []);
@@ -136,7 +163,7 @@ export function TooltipLayer() {
       role="tooltip"
       data-testid="tooltip"
       style={{ top: pos?.top ?? 0, left: pos?.left ?? 0 }}
-      className={`pointer-events-none fixed z-[var(--oc-z-tooltip)] max-w-[22rem] rounded-control border border-edge bg-panel3 px-2 py-1 text-xs leading-snug text-fg shadow-popover ${
+      className={`pointer-events-none fixed z-[var(--oc-z-tooltip)] max-w-[22rem] break-words rounded-control border border-edge bg-panel3 px-2 py-1 text-xs leading-snug text-fg shadow-popover ${
         pos === null ? 'invisible' : 'animate-popover-in'
       }`}
     >

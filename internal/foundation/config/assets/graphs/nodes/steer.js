@@ -36,8 +36,11 @@ if (board.getVar("world.compact.pending")) return;
 // text where providers reject it, and it runs before the drain because
 // draining is destructive: a boundary that cannot append must not take
 // the messages out of the queue.
-var channel = board.channel(board.MAIN_CHANNEL) || [];
-var last = channel[channel.length - 1];
+//
+// The tail is read through lastMessage (core >= v0.4.7): this node runs
+// once per tool round, and projecting the whole channel to look at its
+// last entry was the node's entire cost (flowcraft#573).
+var last = board.lastMessage(board.MAIN_CHANNEL);
 if (!last || last.role !== "tool") return;
 
 var pending = host.drainSteer();

@@ -1,6 +1,7 @@
 package host
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -83,15 +84,33 @@ func PendingSteer(res *agent.Result) (count int, known bool) {
 	return 0, false
 }
 
+// reconcileSteerQueued drops the ledger entries a boundary has drained,
+// oldest first, and reports whether anything was dropped. Draining is
+// FIFO, so the messages still queued are the newest ones the ledger
+// holds, and the ledger is only ever truncated toward the live count —
+// never grown — so a stale ledger over-counts at worst.
+//
+// Callers hold Host.mu.
+func (d *runDetail) reconcileSteerQueued(queued int) bool {
+	if d == nil {
+		return false
+	}
+	if queued < 0 {
+		queued = 0
+	}
+	if queued >= len(d.steerSizes) {
+		return false
+	}
+	d.steerSizes = d.steerSizes[len(d.steerSizes)-queued:]
+	return true
+}
+
 // steerQueuedBytes reports the steer payload the run currently holds
 // queued, reconciling the ledger with the live engine queue first: the
 // graph's boundary drain (host.drainSteer in the steer node) removes
 // the oldest queued messages without the host observing it, and core's
-// PendingSteer is the only view of what is left. Draining is FIFO, so
-// the messages still queued are the newest ones the ledger holds, and
-// the ledger is only ever truncated toward the live count — never
-// grown — so a stale ledger over-counts at worst. A submit that then
-// sees a full queue is refused: early, never over the budget.
+// PendingSteer is the only view of what is left. A submit that then sees
+// a full queue is refused: early, never over the budget.
 //
 // The one exception is two submits racing for the last of the budget:
 // the engine call is outside Host.mu, so neither sees the other's
@@ -105,14 +124,50 @@ func (d *runDetail) steerQueuedBytes() int {
 	if d == nil || d.run == nil || d.run.turn == nil {
 		return 0
 	}
-	if queued := d.run.turn.PendingSteer(); queued < len(d.steerSizes) {
-		d.steerSizes = d.steerSizes[len(d.steerSizes)-queued:]
-	}
+	d.reconcileSteerQueued(d.run.turn.PendingSteer())
 	total := 0
 	for _, size := range d.steerSizes {
 		total += size
 	}
 	return total
+}
+
+// observeSteerQueue reconciles a run's steer ledger with the live engine
+// queue and, when a boundary took messages, reports how many are still
+// waiting to the run's observer (RunOptions.OnSteerPending).
+//
+// It is called from the stream wrapper, the host's one hook that runs
+// while a turn streams: a boundary drains before the round it opened, and
+// that round's first delta arrives right after, so a delivered
+// interjection is reported moments after it is taken. A turn that ends
+// straight after a boundary never reaches this path — its turn result
+// reports the same number instead (see PendingSteer), so the UI settles
+// the rows either way.
+//
+// The check costs one length comparison until the run has steer messages
+// queued, which is what nearly every stream delta sees.
+func (h *Host) observeSteerQueue(ctx context.Context, runID RunID) {
+	h.mu.Lock()
+	d := h.runs[runID]
+	if d == nil || d.onSteer == nil || d.run == nil || d.run.turn == nil ||
+		len(d.steerSizes) == 0 {
+		h.mu.Unlock()
+		return
+	}
+	turn, observe := d.run.turn, d.onSteer
+	h.mu.Unlock()
+	// The queue read and the observer run outside Host.mu: the engine
+	// queue carries its own lock, and an observer must not hold up a
+	// submit.
+	queued := turn.PendingSteer()
+	h.mu.Lock()
+	d = h.runs[runID]
+	if d == nil || d.onSteer == nil || !d.reconcileSteerQueued(queued) {
+		h.mu.Unlock()
+		return
+	}
+	h.mu.Unlock()
+	observe(ctx, string(runID), queued)
 }
 
 // SteerRun hands one mid-turn message to a live engine turn. The

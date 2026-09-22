@@ -242,6 +242,22 @@ test('chat transcript', async ({ page }) => {
   await page.addInitScript(mockBackend as never, {
     workspace: WS,
     startTurn: { run_id: 'r-1', context_id: 's-1' },
+    // The activity card's process section reads Session.Processes; one
+    // running dev server shows the whole card (plan, thought, output).
+    processes: [
+      {
+        process_id: 'p-1',
+        argv: ['npm', 'run', 'dev'],
+        workdir: WS,
+        tty: false,
+        pid: 4242,
+        started_at: '2026-01-01T00:00:00Z',
+        running: true,
+        tail: 'VITE v7.0.0  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n  ➜  Network: http://192.168.1.24:5173/\n',
+        truncated: false,
+        seq: 96,
+      },
+    ],
   });
   await page.goto('/');
   await typeComposerMessage(page, 'Add the usage hero card');
@@ -341,8 +357,156 @@ test('chat transcript', async ({ page }) => {
       },
     },
   });
+  await emit('opencraft:ui', {
+    type: 'stream',
+    data: {
+      run_id: 'r-1',
+      conversation_id: 's-1',
+      delta: {
+        type: 'part',
+        // The activity card's thought section.
+        part: {
+          type: 'reasoning',
+          text: 'The hero card already owns the top of the page, so the range picker moves under it instead of beside it; keeping both in one row would squeeze the sparkline below its legibility floor.',
+        },
+      },
+    },
+  });
+  // The thought is the last thing on the wire, so the card's section is
+  // live at shot time (expanded, "Thinking…") instead of folded away by
+  // whatever the model did next.
   await page.waitForTimeout(400);
   await shot(page, '40-chat');
+  // The card is the surface here that is new in both themes: the plan
+  // tints, the section glyphs and the process tail all have to survive
+  // the flipped palette.
+  await page.evaluate(() => {
+    document.documentElement.classList.add('theme-light');
+  });
+  await page.waitForTimeout(200);
+  await shot(page, '41-chat-light');
+});
+
+// The activity card's whole lifetime: it is in the corner while the turn
+// or one of the conversation's processes runs, and the corner is the
+// transcript's again once neither does. The pair is what makes that
+// reviewable as images — nothing on screen takes the card down.
+test('activity card lifetime', async ({ page }) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: WS,
+    startTurn: { run_id: 'r-1', context_id: 's-1' },
+    processes: [
+      {
+        process_id: 'p-1',
+        argv: ['npm', 'run', 'dev'],
+        workdir: WS,
+        tty: false,
+        pid: 4242,
+        started_at: '2026-01-01T00:00:00Z',
+        running: true,
+        tail: `VITE v7.0.0  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n`,
+        truncated: false,
+        seq: 96,
+      },
+    ],
+  });
+  await page.goto('/');
+  await typeComposerMessage(page, 'Move the usage recorder out of the desktop');
+  await page.getByRole('button', { name: 'Send' }).click();
+  const emit = emitter(page);
+  await emit('opencraft:ui', {
+    type: 'stream',
+    data: {
+      run_id: 'r-1',
+      conversation_id: 's-1',
+      delta: {
+        type: 'part',
+        part: {
+          type: 'tool_call',
+          call: {
+            id: 'call-plan',
+            name: 'update_plan',
+            arguments: {
+              plan: [
+                {
+                  step: 'Move the recorder into the host',
+                  status: 'completed',
+                },
+                { step: 'Keep the per-workspace split', status: 'in_progress' },
+                { step: 'Run the host tests', status: 'pending' },
+              ],
+            },
+          },
+        },
+      },
+    },
+  });
+  await emit('opencraft:ui', {
+    type: 'stream',
+    data: {
+      run_id: 'r-1',
+      conversation_id: 's-1',
+      delta: {
+        type: 'part',
+        part: {
+          type: 'reasoning',
+          text: 'The recorder belongs to the host: the desktop shell must not open a second one, and a per-workspace split keeps usage attributable…',
+        },
+      },
+    },
+  });
+  await page.waitForTimeout(400);
+  await shot(page, '41b-activity-card-live');
+
+  // Folded to its header — the card's one control. The dot and the title
+  // stay (the overlay is still reporting the turn), the body and the
+  // card's column are gone.
+  await page.getByTestId('activity-card-header').click();
+  await expect(page.getByTestId('activity-card')).toHaveAttribute(
+    'data-folded',
+    'true',
+  );
+  await shot(page, '41d-activity-card-folded');
+  await page.getByTestId('activity-card-header').click();
+
+  // The dev server exits while the turn runs: a stopped process is not
+  // activity, so its row and its tail leave the card at the next read.
+  // The card stays up because the turn, the plan and the thought are.
+  await page.evaluate(() => {
+    const modules = (
+      window as never as {
+        __ocMockByModule: Record<string, Record<string, unknown>>;
+      }
+    ).__ocMockByModule;
+    modules.Session.Processes = async () => [
+      {
+        process_id: 'p-1',
+        argv: ['npm', 'run', 'dev'],
+        workdir: '/Users/me/projects/opencraft',
+        tty: false,
+        pid: 4242,
+        started_at: '2026-01-01T00:00:00Z',
+        running: false,
+        exit_code: 0,
+        exit_reason: 'exited',
+        tail: 'VITE v7.0.0  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n',
+        truncated: false,
+        seq: 128,
+      },
+    ];
+  });
+  await expect(page.getByTestId('process-section')).toHaveCount(0);
+  await expect(page.getByTestId('activity-card')).toBeVisible();
+
+  // The turn ends, and with nothing running the card's lifetime is over:
+  // the corner goes back to the transcript.
+  await emit('opencraft:ui', {
+    type: 'turn_end',
+    data: { run_id: 'r-1', conversation_id: 's-1', status: 'completed' },
+  });
+  await expect(page.getByTestId('activity-card')).toHaveCount(0);
+  await page.waitForTimeout(300);
+  await shot(page, '41c-activity-card-after-work');
 });
 
 test('chat interactions', async ({ page }) => {
@@ -957,6 +1121,82 @@ test('collapsed tool group header', async ({ page }) => {
   await shot(page, '46b-tool-group-header-light');
 });
 
+// A mid-turn interjection is a note in the transcript, not a second
+// bubble opening a turn — and the note says which state it is in:
+// waiting for a round boundary, taken by one, or left over because the
+// turn ended first. Two turns sit on screen so the states can be
+// compared in one shot: the settled turn's note under the reply it was
+// answered in, the live turn's note still waiting (shot while it
+// waits), and then the note that turn walked away from with its
+// resend / copy / discard row.
+test('steer notes', async ({ page }) => {
+  await page.addInitScript(mockBackend as never, { workspace: WS });
+  await page.goto('/');
+  const emit = emitter(page);
+  const delta = (runID: string, part: unknown) =>
+    emit('opencraft:ui', {
+      type: 'stream',
+      data: {
+        run_id: runID,
+        conversation_id: 's-1',
+        delta: { type: 'part', part },
+      },
+    });
+  const end = (runID: string, data: Record<string, unknown> = {}) =>
+    emit('opencraft:ui', {
+      type: 'turn_end',
+      data: {
+        run_id: runID,
+        conversation_id: 's-1',
+        status: 'completed',
+        ...data,
+      },
+    });
+  const steer = async (text: string) => {
+    await typeComposerMessage(page, text);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(200);
+  };
+
+  // Turn one is the happy path: a boundary takes the interjection and
+  // the reply carries on under it.
+  await typeComposerMessage(page, 'Split the session store by feature');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await delta('r-1', {
+    type: 'text',
+    text: 'Reading the store first, then I will split it.\n\n',
+  });
+  await steer('keep the archive tags working');
+  await delta('r-1', {
+    type: 'text',
+    text: 'Good point — checking that path now.',
+  });
+  await end('r-1', { steer_pending: 0, duration_ms: 42000 });
+  await page.waitForTimeout(250);
+
+  // Turn two is the one that ends before a boundary reads the queue.
+  await typeComposerMessage(
+    page,
+    'Now move the usage recorder out of the desktop',
+  );
+  await page.getByRole('button', { name: 'Send' }).click();
+  await delta('r-2', {
+    type: 'text',
+    text: 'The recorder hangs off the host now.\n\n',
+  });
+  await steer('also keep the per-workspace split');
+  await page.waitForTimeout(150);
+  await shot(page, '47-steer-notes-pending');
+  await end('r-2', { steer_pending: 1, duration_ms: 12000 });
+  await page.waitForTimeout(300);
+  await shot(page, '47b-steer-notes');
+  await page.evaluate(() => {
+    document.documentElement.classList.add('theme-light');
+  });
+  await page.waitForTimeout(200);
+  await shot(page, '47c-steer-notes-light');
+});
+
 // The chat header is the pane's title bar: the conversation's identity on
 // the left, its run state next to it, the viewer toggle on the right. It
 // is also the one strip that animates outside overlay chrome, so the
@@ -1105,8 +1345,12 @@ test.describe('sidebar seam', () => {
     // And a live drag: the accent state, with the column narrowed far
     // enough that the pointer sits outside the seam it is dragging.
     const before = await columnWidth(page);
+    // The drag is measured from the press point, so the press has to
+    // land on the seam itself; the hover above deliberately sits 3px
+    // into the knob, and those pixels would be added to the drag.
+    await page.mouse.move(box.x + 1, midY);
     await page.mouse.down();
-    await page.mouse.move(box.x - 40, midY);
+    await page.mouse.move(box.x - 39, midY);
     await page.waitForTimeout(200);
     await page.screenshot({
       path: `${SHOTS}/76-sidebar-seam-dragging.png`,

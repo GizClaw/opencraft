@@ -85,7 +85,7 @@ test('floats the current plan in the top-left corner without reserving a row', a
   const before = await boxOf(scroll);
 
   await emitPlan(page);
-  const card = page.getByTestId('plan-panel');
+  const card = page.getByTestId('activity-card');
   await expect(card.getByText('Wire the range picker')).toBeVisible();
 
   // The transcript keeps the whole column: the card is an overlay, so
@@ -105,7 +105,7 @@ test('keeps the plan card put while the file panel opens and closes', async ({
 }) => {
   await startChat(page);
   await emitPlan(page);
-  const card = page.getByTestId('plan-panel');
+  const card = page.getByTestId('activity-card');
   const scroll = page.getByTestId('chat-scroll');
   await expect(card.getByText('Run the e2e suite')).toBeVisible();
   const pinned = await boxOf(card);
@@ -118,10 +118,16 @@ test('keeps the plan card put while the file panel opens and closes', async ({
   await expect(async () => {
     expect((await boxOf(scroll)).width).toBeLessThan(wide.width);
   }).toPass();
-  expect(await boxOf(card)).toEqual(pinned);
-  // Narrow column or not, the card keeps its own size and stays inside it.
-  expect(pinned.width).toBeLessThan((await boxOf(scroll)).width);
-  expect((await boxOf(card)).width).toBe(pinned.width);
+  // The card does not reflow with the column: same corner, same rows.
+  // Its width gives way only to the clamp that keeps it inside a column
+  // too narrow to hold it — a few pixels, not a re-layout.
+  const narrow = await boxOf(card);
+  expect(narrow.x).toBe(pinned.x);
+  expect(narrow.y).toBe(pinned.y);
+  expect(narrow.height).toBe(pinned.height);
+  expect(pinned.width - narrow.width).toBeLessThan(8);
+  // Narrow column or not, the card stays inside it.
+  expect(narrow.width).toBeLessThan((await boxOf(scroll)).width);
 
   await toggle.click();
   await expect(async () => {

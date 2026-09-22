@@ -911,6 +911,11 @@ func (m *Manager) buildHost(
 			obs.SetSink(h.onArtifactWrite)
 		}
 	}
+	if value, ok := rt.Resource("processes"); ok {
+		if feed, ok := value.(*sandbox.ProcessFeed); ok && feed != nil {
+			h.procs.Store(feed)
+		}
+	}
 	// Materialize the turns a previous process never archived before
 	// this Host starts serving reads: the window's first session read
 	// must already see an interrupted turn instead of a gap.
@@ -1208,15 +1213,19 @@ func (m *Manager) releaseStore(store *sessions.Store) {
 
 // Host is one shared workspace runtime.
 type Host struct {
-	workDir       string
-	userDir       string
-	workspaceID   string
-	store         *sessions.Store
-	ctrl          *engine.Controller
-	broker        *interact.Broker
-	manager       *Manager
-	agents        atomic.Pointer[ocsagents.Lifecycle]
-	hooks         atomic.Pointer[hooks.Manager]
+	workDir     string
+	userDir     string
+	workspaceID string
+	store       *sessions.Store
+	ctrl        *engine.Controller
+	broker      *interact.Broker
+	manager     *Manager
+	agents      atomic.Pointer[ocsagents.Lifecycle]
+	hooks       atomic.Pointer[hooks.Manager]
+	// procs is the current generation's sandbox process feed (the
+	// conversation-scoped tap the activity card reads back). Rebound on
+	// every runtime reload; nil when the deployment has no feed.
+	procs         atomic.Pointer[sandbox.ProcessFeed]
 	usage         func(context.Context, inference.Usage)
 	usageRecorder UsageRecorder
 
@@ -1291,6 +1300,9 @@ type runDetail struct {
 	// is what bounds the payload one round boundary can inject (see
 	// maxSteerQueuedBytes and steerQueuedBytes). Guarded by Host.mu.
 	steerSizes []int
+	// onSteer reports a boundary draining this run's steer queue (see
+	// RunOptions.OnSteerPending). Guarded by Host.mu.
+	onSteer func(ctx context.Context, runID string, pending int)
 }
 
 // dropRun removes an ended run from the active set. Usage for the run
@@ -1461,6 +1473,17 @@ func (h *Host) Broker() *interact.Broker { return h.broker }
 // Agents returns the runtime's agent lifecycle registry, or nil when
 // the runtime does not wire one.
 func (h *Host) Agents() *ocsagents.Lifecycle { return h.agents.Load() }
+
+// Processes returns the sandboxed child processes the given
+// conversation started on the current runtime generation, oldest
+// first. Empty when the deployment wires no feed.
+func (h *Host) Processes(conversationID string) []sandbox.Process {
+	feed := h.procs.Load()
+	if feed == nil {
+		return nil
+	}
+	return feed.List(conversationID)
+}
 
 // CancelRun cancels one live engine turn. It returns an error when the
 // run is not active on this Host.

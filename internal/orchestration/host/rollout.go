@@ -14,6 +14,11 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
+// observeSink wraps a run's stream sink with the host's per-delta
+// observation: the rollout recorder's item events, and the steer queue,
+// where a boundary's drain is visible in the round it opened (see
+// observeSteerQueue). It returns nil for a nil sink, so callers keep the
+// "no sink, no streaming" contract.
 func (h *Host) observeSink(next agent.StreamSink) agent.StreamSink {
 	if next == nil {
 		return nil
@@ -24,7 +29,9 @@ func (h *Host) observeSink(next agent.StreamSink) agent.StreamSink {
 		delta agent.StreamDeltaPayload,
 	) error {
 		if agent.IsStreamDelta(env.Subject) {
-			h.onStreamRollout(ctx, interact.StreamRunID(env.Subject), delta)
+			runID := interact.StreamRunID(env.Subject)
+			h.onStreamRollout(ctx, runID, delta)
+			h.observeSteerQueue(ctx, RunID(runID))
 		}
 		return next.OnDelta(ctx, env, delta)
 	})

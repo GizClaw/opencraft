@@ -91,7 +91,7 @@ func TestRunExposesCompactionBookkeeping(t *testing.T) {
 	}
 	// The stamped length can only shrink afterwards (a fold moves messages
 	// off the channel), never grow.
-	if got := len(res.LastBoard.Channel(agent.MainChannel)); got < anchor.AnchoredMessages {
+	if got := res.LastBoard.ChannelLen(agent.MainChannel); got < anchor.AnchoredMessages {
 		t.Fatalf("channel holds %d messages, fewer than the measured %d",
 			got, anchor.AnchoredMessages)
 	}

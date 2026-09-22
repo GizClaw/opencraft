@@ -152,6 +152,11 @@ func extractConversation(req *agent.Request, res *agent.Result) []message.Messag
 // tests, non-graph engines, a checkpoint whose world node never ran),
 // it falls back to the request plus tail.
 //
+// The messages are read through [agent.Board.ChannelView], so the
+// result aliases board storage: it is read-only, and the persistence
+// callers keep it that way (they clone before storing). Clone a
+// message before editing it.
+//
 // req restores the turn's user message in its original (pre-inline)
 // form, the shape the archive keeps for attachments. A nil req (a
 // checkpoint written before the recovery annotation existed, or one
@@ -165,7 +170,11 @@ func ExtractTurnMessages(
 ) []message.Message {
 	var msgs []message.Message
 	if board != nil {
-		channel := board.Channel(agent.MainChannel)
+		// Both reads go through ChannelView: this function only slices
+		// and filters, and every path that keeps the messages clones
+		// first (filterArchive, renderConversation), so the board's
+		// storage is never mutated through the view.
+		channel := board.ChannelView(agent.MainChannel)
 		if n, ok := sectionCount(board); ok && n >= 0 && n <= len(channel) {
 			// The compact node moves the prefix it folds onto a side
 			// channel before shrinking MainChannel for the model. That
@@ -176,7 +185,7 @@ func ExtractTurnMessages(
 			// (world.compact.turn_start) so a fold that runs later can
 			// leave it behind while newer rounds move to the side
 			// channel: the message is then re-anchored in front.
-			archived := board.Channel(config.CompactArchiveChannel)
+			archived := board.ChannelView(config.CompactArchiveChannel)
 			// Full-history replay prepends the persisted conversation
 			// between the world sections and this turn's messages.
 			// Those replayed messages are context, not new

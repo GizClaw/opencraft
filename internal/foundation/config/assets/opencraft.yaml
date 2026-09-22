@@ -124,6 +124,13 @@ resources:
   artifacts:
     kind: opencraft.artifacts
     impl: local
+  # Shared process feed: the sandbox runner registers every session it
+  # starts inside a conversation here and drains a bounded output tail,
+  # which the desktop reads back for the activity card. Without a
+  # consumer the feed is still correct, just unread.
+  processes:
+    kind: opencraft.processes
+    impl: local
   ws:
     kind: opencraft.workspace
     impl: local
@@ -212,6 +219,7 @@ resources:
       execpolicy: execpolicy
       sessions: sessions
       netpolicy: netpolicy
+      processes: processes
     settings:
       root: ${ocraft:WORKDIR}
       writable_paths: ["${ocraft:CACHE}"]

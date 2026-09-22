@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
+	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
+	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
@@ -56,7 +59,17 @@ func TestRuntimeInPlaceReloadGenerationSemantics(t *testing.T) {
 	recorder := logcapture.Install(t)
 	providerA := fakeprovider.New(t, fakeprovider.Reply{Text: "done-a"})
 	gate := providerA.HoldNext()
-	providerB := fakeprovider.New(t, fakeprovider.Reply{Text: "done-b"})
+	providerB := fakeprovider.New(t,
+		fakeprovider.Reply{Text: "done-b"},
+		// Consumed by the process-feed check at the end of the test:
+		// the new generation runs one command so the Host's feed can
+		// be observed serving the new generation, not the retired one.
+		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+			Name:      "exec_command",
+			Arguments: `{"command":"echo reload-tap"}`,
+		}}},
+		fakeprovider.Reply{Text: "done-c"},
+	)
 
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
@@ -111,11 +124,13 @@ func TestRuntimeInPlaceReloadGenerationSemantics(t *testing.T) {
 	artifactsBefore := resource("artifacts")
 	agentsBefore := resource("agentlifecycle")
 	hooksBefore := resource("hooks")
+	processesBefore := resource("processes")
 	storeBefore := h.Sessions()
 	if sessionsBefore == nil || artifactsBefore == nil ||
-		agentsBefore == nil || hooksBefore == nil {
-		t.Fatalf("prereq resources missing: sessions=%v artifacts=%v agents=%v hooks=%v",
-			sessionsBefore, artifactsBefore, agentsBefore, hooksBefore)
+		agentsBefore == nil || hooksBefore == nil || processesBefore == nil {
+		t.Fatalf("prereq resources missing: sessions=%v artifacts=%v agents=%v hooks=%v processes=%v",
+			sessionsBefore, artifactsBefore, agentsBefore, hooksBefore,
+			processesBefore)
 	}
 
 	// A runtime-created persistent subagent must survive the in-place
@@ -224,6 +239,13 @@ func TestRuntimeInPlaceReloadGenerationSemantics(t *testing.T) {
 	if hooksBefore == resource("hooks") {
 		t.Fatal("hooks resource instance did not change across reload (refresh unnecessary?)")
 	}
+	if processesBefore == resource("processes") {
+		t.Fatal("processes resource instance did not change across reload (rebind unnecessary?)")
+	}
+	if _, ok := resource("processes").(*sandbox.ProcessFeed); !ok {
+		t.Fatalf("processes after reload is %T, want *sandbox.ProcessFeed",
+			resource("processes"))
+	}
 
 	// The Host's runtime-reload observer must rebind the agent
 	// lifecycle to the new generation's instance.
@@ -281,6 +303,33 @@ func TestRuntimeInPlaceReloadGenerationSemantics(t *testing.T) {
 	}
 	if got := providerA.Calls(); got != 1 {
 		t.Fatalf("provider A calls = %d, want 1 (old generation must not serve new turns)", got)
+	}
+
+	// The process feed must follow the new generation too: a command run
+	// after the reload lands in the feed the Host serves. A Host still
+	// bound to the retired generation's feed would see nothing here.
+	run3, err := h.StartRun(ctx, host.RunOptions{
+		Message:       message.NewTextMessage(message.RoleUser, "run echo after reload"),
+		Mode:          ocsessions.ModeYOLO,
+		SkipAutoTitle: true,
+	})
+	if err != nil {
+		t.Fatalf("start tap run after reload: %v", err)
+	}
+	res3, err := run3.Wait(ctx)
+	if err != nil {
+		t.Fatalf("wait tap run after reload: %v", err)
+	}
+	if res3 == nil || res3.Status != "completed" {
+		t.Fatalf("tap run result = %+v, want completed", res3)
+	}
+	procs := h.Processes(run3.ContextID())
+	if len(procs) == 0 {
+		t.Fatal("process feed lost across in-place reload")
+	}
+	if !strings.Contains(procs[0].Tail, "reload-tap") {
+		t.Fatalf("process tail after reload = %q, want the command output",
+			procs[0].Tail)
 	}
 }
 

@@ -16,10 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waiting at the same boundary arrive as one message. A boundary
   injects at most one core-sized steer (32 KiB of text); a submit that
   would exceed that is refused with the text left in the caller's
-  hands. Whatever a turn cannot deliver comes back as a card with
-  resend/dismiss instead of disappearing with the conversation archive,
-  and a turn result whose undelivered count cannot be read keeps every
-  such row rather than assuming delivery. (#181)
+  hands. The transcript keeps the interjection where it was typed,
+  written as a note the reply continues under rather than as a second
+  bubble opening a turn of its own, and the note carries its own state:
+  waiting for a boundary, taken by one, or undelivered because the turn
+  ended first. A boundary reports what it took as it takes it, so a row
+  that made it says so mid-turn instead of holding "waiting for the next
+  step" until the turn ends; what never made it stays in place with
+  resend, copy and discard instead of disappearing with the conversation
+  archive. A resumed session rebuilds these rows from the archive (a
+  boundary's batch comes back as one row, which is all the archive still
+  proves), and a turn result whose undelivered count cannot be read
+  keeps every such row rather than assuming delivery. (#181)
 - Unattended automations get a per-task run limit: `timeout` bounds one
   run (whole minutes, empty = the 15-minute default, at most 24h). A run
   that outlives it is cancelled, its record says `timeout` with the
@@ -91,6 +99,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- flowcraft core moves to v0.4.7, carrying the narrow board channel
+  reads this repository's hot paths asked for: Go gains
+  `Board.ChannelLen`/`LastMessage`/`ChannelTail`/`ChannelView` and a
+  batch `AppendChannelMessages`, the script surface gains
+  `board.channelLen`/`lastMessage`/`channelTail`, `board.appendChannel`
+  takes one message or an array of them validated as a whole, and
+  "a message on a channel is immutable" is now the Board contract
+  rather than a note on `ChannelView`. The consumer side migrated with
+  it: the steer node reads its tail through `board.lastMessage`
+  instead of projecting the whole channel on every tool round, the
+  compact node lands its folded prefix on the side channel in one
+  batched append (it never reads the archive back) and stamps its
+  anchor from the array it just wrote, and
+  `memory.ExtractTurnMessages` reads through `ChannelView` — the
+  persistence paths clone what they keep, so the defensive copies were
+  pure overhead. The media prepare hook keeps `Channel()`: it edits
+  the message it reads and writes the channel back, which the new
+  contract requires a copy for.
 - Checkpoints are a crash-recovery log rather than a resume cache: a
   session now starts persistent so the engine stamps one per completed
   wave, the host deletes a run's checkpoint once its turn has an
@@ -196,9 +222,106 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which silently assembled a workspace against whatever state root the
   process happened to have instead of the one it was launched with.
   (#190)
+- The top-left corner of the chat pane is one activity card instead of a
+  plan panel: the current plan, the model's latest thought, and what the
+  conversation's sandboxed processes print. The card's lifetime is the
+  work it reports: the pane mounts it while a turn is in flight or one of
+  the conversation's processes still runs, and it leaves on its own once
+  neither does — which is why there is no close button, and why a
+  finished plan, the last thought and a stopped process's tail are the
+  transcript's to keep afterwards. Inside that life each section folds
+  itself when its content is done (a completed plan, a thought the model
+  has acted on), and no update re-opens one the reader folded: a plan
+  revision, a new thought and a new process all arrive without moving a
+  section that was closed by hand. The card itself folds the same way:
+  its header is one button that folds the whole overlay down to itself
+  — and shrinks it to the header's own width — while the dot goes on
+  pulsing in it, so the corner comes back without losing the report
+  that work is running; nothing that arrives re-opens a folded card
+  either, and unfolding brings the body back at the sections' own
+  defaults, because a folded card renders no body for a fold made
+  inside it to survive in. The process section is about live work: it
+  lists the processes still running (newest first, four rows plus the
+  selected one) with the tail of the selected one, and a process that
+  stops drops off the card at the next read — the exit status and the
+  output it printed are the transcript's record. Output is shown as
+  the process wrote it: nothing is redacted and nothing is inferred,
+  which is also why the card offers no actions — stopping a process
+  stays a tool decision the model makes, and the transcript's own
+  session cards remain the place to act on one.
+- A conversation's sandboxed processes are readable while they run, not
+  only after the model reads them. A new `opencraft.processes` resource
+  taps every session the sandbox runner starts inside a session run
+  (exec_command and exec_session alike, on both sandbox backends) and
+  drains its output into a bounded 16 KiB tail that `Session.Processes`
+  serves to the desktop. Draining never consumes bytes — sandbox output
+  logs are cursor-based and replayable, so the feed reads with its own
+  cursor beside the model's — and closing a tapped session salvages
+  whatever the backend still buffers, so a command that closes its
+  session the moment it ends still lands complete instead of racing the
+  drain. Each read is windowed to a quarter second, which keeps a tap
+  from holding the process's single blocking read slot, and a read that
+  brings nothing is followed by a pause, so a silent server is asked
+  about twice a second rather than as fast as the backend answers. A
+  backend that trimmed output faster than the feed read it freezes the
+  tail and marks it truncated rather than retrying a dead cursor. The
+  feed is a per-generation resource: a runtime reload (a settings save,
+  a plugin install) starts on an empty feed, exactly like the sessions
+  it was watching.
+- A turn that is only thinking no longer commits at the pace of prose.
+  Reasoning is the one stream the transcript never renders — the
+  activity card's thought block is its only reader, and what it shows is
+  a tail meant to be skimmed — so a queue holding nothing but reasoning
+  now folds into the store at 250ms instead of the 100ms streaming text
+  keeps, which is four updates a second against a burst that used to
+  re-lay-out the card's largest text block ten times a second. The
+  answer's own words keep the fast beat, and prose joining a thought
+  pulls the queued commit in rather than waiting out the slower one.
 
 ### Fixed
 
+- A process started in a turn's last poll gap is no longer invisible
+  until the next message. The activity card's process section follows a
+  hook that reads the conversation's sandboxed processes on open and
+  then only while a turn runs or a process is known to run, so a
+  session whose row landed after the turn's final read (the sandbox
+  registers it at Start, and a turn can end right after its own tool
+  call returns) left nothing behind to read again: nothing running was
+  known, the card went with the turn, and the still-running server
+  stayed out of sight. The hook now also reads once on the turn's
+  falling edge — the row is always there by then — and a running answer
+  hands the conversation to the idle pace from there.
+- A sandboxed session read that stopped at its own request deadline
+  reported the child's wire error (`execd: read: deadline_exceeded:
+  request deadline exceeded`) instead of a timeout: the request deadline
+  and the client's own context cancel race each other, and only one of
+  the two outcomes looked like a timeout to a caller. The remote session
+  now translates that code — and the child's cancel code — into the
+  plain context errors the local backend has always returned, so a
+  reader that re-polls from its cursor reads "no output yet" instead of
+  a failure it has to classify itself.
+- One GUI per state root no longer rests on the shell's single-instance
+  machinery. The desktop app takes its own non-blocking lock on
+  `<state root>/gui.lock` (the same kernel primitives as the workspace
+  lock) before anything else runs, so the guarantee holds on every
+  platform instead of depending on `$TMPDIR` flock semantics, a session
+  bus (whose absence used to abort startup on Linux) or a named mutex.
+  A rejected second launch is no longer silent either: it asks the
+  holder to bring its window to the front over a per-root socket (a
+  named pipe on Windows), prints one line on stderr naming the holder
+  (pid, version, start time) and exits 1. A state root whose lock file
+  cannot be created fails open with a warning — a broken lock must not
+  keep a user out of their own app — and
+  `OPENCRAFT_NO_SINGLE_INSTANCE=1` still skips the gate entirely. The
+  shell's single-instance options stay enabled as a second,
+  opportunistic gate, which is what keeps launches from older builds of
+  the same root lineage in check. The lock is keyed on the state root,
+  exactly like the instance id: `--profile dev` (what `wails3 task dev`
+  runs as) keeps its own root and therefore still starts beside the
+  installed app, and a raise aimed at one root never touches the other
+  window. Only a second instance on the *same* root is rejected - the
+  installed app opened twice, or a dev build pointed at the installed
+  app's root without a profile.
 - A correction typed while a scheduled automation runs in the open
   workspace is reported like one typed into an interactive turn: the
   automation's terminal event carries the undelivered-steer count, so
@@ -253,6 +376,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handle from the Wails window and is re-applied from a window-layout
   observer, skipped while fullscreen so macOS keeps its own placement
   there.
+- An open menu no longer closes because a scroller somewhere else in the
+  window moved. The popover dismissed itself on any scroll event in the
+  capture phase — the rule exists because a scroll invalidates the
+  measured anchor — and then closed whenever the scrolled node was not
+  inside its own panel, which is every pane the menu is not anchored in:
+  the chat transcript following a turn, the activity card re-pinning its
+  thought and process tails as they stream. A settings dropdown closed
+  under the reader's cursor the moment the model printed its next
+  thought. The dismissal now fires only for the page itself and for a
+  container the anchor is inside, which is the case that actually moved
+  it, while the panel's own list keeps scrolling itself as before.
+  Hover hints are pinned to a control the same way and now follow the
+  same rule instead of vanishing whenever anything in the window moved.
 
 ## [0.5.3] - 2026-09-17
 

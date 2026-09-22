@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/message"
 
+	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
@@ -114,6 +116,88 @@ func TestHostRunWritesFileEndToEnd(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workDir, ".opencraft")); !os.IsNotExist(err) {
 		t.Fatalf("project .opencraft must not be created: %v", err)
+	}
+}
+
+// TestHostTapsSandboxProcessOutput is the end-to-end contract of the
+// conversation-scoped process feed: a command the model runs through
+// exec_command lands in Host.Processes with its output tail, without
+// the model (or anyone) reading the session first.
+func TestHostTapsSandboxProcessOutput(t *testing.T) {
+	if goruntime.GOOS == "windows" {
+		// The fixture is POSIX-shell shaped; the feed itself is
+		// platform-independent and the sandbox package covers the
+		// tap semantics on every backend.
+		t.Skip("POSIX shell fixture")
+	}
+	provider := fakeprovider.New(t,
+		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+			Name:      "exec_command",
+			Arguments: `{"command":"echo host-tap-ok"}`,
+		}}},
+		fakeprovider.Reply{Text: "done"},
+	)
+	workDir := t.TempDir()
+	dataDir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dataDir, "home"))
+	configDir := filepath.Join(dataDir, "config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeConfig(t, configDir, provider.URL())
+
+	mgr := host.NewManagerAt(dataDir, configDir)
+	ctx := context.Background()
+	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire host: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+
+	// YOLO keeps the test off the approval prompt; both chains route
+	// through the same tap.
+	run, err := h.StartRun(ctx, host.RunOptions{
+		Message:       message.NewTextMessage(message.RoleUser, "run echo"),
+		Mode:          ocsessions.ModeYOLO,
+		SkipAutoTitle: true,
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	res, err := run.Wait(ctx)
+	if err != nil {
+		t.Fatalf("wait run: %v", err)
+	}
+	if res == nil || res.Status != "completed" {
+		t.Fatalf("result = %+v, want completed", res)
+	}
+
+	procs := h.Processes(run.ContextID())
+	if len(procs) == 0 {
+		t.Fatal("process feed is empty after exec_command")
+	}
+	var tapped bool
+	for _, proc := range procs {
+		if !strings.Contains(strings.Join(proc.Argv, " "), "host-tap-ok") {
+			continue
+		}
+		tapped = true
+		if !strings.Contains(proc.Tail, "host-tap-ok") {
+			t.Errorf("process tail = %q, want the command's output", proc.Tail)
+		}
+		if proc.Running {
+			t.Error("finished command still reported as running")
+		}
+		if proc.ExitCode == nil || *proc.ExitCode != 0 {
+			t.Errorf("exit code = %v, want 0", proc.ExitCode)
+		}
+	}
+	if !tapped {
+		t.Fatalf("tapped processes = %+v, want the exec_command session", procs)
+	}
+	// Other conversations do not see this workspace's processes.
+	if other := h.Processes("someone-else"); len(other) != 0 {
+		t.Errorf("unrelated conversation sees %d processes, want 0", len(other))
 	}
 }
 

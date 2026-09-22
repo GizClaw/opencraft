@@ -108,4 +108,30 @@ describe('event router', () => {
     expect(calls).toEqual([]);
     expect(root.registry.get('s-1')).toBeUndefined();
   });
+
+  it('routes steer_pending to the data layer without touching the turn', () => {
+    const root = new StateRoot();
+    const { sink, calls } = fakeSink();
+    routeBackendEvent(
+      {
+        type: 'automation_run_started',
+        data: { run_id: 'r-1', conversation_id: 's-1' },
+      },
+      { root, data: sink },
+    );
+    routeBackendEvent(
+      {
+        type: 'steer_pending',
+        data: { run_id: 'r-1', conversation_id: 's-1', steer_pending: 0 },
+      },
+      { root, data: sink },
+    );
+
+    // The count is the data layer's: it settles interjection rows that are
+    // still waiting, and the turn's own state does not move for it.
+    expect(calls.filter((c) => c === 'conversation-data')).toHaveLength(2);
+    expect(root.registry.get('s-1')?.getSnapshot().value).toMatchObject({
+      turn: 'running',
+    });
+  });
 });
