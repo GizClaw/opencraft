@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown,
@@ -16,14 +16,26 @@ import {
   Search,
   X,
 } from 'lucide-react';
+import { Events } from '@wailsio/runtime';
 import { api } from '../lib/api';
+import {
+  changeForPath,
+  folderChangeMap,
+  KIND_LABEL,
+  KIND_MARK,
+  KIND_PRIORITY,
+  kindClass,
+  workspaceChangeMap,
+} from '../lib/gitKinds';
+import type { FolderChange } from '../lib/gitKinds';
 import { useStore } from '../lib/store';
-import type { FileNode, FileTab } from '../lib/types';
+import type { FileNode, FileTab, GitChange, GitFileMarks } from '../lib/types';
 import { Button } from './ui/Button';
 import { useOverlayLayer } from '../lib/overlay';
 import { Popover } from './ui/Popover';
 import { ICON } from './ui/icon';
 import { FilePreviewPane, isMarkdownFile } from './viewer/FilePreviewPane';
+import { useFileMarks } from './viewer/useFileMarks';
 
 function pathParts(rel: string): string[] {
   if (!rel || rel === '.') return [];
@@ -68,11 +80,14 @@ export function FileViewer({
   const showDir = useStore((s) => s.showFileDir);
   const newEmptyTab = useStore((s) => s.newEmptyTab);
   const openFileTarget = useStore((s) => s.openFileTarget);
+  const focusGitPath = useStore((s) => s.focusGitPath);
+  const uiSettings = useStore((s) => s.uiSettings);
   const [treeOpen, setTreeOpen] = useState(false);
   const stripRef = useRef<HTMLDivElement | null>(null);
   const [stripFade, setStripFade] = useState({ left: false, right: false });
   const active = tabs.find((tab) => tab.key === activeKey) ?? null;
   const mask = stripMask(stripFade.left, stripFade.right);
+  const marks = useFileMarks(active, uiSettings.gitMarks !== false);
 
   // The tree visibility is a per-panel transient: switching sessions
   // closes it so a chat never inherits the previous one's overlay.
@@ -183,6 +198,8 @@ export function FileViewer({
         {active && active.path ? (
           <ToolbarRow
             tab={active}
+            marks={marks}
+            onOpenGit={(path) => focusGitPath(path)}
             treeOpen={treeOpen}
             onToggleTree={() => setTreeOpen((v) => !v)}
             onDir={(rel) => {
@@ -200,6 +217,7 @@ export function FileViewer({
               <FilePreviewPane
                 tab={active}
                 key={active.key}
+                marks={marks}
                 onOpen={(href, base) => void openFileTarget(href, base)}
               />
             </div>
@@ -285,11 +303,15 @@ function TabChip({
 // actions pill into one navigation row under the tabs.
 function ToolbarRow({
   tab,
+  marks,
+  onOpenGit,
   treeOpen,
   onToggleTree,
   onDir,
 }: {
   tab: FileTab;
+  marks: GitFileMarks | null;
+  onOpenGit: (path: string) => void;
   treeOpen: boolean;
   onToggleTree: () => void;
   onDir: (rel: string) => void;
@@ -354,8 +376,144 @@ function ToolbarRow({
       >
         {treeOpen ? <FolderOpen size={ICON.sm} /> : <Folder size={ICON.sm} />}
       </button>
+      <MarksChip marks={marks} onOpenGit={onOpenGit} />
       <ViewerActions tab={tab} />
     </div>
+  );
+}
+
+// MarksChip is the viewer's git surface: one letter for what happened to
+// this file since HEAD, the line counts, and a handoff to the Git panel
+// where the full diff lives. It renders nothing at all for a clean file
+// (or a workspace outside any repository), so the common case leaves the
+// row as it was.
+function MarksChip({
+  marks,
+  onOpenGit,
+}: {
+  marks: GitFileMarks | null;
+  onOpenGit: (path: string) => void;
+}) {
+  const { t } = useTranslation();
+  if (!marks?.in_repo || !marks.kind || !marks.path) return null;
+  const counts = !marks.binary && (marks.additions > 0 || marks.deletions > 0);
+  const tip = [
+    t(KIND_LABEL[marks.kind]),
+    marks.staged ? t('git.staged') : '',
+    marks.unstaged || marks.untracked ? t('git.workingTree') : '',
+    marks.truncated ? t('files.marksTruncated') : '',
+    counts
+      ? t('files.marksSummary', {
+          added: marks.additions,
+          deleted: marks.deletions,
+        })
+      : '',
+    t('files.openInGitPanel'),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <button
+      onClick={() => onOpenGit(marks.path ?? '')}
+      data-tip={tip}
+      aria-label={t('files.openInGitPanel')}
+      className={`flex h-7 shrink-0 items-center gap-1 rounded-control px-1.5 text-micro tabular-nums ${
+        marks.truncated ? 'opacity-70' : ''
+      } hover:bg-panel2`}
+    >
+      <span
+        className={`grid h-4 w-4 place-items-center rounded-tight font-mono text-micro ${kindClass(
+          marks.kind,
+        )}`}
+      >
+        {KIND_MARK[marks.kind] ?? '?'}
+      </span>
+      {counts && (
+        <span className="shrink-0">
+          <span className="text-ok">+{marks.additions}</span>{' '}
+          <span className="text-err">−{marks.deletions}</span>
+          {marks.truncated ? '…' : ''}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// TreeChangeBadge marks one file row with the letter of what happened
+// to it since HEAD, in the same vocabulary as the toolbar chip.
+function TreeChangeBadge({
+  change,
+  truncated = false,
+}: {
+  change?: GitChange;
+  truncated?: boolean;
+}) {
+  const { t } = useTranslation();
+  if (!change) return null;
+  const tip = [
+    t(KIND_LABEL[change.kind]),
+    change.staged ? t('git.staged') : '',
+    change.unstaged || change.untracked ? t('git.workingTree') : '',
+    change.additions > 0 || change.deletions > 0
+      ? t('files.marksSummary', {
+          added: change.additions,
+          deleted: change.deletions,
+        })
+      : '',
+    truncated ? t('git.truncatedList') : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <span
+      data-tip={tip}
+      data-kind={change.kind}
+      className={`grid h-4 w-4 shrink-0 place-items-center rounded-tight font-mono text-micro ${kindClass(
+        change.kind,
+      )}`}
+    >
+      {KIND_MARK[change.kind] ?? '?'}
+    </span>
+  );
+}
+
+// TreeFolderBadge is the same mark one level up: a folder shows the
+// loudest kind of everything under it, so a collapsed directory already
+// says that something inside it changed — the answer comes from the
+// whole-repository snapshot, not from the rows the tree has listed.
+// When a folder's paths disagree on the kind the headline letter stays
+// and the tooltip spells the mixture out.
+function TreeFolderBadge({ folder }: { folder?: FolderChange }) {
+  const { t } = useTranslation();
+  if (!folder || folder.files === 0) return null;
+  const tip = [
+    ...KIND_PRIORITY.filter((kind) => folder.kinds[kind]).map(
+      (kind) => `${folder.kinds[kind]} × ${t(KIND_LABEL[kind])}`,
+    ),
+    folder.staged ? t('git.staged') : '',
+    folder.unstaged || folder.untracked ? t('git.workingTree') : '',
+    folder.additions > 0 || folder.deletions > 0
+      ? t('files.marksSummary', {
+          added: folder.additions,
+          deleted: folder.deletions,
+        })
+      : '',
+    folder.truncated ? t('git.truncatedList') : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    <span
+      data-tip={tip}
+      data-kind={folder.kind}
+      data-files={folder.files}
+      data-mixed={folder.mixed ? 'true' : undefined}
+      className={`grid h-4 w-4 shrink-0 place-items-center rounded-tight font-mono text-micro ${kindClass(
+        folder.kind,
+      )}`}
+    >
+      {KIND_MARK[folder.kind] ?? '?'}
+    </span>
   );
 }
 
@@ -483,9 +641,61 @@ function FileTreePanel({
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<{ path: string; is_dir: boolean }[]>([]);
   const [entries, setEntries] = useState<Record<string, FileNode[]>>({});
+  const [snapshot, setSnapshot] = useState<{
+    changes: Record<string, GitChange>;
+    truncated: boolean;
+  }>({ changes: {}, truncated: false });
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     '.': true,
   });
+  const changes = snapshot.changes;
+  // The folder roll-up is a pure function of the snapshot, so the same
+  // one answers every collapsed directory the tree has not listed yet.
+  const folderChanges = useMemo(
+    () => folderChangeMap(snapshot.changes, snapshot.truncated),
+    [snapshot],
+  );
+
+  // The badge feed: the same repository snapshot the Git segment shows,
+  // re-keyed to workspace-relative paths. It is read while the tree is
+  // open and refreshed on the events that can change it — the poll is
+  // the slow backstop for writes that announce nothing (an external
+  // editor), so it is sparser than the panel's own status poll.
+  useEffect(() => {
+    let live = true;
+    const read = () => {
+      void api
+        .gitStatus()
+        .then((status) => {
+          if (live) {
+            setSnapshot({
+              changes: workspaceChangeMap(status),
+              truncated: !!status.truncated,
+            });
+          }
+        })
+        .catch(() => {
+          // No repository (or a broken one) simply means no badges.
+          if (live) setSnapshot({ changes: {}, truncated: false });
+        });
+    };
+    read();
+    const off = Events.On('opencraft:ui', (e) => {
+      const ev = e.data as { type?: string } | undefined;
+      if (ev?.type === 'git_changed' || ev?.type === 'turn_end') read();
+    });
+    const wake = () => {
+      if (!document.hidden) read();
+    };
+    window.addEventListener('focus', wake);
+    const poll = window.setInterval(wake, 15_000);
+    return () => {
+      live = false;
+      off();
+      window.removeEventListener('focus', wake);
+      window.clearInterval(poll);
+    };
+  }, []);
 
   // The switch is a durable preference (desktop.json), so the panel
   // writes it the way Settings > Interface does and rolls the applied
@@ -574,6 +784,7 @@ function FileTreePanel({
               <div key={childRel}>
                 <button
                   onClick={() => toggle(childRel)}
+                  data-tree-path={childRel}
                   style={{ paddingLeft: 8 + depth * 12 }}
                   className={`flex w-full items-center gap-1 truncate rounded-tight px-1 py-0.5 text-left text-xs hover:bg-panel2 ${
                     treeDir === childRel ? 'text-fg' : 'text-dim hover:text-fg'
@@ -592,7 +803,8 @@ function FileTreePanel({
                   ) : (
                     <Folder size={ICON.sm} className="shrink-0 text-accent" />
                   )}
-                  <span className="truncate">{n.name}</span>
+                  <span className="min-w-0 flex-1 truncate">{n.name}</span>
+                  <TreeFolderBadge folder={folderChanges[childRel]} />
                 </button>
                 {childOpen && renderDir(childRel, depth + 1)}
               </div>
@@ -604,12 +816,17 @@ function FileTreePanel({
             <button
               key={n.path}
               onClick={() => void openFileTarget(n.path)}
+              data-tree-path={n.path}
               style={{ paddingLeft: 8 + (depth + 1) * 12 }}
               className="flex w-full items-center gap-1 rounded-tight px-1 py-0.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
               data-tip={n.path}
             >
               <FileCode size={ICON.xs} className="shrink-0" />
-              <span className="truncate">{n.name}</span>
+              <span className="min-w-0 flex-1 truncate">{n.name}</span>
+              <TreeChangeBadge
+                change={changeForPath(changes, n.path)}
+                truncated={snapshot.truncated}
+              />
             </button>
           ))}
       </div>
@@ -661,6 +878,7 @@ function FileTreePanel({
             hits.map((hit) => (
               <button
                 key={hit.path}
+                data-tree-path={hit.path}
                 onClick={() => {
                   if (hit.is_dir) showDir(hit.path);
                   else void openFileTarget(hit.path);
@@ -672,7 +890,15 @@ function FileTreePanel({
                 ) : (
                   <FileCode size={ICON.xs} className="shrink-0" />
                 )}
-                <span className="truncate">{hit.path}</span>
+                <span className="min-w-0 flex-1 truncate">{hit.path}</span>
+                {hit.is_dir ? (
+                  <TreeFolderBadge folder={folderChanges[hit.path]} />
+                ) : (
+                  <TreeChangeBadge
+                    change={changeForPath(changes, hit.path)}
+                    truncated={snapshot.truncated}
+                  />
+                )}
               </button>
             ))
           )
@@ -683,6 +909,7 @@ function FileTreePanel({
             </div>
             <button
               onClick={() => toggle('.')}
+              data-tree-path="."
               className="flex w-full items-center gap-1 rounded-tight px-1 py-0.5 text-xs text-dim hover:bg-panel2 hover:text-fg"
             >
               {expanded['.'] ? (
@@ -695,7 +922,10 @@ function FileTreePanel({
               ) : (
                 <Folder size={ICON.sm} className="text-accent" />
               )}
-              <span className="truncate">{t('files.workspace')}</span>
+              <span className="min-w-0 flex-1 truncate">
+                {t('files.workspace')}
+              </span>
+              <TreeFolderBadge folder={folderChanges['.']} />
             </button>
             {expanded['.'] && renderDir('.', 1)}
           </>

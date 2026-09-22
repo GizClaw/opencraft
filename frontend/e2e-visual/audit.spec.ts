@@ -1198,6 +1198,156 @@ test('steer notes', async ({ page }) => {
   await shot(page, '47c-steer-notes-light');
 });
 
+// The ask card's header row: an icon, the question, the answer chip, the
+// chevron. The chip is capped to its share of the row and shortened with
+// an ellipsis (its full text is on hover); a multi-choice answer is named
+// by how many options were taken instead of joining the option texts,
+// which had no bound at all. Three states sit on screen at once: a long
+// single answer, a multi-choice answer, and a question still waiting for
+// the user (no chip).
+test('ask cards', async ({ page }) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: WS,
+  });
+  await page.goto('/');
+  const emit = emitter(page);
+  const delta = (runID: string, part: unknown) =>
+    emit('opencraft:ui', {
+      type: 'stream',
+      data: {
+        run_id: runID,
+        conversation_id: 's-1',
+        delta: { type: 'part', part },
+      },
+    });
+  const end = (runID: string) =>
+    emit('opencraft:ui', {
+      type: 'turn_end',
+      data: {
+        run_id: runID,
+        conversation_id: 's-1',
+        status: 'completed',
+        duration_ms: 24000,
+      },
+    });
+  const send = async (text: string) => {
+    await typeComposerMessage(page, text);
+    await page.getByRole('button', { name: 'Send' }).click();
+  };
+  const ask = (
+    runID: string,
+    id: string,
+    question: string,
+    options: string[],
+    multiple: boolean,
+  ) =>
+    delta(runID, {
+      type: 'tool_call',
+      call: {
+        id,
+        name: 'ask_user',
+        arguments: { question, kind: 'select', multiple, options },
+      },
+    });
+  const answered = (
+    runID: string,
+    id: string,
+    reply: { choice?: string; choices?: string[] },
+  ) =>
+    delta(runID, {
+      type: 'tool_result',
+      result: {
+        call_id: id,
+        content: {
+          parts: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                cancelled: false,
+                choice: '',
+                choices: [],
+                other: '',
+                text: '',
+                ...reply,
+              }),
+            },
+          ],
+        },
+        is_error: false,
+      },
+    });
+
+  // Turn one: the multi-choice answer that started all this — five long
+  // options, three of them taken.
+  await send('三条线都收口了，先对一下下一步');
+  await delta('r-1', {
+    type: 'text',
+    text: '三条线都收口了，给你完整交代。\n\n## 待你定',
+  });
+  await ask(
+    'r-1',
+    'call-ask-1',
+    '接下来做哪些?(#197 全绿待合,execd 那个 flake 我已把范围收窄到"信号没送达/被忽略")',
+    [
+      '合入 #197(它修的就是让 main 变红的那条 flake)',
+      '给 TestSessionSignalInterrupts 加超时自诊断(超时: dump 子进程 /proc/<pid>/status 的 Sigln/SigBlk + ps 进程组,下次 CI 红自带证据,Linux 分支守卫)',
+      '把 execd flake 追到底:重建 CI 形状的 Linux 复现环境(bwrap+sudo+整仓并行)再修',
+      '给定时 fuzz 失败加通知(自动开 issue)',
+      '都先放着,我先看 #197',
+    ],
+    true,
+  );
+  await answered('r-1', 'call-ask-1', {
+    choices: [
+      '合入 #197(它修的就是让 main 变红的那条 flake)',
+      '给 TestSessionSignalInterrupts 加超时自诊断(超时: dump 子进程 /proc/<pid>/status 的 Sigln/SigBlk + ps 进程组,下次 CI 红自带证据,Linux 分支守卫)',
+      '把 execd flake 追到底:重建 CI 形状的 Linux 复现环境(bwrap+sudo+整仓并行)再修',
+    ],
+  });
+  await end('r-1');
+  await page.waitForTimeout(250);
+
+  // Turn two: one long answer instead of a list.
+  await send('证据打在哪一层?');
+  await delta('r-2', { type: 'text', text: '明白，我把 evidence 分层：\n' });
+  await ask(
+    'r-2',
+    'call-ask-1',
+    '给 TestSessionSignalInterrupts 加超时自诊断，evidence 打到哪一层?',
+    [
+      '子进程 dump /proc/<pid>/status 的 SigBlk + 进程组，落进 CI artifact',
+      '只记 ps 输出，保持日志体量',
+      '先不做，等下一次红再说',
+    ],
+    false,
+  );
+  await answered('r-2', 'call-ask-1', {
+    choice:
+      '子进程 dump /proc/<pid>/status 的 SigBlk + 进程组，落进 CI artifact，附带失败时的 rollout 片段',
+  });
+  await end('r-2');
+  await page.waitForTimeout(250);
+
+  // Turn three: a question still waiting for an answer (spinner instead
+  // of a chip) — the state the card spends most of its life in.
+  await send('这三条要我一起推，还是先只推 #197?');
+  await delta('r-3', { type: 'text', text: '那先说清楚再动手：\n' });
+  await ask(
+    'r-3',
+    'call-ask-3',
+    '这三条要我一起推，还是先只推 #197?',
+    ['一起推', '先推 #197', '都别动'],
+    false,
+  );
+  await page.waitForTimeout(400);
+  await shot(page, '48-ask-card');
+  await page.evaluate(() => {
+    document.documentElement.classList.add('theme-light');
+  });
+  await page.waitForTimeout(200);
+  await shot(page, '48b-ask-card-light');
+});
+
 // The chat header is the pane's title bar: the conversation's identity on
 // the left, its run state next to it, the viewer toggle on the right. It
 // is also the one strip that animates outside overlay chrome, so the

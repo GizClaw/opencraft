@@ -507,6 +507,12 @@ export interface FilePreview {
   /** Loopback URL a video kind streams from (byte ranges, no base64). */
   stream_url?: string;
   too_large?: boolean;
+  /**
+   * Modification stamp of the file this payload was read from. The
+   * viewer compares it with Git.FileMarks' stamp to notice an
+   * out-of-band write (the agent editing the open file) and reload.
+   */
+  mtime_ns?: number;
 }
 
 // FileTab is one open file viewer tab. Viewer state is memory-only
@@ -600,6 +606,51 @@ export interface GitDiff {
   content: string;
   truncated: boolean;
 }
+
+/** GitLineRange is one run of changed working-tree lines, 1-based. */
+export interface GitLineRange {
+  start: number;
+  count: number;
+}
+
+/**
+ * GitDeleteAnchor marks a gap where lines were deleted: `after` counts
+ * the unchanged lines above it (0 = above line 1), `count` how many.
+ */
+export interface GitDeleteAnchor {
+  after: number;
+  count: number;
+  old_start?: number;
+}
+
+/**
+ * GitFileMarks mirrors the Git.FileMarks binding: the line-level change
+ * snapshot of one workspace file against HEAD. `kind` is empty for a
+ * clean file, and a repository-less workspace answers in_repo: false.
+ */
+export interface GitFileMarks {
+  in_repo: boolean;
+  path?: string;
+  orig_path?: string;
+  kind?: GitChangeKind;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  unmerged: boolean;
+  binary: boolean;
+  truncated: boolean;
+  additions: number;
+  deletions: number;
+  /** Modification stamp and size of the file the marks were read from. */
+  mtime_ns: number;
+  size: number;
+  adds?: GitLineRange[];
+  mods?: GitLineRange[];
+  dels?: GitDeleteAnchor[];
+}
+
+/** MarkTone is the per-line classification drawn next to the gutter. */
+export type MarkTone = 'add' | 'mod';
 
 export interface GitHubAuthor {
   login: string;

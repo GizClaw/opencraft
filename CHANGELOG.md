@@ -395,6 +395,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it, while the panel's own list keeps scrolling itself as before.
   Hover hints are pinned to a control the same way and now follow the
   same rule instead of vanishing whenever anything in the window moved.
+- A text block the model had finished writing no longer sits on screen in
+  raw markdown until its turn ends. The transcript chose between plain
+  text and markdown once per message, with a flag that meant "this turn's
+  answer is still streaming", so every block of a running turn rendered
+  its markers literally: `## Plan` stayed `## Plan`, and the heading font
+  arrived only when the whole turn settled and the pane re-laid itself
+  out. The flag now marks the one item it was meant for — the message's
+  trailing block, while its turn runs — so a block that a tool call (or
+  the next block) ended is parsed the moment it stops growing. Only the
+  block still being written stays plain text, which is what keeps a
+  half-written `#` from being re-parsed on every delta.
+- An `ask_user` card's header no longer loses its question to a long
+  answer. The answer chip only ever grew — a multi-choice answer joined
+  its option texts — and the question was the one part of the row that
+  could give way, so three options of ordinary length squeezed it to
+  nothing and painted both past the card edge, with no ellipsis anywhere
+  because nothing was capped. A multi-choice answer is now named by its
+  count (`✓ 3 choices`), the chip is capped to its share of the row and
+  truncates, and the answer it had to shorten is one hover away and
+  spelled out in the expanded body, where every option is still listed
+  with the ticked ones marked.
 
 ## [0.5.3] - 2026-09-17
 

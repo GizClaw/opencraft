@@ -2,6 +2,8 @@ package bindings
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -213,6 +215,127 @@ func (b *Git) Diff(path string, cached bool) (GitDiffDTO, error) {
 	content, truncated := gitx.Diff(
 		b.core.Shell.Context(), root, path, cached, 0)
 	return GitDiffDTO{Content: content, Truncated: truncated}, nil
+}
+
+// GitLineRangeDTO is one run of changed lines in the working-tree
+// coordinates the file preview renders.
+type GitLineRangeDTO struct {
+	Start int `json:"start"`
+	Count int `json:"count"`
+}
+
+// GitDeleteAnchorDTO is a gap where lines were removed. After counts
+// the unchanged lines above the gap (0 places it above line 1).
+type GitDeleteAnchorDTO struct {
+	After    int `json:"after"`
+	Count    int `json:"count"`
+	OldStart int `json:"old_start,omitempty"`
+}
+
+// GitFileMarksDTO is the line-level change snapshot of one workspace
+// file against HEAD, plus the metadata the viewer compares against the
+// preview it currently shows.
+type GitFileMarksDTO struct {
+	InRepo    bool   `json:"in_repo"`
+	Path      string `json:"path,omitempty"`
+	OrigPath  string `json:"orig_path,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Staged    bool   `json:"staged"`
+	Unstaged  bool   `json:"unstaged"`
+	Untracked bool   `json:"untracked"`
+	Unmerged  bool   `json:"unmerged"`
+	Binary    bool   `json:"binary"`
+	Truncated bool   `json:"truncated"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	// MtimeNS and Size describe the working-tree file the marks were
+	// read from, so the viewer can tell a stale preview from a fresh
+	// one without a second stat call.
+	MtimeNS int64                `json:"mtime_ns"`
+	Size    int64                `json:"size"`
+	Adds    []GitLineRangeDTO    `json:"adds,omitempty"`
+	Mods    []GitLineRangeDTO    `json:"mods,omitempty"`
+	Dels    []GitDeleteAnchorDTO `json:"dels,omitempty"`
+}
+
+// FileMarks returns the line marks of one file for the viewer's git
+// gutter. Every "nothing to draw" case answers with InRepo=false or an
+// empty Kind instead of an error: a file outside the workspace, a
+// workspace outside any repository, and a clean or untracked file are
+// all normal states for the panel to render as "no marks".
+func (b *Git) FileMarks(path string) (GitFileMarksDTO, error) {
+	workDir := b.core.ActiveWorkDir()
+	if workDir == "" {
+		return GitFileMarksDTO{}, errors.New("git: no workspace selected")
+	}
+	if strings.TrimSpace(path) == "" {
+		return GitFileMarksDTO{}, errors.New("git: file path is required")
+	}
+	// Viewer targets arrive absolute (what ResolveTarget handed the
+	// tab); workspace-relative paths are accepted for the same call.
+	target := filepath.Clean(path)
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(workDir, filepath.FromSlash(path))
+	}
+	if !pathsafe.Within(filepath.Clean(workDir), target) {
+		return GitFileMarksDTO{}, fmt.Errorf("%s is outside the workspace", path)
+	}
+	ctx := b.core.Shell.Context()
+	dto := GitFileMarksDTO{}
+	// The stamp is read before the repository check: the viewer uses it
+	// to notice the agent rewriting the open file, and that matters just
+	// as much in a workspace that is not a repository at all.
+	if st, err := os.Stat(target); err == nil && st.Mode().IsRegular() {
+		dto.MtimeNS = st.ModTime().UnixNano()
+		dto.Size = st.Size()
+	}
+	info := gitx.Info(ctx, workDir)
+	if info.Root == "" {
+		return dto, nil
+	}
+	// Both sides of the relation go through the symlink pass so a
+	// workspace reached through /var on macOS still lands inside the
+	// repository root git reports.
+	repoRoot, err := filepath.EvalSymlinks(info.Root)
+	if err != nil {
+		repoRoot = info.Root
+	}
+	eval, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		eval = target
+	}
+	rel, ok := pathsafe.Rel(repoRoot, eval)
+	if !ok {
+		dto.InRepo = true
+		return dto, nil
+	}
+	dto.InRepo = true
+	dto.Path = filepath.ToSlash(rel)
+	marks := gitx.FileMarks(ctx, info.Root, dto.Path)
+	dto.OrigPath = marks.OrigPath
+	dto.Kind = string(marks.Kind)
+	dto.Staged = marks.Staged
+	dto.Unstaged = marks.Unstaged
+	dto.Untracked = marks.Untracked
+	dto.Unmerged = marks.Unmerged
+	dto.Binary = marks.Binary
+	dto.Truncated = marks.Truncated
+	dto.Additions = marks.Additions
+	dto.Deletions = marks.Deletions
+	for _, r := range marks.Adds {
+		dto.Adds = append(dto.Adds, GitLineRangeDTO{Start: r.Start, Count: r.Count})
+	}
+	for _, r := range marks.Mods {
+		dto.Mods = append(dto.Mods, GitLineRangeDTO{Start: r.Start, Count: r.Count})
+	}
+	for _, d := range marks.Dels {
+		dto.Dels = append(dto.Dels, GitDeleteAnchorDTO{
+			After:    d.After,
+			Count:    d.Count,
+			OldStart: d.OldStart,
+		})
+	}
+	return dto, nil
 }
 
 // GitCommitFileDTO is one path changed by a commit.

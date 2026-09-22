@@ -327,6 +327,10 @@ type FilePreview struct {
 	// seeks through byte ranges, so no size cap applies.
 	StreamURL string `json:"stream_url,omitempty"`
 	TooLarge  bool   `json:"too_large"`
+	// MtimeNS is the modification stamp of the file this payload was
+	// read from. The viewer compares it against Git.FileMarks' stamp to
+	// notice an out-of-band write and reload silently.
+	MtimeNS int64 `json:"mtime_ns"`
 }
 
 // ReadPreview returns a bounded preview for one viewer target: text
@@ -361,6 +365,7 @@ func (b *File) ReadPreview(path string) (FilePreview, error) {
 		Size:      info.Size(),
 		MediaType: mediaType,
 		Kind:      "meta",
+		MtimeNS:   info.ModTime().UnixNano(),
 	}
 	if url := b.streamURL(root, rel, mediaType); url != "" {
 		out.Kind = "video"

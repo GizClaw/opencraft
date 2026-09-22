@@ -79,6 +79,10 @@ type UISettings struct {
 	CodeFontName    string  `json:"codeFontName,omitempty"`
 	FontScale       float64 `json:"fontScale"`
 	ShowHiddenFiles bool    `json:"showHiddenFiles"`
+	// GitMarks draws the file viewer's per-line git change marks. A
+	// missing value means enabled (the default), so only the explicit
+	// false a user picked is ever absent from the document.
+	GitMarks *bool `json:"gitMarks,omitempty"`
 }
 
 // GetUISettings returns the persisted appearance preferences.
@@ -91,6 +95,7 @@ func (b *Lifecycle) GetUISettings() UISettings {
 		CodeFontName:    ui.CodeFontName,
 		FontScale:       ui.FontScale,
 		ShowHiddenFiles: ui.ShowHiddenFiles,
+		GitMarks:        ui.GitMarks,
 	}
 }
 
@@ -104,6 +109,7 @@ func (b *Lifecycle) SetUISettings(settings UISettings) error {
 		CodeFontName:    settings.CodeFontName,
 		FontScale:       settings.FontScale,
 		ShowHiddenFiles: settings.ShowHiddenFiles,
+		GitMarks:        settings.GitMarks,
 	})
 }
 

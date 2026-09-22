@@ -1342,13 +1342,27 @@ function AskUserView({ tool }: { tool: ToolView }) {
       : null;
   const running = tool.status === 'running';
   const failed = tool.status === 'error';
-  const answer =
-    parsed?.other ||
-    parsed?.choice ||
-    parsed?.text ||
-    (parsed?.choices && parsed.choices.length > 0
-      ? parsed.choices.join(', ')
-      : '');
+  // answer is the whole answer, for the expanded body: a written or
+  // picked one verbatim, a multi-choice one as the list the user
+  // ticked. The body wraps, so it can afford the list.
+  const named = (parsed?.other || parsed?.choice || parsed?.text || '').trim();
+  const chosen = parsed?.choices ?? [];
+  const answer = named || chosen.join(', ');
+  // The header chip has one line of a narrow row to say the same thing.
+  // A multi-choice answer is named by its count instead of joining the
+  // option texts: three long options used to make a chip half again as
+  // wide as the card, which squeezed the question to zero width and
+  // painted both past the card edge (no ellipsis was possible, because
+  // nothing was capped). Whatever the chip has to shorten stays reachable
+  // — on hover, and in full in the expanded body.
+  const chip = named
+    ? `✓ ${named}`
+    : chosen.length > 1
+      ? `✓ ${t('tool.answeredCount', { count: chosen.length })}`
+      : chosen.length === 1
+        ? `✓ ${chosen[0]}`
+        : t('tool.answered');
+  const chipTip = named || chosen.join(', ');
 
   return (
     <div className="my-1.5">
@@ -1377,15 +1391,12 @@ function AskUserView({ tool }: { tool: ToolView }) {
         </span>
         {!running && parsed !== null && (
           <span
-            className={`shrink-0 rounded-tight px-1.5 py-0.5 text-micro ${
+            className={`max-w-[45%] shrink-0 truncate rounded-tight px-1.5 py-0.5 text-micro ${
               parsed.cancelled ? 'bg-panel text-dim' : 'bg-ok/10 text-ok'
             }`}
+            data-tip={chipTip === '' ? undefined : chipTip}
           >
-            {parsed.cancelled
-              ? t('tool.cancelled')
-              : answer
-                ? `✓ ${answer}`
-                : t('tool.answered')}
+            {parsed.cancelled ? t('tool.cancelled') : chip}
           </span>
         )}
         {open ? (

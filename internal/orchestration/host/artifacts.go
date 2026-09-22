@@ -47,6 +47,13 @@ func artifactConversation(ctx context.Context) string {
 
 // onArtifactWrite notifies the external observer and buffers the write
 // for the turn's archive.
+//
+// This write path is the only source of turn artifacts, and deliberately
+// the only one: nothing walks the workspace around a turn to reconcile
+// what changed, so a file written outside this path (a script, a bash
+// command, an MCP server) is not an artifact until an event stream can
+// attribute the write to a turn. ArchiveTurn flushes the buffer when the
+// turn is archived.
 func (h *Host) onArtifactWrite(ctx context.Context, path string, data []byte) {
 	h.mu.Lock()
 	fn := h.artifact

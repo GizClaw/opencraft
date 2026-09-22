@@ -1,17 +1,35 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
 import { DEFAULT_UI_SETTINGS } from '../lib/appearance';
-import type { FilePreview } from '../lib/types';
+import type { FilePreview, GitStatus } from '../lib/types';
 import { stateRoot } from '../state/app';
 import { FileViewer } from './FileViewer';
 
 const apiMock = vi.hoisted(() => ({
   listDir: vi.fn(
-    async (): Promise<{ name: string; path: string; is_dir: boolean }[]> => [],
+    async (
+      _dir: string,
+      _showHidden?: boolean,
+    ): Promise<{ name: string; path: string; is_dir: boolean }[]> => [],
   ),
   searchFiles: vi.fn(async () => []),
   setUISettings: vi.fn(async () => undefined),
+  // The tree's change badges read the repository snapshot; a workspace
+  // outside a repository answers with no entries.
+  gitStatus: vi.fn(async (): Promise<GitStatus> => ({
+    root: '/tmp/w',
+    workspace: '/tmp/w',
+    truncated: false,
+    entries: [],
+  })),
+  gitFileMarks: vi.fn(async () => null),
   readPreview: vi.fn(async (): Promise<FilePreview> => ({
     path: '/tmp/w/internal/a.go',
     rel: 'internal/a.go',
@@ -99,6 +117,117 @@ describe('FileViewer', () => {
     );
 
     useStore.setState({ uiSettings: { ...DEFAULT_UI_SETTINGS } });
+  });
+
+  it('rolls the change status up onto the folders of the tree', async () => {
+    useStore.setState({ uiSettings: { ...DEFAULT_UI_SETTINGS } });
+    apiMock.listDir.mockImplementation(async (dir: string) => {
+      if (dir === '.') {
+        return [
+          { name: 'internal', path: 'internal', is_dir: true },
+          { name: 'README.md', path: 'README.md', is_dir: false },
+        ];
+      }
+      return [];
+    });
+    apiMock.gitStatus.mockResolvedValue({
+      root: '/tmp/w',
+      workspace: '/tmp/w',
+      truncated: false,
+      entries: [
+        {
+          path: 'internal/a.go',
+          kind: 'modified',
+          staged: false,
+          unstaged: true,
+          untracked: false,
+          unmerged: false,
+          directory: false,
+          is_binary: false,
+          additions: 4,
+          deletions: 2,
+          in_workspace: true,
+        },
+        {
+          path: 'internal/scratch',
+          kind: 'untracked',
+          staged: false,
+          unstaged: false,
+          untracked: true,
+          unmerged: false,
+          directory: true,
+          is_binary: false,
+          additions: 0,
+          deletions: 0,
+          in_workspace: true,
+        },
+      ],
+    });
+    render(<FileViewer sessionID="s-1" />);
+    (await screen.findByLabelText('Toggle file tree')).click();
+
+    // A collapsed folder already carries the aggregate of everything
+    // under it, not just of the rows the tree has listed.
+    const row = (path: string) =>
+      document.querySelector(`[data-tree-path="${path}"] [data-kind]`);
+    await waitFor(() =>
+      expect(row('internal')).toHaveAttribute('data-files', '2'),
+    );
+    const folderBadge = row('internal');
+    expect(folderBadge?.textContent).toBe('M');
+    expect(folderBadge).toHaveAttribute('data-kind', 'modified');
+    expect(folderBadge).toHaveAttribute('data-mixed', 'true');
+    expect(folderBadge).toHaveAttribute(
+      'data-tip',
+      '1 × Modified · 1 × Untracked · Working tree · 4 added · 2 deleted',
+    );
+
+    // The workspace root row is the top-most folder and answers with the
+    // same roll-up of the whole subtree.
+    expect(row('.')).toHaveAttribute('data-files', '2');
+    // A file with an entry of its own keeps its own letter, and a clean
+    // one draws nothing at all.
+    expect(row('README.md')).toBeNull();
+  });
+
+  it('marks the files inside a collapsed untracked directory', async () => {
+    useStore.setState({ uiSettings: { ...DEFAULT_UI_SETTINGS } });
+    apiMock.listDir.mockImplementation(async (dir: string) =>
+      dir === 'docs'
+        ? [{ name: 'note.md', path: 'docs/note.md', is_dir: false }]
+        : [{ name: 'docs', path: 'docs', is_dir: true }],
+    );
+    apiMock.gitStatus.mockResolvedValue({
+      root: '/tmp/w',
+      workspace: '/tmp/w',
+      truncated: false,
+      entries: [
+        {
+          path: 'docs',
+          kind: 'untracked',
+          staged: false,
+          unstaged: false,
+          untracked: true,
+          unmerged: false,
+          directory: true,
+          is_binary: false,
+          additions: 0,
+          deletions: 0,
+          in_workspace: true,
+        },
+      ],
+    });
+    render(<FileViewer sessionID="s-1" />);
+    (await screen.findByLabelText('Toggle file tree')).click();
+    const row = (path: string) =>
+      document.querySelector(`[data-tree-path="${path}"] [data-kind]`);
+    await waitFor(() =>
+      expect(row('docs')).toHaveAttribute('data-kind', 'untracked'),
+    );
+    fireEvent.click(document.querySelector('[data-tree-path="docs"]')!);
+    await waitFor(() =>
+      expect(row('docs/note.md')).toHaveAttribute('data-kind', 'untracked'),
+    );
   });
 
   it('plays a video preview from the loopback stream URL', async () => {

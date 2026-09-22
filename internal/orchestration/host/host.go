@@ -1288,7 +1288,6 @@ type runDetail struct {
 	usageHours map[string]sessions.Usage
 	notify     func(context.Context, inference.Usage)
 	buffer     *rolloutBuffer
-	manifest   map[string]fileStat
 	backend    interact.Backend
 	// requestID/responseID hold the provider correlation identifiers
 	// of the run's final generation, captured from the terminal

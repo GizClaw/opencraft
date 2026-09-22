@@ -201,4 +201,19 @@ describe('SettingsDisplay appearance', () => {
     });
     expect(toast).toHaveBeenCalled();
   });
+
+  // The git-marks switch is the viewer's opt-out: it defaults on, so what
+  // this pins is that turning it off writes the preference (and that the
+  // card never writes a value the user did not pick).
+  it('turns the git change marks off through the preference document', async () => {
+    const user = userEvent.setup();
+    render(<SettingsDisplay />);
+
+    await user.click(screen.getByRole('button', { name: /^Off$|^关$/ }));
+
+    expect(apiMock.setUISettings).toHaveBeenCalledWith({
+      ...DEFAULT_UI_SETTINGS,
+      gitMarks: false,
+    });
+  });
 });
