@@ -120,6 +120,67 @@ func TestForkCopiesHistoryThroughRun(t *testing.T) {
 	}
 }
 
+// TestForkNamesFromTheFirstUserTurn keeps a fork's name honest when the
+// source starts with an app-authored turn: the note rides along with
+// its kind and fields, but the forked conversation is named after the
+// first turn a person wrote.
+func TestForkNamesFromTheFirstUserTurn(t *testing.T) {
+	store, err := newMigratedStore(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.CloseDB() })
+	ctx := context.Background()
+
+	sourceID, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"target":"researcher","status":"succeeded"}`)
+	const prose = "[delegated worker \"researcher\" finished: succeeded]\n\n" +
+		"the report"
+	if err := store.AppendTurnWithOriginAndRunID(
+		ctx, sourceID, "subagent:card-1",
+		TurnOrigin{Kind: "delegation_note", Payload: payload},
+		[]message.Message{message.NewTextMessage(message.RoleUser, prose)},
+	); err != nil {
+		t.Fatalf("append note turn: %v", err)
+	}
+	if err := store.AppendTurnWithRunID(ctx, sourceID, "run-1",
+		[]message.Message{
+			message.NewTextMessage(message.RoleUser, "the real question"),
+			message.NewTextMessage(message.RoleAssistant, "the answer"),
+		}); err != nil {
+		t.Fatalf("append user turn: %v", err)
+	}
+	if err := store.RecordTurnEnd(
+		sourceID, "run-1", time.Now().UTC(), "completed", "", "", "", "", "",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	forked, err := store.Fork(ctx, sourceID, "run-1")
+	if err != nil {
+		t.Fatalf("Fork: %v", err)
+	}
+	if title, err := store.Title(forked.ID); err != nil ||
+		title != "the real question" {
+		t.Fatalf("forked title = %q (%v), want the user's first line",
+			title, err)
+	}
+	turns, err := store.Turns(ctx, forked.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("forked turns = %d, want the note and the user turn", len(turns))
+	}
+	if turns[0].Kind != "delegation_note" ||
+		string(turns[0].Payload) != string(payload) {
+		t.Fatalf("forked note turn = %+v", turns[0])
+	}
+}
+
 func TestForkCopiesSessionAttachments(t *testing.T) {
 	store, err := newMigratedStore(t.TempDir(), 40)
 	if err != nil {

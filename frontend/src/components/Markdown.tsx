@@ -1,8 +1,9 @@
-import { memo, useState } from 'react';
+import { memo, useLayoutEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Check, Copy } from 'lucide-react';
+import { beginMarkdownRender, endMarkdownRender } from '../lib/perfMetrics';
 import { ICON } from './ui/icon';
 
 // MarkdownLinkHandler is the shape every markdown surface hands its
@@ -35,6 +36,15 @@ export const Markdown = memo(function Markdown({
   basePath?: string;
   onOpen?: MarkdownLinkHandler;
 }) {
+  // The probe's markdown series wants the cost of one block, so the pair is
+  // taken around this render: the body runs before react-markdown parses
+  // and builds its elements, and the layout effect runs after the block has
+  // committed. memo keeps a re-render of the parent from looking like a
+  // parse, and a disabled probe hands back a zero the effect ignores.
+  const renderStartedAt = beginMarkdownRender();
+  useLayoutEffect(() => {
+    endMarkdownRender(renderStartedAt);
+  });
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}

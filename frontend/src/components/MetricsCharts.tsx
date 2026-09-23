@@ -60,12 +60,14 @@ const METRICS: MetricDef[] = [
     unit: 'ms',
     aggregate: 'mean',
   },
-  // Web-vitals series are running values: LCP is the largest paint so far
-  // (in an SPA a later, bigger element keeps raising it), INP the worst
-  // interaction so far, FID the one first input of the session. Their
-  // samples are states, not events. CLS is not charted: the shell's engine
-  // never reports layout shifts (see rum.ts).
-  { name: 'frontend.lcp', section: 'frontend', unit: 'ms', aggregate: 'last' },
+  // Web-vitals series are running values: INP is the worst interaction so
+  // far, FID the one first input of the session. Their samples are states,
+  // not events. LCP is neither collected nor charted: this window is an
+  // always-open SPA, and the running largest-paint value is raised by
+  // whatever has painted so far (the stored series ran into minutes), so it
+  // tracked how large the last render got rather than how fast the shell
+  // loads (see rum.ts). CLS is not charted either: the shell's engine never
+  // reports layout shifts.
   { name: 'frontend.inp', section: 'frontend', unit: 'ms', aggregate: 'last' },
   { name: 'frontend.fid', section: 'frontend', unit: 'ms', aggregate: 'last' },
   // One sample per page load, so a bucket holds a handful of real
@@ -83,8 +85,17 @@ const METRICS: MetricDef[] = [
     aggregate: 'mean',
   },
   // The renderer probe (Diagnostics > DEV tools) reports once per 30s
-  // window: two gauges taken at the moment of the report, a frame count for
-  // the window, and the worst values inside it.
+  // window: how much time the window covers, three gauges taken at the
+  // moment of the report (dom_nodes, conv_messages, mounted_rows), frame
+  // counts for the window, and the worst values inside it. A report is
+  // skipped while the window is hidden, so window_ms is what keeps frames
+  // and the flush counts comparable across windows.
+  {
+    name: 'frontend.window_ms',
+    section: 'probe',
+    unit: 'ms',
+    aggregate: 'last',
+  },
   {
     name: 'frontend.dom_nodes',
     section: 'probe',
@@ -97,12 +108,50 @@ const METRICS: MetricDef[] = [
     unit: '',
     aggregate: 'last',
   },
+  {
+    name: 'frontend.mounted_rows',
+    section: 'probe',
+    unit: '',
+    aggregate: 'last',
+  },
   { name: 'frontend.frames', section: 'probe', unit: '', aggregate: 'mean' },
   {
     name: 'frontend.frame_max',
     section: 'probe',
     unit: 'ms',
     aggregate: 'max',
+  },
+  // Frame gaps too long to be a frame: the window was occluded, the
+  // machine asleep, or the renderer stalled past a second. Dropped from
+  // the frame series next to this one, counted here so a window that was
+  // not really sampled cannot read as a quiet one.
+  {
+    name: 'frontend.dropped_gaps',
+    section: 'probe',
+    unit: '',
+    aggregate: 'sum',
+  },
+  // Frames whose gap blew 50 / 100 / 200ms in the report window: the
+  // dropped-frame counts that work on every engine (the Chromium-only
+  // longtask observer these replaced never fired under WebKit), and a
+  // count of how many frames were that slow rather than only the worst.
+  {
+    name: 'frontend.long_frames_50',
+    section: 'probe',
+    unit: '',
+    aggregate: 'sum',
+  },
+  {
+    name: 'frontend.long_frames_100',
+    section: 'probe',
+    unit: '',
+    aggregate: 'sum',
+  },
+  {
+    name: 'frontend.long_frames_200',
+    section: 'probe',
+    unit: '',
+    aggregate: 'sum',
   },
   {
     name: 'frontend.flush_p50',
@@ -122,23 +171,55 @@ const METRICS: MetricDef[] = [
     unit: 'ms',
     aggregate: 'max',
   },
+  // Flushes inside that report window; a downsampled bucket sums to how
+  // many flushes happened in it.
   {
     name: 'frontend.flush_count',
     section: 'probe',
     unit: '',
     aggregate: 'sum',
   },
+  // The flush's other half: from the flush's start to the frame that
+  // followed it — the routing itself plus everything else the frame had to
+  // do before it painted. flush_p95 above is the synchronous part;
+  // flush_commit_p95 is what the user waited for, so a renderer getting
+  // more expensive shows up here before frame_max moves.
   {
-    name: 'frontend.long_task_max',
+    name: 'frontend.flush_commit_p50',
+    section: 'probe',
+    unit: 'ms',
+    aggregate: 'mean',
+  },
+  {
+    name: 'frontend.flush_commit_p95',
+    section: 'probe',
+    unit: 'ms',
+    aggregate: 'mean',
+  },
+  {
+    name: 'frontend.flush_commit_max',
     section: 'probe',
     unit: 'ms',
     aggregate: 'max',
   },
+  // One markdown block's render-to-commit cost: the parse is what a long
+  // answer makes the flush pay, and measuring it separately is what a
+  // "render streaming markdown as plain text" decision would be based on.
   {
-    name: 'frontend.long_tasks',
+    name: 'frontend.flush_md_p95',
     section: 'probe',
-    unit: '',
-    aggregate: 'sum',
+    unit: 'ms',
+    aggregate: 'mean',
+  },
+  // The slowest top-level interaction of the window (send, session switch,
+  // opening or saving settings), labeled with which one it was. Only
+  // windows that held an interaction carry the sample, so a gap in the
+  // chart means nobody clicked rather than nothing measured.
+  {
+    name: 'frontend.interaction_max',
+    section: 'probe',
+    unit: 'ms',
+    aggregate: 'max',
   },
   {
     name: 'go.mem.heap_alloc',

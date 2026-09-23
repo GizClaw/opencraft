@@ -110,6 +110,7 @@ import type { PetActivityDTO } from '../pet/state';
 import type { PetMindDebug } from '../pet/state';
 import type { PetRuntimeStatus } from '../pet/validate';
 import { normalizeUISettings, type UISettings } from './appearance';
+import { measureInteraction } from './perfMetrics';
 import type { PetWindowGeometry } from '../pet/geometry';
 import type * as genPlugin from '../../bindings/github.com/GizClaw/opencraft/internal/capabilities/plugins/models';
 import type * as genPet from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/pet/models';
@@ -224,6 +225,13 @@ function toAgentDetail(dto: gen.AgentDetail): AgentDetail {
   };
 }
 
+// settingsSave wraps the settings page's writes as one interaction: the
+// probe reports the slowest interaction of a window with the label of what
+// it was, so a save that started blocking the renderer is named instead of
+// showing up as an unexplained long frame.
+const settingsSave = <T>(run: () => Promise<T>): Promise<T> =>
+  measureInteraction('settings-save', run);
+
 export const api = {
   version: () => Config.Version(),
   profile: () => Config.Profile(),
@@ -233,7 +241,9 @@ export const api = {
     Config.InferenceCatalog() as unknown as Promise<InferenceCatalogState>,
   configState: () => Config.ConfigState() as Promise<ConfigState>,
   saveInstances: (req: InferenceRequest) =>
-    Config.SaveInstances(req as unknown as gen.InferenceRequest),
+    settingsSave(() =>
+      Config.SaveInstances(req as unknown as gen.InferenceRequest),
+    ),
   reload: () => Config.Reload(),
   workspace: () => Workspace.Active(),
   newChat: async () => {
@@ -278,6 +288,15 @@ export const api = {
   // cross the desktop bridge in one payload.
   sessionTurns: (id: string, limit = 0, beforeSeq = 0) =>
     Session.Turns(id, limit, beforeSeq) as unknown as Promise<SessionTurn[]>,
+  // turnsSince reads the tail of the archive: the turns appended after
+  // the newest seq the transcript holds. It is how a conversation that
+  // is already on screen picks up a turn the app wrote on its own (a
+  // delegation note lands when its subagent finishes, long after the
+  // turn that spawned it ended) without re-reading what it has.
+  turnsSince: (id: string, afterSeq: number, limit = 0) =>
+    Session.TurnsSince(id, afterSeq, limit) as unknown as Promise<
+      SessionTurn[]
+    >,
   turnByRunID: (conversationID: string, runID: string) =>
     Session.TurnByRunID(
       conversationID,
@@ -352,7 +371,9 @@ export const api = {
   sessionDefaults: () =>
     Settings.GetSessionDefaults() as unknown as Promise<SessionDefaults>,
   saveSessionDefaults: (d: SessionDefaults) =>
-    Settings.SetSessionDefaults(d as unknown as gen.SessionDefaults),
+    settingsSave(() =>
+      Settings.SetSessionDefaults(d as unknown as gen.SessionDefaults),
+    ),
   modelOptions: () =>
     Config.ModelOptions() as unknown as Promise<ModelOption[]>,
   modelUsage: () => Config.ModelUsage() as unknown as Promise<ModelUsageStat[]>,
@@ -373,7 +394,9 @@ export const api = {
     )) ?? [],
   mcpConfig: () => Config.MCPConfig() as Promise<MCPServer[]>,
   saveMCP: (servers: MCPServer[]) =>
-    Config.SaveMCP(servers as unknown as genConfig.MCPServer[]),
+    settingsSave(() =>
+      Config.SaveMCP(servers as unknown as genConfig.MCPServer[]),
+    ),
   agentDetail: async (name: string): Promise<AgentDetail> =>
     toAgentDetail(await Agent.Detail(name)),
   updateAgent: (name: string, description: string, graph: string) =>
@@ -412,7 +435,9 @@ export const api = {
     >,
   memoryConfig: () => Config.MemoryConfig() as Promise<MemorySettings>,
   saveMemory: (s: MemorySettings) =>
-    Config.SaveMemory(s as unknown as genConfig.MemorySettings),
+    settingsSave(() =>
+      Config.SaveMemory(s as unknown as genConfig.MemorySettings),
+    ),
   // userMemory is the user-level long-term memory (facts that outlive a
   // session), as opposed to memoryConfig above, which tunes how the
   // conversation history of the current session is folded.
@@ -429,15 +454,19 @@ export const api = {
   setMemoryFactStale: (id: string, stale: boolean) =>
     Config.SetMemoryFactStale(id, stale) as unknown as Promise<MemoryFact>,
   saveUserMemorySettings: (req: UserMemorySettingsRequest) =>
-    Config.SaveUserMemorySettings(
-      req as unknown as gen.UserMemorySettingsRequest,
+    settingsSave(() =>
+      Config.SaveUserMemorySettings(
+        req as unknown as gen.UserMemorySettingsRequest,
+      ),
     ),
   // reviewSettings and the suggestion queue drive the post-turn
   // write-back review: what it proposed, and the user's verdict on it.
   reviewSettings: () =>
     Review.ReviewSettings() as unknown as Promise<ReviewState>,
   saveReviewSettings: (req: ReviewSettingsRequest) =>
-    Review.SaveReviewSettings(req as unknown as gen.ReviewSettingsRequest),
+    settingsSave(() =>
+      Review.SaveReviewSettings(req as unknown as gen.ReviewSettingsRequest),
+    ),
   reviewSuggestions: () =>
     Review.ReviewSuggestions() as unknown as Promise<ReviewSuggestion[]>,
   acceptReviewSuggestion: (id: string) =>
@@ -463,8 +492,10 @@ export const api = {
   skillArchives: () =>
     SkillLifecycle.SkillArchives() as unknown as Promise<SkillArchiveRow[]>,
   saveSkillLifecycleSettings: (req: SkillLifecycleSettingsRequest) =>
-    SkillLifecycle.SaveSkillLifecycleSettings(
-      req as unknown as gen.SkillLifecycleSettingsRequest,
+    settingsSave(() =>
+      SkillLifecycle.SaveSkillLifecycleSettings(
+        req as unknown as gen.SkillLifecycleSettingsRequest,
+      ),
     ),
   // delegationSettings drives the delegation policy card: the service
   // limits and the curated target lists. The lists are enforced on
@@ -472,17 +503,23 @@ export const api = {
   delegationState: () =>
     Delegation.DelegationState() as unknown as Promise<DelegationState>,
   saveDelegationSettings: (req: DelegationSettingsRequest) =>
-    Delegation.SaveDelegationSettings(
-      req as unknown as gen.DelegationSettingsRequest,
+    settingsSave(() =>
+      Delegation.SaveDelegationSettings(
+        req as unknown as gen.DelegationSettingsRequest,
+      ),
     ),
   toolOptions: () =>
     Config.ToolOptions() as unknown as Promise<ToolOptionsState>,
   saveToolOptions: (req: ToolOptionsRequest) =>
-    Config.SaveToolOptions(req as unknown as gen.ToolOptionsRequest),
+    settingsSave(() =>
+      Config.SaveToolOptions(req as unknown as gen.ToolOptionsRequest),
+    ),
   webSearchConfig: () =>
     Config.WebSearchConfig() as unknown as Promise<WebSearchState>,
   saveWebSearch: (req: WebSearchRequest) =>
-    Config.SaveWebSearch(req as unknown as gen.WebSearchRequest),
+    settingsSave(() =>
+      Config.SaveWebSearch(req as unknown as gen.WebSearchRequest),
+    ),
   testWebSearch: (req: WebSearchTestRequest) =>
     Config.TestWebSearch(
       req as unknown as gen.WebSearchTestRequest,
@@ -496,7 +533,12 @@ export const api = {
       command,
     ) as unknown as Promise<PolicyDecision>,
   reportFrontendPerf: (
-    samples: Array<{ name: string; value: number; unit: string }>,
+    samples: Array<{
+      name: string;
+      value: number;
+      unit: string;
+      labels?: Record<string, string>;
+    }>,
   ) => Diagnostics.ReportFrontendPerf(samples),
   // captureHeapProfile writes a pprof heap profile of the running app to
   // the diagnostics directory; the returned path is what `go tool pprof`
@@ -595,7 +637,9 @@ export const api = {
   petSettings: () =>
     Lifecycle.GetPetsSettings() as unknown as Promise<PetsSettings>,
   setPetSettings: (settings: PetsSettings) =>
-    Lifecycle.SetPetsSettings(settings as unknown as gen.PetsSettings),
+    settingsSave(() =>
+      Lifecycle.SetPetsSettings(settings as unknown as gen.PetsSettings),
+    ),
   petListPacks: () => Pet.ListPacks() as unknown as Promise<PetPack[]>,
   petActivities: () => Pet.Activities() as unknown as Promise<PetActivityDTO[]>,
   petDiagnostics: () => Pet.Diagnostics() as unknown as Promise<PetMindDebug>,

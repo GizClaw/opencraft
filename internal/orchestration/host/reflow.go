@@ -13,6 +13,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
 )
@@ -158,8 +159,23 @@ func (h *Host) reflowDelegation(ctx context.Context, result subagents.Result) {
 		return
 	}
 	note := message.NewTextMessage(message.RoleUser, result.Note())
-	if err := store.AppendTurnWithRunID(
-		ctx, conversationID, runKey, []message.Message{note},
+	// The note's author and fields are written with it: this turn
+	// exists only as an archive row, and every reader — the title
+	// fallback, the transcript card — goes by the kind and the payload
+	// rather than by re-reading the note's prose.
+	origin := sessions.TurnOrigin{Kind: subagents.KindDelegationNote}
+	if payload, err := result.Payload().Encode(); err != nil {
+		// Fields of a struct of strings: this cannot fail in a way the
+		// note could survive without. The kind still keeps the row out
+		// of title derivation.
+		telemetry.WarnErr(ctx,
+			"host: encode delegation note payload failed", err,
+			otellog.String("card.id", result.CardID))
+	} else {
+		origin.Payload = payload
+	}
+	if err := store.AppendTurnWithOriginAndRunID(
+		ctx, conversationID, runKey, origin, []message.Message{note},
 	); err != nil {
 		telemetry.WarnErr(ctx, "host: append delegation reflow note failed", err,
 			otellog.String("conversation.id", conversationID),

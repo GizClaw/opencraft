@@ -1,6 +1,7 @@
 package bindings
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
 )
 
 func TestProcessViewShape(t *testing.T) {
@@ -88,7 +90,7 @@ func TestSessionMetaJSONShape(t *testing.T) {
 func TestSessionTurnDTOFallsBackToTurnTime(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	started := now.Add(-90 * time.Second)
-	dto := toSessionTurnDTO(sessions.TurnRecord{
+	dto := toSessionTurnDTO(context.Background(), "s-1", sessions.TurnRecord{
 		Seq:        3,
 		At:         now,
 		StartedAt:  started,
@@ -122,6 +124,110 @@ func TestRequireArchivedTurnsRejectsEmpty(t *testing.T) {
 	}
 	if err := requireArchivedTurns(nil); err == nil {
 		t.Fatal("empty turns accepted for export")
+	}
+}
+
+// TestSessionTurnDTOFilesDelegationNote pins the read side of the note
+// contract: a turn the app wrote arrives as a turn whose fields are
+// already decoded, an unknown kind travels through without being
+// guessed at, and a payload this build cannot read degrades to the
+// row's text rather than failing the read.
+func TestSessionTurnDTOFilesDelegationNote(t *testing.T) {
+	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	payload, err := subagents.NotePayload{
+		Target:      "researcher",
+		Status:      "succeeded",
+		CardID:      "card-1",
+		RunID:       "run-child",
+		ParentRunID: "run-parent",
+		Body:        "the report",
+	}.Encode()
+	if err != nil {
+		t.Fatalf("encode payload: %v", err)
+	}
+	dto := toSessionTurnDTO(context.Background(), "s-1", sessions.TurnRecord{
+		Seq:     4,
+		At:      now,
+		RunID:   "subagent:card-1",
+		Kind:    subagents.KindDelegationNote,
+		Payload: payload,
+	})
+	if dto.Kind != subagents.KindDelegationNote || dto.Note == nil {
+		t.Fatalf("note turn = %+v", dto)
+	}
+	if dto.Note.Target != "researcher" || dto.Note.Status != "succeeded" ||
+		dto.Note.CardID != "card-1" || dto.Note.RunID != "run-child" ||
+		dto.Note.ParentRunID != "run-parent" ||
+		dto.Note.Body != "the report" {
+		t.Fatalf("note = %+v", dto.Note)
+	}
+	raw, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, key := range []string{
+		`"kind":"delegation_note"`, `"delegation_note":{`,
+		`"parent_run_id":"run-parent"`,
+	} {
+		if !strings.Contains(string(raw), key) {
+			t.Fatalf("note turn JSON missing %s: %s", key, raw)
+		}
+	}
+
+	// An ordinary turn carries no note, and a kind from a newer build
+	// is passed through untouched instead of being decoded as one this
+	// build knows.
+	if plain := toSessionTurnDTO(context.Background(), "s-1",
+		sessions.TurnRecord{Seq: 5, At: now}); plain.Kind != "" ||
+		plain.Note != nil {
+		t.Fatalf("plain turn = %+v", plain)
+	}
+	future := toSessionTurnDTO(context.Background(), "s-1",
+		sessions.TurnRecord{
+			Seq:     6,
+			At:      now,
+			Kind:    "something_newer",
+			Payload: payload,
+		})
+	if future.Kind != "something_newer" || future.Note != nil {
+		t.Fatalf("future turn = %+v", future)
+	}
+
+	// A note whose payload does not decode keeps its kind and renders
+	// from the message text: losing the card loses nothing.
+	broken := toSessionTurnDTO(context.Background(), "s-1",
+		sessions.TurnRecord{
+			Seq:     7,
+			At:      now,
+			Kind:    subagents.KindDelegationNote,
+			Payload: []byte("{not json"),
+		})
+	if broken.Kind != subagents.KindDelegationNote || broken.Note != nil {
+		t.Fatalf("broken note turn = %+v", broken)
+	}
+}
+
+// TestDelegationNoteHeadingKeepsTheAuthorsName pins the exported
+// markdown's label for a note turn: the app's report is never filed
+// under the user's heading.
+func TestDelegationNoteHeadingKeepsTheAuthorsName(t *testing.T) {
+	payload, err := subagents.NotePayload{
+		Target: "researcher",
+		Status: "succeeded",
+	}.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	heading := delegationNoteHeading(context.Background(), "s-1",
+		sessions.TurnRecord{Kind: subagents.KindDelegationNote, Payload: payload})
+	if heading != "Delegated result: researcher (succeeded)" {
+		t.Fatalf("heading = %q", heading)
+	}
+	// A note whose fields are missing is still the app reporting, not
+	// the user speaking.
+	if heading := delegationNoteHeading(context.Background(), "s-1",
+		sessions.TurnRecord{Kind: subagents.KindDelegationNote}); heading != "Delegated result" {
+		t.Fatalf("heading without payload = %q", heading)
 	}
 }
 

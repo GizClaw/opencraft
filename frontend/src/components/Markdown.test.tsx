@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { markdownStats, setPerfMetricsEnabled } from '../lib/perfMetrics';
 import { Markdown } from './Markdown';
 
 describe('Markdown', () => {
@@ -87,5 +88,25 @@ describe('Markdown', () => {
     ).not.toMatch(/`node` prop/);
 
     warn.mockRestore();
+  });
+
+  it('records one render-to-commit measurement for the probe', () => {
+    // The markdown series is what a "render streaming markdown as plain
+    // text" decision would be based on, so the pair has to bracket this
+    // render: the body runs before react-markdown parses, the layout
+    // effect after the block committed. The clock advances on every read
+    // so the measurement cannot collapse to zero.
+    let tick = 0;
+    const nowSpy = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => (tick += 10));
+    setPerfMetricsEnabled(true);
+    try {
+      render(<Markdown text={'# hello\n\nsome **bold** text'} />);
+      expect(markdownStats().max).toBeGreaterThan(0);
+    } finally {
+      setPerfMetricsEnabled(false);
+      nowSpy.mockRestore();
+    }
   });
 });

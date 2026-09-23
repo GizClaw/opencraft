@@ -1,7 +1,8 @@
-import { onFID, onINP, onLCP } from 'web-vitals';
+import { onFID, onINP } from 'web-vitals';
 import type { Metric } from 'web-vitals';
 
 import * as Diagnostics from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/diagnostics';
+import { buildVersion, reportLabels } from './perfLabels';
 
 // PerfSample mirrors the Go FrontendPerfSample binding model.
 export interface PerfSample {
@@ -13,9 +14,13 @@ export interface PerfSample {
 let started = false;
 const lastValue = new Map<string, number>();
 
+// send stamps one sample with the same labels the probe uses (surface,
+// build, active conversation), resolved per sample so a report carries the
+// dimensions of the moment it was taken.
 async function send(sample: PerfSample) {
+  const labels = reportLabels(await buildVersion());
   try {
-    await Diagnostics.ReportFrontendPerf([sample]);
+    await Diagnostics.ReportFrontendPerf([{ ...sample, labels }]);
   } catch {
     // RUM is best-effort: a dead binding must not affect the UI.
   }
@@ -120,11 +125,17 @@ export function startRUM(): void {
   // timing (responseStart stays 0), so web-vitals never reports it. The
   // chart was removed with it rather than left permanently empty.
   //
-  // CLS is deliberately not collected either: web-vitals only arms it on
-  // engines whose PerformanceObserver lists the layout-shift entry type, and
-  // WebKit (the shell's engine on macOS and Linux) does not, so the callback
-  // could never fire and the chart would sit empty.
-  onLCP((metric) => report(metric, 'ms'));
+  // LCP is deliberately not collected either: this window is an always-open
+  // SPA, and the running largest-paint value keeps being raised by content
+  // that renders long after startup — the stored series ran from ~0.3s to
+  // minutes — so it measured how large the last render got, not how fast
+  // the shell loads. Startup is covered by dom_content_loaded/load,
+  // interactivity by FID/INP.
+  //
+  // CLS is deliberately not collected: web-vitals only arms it on engines
+  // whose PerformanceObserver lists the layout-shift entry type, and WebKit
+  // (the shell's engine on macOS and Linux) does not, so the callback could
+  // never fire and the chart would sit empty.
   onFID((metric) => report(metric, 'ms'));
   onINP((metric) => report(metric, 'ms'));
 }

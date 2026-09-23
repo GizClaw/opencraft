@@ -199,3 +199,61 @@ func TestNoteBoundsTheOutput(t *testing.T) {
 		t.Fatal("note is not valid UTF-8: the excerpt split a rune")
 	}
 }
+
+// TestNotePayloadWireShape pins the stored form of a note: the fields
+// the transcript card reads, encoded exactly as the backfill step
+// (foundation/compat, 018) reconstructs them from older archives. The
+// same literal is asserted there in
+// TestDelegationNoteBackfillParsesRenderedNotes, so the two writers —
+// this one, and the migration parsing prose — cannot drift apart
+// without a failing test on one of the paths.
+func TestNotePayloadWireShape(t *testing.T) {
+	result, _ := ParseCardEvent(conversationEvent(kanban.StatusDone,
+		&delegation.Response{
+			ID:     "card-1",
+			Status: delegation.StatusSucceeded,
+			Output: "the report",
+		}))
+	payload := result.Payload()
+	if payload.Target != "researcher" || payload.RunID != "run-child" ||
+		payload.ParentRunID != "run-parent" || payload.Body != "the report" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	raw, err := payload.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"target":"researcher","status":"succeeded",` +
+		`"card_id":"card-1","run_id":"run-child",` +
+		`"parent_run_id":"run-parent","body":"the report"}`
+	if string(raw) != want {
+		t.Fatalf("payload = %s, want %s", raw, want)
+	}
+
+	// The note text is rendered from the same fields, so what the model
+	// reads and what the card shows cannot disagree.
+	note := result.Note()
+	for _, part := range []string{
+		payload.Target, payload.Status, payload.CardID,
+		payload.RunID, payload.ParentRunID, payload.Body,
+	} {
+		if !strings.Contains(note, part) {
+			t.Fatalf("note %q does not carry %q", note, part)
+		}
+	}
+
+	// A failed delegation reports the error in the body: the card has to
+	// show why, not an empty answer.
+	failed, _ := ParseCardEvent(conversationEvent(kanban.StatusFailed,
+		&delegation.Response{
+			ID:     "card-1",
+			Status: delegation.StatusFailed,
+			Error:  "boom",
+		}))
+	if body := failed.Payload().Body; body != "boom" {
+		t.Fatalf("failure payload body = %q, want the error text", body)
+	}
+	if body := failed.Payload().Body; !strings.Contains(failed.Note(), body) {
+		t.Fatalf("failure note = %q, want the failing body", failed.Note())
+	}
+}

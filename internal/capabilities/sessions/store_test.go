@@ -334,6 +334,67 @@ func TestMetaIndexSurvivesUsageRecord(t *testing.T) {
 	}
 }
 
+// TestAppAuthoredTurnNeverNamesTheConversation pins the read rule the
+// delegation note depends on: a turn the app wrote keeps its author and
+// its fields through the store, and every reader asking what the user
+// said (the archive-title fallback, the auto-title's input) skips it
+// instead of reading the app's report as speech.
+func TestAppAuthoredTurnNeverNamesTheConversation(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	ctx := context.Background()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const prose = "[delegated worker \"researcher\" finished: succeeded]\n\n" +
+		"the report"
+	payload := []byte(`{"target":"researcher","status":"succeeded",` +
+		`"body":"the report"}`)
+	if err := store.AppendTurnWithOriginAndRunID(
+		ctx, id, "subagent:card-1",
+		TurnOrigin{Kind: "delegation_note", Payload: payload},
+		[]message.Message{message.NewTextMessage(message.RoleUser, prose)},
+	); err != nil {
+		t.Fatalf("append note turn: %v", err)
+	}
+
+	turns, err := store.Turns(ctx, id)
+	if err != nil {
+		t.Fatalf("turns: %v", err)
+	}
+	if len(turns) != 1 || turns[0].Kind != "delegation_note" ||
+		string(turns[0].Payload) != string(payload) {
+		t.Fatalf("archived note turn = %+v", turns)
+	}
+	if title, err := store.Title(id); err != nil || title != "" {
+		t.Fatalf("title after a note = %q (%v), want empty", title, err)
+	}
+	if first, err := store.FirstUserMessage(id); err != nil || first != "" {
+		t.Fatalf("first user message after a note = %q (%v), want empty",
+			first, err)
+	}
+
+	// The first turn a person writes names the conversation, exactly as
+	// if the note had not been there.
+	if err := store.AppendTurn(ctx, id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "what the user asked"),
+	}); err != nil {
+		t.Fatalf("append user turn: %v", err)
+	}
+	if title, err := store.Title(id); err != nil || title != "what the user asked" {
+		t.Fatalf("title after the user spoke = %q (%v)", title, err)
+	}
+	if first, err := store.FirstUserMessage(id); err != nil ||
+		first != "what the user asked" {
+		t.Fatalf("first user message = %q (%v)", first, err)
+	}
+}
+
 func TestAddUsageAccumulatesAcrossTurns(t *testing.T) {
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
@@ -1063,6 +1124,85 @@ func turnSeqs(turns []TurnRecord) []int {
 		out = append(out, turn.Seq)
 	}
 	return out
+}
+
+// TestTurnsSinceReadsTheTranscriptTail verifies the cursor the desktop
+// uses to pick up a turn the app appended on its own: a delegation note
+// lands after its parent turn ended, so a transcript that is already on
+// screen asks what came after the newest seq it holds rather than
+// re-reading turns it has.
+func TestTurnsSinceReadsTheTranscriptTail(t *testing.T) {
+	store, err := newMigratedStore(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 3; i++ {
+		if err := store.AppendTurnWithRunID(
+			context.Background(), id, fmt.Sprintf("run-%d", i),
+			[]message.Message{
+				message.NewTextMessage(message.RoleUser,
+					fmt.Sprintf("prompt-%d", i)),
+			},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A note the app wrote, carrying its author and fields.
+	note := message.NewTextMessage(message.RoleUser, "the report")
+	if err := store.AppendTurnWithOriginAndRunID(
+		context.Background(), id, "subagent:card-1",
+		TurnOrigin{Kind: "delegation_note", Payload: []byte(`{"target":"researcher"}`)},
+		[]message.Message{note},
+	); err != nil {
+		t.Fatal(err)
+	}
+	// The note was appended while run-3 was still going, so it sits
+	// *below* the turn seq the client holds once that turn is archived:
+	// this is the read that has to find it anyway.
+	if err := store.AppendTurnWithRunID(
+		context.Background(), id, "run-4",
+		[]message.Message{
+			message.NewTextMessage(message.RoleUser, "prompt-4"),
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	turns, err := store.TurnsSince(context.Background(), id, 3, 20)
+	if err != nil {
+		t.Fatalf("TurnsSince: %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("turns since seq 3 = %v", turnSeqs(turns))
+	}
+	if turns[0].Kind != "delegation_note" ||
+		string(turns[0].Payload) != `{"target":"researcher"}` {
+		t.Fatalf("note turn = %+v", turns[0])
+	}
+	if len(turns[0].Messages) != 1 ||
+		turns[0].Messages[0].Content.Text() != "the report" {
+		t.Fatalf("note messages = %+v", turns[0].Messages)
+	}
+	if turns[1].Seq != 5 || turns[1].RunID != "run-4" ||
+		len(turns[1].Messages) != 1 {
+		t.Fatalf("newest turn = %+v", turns[1])
+	}
+
+	turns, err = store.TurnsSince(context.Background(), id, 5, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 0 {
+		t.Fatalf("turns past the newest seq = %v", turnSeqs(turns))
+	}
+	if _, err := store.TurnsSince(context.Background(), "", 1, 20); err == nil {
+		t.Fatal("TurnsSince accepted an empty conversation id")
+	}
 }
 
 // TestTurnByRunIDLoadsOneCompletedTurn verifies the frontend

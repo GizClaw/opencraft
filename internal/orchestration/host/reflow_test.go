@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -126,6 +127,19 @@ func TestReflowDelegationAppendsNoteTurn(t *testing.T) {
 	// settled.
 	if note.Status != string(agent.StatusCompleted) {
 		t.Fatalf("note status = %q, want completed", note.Status)
+	}
+	// The author and the fields are archived with the text: the
+	// transcript renders the card from this payload, and title
+	// derivation goes by the kind instead of reading the prose.
+	if note.Kind != subagents.KindDelegationNote {
+		t.Fatalf("note kind = %q, want %q", note.Kind, subagents.KindDelegationNote)
+	}
+	var payload subagents.NotePayload
+	if err := json.Unmarshal(note.Payload, &payload); err != nil {
+		t.Fatalf("decode note payload %s: %v", note.Payload, err)
+	}
+	if payload != result.Payload() {
+		t.Fatalf("note payload = %+v, want %+v", payload, result.Payload())
 	}
 	if got := notified.conversations(); len(got) != 1 || got[0] != conversationID {
 		t.Fatalf("notifications = %v, want the one conversation", got)

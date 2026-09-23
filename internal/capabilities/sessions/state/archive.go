@@ -55,6 +55,13 @@ type ArchiveTurn struct {
 	// the only correlation id available there.
 	ResponseID    string
 	ArtifactsJSON []byte
+	// Kind names the author of a turn the app itself wrote (a
+	// delegation note, for example); empty for every turn a user or
+	// model produced. PayloadJSON is that author's own structured
+	// record, stored verbatim — the archive never inspects it, and a
+	// reader that does not know the kind ignores it.
+	Kind        string
+	PayloadJSON []byte
 }
 
 // ArchiveMessage is one full-fidelity message stored in SQLite.
@@ -65,6 +72,46 @@ type ArchiveMessage struct {
 	Role      string
 	Content   message.Content
 	CreatedAt time.Time
+}
+
+// archiveTurnColumns is the column list every archive-turn read shares,
+// in the order scanArchiveTurn expects. Keeping it in one place means a
+// new turn column is added to the write and every read together.
+const archiveTurnColumns = `id, conversation_id, seq, run_id, at,
+	requested_at, started_at, finished_at,
+	status, error, interrupt_cause, error_kind,
+	request_id, response_id, artifacts_json, kind, payload_json`
+
+// scanArchiveTurn reads one row selected with archiveTurnColumns.
+func scanArchiveTurn(row rowScanner) (ArchiveTurn, error) {
+	var t ArchiveTurn
+	var convID string
+	var run sql.NullString
+	var at, requested, started, finished, status, errText string
+	var interruptCause, errorKind, requestID, responseID, artifacts string
+	var kind, payload string
+	if err := row.Scan(&t.ID, &convID, &t.Seq, &run, &at,
+		&requested, &started, &finished, &status, &errText,
+		&interruptCause, &errorKind,
+		&requestID, &responseID, &artifacts,
+		&kind, &payload); err != nil {
+		return ArchiveTurn{}, err
+	}
+	t.RunID = run.String
+	t.At = parseTime(at)
+	t.RequestedAt = parseTime(requested)
+	t.StartedAt = parseTime(started)
+	t.FinishedAt = parseTime(finished)
+	t.Status = status
+	t.Error = errText
+	t.InterruptCause = interruptCause
+	t.ErrorKind = errorKind
+	t.RequestID = requestID
+	t.ResponseID = responseID
+	t.ArtifactsJSON = []byte(artifacts)
+	t.Kind = kind
+	t.PayloadJSON = []byte(payload)
+	return t, nil
 }
 
 // CommitHook runs inside the conversation turn transaction after the
@@ -383,8 +430,9 @@ func (s *Store) CommitConversationTurnWithHook(
 			conversation_id, seq, run_id, at,
 			requested_at, started_at, finished_at,
 			status, error, interrupt_cause, error_kind,
-			request_id, response_id, artifacts_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			request_id, response_id, artifacts_json,
+			kind, payload_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, turnSeq, runID,
 		turn.At.UTC().Format(time.RFC3339Nano),
 		turn.RequestedAt.UTC().Format(time.RFC3339Nano),
@@ -397,6 +445,8 @@ func (s *Store) CommitConversationTurnWithHook(
 		turn.RequestID,
 		turn.ResponseID,
 		string(turn.ArtifactsJSON),
+		turn.Kind,
+		string(turn.PayloadJSON),
 	)
 	if err != nil {
 		return fmt.Errorf("state: insert archive turn: %w", err)
@@ -486,10 +536,7 @@ func (s *Store) ListArchiveTurnsPage(
 	ctx context.Context, conversationID string, limit int, beforeSeq int64,
 ) ([]ArchiveTurn, error) {
 	query := `
-		SELECT id, conversation_id, seq, run_id, at,
-			requested_at, started_at, finished_at,
-			status, error, interrupt_cause, error_kind,
-			request_id, response_id, artifacts_json
+		SELECT ` + archiveTurnColumns + `
 		FROM archive_turns WHERE conversation_id = ?`
 	args := []any{conversationID}
 	if beforeSeq > 0 {
@@ -504,6 +551,42 @@ func (s *Store) ListArchiveTurnsPage(
 	} else {
 		query += ` ORDER BY seq`
 	}
+	out, err := s.scanArchiveTurns(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 {
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
+	}
+	return out, nil
+}
+
+// ListArchiveTurnsAfter returns up to limit turns newer than seq, oldest
+// first. It is the tail cursor to ListArchiveTurnsPage's backwards one:
+// a reader holding the newest turn it knows asks what was appended
+// since, instead of re-reading the turns it already has.
+func (s *Store) ListArchiveTurnsAfter(
+	ctx context.Context, conversationID string, afterSeq int64, limit int,
+) ([]ArchiveTurn, error) {
+	query := `
+		SELECT ` + archiveTurnColumns + `
+		FROM archive_turns WHERE conversation_id = ? AND seq > ?`
+	args := []any{conversationID, afterSeq}
+	if limit > 0 {
+		query += ` ORDER BY seq LIMIT ?`
+		args = append(args, limit)
+	} else {
+		query += ` ORDER BY seq`
+	}
+	return s.scanArchiveTurns(ctx, query, args...)
+}
+
+// scanArchiveTurns runs one archive-turn query and reads every row.
+func (s *Store) scanArchiveTurns(
+	ctx context.Context, query string, args ...any,
+) ([]ArchiveTurn, error) {
 	rows, err := s.db.SQLDB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("state: list archive turns: %w", err)
@@ -513,39 +596,14 @@ func (s *Store) ListArchiveTurnsPage(
 	}()
 	var out []ArchiveTurn
 	for rows.Next() {
-		var t ArchiveTurn
-		var conversationID string
-		var runID sql.NullString
-		var at, requested, started, finished, status, errText string
-		var interruptCause, errorKind string
-		var requestID, responseID, artifacts string
-		if err := rows.Scan(&t.ID, &conversationID, &t.Seq, &runID, &at,
-			&requested, &started, &finished, &status, &errText,
-			&interruptCause, &errorKind,
-			&requestID, &responseID, &artifacts); err != nil {
+		t, err := scanArchiveTurn(rows)
+		if err != nil {
 			return nil, fmt.Errorf("state: scan archive turn: %w", err)
 		}
-		t.RunID = runID.String
-		t.At = parseTime(at)
-		t.RequestedAt = parseTime(requested)
-		t.StartedAt = parseTime(started)
-		t.FinishedAt = parseTime(finished)
-		t.Status = status
-		t.Error = errText
-		t.InterruptCause = interruptCause
-		t.ErrorKind = errorKind
-		t.RequestID = requestID
-		t.ResponseID = responseID
-		t.ArtifactsJSON = []byte(artifacts)
 		out = append(out, t)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-	if limit > 0 {
-		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-			out[i], out[j] = out[j], out[i]
-		}
 	}
 	return out, nil
 }
@@ -567,16 +625,60 @@ func (s *Store) ListArchiveMessages(
 	}()
 	var out []ArchiveMessage
 	for rows.Next() {
-		var m ArchiveMessage
-		var content, createdAt string
-		if err := rows.Scan(&m.ID, &m.TurnID, &m.Seq, &m.Role,
-			&content, &createdAt); err != nil {
+		m, err := scanArchiveMessage(rows)
+		if err != nil {
 			return nil, fmt.Errorf("state: scan archive message: %w", err)
 		}
-		if err := json.Unmarshal([]byte(content), &m.Content); err != nil {
-			return nil, fmt.Errorf("state: decode archive message: %w", err)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// scanArchiveMessage reads one archive_messages row selected as id,
+// turn_id, seq, role, content_json, created_at.
+func scanArchiveMessage(row rowScanner) (ArchiveMessage, error) {
+	var m ArchiveMessage
+	var content, createdAt string
+	if err := row.Scan(&m.ID, &m.TurnID, &m.Seq, &m.Role,
+		&content, &createdAt); err != nil {
+		return ArchiveMessage{}, err
+	}
+	if err := json.Unmarshal([]byte(content), &m.Content); err != nil {
+		return ArchiveMessage{}, fmt.Errorf("decode archive message: %w", err)
+	}
+	m.CreatedAt = parseTime(createdAt)
+	return m, nil
+}
+
+// ListArchiveMessagesWithoutTurnKind returns the conversation's archived
+// messages in conversation order, skipping every message whose turn
+// carries a kind. Such a turn is app-authored — a delegation note, for
+// example — so it speaks to the model rather than as someone in the
+// conversation, and a reader asking what the user said (title
+// derivation, above all) must not hear it. The archive keeps every row;
+// this is a reading rule, not a rewrite.
+func (s *Store) ListArchiveMessagesWithoutTurnKind(
+	ctx context.Context, conversationID string,
+) ([]ArchiveMessage, error) {
+	rows, err := s.db.SQLDB().QueryContext(ctx, `
+		SELECT m.id, m.turn_id, m.seq, m.role, m.content_json, m.created_at
+		FROM archive_messages m
+		JOIN archive_turns t ON t.id = m.turn_id
+		WHERE m.conversation_id = ? AND t.kind = ''
+		ORDER BY m.seq`, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("state: list unkinded archive messages: %w", err)
+	}
+	defer func() {
+		telemetry.WarnErr(ctx,
+			"state: close unkinded archive message rows failed", rows.Close())
+	}()
+	var out []ArchiveMessage
+	for rows.Next() {
+		m, err := scanArchiveMessage(rows)
+		if err != nil {
+			return nil, fmt.Errorf("state: scan unkinded archive message: %w", err)
 		}
-		m.CreatedAt = parseTime(createdAt)
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -618,16 +720,10 @@ func (s *Store) ListArchiveMessagesForTurns(
 	}()
 	var out []ArchiveMessage
 	for rows.Next() {
-		var m ArchiveMessage
-		var content, createdAt string
-		if err := rows.Scan(&m.ID, &m.TurnID, &m.Seq, &m.Role,
-			&content, &createdAt); err != nil {
+		m, err := scanArchiveMessage(rows)
+		if err != nil {
 			return nil, fmt.Errorf("state: scan archive turn message: %w", err)
 		}
-		if err := json.Unmarshal([]byte(content), &m.Content); err != nil {
-			return nil, fmt.Errorf("state: decode archive turn message: %w", err)
-		}
-		m.CreatedAt = parseTime(createdAt)
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -643,24 +739,12 @@ func (s *Store) ArchiveTurnByRun(
 		return ArchiveTurn{}, nil,
 			fmt.Errorf("state: conversation/run ids are required")
 	}
-	var t ArchiveTurn
-	var convID string
-	var run sql.NullString
-	var at, requested, started, finished, status, errText string
-	var interruptCause, errorKind string
-	var requestID, responseID, artifacts string
-	err := s.db.SQLDB().QueryRowContext(ctx, `
-		SELECT id, conversation_id, seq, run_id, at,
-			requested_at, started_at, finished_at,
-			status, error, interrupt_cause, error_kind,
-			request_id, response_id, artifacts_json
+	t, err := scanArchiveTurn(s.db.SQLDB().QueryRowContext(ctx, `
+		SELECT `+archiveTurnColumns+`
 		FROM archive_turns
 		WHERE conversation_id = ? AND run_id = ?`,
 		conversationID, runID,
-	).Scan(&t.ID, &convID, &t.Seq, &run, &at,
-		&requested, &started, &finished, &status, &errText,
-		&interruptCause, &errorKind,
-		&requestID, &responseID, &artifacts)
+	))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ArchiveTurn{}, nil, ErrNotFound
@@ -668,18 +752,6 @@ func (s *Store) ArchiveTurnByRun(
 		return ArchiveTurn{}, nil,
 			fmt.Errorf("state: get archive turn by run: %w", err)
 	}
-	t.RunID = run.String
-	t.At = parseTime(at)
-	t.RequestedAt = parseTime(requested)
-	t.StartedAt = parseTime(started)
-	t.FinishedAt = parseTime(finished)
-	t.Status = status
-	t.Error = errText
-	t.InterruptCause = interruptCause
-	t.ErrorKind = errorKind
-	t.RequestID = requestID
-	t.ResponseID = responseID
-	t.ArtifactsJSON = []byte(artifacts)
 
 	rows, err := s.db.SQLDB().QueryContext(ctx, `
 		SELECT id, turn_id, seq, role, content_json, created_at
@@ -694,18 +766,11 @@ func (s *Store) ArchiveTurnByRun(
 	}()
 	var msgs []ArchiveMessage
 	for rows.Next() {
-		var m ArchiveMessage
-		var content, createdAt string
-		if err := rows.Scan(&m.ID, &m.TurnID, &m.Seq, &m.Role,
-			&content, &createdAt); err != nil {
+		m, err := scanArchiveMessage(rows)
+		if err != nil {
 			return ArchiveTurn{}, nil,
 				fmt.Errorf("state: scan archive turn message: %w", err)
 		}
-		if err := json.Unmarshal([]byte(content), &m.Content); err != nil {
-			return ArchiveTurn{}, nil,
-				fmt.Errorf("state: decode archive turn message: %w", err)
-		}
-		m.CreatedAt = parseTime(createdAt)
 		msgs = append(msgs, m)
 	}
 	return t, msgs, rows.Err()

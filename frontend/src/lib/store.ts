@@ -11,6 +11,7 @@ import {
 import { sanitizeToolResult } from './ansi';
 import { COMPACT_SUMMARY_PREFIX } from './compact';
 import { followLinkTarget } from './linkTarget';
+import { measureInteraction, scheduleFlushCommit } from './perfMetrics';
 import { coalesceStreamEvents, streamFlushInterval } from './stream';
 import { toolResultImages, toolResultText, type ToolImage } from './toolresult';
 import type {
@@ -19,6 +20,7 @@ import type {
   AutomationTask,
   AttachmentView,
   ConfigStatus,
+  DelegationNote,
   FileTab,
   InteractDTO,
   HistoryPart,
@@ -158,6 +160,14 @@ export interface MessageView {
   // Absent on every row that opened its turn, and on rows a resumed
   // session cannot tell apart (see historyToMessages).
   steer?: SteerState;
+  // kind and note mark a row the app itself wrote: kind is the archived
+  // author ("delegation_note") and note its decoded fields. The
+  // transcript renders the card from `note` and never reads such a row
+  // as user speech, and a kind whose fields did not decode still marks
+  // the row as the app's so it cannot be mistaken for something the
+  // user said.
+  kind?: string;
+  note?: DelegationNote;
 }
 
 // SteerState is where a mid-turn interjection stands. See
@@ -335,6 +345,12 @@ const MAX_CONV_MESSAGES = 800;
 const INITIAL_HISTORY_TURNS = 6;
 const HISTORY_PAGE_TURNS = 10;
 
+// TAIL_SYNC_TURNS bounds one read of the transcript's tail: the turns
+// appended after the newest seq the transcript holds are normally one
+// app-authored turn (a delegation note), so the cap only exists to keep
+// a pathological append burst from crossing the bridge in one payload.
+const TAIL_SYNC_TURNS = 20;
+
 // MAX_ITEMS_PER_MESSAGE bounds how many blocks one assistant message
 // keeps while a turn streams. A long turn appends a reasoning block, a
 // text block and a tool call per round; past the cap the oldest blocks
@@ -369,27 +385,35 @@ const MAX_TOOL_ARGS_CHARS = 512 << 10;
 const FLUSH_SAMPLE_SIZE = 256;
 const flushDurations: number[] = [];
 
+// flushTotal counts every flush of the page's lifetime. The ring above can
+// only ever say how many timings it kept — its capacity, not activity — so
+// the probe diffs this total between reports to get the flushes that
+// happened inside each reporting window.
+let flushTotal = 0;
+
 function recordFlushDuration(ms: number) {
+  flushTotal += 1;
   flushDurations.push(ms);
   if (flushDurations.length > FLUSH_SAMPLE_SIZE) flushDurations.shift();
 }
 
-// streamFlushStats summarizes the recorded flush timings. Percentiles use
-// the nearest-rank method, which is what the probe reports as P50/P95.
+// streamFlushStats summarizes the recorded flush timings: total is the
+// page-lifetime count, the percentiles describe the last FLUSH_SAMPLE_SIZE
+// flushes (nearest-rank, which is what the probe reports as P50/P95).
 export function streamFlushStats(): {
-  count: number;
+  total: number;
   p50: number;
   p95: number;
   max: number;
 } {
   if (flushDurations.length === 0) {
-    return { count: 0, p50: 0, p95: 0, max: 0 };
+    return { total: flushTotal, p50: 0, p95: 0, max: 0 };
   }
   const sorted = [...flushDurations].sort((a, b) => a - b);
   const pick = (q: number) =>
     sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
   return {
-    count: sorted.length,
+    total: flushTotal,
     p50: pick(0.5),
     p95: pick(0.95),
     max: sorted[sorted.length - 1],
@@ -460,9 +484,12 @@ const emptyConv = (
 // a real title (manual rename or the LLM auto-title) replaces it.
 // New sessions have no stored record while their first turn is still
 // running, so the running row and chat header use this local copy.
+// Rows the app itself wrote (a delegation note) are skipped: they are
+// the app speaking to the model, and the backend's own fallback skips
+// them the same way.
 export function firstMessageTitle(messages: MessageView[]): string {
   for (const m of messages) {
-    if (m.role !== 'user') continue;
+    if (m.role !== 'user' || m.kind) continue;
     const text = m.text.trim();
     if (text) {
       const line = text.split('\n', 1)[0].trim();
@@ -753,6 +780,18 @@ function historyTurnsToState(turns: SessionTurn[]): {
   for (const turn of turns) {
     const start = messages.length;
     messages.push(...historyToMessages(turn.messages));
+    // A turn the app wrote is marked on its rows: the transcript renders
+    // the card from the archived fields, and nothing that asks what the
+    // user said reads them as speech. The mark rides on every row of the
+    // turn, and the decoded card on the one row that carries the note's
+    // text (the note turn holds exactly one message).
+    if (turn.kind) {
+      for (let i = start; i < messages.length; i++) {
+        messages[i].kind = turn.kind;
+      }
+      const first = messages[start];
+      if (first && turn.delegation_note) first.note = turn.delegation_note;
+    }
     turnArtifacts.push({
       id: `h-${turn.seq}`,
       start,
@@ -799,6 +838,72 @@ function historyPage(
     historySeq: page[0]?.seq ?? 0,
     historyHasMore,
   };
+}
+
+// newestArchivedSeq is the seq of the newest archived turn the
+// transcript holds, and 0 when it holds none (a live-only transcript, or
+// one whose archived turns were all trimmed — seq starts at 1).
+function newestArchivedSeq(conv: ConversationState): number {
+  let newest = 0;
+  for (const turn of conv.turnArtifacts) {
+    if (turn.seq !== undefined && turn.seq > newest) newest = turn.seq;
+  }
+  return newest;
+}
+
+// foldArchivedTurns folds archive turns into a transcript that is
+// already on screen. Placement is by seq — the archive's write order —
+// so a note the app wrote while another turn was still running lands
+// above that turn's rows, which is where the next full hydrate renders
+// it: a turn's row is written when it ends, so its seq is newer than the
+// note's. Turns already present are dropped by seq and by run id,
+// because the live path may have reconciled the same turn while this
+// read was in flight.
+//
+// Returns undefined when nothing was added, so the caller can skip a
+// store write.
+function foldArchivedTurns(
+  conv: ConversationState,
+  fresh: SessionTurn[],
+): ConversationState | undefined {
+  const knownSeq = new Set<number>();
+  const knownRuns = new Set<string>();
+  for (const turn of conv.turnArtifacts) {
+    if (turn.seq !== undefined) knownSeq.add(turn.seq);
+    if (turn.runID) knownRuns.add(turn.runID);
+  }
+  let messages = conv.messages;
+  let turnArtifacts = conv.turnArtifacts;
+  let added = false;
+  for (const turn of fresh) {
+    if (knownSeq.has(turn.seq)) continue;
+    if (turn.run_id && knownRuns.has(turn.run_id)) continue;
+    const rebuilt = historyTurnsToState([turn]);
+    const strip = rebuilt.turnArtifacts[0];
+    if (!strip || rebuilt.messages.length === 0) continue;
+    let idx = turnArtifacts.findIndex(
+      (t) => t.seq !== undefined && t.seq > turn.seq,
+    );
+    if (idx < 0) idx = turnArtifacts.length;
+    const at =
+      idx < turnArtifacts.length ? turnArtifacts[idx].start : messages.length;
+    const rows = rebuilt.messages.length;
+    messages = [
+      ...messages.slice(0, at),
+      ...rebuilt.messages,
+      ...messages.slice(at),
+    ];
+    turnArtifacts = [
+      ...turnArtifacts.slice(0, idx),
+      { ...strip, start: at },
+      ...turnArtifacts.slice(idx).map((t) => ({ ...t, start: t.start + rows })),
+    ];
+    knownSeq.add(turn.seq);
+    if (turn.run_id) knownRuns.add(turn.run_id);
+    added = true;
+  }
+  if (!added) return undefined;
+  return { ...conv, messages, turnArtifacts };
 }
 
 // lastAssistant returns a mutable copy of the last assistant message
@@ -1286,6 +1391,16 @@ function applyTheme(theme: 'dark' | 'light' | 'auto') {
     themeMedia = null;
     themeMediaHandler = null;
   }
+}
+
+// activeConversationID is the session the focus state machine currently
+// shows. It lives at module scope because renderer diagnostics (the perf
+// probe's labels) report the same value the store's actions act on.
+export function activeConversationID(): string {
+  const snapshot = stateRoot.focusSnapshot;
+  return snapshot.value === 'active'
+    ? (snapshot.context as { sessionID: string }).sessionID
+    : '';
 }
 
 export const useStore = create<StoreState>((set, get) => {
@@ -2003,6 +2118,7 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     refreshSessionList: () => void get().loadSessions(),
+    sessionUpdated: (id) => void syncTranscriptTail(id),
     refreshAutomations: () => void get().loadAutomations(),
     refreshAutomationRuns: (ev) => {
       const data = ev.data as AutomationRun;
@@ -2012,13 +2128,6 @@ export const useStore = create<StoreState>((set, get) => {
     pendingInteractConversation: (promptID) =>
       get().pendingPromptConvs[promptID],
     activeWorkspace: () => get().workspace,
-  };
-
-  const activeConversationID = () => {
-    const snapshot = stateRoot.focusSnapshot;
-    return snapshot.value === 'active'
-      ? (snapshot.context as { sessionID: string }).sessionID
-      : '';
   };
 
   const conversationTurnState = (conversationID: string) => {
@@ -2072,6 +2181,9 @@ export const useStore = create<StoreState>((set, get) => {
     }
     lastStreamFlushAt = performance.now();
     recordFlushDuration(performance.now() - started);
+    // The commit lands on the next frame; perfMetrics turns that into the
+    // flush-to-frame number the probe reports.
+    scheduleFlushCommit(started);
   };
 
   const scheduleStreamFlush = () => {
@@ -2214,6 +2326,103 @@ export const useStore = create<StoreState>((set, get) => {
       // Archive reconciliation is best-effort: a failed turn_end must
       // not leave the UI in a worse state or block the next turn.
     }
+  };
+
+  // deferredTailSyncs holds conversations whose tail sync had to wait
+  // for a running turn, each with the anchor captured at that moment.
+  // The anchor is what makes the wait worth it: a note written while the
+  // turn ran lands in the archive below the seq that turn gets when it
+  // ends, so asking later "what came after everything I hold" would miss
+  // exactly the turn that was waiting.
+  const deferredTailSyncs = new Map<string, number>();
+
+  const turnIsLive = (name: string) =>
+    name === 'starting' || name === 'running';
+
+  const rememberDeferredTailSync = (id: string, anchor: number) => {
+    const held = deferredTailSyncs.get(id);
+    deferredTailSyncs.set(
+      id,
+      held === undefined ? anchor : Math.min(held, anchor),
+    );
+  };
+
+  // syncTranscriptTail appends archive turns the live stream never saw
+  // to a transcript that is already on screen. A delegation note is
+  // written when its subagent finishes, which can be long after the turn
+  // that spawned it ended: nothing streams it, so without this the card
+  // only appeared on the next full hydrate.
+  //
+  // Idle only. A running turn owns the tail (its deltas land on the last
+  // assistant row), so a request that arrives mid-turn waits for
+  // turn_end; appending under a live answer would both misplace the card
+  // and split the answer around it.
+  const syncTranscriptTail = async (id: string, anchor?: number) => {
+    const conv = get().conversations[id];
+    // Nothing to repair: the transcript is not loaded (the next hydrate
+    // reads the whole archive, notes included) or holds no archived turn
+    // to anchor a read on.
+    if (!conv) return;
+    const newest = newestArchivedSeq(conv);
+    const afterSeq = anchor === undefined ? newest : Math.min(anchor, newest);
+    if (afterSeq === 0) return;
+    if (turnIsLive(conversationTurnState(id).name)) {
+      rememberDeferredTailSync(id, afterSeq);
+      return;
+    }
+    const workspace = get().workspace;
+    const generation = stateRoot.generation();
+    const messageCount = conv.messages.length;
+    const artifactCount = conv.turnArtifacts.length;
+    try {
+      const turns = (await api.turnsSince(id, afterSeq, TAIL_SYNC_TURNS)) ?? [];
+      if (
+        get().workspace !== workspace ||
+        stateRoot.generation() !== generation ||
+        stateRoot.registry.isDeleted(id)
+      ) {
+        return;
+      }
+      const anchored = get().conversations[id];
+      if (!anchored) return;
+      // Anything the live path did while this read was in flight owns
+      // the tail now: the fold waits for the next idle moment instead of
+      // landing on top of it.
+      if (
+        anchored.messages.length !== messageCount ||
+        anchored.turnArtifacts.length !== artifactCount ||
+        turnIsLive(conversationTurnState(id).name)
+      ) {
+        rememberDeferredTailSync(id, afterSeq);
+        return;
+      }
+      set((state) => {
+        const current = state.conversations[id];
+        if (!current || current.messages.length !== messageCount) return state;
+        const folded = foldArchivedTurns(current, turns);
+        if (!folded) return state;
+        return {
+          conversations: {
+            ...state.conversations,
+            [id]: capConversation(folded),
+          },
+        };
+      });
+    } catch {
+      // Best-effort, like the turn reconciliation: the next hydrate
+      // reads the appended turns from the archive.
+    }
+  };
+
+  // drainDeferredTailSync retries a tail sync that a running turn held
+  // back. Called once that turn's terminal event has been applied and
+  // its archived copy reconciled, so the transcript holds the seq of the
+  // turn that just finished before the read is anchored.
+  const drainDeferredTailSync = async (id: string) => {
+    const anchor = deferredTailSyncs.get(id);
+    if (anchor === undefined) return;
+    deferredTailSyncs.delete(id);
+    await syncTranscriptTail(id, anchor);
   };
 
   const viewerPatch = (id: string | null, patch: Partial<FileViewerState>) => {
@@ -2450,67 +2659,73 @@ export const useStore = create<StoreState>((set, get) => {
         (turnEndData?.run_id ? get().runConvs[turnEndData.run_id] : undefined);
       routeBackendEvent(ev, { root: stateRoot, data: eventDataSink });
       if (turnEndConversationID) {
+        // The tail sync runs after the reconciliation, not beside it:
+        // the anchor it reads back is the seq the finished turn gets from
+        // its archived copy, and a note appended while that turn ran sits
+        // below it in archive order.
         void reconcileTurnFromArchive(
           turnEndConversationID,
           turnEndData?.run_id ?? '',
-        );
+        ).then(() => drainDeferredTailSync(turnEndConversationID));
       }
     },
 
     flushStreams: () => flushPendingStreams(),
 
-    send: async (text, attachments = []) => {
-      const trimmed = text.trim();
-      const state = get();
-      const convID = activeConversationID();
-      const conv = convID ? state.conversations[convID] : undefined;
-      if (
-        (!trimmed && attachments.length === 0) ||
-        !convID ||
-        !conv ||
-        (() => {
-          const turn = conversationTurnState(convID);
-          return turn.name === 'starting' || turn.name === 'running';
-        })() ||
-        !state.configured
-      ) {
-        return;
-      }
-      // Any fresh manual send supersedes a draft that is still staged
-      // (for example after the turn it was queued behind failed).
-      updateConv(convID, { queued: undefined });
-      await startTurnFor(convID, text, attachments);
-    },
+    send: (text, attachments = []) =>
+      measureInteraction('send', async () => {
+        const trimmed = text.trim();
+        const state = get();
+        const convID = activeConversationID();
+        const conv = convID ? state.conversations[convID] : undefined;
+        if (
+          (!trimmed && attachments.length === 0) ||
+          !convID ||
+          !conv ||
+          (() => {
+            const turn = conversationTurnState(convID);
+            return turn.name === 'starting' || turn.name === 'running';
+          })() ||
+          !state.configured
+        ) {
+          return;
+        }
+        // Any fresh manual send supersedes a draft that is still staged
+        // (for example after the turn it was queued behind failed).
+        updateConv(convID, { queued: undefined });
+        await startTurnFor(convID, text, attachments);
+      }),
 
-    sendInterrupt: async (text, attachments = []) => {
-      const trimmed = text.trim();
-      const state = get();
-      const convID = activeConversationID();
-      const conv = convID ? state.conversations[convID] : undefined;
-      if (
-        (!trimmed && attachments.length === 0) ||
-        !convID ||
-        !conv ||
-        !state.configured
-      ) {
-        return false;
-      }
-      const turn = conversationTurnState(convID);
-      if (turn.name === 'starting') {
-        // No run id exists yet to interrupt; stage the input and fire
-        // it as a barge-in the moment the awaited run starts.
-        updateConv(convID, {
-          queued: { text: trimmed, attachments, interrupt: true },
-        });
+    sendInterrupt: (text, attachments = []) =>
+      measureInteraction('send', async () => {
+        const trimmed = text.trim();
+        const state = get();
+        const convID = activeConversationID();
+        const conv = convID ? state.conversations[convID] : undefined;
+        if (
+          (!trimmed && attachments.length === 0) ||
+          !convID ||
+          !conv ||
+          !state.configured
+        ) {
+          return false;
+        }
+        const turn = conversationTurnState(convID);
+        if (turn.name === 'starting') {
+          // No run id exists yet to interrupt; stage the input and fire
+          // it as a barge-in the moment the awaited run starts.
+          updateConv(convID, {
+            queued: { text: trimmed, attachments, interrupt: true },
+          });
+          return true;
+        }
+        // Enter is "answer me now": drop anything staged with Tab and
+        // start immediately. While a turn is running the engine
+        // interrupts it; otherwise this is a normal send.
+        updateConv(convID, { queued: undefined });
+        await startTurnFor(convID, text, attachments);
         return true;
-      }
-      // Enter is "answer me now": drop anything staged with Tab and
-      // start immediately. While a turn is running the engine
-      // interrupts it; otherwise this is a normal send.
-      updateConv(convID, { queued: undefined });
-      await startTurnFor(convID, text, attachments);
-      return true;
-    },
+      }),
 
     steer: async (text, attachments = []) => {
       const trimmed = text.trim();
@@ -2738,7 +2953,13 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
-    openConfig: (tab) => set({ configOpen: true, configTab: tab ?? 'general' }),
+    openConfig: (tab) => {
+      // Opening the settings page is a render the probe attributes: the
+      // measurement runs to the frame that shows it.
+      void measureInteraction('settings-open', () =>
+        set({ configOpen: true, configTab: tab ?? 'general' }),
+      );
+    },
     closeConfig: () => set({ configOpen: false }),
 
     openPalette: () => set({ paletteOpen: true }),
@@ -3007,143 +3228,144 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
-    resume: async (id) => {
-      if (activeConversationID() === id) {
-        // Returning to the already-active conversation means closing
-        // whatever overlay/tool page currently covers the chat.
-        set({ toolsView: null, configOpen: false });
-        return;
-      }
-      stateRoot.sendFocus({ type: 'OPEN_SESSION', id });
-      const request = stateRoot.focusSnapshot.context.request;
-      try {
-        const snapshot = await runContextSwitch(() => api.resumeSession(id));
-        stateRoot.sendFocus({
-          type: 'OPEN_SUCCEEDED',
-          request,
-          sessionID: snapshot.session_id,
-        });
-        const focus = stateRoot.focusSnapshot;
-        if (
-          focus.value !== 'active' ||
-          focus.context.sessionID !== snapshot.session_id
-        ) {
+    resume: (id) =>
+      measureInteraction('resume', async () => {
+        if (activeConversationID() === id) {
+          // Returning to the already-active conversation means closing
+          // whatever overlay/tool page currently covers the chat.
+          set({ toolsView: null, configOpen: false });
           return;
         }
-        const resolvedID = snapshot.session_id;
-        const actor = stateRoot.registry.ensure(resolvedID, {
-          workspaceGeneration: stateRoot.generation(),
-          workspace: get().workspace,
-        });
-        const hydrateRequest = 1;
-        const generation = stateRoot.generation();
-        actor?.send({
-          type: 'HYDRATE_REQUESTED',
-          request: hydrateRequest,
-          generation,
-        });
-        const existing = get().conversations[resolvedID];
-        const actorValue = actor?.getSnapshot().value as
-          { transcript: string; turn: string } | undefined;
-        if (existing && actorValue?.transcript === 'ready') {
-          set({
+        stateRoot.sendFocus({ type: 'OPEN_SESSION', id });
+        const request = stateRoot.focusSnapshot.context.request;
+        try {
+          const snapshot = await runContextSwitch(() => api.resumeSession(id));
+          stateRoot.sendFocus({
+            type: 'OPEN_SUCCEEDED',
+            request,
+            sessionID: snapshot.session_id,
+          });
+          const focus = stateRoot.focusSnapshot;
+          if (
+            focus.value !== 'active' ||
+            focus.context.sessionID !== snapshot.session_id
+          ) {
+            return;
+          }
+          const resolvedID = snapshot.session_id;
+          const actor = stateRoot.registry.ensure(resolvedID, {
+            workspaceGeneration: stateRoot.generation(),
+            workspace: get().workspace,
+          });
+          const hydrateRequest = 1;
+          const generation = stateRoot.generation();
+          actor?.send({
+            type: 'HYDRATE_REQUESTED',
+            request: hydrateRequest,
+            generation,
+          });
+          const existing = get().conversations[resolvedID];
+          const actorValue = actor?.getSnapshot().value as
+            { transcript: string; turn: string } | undefined;
+          if (existing && actorValue?.transcript === 'ready') {
+            set({
+              toolsView: null,
+              conversations: {
+                ...get().conversations,
+                [resolvedID]: {
+                  ...get().conversations[resolvedID],
+                  mode: snapshot.mode,
+                  think: snapshot.think,
+                  model: snapshot.model,
+                },
+              },
+            });
+            actor?.send({
+              type: 'HYDRATE_OK',
+              request: hydrateRequest,
+              generation,
+              empty: existing.messages.length === 0,
+            });
+            retainLiveConversations(resolvedID);
+            return;
+          }
+          let turns: Awaited<ReturnType<typeof api.sessionTurns>>;
+          try {
+            turns = await api.sessionTurns(
+              resolvedID,
+              INITIAL_HISTORY_TURNS + 1,
+              0,
+            );
+          } catch (err) {
+            actor?.send({
+              type: 'HYDRATE_FAIL',
+              request: hydrateRequest,
+              generation,
+              error: errorMessage(err),
+            });
+            if (!existing) {
+              set((state) => ({
+                conversations: {
+                  ...state.conversations,
+                  [resolvedID]: emptyConv(),
+                },
+              }));
+            }
+            return;
+          }
+          const page = historyPage(turns, INITIAL_HISTORY_TURNS);
+          const messages = page.messages;
+          const turnArtifacts = page.turnArtifacts;
+          // A live shell may already hold the current run's streamed
+          // messages. Keep them after the archived history; completed
+          // shells are replaced by the archive instead of duplicated.
+          const keepLive =
+            Boolean(existing) &&
+            (actorValue?.turn === 'running' || actorValue?.turn === 'starting');
+          const mergedMessages = keepLive
+            ? [...messages, ...existing.messages]
+            : [
+                // Undelivered steer rows are not in the archive, so they
+                // travel across the rebuild explicitly (see
+                // carryUndeliveredSteers).
+                ...messages,
+                ...carryUndeliveredSteers(existing?.messages, messages),
+              ];
+          set((state) => ({
             toolsView: null,
             conversations: {
-              ...get().conversations,
-              [resolvedID]: {
-                ...get().conversations[resolvedID],
+              ...state.conversations,
+              [resolvedID]: capConversation({
+                ...emptyConv(),
                 mode: snapshot.mode,
                 think: snapshot.think,
                 model: snapshot.model,
-              },
+                messages: mergedMessages,
+                turnArtifacts,
+                historySeq: page.historySeq,
+                historyHasMore: page.historyHasMore,
+                pendingInteracts: existing?.pendingInteracts ?? [],
+              }),
             },
-          });
+          }));
+          if (existing?.pendingInteracts.length) {
+            syncPendingIndex(resolvedID);
+          }
           actor?.send({
             type: 'HYDRATE_OK',
             request: hydrateRequest,
             generation,
-            empty: existing.messages.length === 0,
+            empty: turns.length === 0 && !keepLive,
           });
           retainLiveConversations(resolvedID);
-          return;
-        }
-        let turns: Awaited<ReturnType<typeof api.sessionTurns>>;
-        try {
-          turns = await api.sessionTurns(
-            resolvedID,
-            INITIAL_HISTORY_TURNS + 1,
-            0,
-          );
         } catch (err) {
-          actor?.send({
-            type: 'HYDRATE_FAIL',
-            request: hydrateRequest,
-            generation,
+          stateRoot.sendFocus({
+            type: 'OPEN_FAILED',
+            request,
             error: errorMessage(err),
           });
-          if (!existing) {
-            set((state) => ({
-              conversations: {
-                ...state.conversations,
-                [resolvedID]: emptyConv(),
-              },
-            }));
-          }
-          return;
         }
-        const page = historyPage(turns, INITIAL_HISTORY_TURNS);
-        const messages = page.messages;
-        const turnArtifacts = page.turnArtifacts;
-        // A live shell may already hold the current run's streamed
-        // messages. Keep them after the archived history; completed
-        // shells are replaced by the archive instead of duplicated.
-        const keepLive =
-          Boolean(existing) &&
-          (actorValue?.turn === 'running' || actorValue?.turn === 'starting');
-        const mergedMessages = keepLive
-          ? [...messages, ...existing.messages]
-          : [
-              // Undelivered steer rows are not in the archive, so they
-              // travel across the rebuild explicitly (see
-              // carryUndeliveredSteers).
-              ...messages,
-              ...carryUndeliveredSteers(existing?.messages, messages),
-            ];
-        set((state) => ({
-          toolsView: null,
-          conversations: {
-            ...state.conversations,
-            [resolvedID]: capConversation({
-              ...emptyConv(),
-              mode: snapshot.mode,
-              think: snapshot.think,
-              model: snapshot.model,
-              messages: mergedMessages,
-              turnArtifacts,
-              historySeq: page.historySeq,
-              historyHasMore: page.historyHasMore,
-              pendingInteracts: existing?.pendingInteracts ?? [],
-            }),
-          },
-        }));
-        if (existing?.pendingInteracts.length) {
-          syncPendingIndex(resolvedID);
-        }
-        actor?.send({
-          type: 'HYDRATE_OK',
-          request: hydrateRequest,
-          generation,
-          empty: turns.length === 0 && !keepLive,
-        });
-        retainLiveConversations(resolvedID);
-      } catch (err) {
-        stateRoot.sendFocus({
-          type: 'OPEN_FAILED',
-          request,
-          error: errorMessage(err),
-        });
-      }
-    },
+      }),
 
     deleteSession: async (id) => {
       try {

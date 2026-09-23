@@ -69,7 +69,11 @@ import {
   useStore,
 } from '../lib/store';
 import { useConversationState, useFocusState } from '../state/react';
-import type { AttachmentDTO, AttachmentView } from '../lib/types';
+import type {
+  AttachmentDTO,
+  AttachmentView,
+  DelegationNote,
+} from '../lib/types';
 import type {
   AssistantItem,
   MessageView,
@@ -227,10 +231,18 @@ function failedSteps(tools: ToolCallItem[]): ToolView[] {
 // at the user message that opened it, so a long session costs nothing
 // per stream flush. Interjections are walked past: they are the user
 // speaking inside the turn, not a boundary between turns, and the call
-// in flight is newer than every one of them.
+// in flight is newer than every one of them. Rows the app wrote (a
+// delegation note) are walked past as well: they are not something the
+// user said, so they do not open the turn this walk is looking for.
 function liveStep(messages: MessageView[]): ToolView | null {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user' && !messages[i].steer) return null;
+    if (
+      messages[i].role === 'user' &&
+      !messages[i].steer &&
+      !messages[i].kind
+    ) {
+      return null;
+    }
     const tools = messages[i].items.filter(
       (item): item is ToolCallItem => item.kind === 'tool_call',
     );
@@ -766,6 +778,20 @@ const MessageRow = memo(function MessageRow({
   const resendSteer = useStore((s) => s.resendSteer);
   const dismissSteer = useStore((s) => s.dismissSteer);
   if (msg.role === 'user') {
+    // A row the app itself wrote (a delegation note) is the app
+    // answering a call the model made, so it renders as a card rather
+    // than as the bubble that means "the user opened this turn".
+    if (msg.kind) {
+      return (
+        <DelegationNoteCard
+          text={msg.text}
+          note={msg.note}
+          msgIndex={msgIndex}
+          turnIndex={turnIndex}
+          turnStart={turnStart}
+        />
+      );
+    }
     if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
       return (
         <CompactCard
@@ -1035,6 +1061,111 @@ function CompactCard({
       {open && body && (
         <div className="max-h-80 overflow-y-auto whitespace-pre-wrap border-t border-edge px-3 py-2 text-xs text-dim">
           {body}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// DelegationNoteCard renders a finished delegation the app routed home.
+//
+// The row it replaces is an archived turn the app wrote: a subagent's
+// report delivered to the model because an async call has no return
+// path of its own. It renders as a card rather than a bubble because
+// the bubble is the transcript's word for "the user opened this turn",
+// and this row is the opposite — the app answering a call the model
+// already made. It also reads from the archived fields (target, status,
+// body) instead of the sentence the model gets, so the note's wording
+// can change without touching this card.
+//
+// A note whose fields did not decode still renders as a card, from its
+// own text: the row is app-authored either way, and dressing it as the
+// user speaking would be wrong in a way the missing fields are not.
+function DelegationNoteCard({
+  text,
+  note,
+  msgIndex,
+  turnIndex,
+  turnStart,
+}: {
+  text: string;
+  note?: DelegationNote;
+  msgIndex: number;
+  turnIndex: number;
+  turnStart: boolean;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(true);
+  const openFileTarget = useStore((s) => s.openFileTarget);
+  // The dot is the subagent dock's vocabulary, one word wide: a
+  // finished-and-good run is the quiet color, a failure is the loud
+  // one, and a canceled run keeps the neutral one.
+  const dot =
+    note?.status === 'failed'
+      ? 'bg-err'
+      : note?.status === 'succeeded'
+        ? 'bg-ok/50'
+        : 'bg-dim';
+  const body = note ? (note.body ?? '').trim() : text.trim();
+  const reference = [
+    note?.card_id ? t('chat.delegationNoteCard', { id: note.card_id }) : '',
+    note?.run_id ? t('chat.delegationNoteRun', { id: note.run_id }) : '',
+    note?.parent_run_id
+      ? t('chat.delegationNoteAskedBy', { id: note.parent_run_id })
+      : '',
+  ].filter(Boolean);
+  return (
+    <div
+      data-msg-index={msgIndex}
+      data-turn-index={turnIndex >= 0 ? turnIndex : undefined}
+      data-turn-start={turnStart ? 'true' : undefined}
+      data-testid="delegation-note"
+      data-status={note?.status || undefined}
+      className="my-1.5 overflow-hidden rounded-control border border-edge bg-panel2"
+    >
+      <button
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-label={
+          open
+            ? t('chat.delegationNoteCollapse')
+            : t('chat.delegationNoteExpand')
+        }
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm"
+      >
+        <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
+        <Bot size={ICON.sm} className="shrink-0 text-subagent" />
+        <span className="shrink-0">{t('chat.delegationNote')}</span>
+        {note?.target && (
+          <span className="min-w-0 truncate font-medium">{note.target}</span>
+        )}
+        {note?.status && (
+          <span className="shrink-0 text-xs text-dim">
+            {t(`tool.status.${note.status}`)}
+          </span>
+        )}
+        <span className="flex-1" />
+        {open ? (
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
+        ) : (
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
+        )}
+      </button>
+      {open && (body || reference.length > 0) && (
+        <div className="border-t border-edge">
+          {body && (
+            <div className="prose-chat max-h-80 overflow-y-auto px-3 py-2 text-sm">
+              <Markdown
+                text={body}
+                onOpen={(href, base) => void openFileTarget(href, base ?? '')}
+              />
+            </div>
+          )}
+          {reference.length > 0 && (
+            <div className="border-t border-edge px-3 py-1 font-mono text-micro text-faint">
+              {reference.join(' · ')}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2084,7 +2215,14 @@ export function ChatView() {
       mi++
     ) {
       const m = currentMessages[mi];
-      if (m.role === 'user' && !m.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
+      // The turn's question is what the user asked: a compaction summary
+      // and a row the app wrote (a delegation note) are both user-role
+      // context, not the user speaking.
+      if (
+        m.role === 'user' &&
+        !m.kind &&
+        !m.text.startsWith(COMPACT_SUMMARY_PREFIX)
+      ) {
         user = m.text;
         break;
       }
@@ -2476,14 +2614,17 @@ export function ChatView() {
       let target = -1;
       if (direction < 0) {
         for (let i = anchor - 1; i >= 0; i--) {
-          if (messages[i]?.role === 'user') {
+          // The walk steps through turns the user opened: rows the app
+          // wrote (a delegation note) are skipped, or a note would stop
+          // the jump one row short of the question it answered.
+          if (messages[i]?.role === 'user' && !messages[i].kind) {
             target = i;
             break;
           }
         }
       } else {
         for (let i = anchor + 1; i < messages.length; i++) {
-          if (messages[i]?.role === 'user') {
+          if (messages[i]?.role === 'user' && !messages[i].kind) {
             target = i;
             break;
           }
@@ -2874,7 +3015,7 @@ export function ChatView() {
     turnState?.name === 'starting' && Boolean(turnState.supersededRunID);
   let bannerPreviewMsg: MessageView | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') {
+    if (messages[i].role === 'user' && !messages[i].kind) {
       bannerPreviewMsg = messages[i];
       break;
     }

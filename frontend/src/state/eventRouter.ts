@@ -13,6 +13,12 @@ export interface EventDataSink {
   writeConversationData(conversationID: string, ev: UIEvent): void;
   writeGlobalData(ev: UIEvent): void;
   refreshSessionList(): void;
+  /**
+   * sessionUpdated reports that one conversation changed on the backend
+   * outside its live stream (a turn the app appended on its own). The
+   * data layer decides whether the transcript needs it.
+   */
+  sessionUpdated?(id: string): void;
   refreshAutomations(): void;
   refreshAutomationRuns(ev: UIEvent): void;
   conversationForRunID(runID: string): string | undefined;
@@ -214,9 +220,12 @@ export function routeBackendEvent(ev: UIEvent, deps: EventRouterDeps) {
       return;
     }
 
-    case 'session_updated':
+    case 'session_updated': {
       deps.data.refreshSessionList();
+      const data = ev.data as { id?: string };
+      if (data.id) deps.data.sessionUpdated?.(data.id);
       return;
+    }
 
     case 'automation_changed':
       deps.data.refreshAutomations();

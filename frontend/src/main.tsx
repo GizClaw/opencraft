@@ -12,14 +12,22 @@ import {
 } from './lib/frontendErrors';
 import { startRUM } from './lib/rum';
 import { installPerfProbe } from './lib/perfProbe';
+import { surfaceOf } from './lib/surface';
 import PetSurface from './pet/PetSurface';
+
+// Renderer telemetry is workbench-only. The pet window (see PetSurface
+// below) is a decorative 168px stage whose frame sampler and web vitals
+// would blend into, and distort, the main window's series.
+const surface = surfaceOf();
 
 // Surface uncaught errors instead of failing silently: render errors
 // are caught by ErrorBoundary, event-handler errors and unhandled rejections
 // are forwarded to the Go telemetry pipeline (and printed for devtools).
 installConsoleErrorCapture();
-startRUM();
-installPerfProbe();
+if (surface === 'main') {
+  startRUM();
+  installPerfProbe();
+}
 window.addEventListener('error', (e) => {
   reportFrontendError('window-error', e.error ?? new Error(e.message));
 });
@@ -37,8 +45,6 @@ applyCachedUISettings();
 const container = document.getElementById('root');
 
 const root = createRoot(container!);
-
-const surface = new URLSearchParams(window.location.search).get('surface');
 
 if (surface === 'pet') {
   // Pet windows must be visually transparent: style.css paints html,

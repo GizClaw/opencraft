@@ -232,6 +232,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a log line on its way out. The profile shows up where a user sees it:
   the window title, the tray tooltip and a Settings ▸ Diagnostics card
   naming the profile, the state root and the app home. (#190)
+- A delegated subagent's report is filed as the app's own turn instead of
+  as something the user said. An async call has no return path of its own
+  — a tool result has to hang on a live turn, and rewriting a finished
+  turn is worse — so the note lands in the archive as a user-role row the
+  next turn's model reads; what is new is that "the app wrote this" is in
+  the data. `archive_turns.kind` names the writer and
+  `archive_turns.payload_json` holds its structured record: workspace
+  migration 018 adds both columns and files the notes older builds
+  archived as plain text by parsing the rendered sentence once, while the
+  live writer (`subagents.Result.Payload()`, which the note's own text
+  renders from) writes that exact object — a test pins the two encodings
+  byte for byte. Every reader goes by the kind or by a field: title
+  derivation, fork and import naming, `FirstUserMessage`, and the
+  transcript, which draws a note card (`data-testid=delegation-note`,
+  wearing the subagent dock's status dot) instead of a user bubble. A
+  note appended while its conversation is already open lands on its own:
+  when the backend reports a session changed, the transcript reads the
+  tail of the archive from the newest seq it holds (`Session.TurnsSince`)
+  and folds it in by seq, so a subagent that finishes long after the turn
+  that spawned it shows up without a reload or a session switch. Kind and
+  payload ride through fork, import and export unchanged; a payload that
+  does not decode still renders as a card from the row's own text, and a
+  kind from a newer build is carried through without being guessed at.
 
 ### Changed
 
@@ -350,6 +373,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than the renderer — the multi-second `frame_max` samples in the log
   were all background windows. Hiding drops the baseline and resuming
   starts a new one, so `frame_max` only describes visible rendering.
+- The renderer's frame sampling separates "not a frame" from "a slow
+  frame". WebKit throttles a window another window occludes without
+  firing visibilitychange, a native menu runs the app's own run loop, and
+  a sleeping machine draws nothing at all — the log's 272-second and
+  4.5-minute `frame_max` samples were all of this, and folding them into
+  the metric is what made it useless for judging whether rendering got
+  cheaper. A gap past a second is now counted in `dropped_gaps` and kept
+  out of `frames`, `frame_max` and the long-frame counters, so a window
+  that was suspended — or stalled long enough that nothing could have
+  painted — reads as one that was not sampled rather than as a quiet one.
+- A report from a hidden window is skipped, and the next visible one
+  carries `window_ms` for the time it covers: those 12k-node rows with
+  zero frames in the log were a page nobody was looking at, and counting
+  them as quiet windows is what made the probe's numbers unreadable.
+  Frames that did render are counted in `long_frames_50` / `_100` /
+  `_200` rather than one 50ms counter, so a window with one bad frame is
+  distinguishable from one with fifty, and every sample carries the view
+  in front (`route`: `welcome` / `chat` / `settings` / `tools:<page>`)
+  beside the surface and the active conversation — the surface alone
+  could not say whether a long frame came from scrolling a transcript or
+  from a settings page.
+- A slow interaction is attributed to the interaction that caused it, not
+  just timed. Four top-level ones are measured from the click to the frame
+  that showed its result — send, session switch, opening settings, and a
+  settings save — and the report carries `interaction_max` with an
+  `interaction` label naming the slowest of its window. WebKit has no
+  `longtask` entry type, so the boundaries are explicit; a window that
+  held no interaction sends no sample at all, a measurement that spans the
+  window hiding is dropped rather than reporting the suspension, and a
+  click that landed on the baseline still names itself (`interaction_max`
+  alone could not say whether the stall was a send or a settings page).
+- A streaming flush is measured to the frame that followed it
+  (`flush_commit_p50` / `_p95` / `_max`), and one markdown block's own
+  render-to-commit cost beside it (`flush_md_p95`). `flush_p95` is what
+  routing the deltas cost synchronously and says nothing about whether
+  anything painted, so the number that describes what the reader waited
+  for is the flush's start to the next painted frame — and the markdown
+  parse is the part a long answer makes it pay, which is what a "render
+  streaming markdown as plain text" decision would rest on. Both live in
+  `lib/perfMetrics.ts`, share the sampler's line between "not rendered"
+  and "expensive to render" (visible windows only, gaps past a second and
+  measurements spanning a hide dropped), and cost one boolean check per
+  event while the sampler is off.
+- `frontend rum:` logs one line per report rather than one per sample. The
+  probe reports a dozen samples every 30 seconds and the log held nothing
+  else — 2294 lines of one shape in 13 days. The summary keeps the numbers
+  greppable as `name=value` pairs beside the batch's sample count, while
+  the same values still land in the metric store for the charts and the
+  review script. A batch is one transaction with one timestamp
+  (`host.RecordMetrics`), so the samples one report carries line up as a
+  single instant on the charts instead of a smear over the report's own
+  duration.
+- Renderer telemetry reports from the workbench only. The pet window is a
+  decorative 168px stage (see `lib/surface.ts`), and its frames and web
+  vitals would blend into — and drag — the main window's series.
+- lcp is neither collected nor charted any more: this window is an
+  always-open SPA, and the running largest-paint value keeps being raised
+  by content that renders long after startup (the stored series ran into
+  minutes), so it measured how large the last render got rather than how
+  fast the shell loads. Startup stays covered by dom_content_loaded/load
+  and interactivity by fid/inp.
+- Nothing that asks what the user said reads the app's own rows. A
+  conversation's title — on append, on fork, on import, and in the
+  renderer's local copy — falls to the first line a person wrote, and
+  `FirstUserMessage` skips app-authored turns, reading archive rows
+  joined against a turn kind rather than the message table alone.
 - Crash recovery defers to a live sibling process instead of guessing
   from timestamps: the first assembly of a workspace takes a
   non-blocking advisory lock (`<state root>/workspaces/<id>/live.lock` —
