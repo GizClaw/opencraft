@@ -13,7 +13,7 @@
 // is the one surface a future skin overrides, so it has to stay
 // repaintable from tokens alone.
 import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -135,6 +135,27 @@ function cssBrokenLines(
 }
 
 /**
+ * uiOnlyOffenders lists file:line of matches outside components/ui --
+ * the one address a native control may be spelled at. A call site that
+ * spells its own number field or textarea is exactly the drift the
+ * primitives exist to remove, and it is the address a skin cannot see.
+ */
+function uiOnlyOffenders(pattern: RegExp): string[] {
+  const found: string[] = [];
+  for (const file of sourceFiles()) {
+    const rel = relative(SRC_DIR, file).split(sep).join('/');
+    if (rel.startsWith('components/ui/')) continue;
+    readFileSync(file, 'utf8')
+      .split('\n')
+      .forEach((line, i) => {
+        pattern.lastIndex = 0;
+        if (pattern.test(line)) found.push(`${rel}:${i + 1}`);
+      });
+  }
+  return found;
+}
+
+/**
  * domTitleAttributes lists file:line of `title=` attributes set on a
  * DOM element. `title` on a component is a prop (a dialog heading, an
  * empty state); on a DOM element the browser draws its own tooltip,
@@ -247,6 +268,15 @@ describe('design scale', () => {
 
   it('hints through data-tip, not the native title attribute', () => {
     expect(domTitleAttributes()).toEqual([]);
+  });
+
+  it('spells number fields and textareas at the ui/ primitives', () => {
+    // A native control spelled at a call site is the drift ui/NumberField
+    // and ui/Textarea exist to remove: it carries its own semantics (what
+    // an empty value means, when the bounds apply) and its own look, and
+    // the skin cannot address it.
+    expect(uiOnlyOffenders(/type="number"/g)).toEqual([]);
+    expect(uiOnlyOffenders(/<textarea/g)).toEqual([]);
   });
 
   it('defines the ladder the comments promise', () => {

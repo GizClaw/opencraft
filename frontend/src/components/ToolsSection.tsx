@@ -18,6 +18,7 @@ import type {
 } from '../lib/types';
 import { ICON } from './ui/icon';
 import { Modal } from './ui/Modal';
+import { NumberField } from './ui/NumberField';
 import { Popover } from './ui/Popover';
 import { SaveBar } from './ui/SaveBar';
 
@@ -373,33 +374,47 @@ export function ToolsSection() {
         />
       );
     } else {
-      control = (
-        <input
-          aria-label={label}
-          type={field.kind === 'string' ? 'text' : 'number'}
-          // The documented default is on the row's own line, so the
-          // placeholder stays short enough to read inside the control.
-          placeholder={providerDefault}
-          value={value === undefined ? '' : String(value)}
-          min={field.min ?? undefined}
-          max={field.max ?? undefined}
-          step={field.kind === 'float' ? 'any' : undefined}
-          onChange={(e) => {
-            const raw = e.target.value.trim();
-            setField(
-              tool,
-              instance.id,
-              field.name,
-              raw === ''
-                ? undefined
-                : field.kind === 'string'
-                  ? raw
-                  : Number(raw),
-            );
-          }}
-          className={fieldClass}
-        />
-      );
+      // The documented default is on the row's own line, so the
+      // placeholder stays short enough to read inside the control.
+      control =
+        field.kind === 'string' ? (
+          <input
+            aria-label={label}
+            placeholder={providerDefault}
+            value={value === undefined ? '' : String(value)}
+            onChange={(e) => {
+              const raw = e.target.value.trim();
+              setField(
+                tool,
+                instance.id,
+                field.name,
+                raw === '' ? undefined : raw,
+              );
+            }}
+            className={fieldClass}
+          />
+        ) : (
+          // An emptied number goes back to the provider's default, which
+          // is what the placeholder has said all along.
+          <NumberField
+            label={label}
+            allowEmpty
+            placeholder={providerDefault}
+            value={typeof value === 'number' ? value : ''}
+            min={field.min ?? undefined}
+            max={field.max ?? undefined}
+            step={field.kind === 'float' ? 'any' : undefined}
+            onChange={(next) =>
+              setField(
+                tool,
+                instance.id,
+                field.name,
+                next === '' ? undefined : next,
+              )
+            }
+            className="w-full"
+          />
+        );
     }
     return (
       <div

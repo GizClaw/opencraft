@@ -38,7 +38,8 @@ export type NumberFieldProps = Omit<
   allowEmpty?: boolean;
   min?: number;
   max?: number;
-  step?: number;
+  /** 'any' is the browser's own "no step" (a float field). */
+  step?: number | 'any';
   size?: 'sm' | 'md';
   surface?: 'sunken' | 'raised';
   invalid?: boolean;
@@ -128,7 +129,9 @@ export function NumberField({
       ? typedNumber
       : (min ?? 0);
   const nudge = (direction: 1 | -1) =>
-    commit(clamp(base + direction * (step ?? 1)));
+    // A float field steps by 1: 'any' is the browser's "no step", not a
+    // distance to add.
+    commit(clamp(base + direction * (typeof step === 'number' ? step : 1)));
   // A label-less stepper still announces what it does; the label names it
   // when the call site has one.
   const stepName = (key: 'ui.stepDown' | 'ui.stepUp') =>

@@ -9,6 +9,7 @@ import type { InteractDTO, InteractSeverity } from '../lib/types';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { ICON } from './ui/icon';
+import { Textarea } from './ui/Textarea';
 
 // One prompt used to look the same whatever it asked: a sandbox
 // escalation that hands a command the whole host wore the same amber
@@ -183,7 +184,6 @@ export function InteractionCard({
                 name={`interact-${spec.id}`}
                 checked={selected.includes(opt.value)}
                 onChange={() => toggle(opt.value)}
-                className="accent-[var(--color-accent)]"
               />
               {opt.label}
             </label>
@@ -199,12 +199,12 @@ export function InteractionCard({
       )}
 
       {spec.kind === 'text' && (
-        <textarea
+        <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={3}
           placeholder={t('interact.answerPlaceholder')}
-          className="mt-3 w-full resize-y rounded-control border border-edge bg-panel px-3 py-2 text-sm outline-none focus:border-accent"
+          className="mt-3"
         />
       )}
 

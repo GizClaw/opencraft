@@ -110,7 +110,6 @@ export function AdvancedSection({
         checked={(adv[key] as boolean | undefined) ?? false}
         onChange={(e) => onUpdate(key, e.target.checked)}
         disabled={disabled}
-        className="accent-accent"
       />
       <span className="text-xs text-dim">{label}</span>
     </label>

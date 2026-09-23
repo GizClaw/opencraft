@@ -41,6 +41,8 @@ import {
   type FieldSpec,
 } from './graphFieldCatalog';
 import { ICON } from './ui/icon';
+import { NumberField } from './ui/NumberField';
+import { Textarea } from './ui/Textarea';
 import {
   SERIES_CACHE_READ,
   SERIES_INPUT,
@@ -548,7 +550,25 @@ function GenericField({
           type="checkbox"
           checked={Boolean(value)}
           onChange={(e) => onChange(path, e.target.checked)}
-          className="h-4 w-4 accent-[var(--color-accent)]"
+        />
+      </label>
+    );
+  }
+  if (kind === 'number') {
+    return (
+      <label className="flex flex-col gap-1 text-xs text-dim">
+        <FieldLabel raw={raw} />
+        <NumberField
+          size="sm"
+          className="w-full font-mono"
+          value={
+            typeof value === 'number' && Number.isFinite(value) ? value : 0
+          }
+          onChange={(next) => {
+            // The field holds a number: a cleared one is a cancelled edit,
+            // and unsetting a parameter is the raw JSON editor's job.
+            if (next !== '') onChange(path, next);
+          }}
         />
       </label>
     );
@@ -557,15 +577,9 @@ function GenericField({
     <label className="flex flex-col gap-1 text-xs text-dim">
       <FieldLabel raw={raw} />
       <input
-        type={kind === 'number' ? 'number' : 'text'}
         value={value == null ? '' : String(value)}
-        onChange={(e) =>
-          onChange(
-            path,
-            kind === 'number' ? Number(e.target.value) : e.target.value,
-          )
-        }
-        className="rounded-control border border-edge bg-panel px-2.5 py-1.5 font-mono text-xs text-fg outline-none focus:border-accent/60"
+        onChange={(e) => onChange(path, e.target.value)}
+        className="w-full rounded-control border border-edge bg-panel px-2.5 py-1.5 font-mono text-xs text-fg outline-none focus:border-accent/60"
       />
     </label>
   );
@@ -592,7 +606,10 @@ function ArrayField({
   return (
     <label className="flex flex-col gap-1 text-xs text-dim">
       <FieldLabel raw={raw} />
-      <textarea
+      <Textarea
+        mono
+        invalid={invalid}
+        size="sm"
         value={text}
         spellCheck={false}
         rows={3}
@@ -607,9 +624,6 @@ function ArrayField({
             setInvalid(true);
           }
         }}
-        className={`w-full resize-y rounded-control border bg-panel px-2 py-1 font-mono text-label text-fg outline-none ${
-          invalid ? 'border-err/60' : 'border-edge'
-        }`}
       />
       {invalid && (
         <span className="text-micro text-err">{t('graph.invalidJson')}</span>
@@ -1169,16 +1183,18 @@ function NodeInspector({
           />
         );
       })()}
-      <details className="rounded-control border border-edge bg-panel">
+      <details className="rounded-control border border-edge bg-panel focus-within:border-accent">
         <summary className="cursor-pointer px-2.5 py-1.5 text-xs text-dim select-none">
           {t('graph.advanced')}
         </summary>
-        <textarea
+        <Textarea
+          seamless
+          mono
           value={rawDraft}
           onChange={(e) => onRaw(e.target.value)}
           spellCheck={false}
           rows={10}
-          className="w-full resize-y bg-transparent px-2.5 pb-2 text-label font-mono text-fg outline-none whitespace-pre"
+          className="whitespace-pre"
         />
       </details>
       {rawTouched && (

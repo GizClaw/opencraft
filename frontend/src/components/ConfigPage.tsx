@@ -87,6 +87,7 @@ import { Badge } from './ui/Badge';
 import { Popover } from './ui/Popover';
 import { Button, IconButton } from './ui/Button';
 import { EmptyState } from './ui/EmptyState';
+import { NumberField } from './ui/NumberField';
 import { searchSettings } from './settingsIndex';
 
 // InstanceRow is one editable inference instance in the settings page.
@@ -1538,7 +1539,6 @@ export function ConfigPage() {
                         onChange={(e) =>
                           update(row.id, { enabled: e.target.checked })
                         }
-                        className="accent-[var(--color-accent)]"
                         data-tip={t('config.instanceEnabled')}
                       />
                       <span className="font-medium text-sm shrink-0">
@@ -2060,7 +2060,6 @@ export function ConfigPage() {
                                           webSearch: e.target.checked,
                                         })
                                       }
-                                      className="accent-[var(--color-accent)]"
                                     />
                                     {t('setup.webSearch')}
                                   </label>
@@ -2073,28 +2072,22 @@ export function ConfigPage() {
                                     <span className="font-medium text-dim">
                                       {t('setup.maxInputTokens')}
                                     </span>
-                                    <input
-                                      type="number"
+                                    <NumberField
+                                      allowEmpty
+                                      size="sm"
                                       min={1}
                                       step={1000}
                                       value={m.maxInputTokens}
                                       disabled={row.managed}
                                       placeholder={t('setup.maxInputAuto')}
                                       data-tip={t('setup.maxInputHint')}
-                                      onChange={(e) => {
-                                        const next: number | '' =
-                                          e.target.value === ''
-                                            ? ''
-                                            : Number(e.target.value);
+                                      label={t('setup.maxInputTokens')}
+                                      onChange={(next) =>
                                         updateModel(row.id, mi, {
-                                          maxInputTokens:
-                                            next === '' ||
-                                            !Number.isFinite(next)
-                                              ? ''
-                                              : next,
-                                        });
-                                      }}
-                                      className="h-[1.875rem] w-40 rounded-control border border-edge bg-panel px-2 text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40"
+                                          maxInputTokens: next,
+                                        })
+                                      }
+                                      className="w-40"
                                     />
                                   </label>
                                 </div>
@@ -2335,7 +2328,6 @@ export function ConfigPage() {
                                 onChange={(e) =>
                                   update(row.id, { keyEnv: e.target.checked })
                                 }
-                                className="accent-[var(--color-accent)]"
                               />
                               {t('setup.envVar', {
                                 var: prov?.env_var ?? '',
@@ -2371,17 +2363,14 @@ export function ConfigPage() {
                     <span className="text-xs text-dim">
                       {t('config.router.maxAttempts')}
                     </span>
-                    <input
-                      type="number"
+                    <NumberField
                       min={1}
                       value={router.max_attempts}
-                      onChange={(e) =>
-                        setRouter({
-                          ...router,
-                          max_attempts: Number(e.target.value) || 1,
-                        })
-                      }
-                      className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
+                      onChange={(next) => {
+                        if (next === '') return;
+                        setRouter({ ...router, max_attempts: next });
+                      }}
+                      className="w-full"
                     />
                   </label>
                   <label className="flex items-center gap-2 pt-4">
@@ -2394,7 +2383,6 @@ export function ConfigPage() {
                           fallback_on_retry_exhausted: e.target.checked,
                         })
                       }
-                      className="accent-accent"
                     />
                     <span className="text-xs text-dim">
                       {t('config.router.fallback')}
@@ -2905,7 +2893,6 @@ export function ConfigPage() {
                     type="checkbox"
                     checked={devMode}
                     onChange={(e) => setDevMode(e.target.checked)}
-                    className="accent-accent"
                   />
                   {t('config.diagDevMode')}
                 </label>

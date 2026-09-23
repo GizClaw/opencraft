@@ -74,7 +74,7 @@ export function ToggleSetting({
         aria-describedby={
           hint === undefined || hint === '' ? undefined : hintId
         }
-        className="mt-0.5 shrink-0 accent-accent"
+        className="mt-0.5 shrink-0"
       />
     </label>
   );

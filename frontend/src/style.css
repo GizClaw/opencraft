@@ -833,7 +833,6 @@ body.oc-resizing * {
   margin-left: -1.2em;
 }
 .prose-chat input[type='checkbox'] {
-  accent-color: var(--color-accent);
   margin-right: 0.45em;
 }
 

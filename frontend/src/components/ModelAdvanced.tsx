@@ -1,6 +1,7 @@
 import { ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ICON } from './ui/icon';
+import { Textarea } from './ui/Textarea';
 
 // ModelAdvancedValue is the model-row state this section edits:
 // discovery metadata plus the driver-specific leaves opencraft does not
@@ -100,14 +101,16 @@ export function ModelAdvanced({
           <span className="text-xs text-dim">
             {t('config.modelAdvanced.driverFields')}
           </span>
-          <textarea
+          <Textarea
+            mono
+            invalid={specError}
+            size="sm"
             value={value.specJson}
             disabled={disabled}
             spellCheck={false}
             rows={2}
             placeholder={t('config.modelAdvanced.driverFieldsPlaceholder')}
             onChange={(e) => onUpdate({ specJson: e.target.value })}
-            className="w-full rounded-control border border-edge bg-panel px-2 py-1 font-mono text-xs outline-none focus:border-accent disabled:opacity-40"
           />
           {specError && (
             <span className="text-xs text-err">

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import type { ExecPool } from '../lib/types';
 import { ICON } from './ui/icon';
-import { Input } from './ui/Input';
+import { NumberField } from './ui/NumberField';
 import { SaveBar } from './ui/SaveBar';
 
 interface Draft {
@@ -135,31 +135,35 @@ export function ExecPoolCard() {
 
       <div className="grid grid-cols-2 gap-2 p-3">
         {FIELDS.map((field) => (
-          <label key={field.key} className="block">
+          // A div, not a label: the steppers are buttons, and a label
+          // element's control is its first labelable descendant — which
+          // would make the field's own label point at the minus button.
+          // The field is named by its aria-label instead.
+          <div key={field.key} className="block">
             <span className="text-micro text-dim">
               {t(`config.${field.label}`)}
             </span>
-            <Input
-              type="number"
+            <NumberField
+              label={t(`config.${field.label}`)}
               size="sm"
               surface="raised"
+              steppers
               min={field.min}
               max={field.max}
               value={draft[field.key]}
-              onChange={(event) => {
-                const value = Number(event.target.value);
+              onChange={(next) => {
                 setSaved(false);
                 setDraft(
                   (prev) =>
                     prev && {
                       ...prev,
-                      [field.key]: Number.isFinite(value) ? value : field.min,
+                      [field.key]: next === '' ? field.min : next,
                     },
                 );
               }}
-              className="mt-1"
+              className="mt-1 w-full"
             />
-          </label>
+          </div>
         ))}
         <p className="col-span-2 text-micro text-faint">
           {t('config.diagExecPoolRanges')}

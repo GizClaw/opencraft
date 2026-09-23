@@ -436,7 +436,7 @@ export function SettingsGeneral() {
                   thinkLevels[Number(e.target.value)]?.value ?? 'medium';
                 scheduleThinkSave(mode, next);
               }}
-              className="mt-2 w-full accent-accent"
+              className="mt-2 w-full"
               aria-label={t('config.generalDefaultThink')}
             />
             <div className="flex justify-between text-micro text-dim">

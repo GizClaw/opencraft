@@ -136,7 +136,6 @@ export function UsageRangePicker({
             onChange={(e) => {
               setDraftLive(e.target.checked);
             }}
-            className="h-3.5 w-3.5 accent-[var(--color-accent)]"
           />
           {t('config.usageLiveEnd')}
         </label>

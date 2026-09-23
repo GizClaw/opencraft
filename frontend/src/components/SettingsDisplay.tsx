@@ -306,7 +306,7 @@ export function SettingsDisplay() {
                   if (step === undefined) return;
                   persist({ ...uiSettings, fontScale: step.scale });
                 }}
-                className="w-[9rem] accent-accent"
+                className="w-[9rem]"
               />
               <button
                 type="button"
