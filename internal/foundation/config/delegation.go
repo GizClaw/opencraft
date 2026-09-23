@@ -159,7 +159,10 @@ func LoadDelegation(configDir string) (DelegationSettings, error) {
 // layer: the service limits are deep-merged into the existing delegate
 // resource (its deps and any hand-added key survive), and the target
 // lists replace the delegate.policy resource wholesale (the policy is
-// generator-owned, so a removed target cannot linger).
+// generator-owned, so a removed target cannot linger). A cleared list
+// is written as an explicit `[]`, never as an empty settings object:
+// deploy reads the latter as an empty resource source and refuses the
+// whole document, and "no restriction" is what the empty list says.
 func SaveDelegation(configDir string, settings DelegationSettings) error {
 	resolved, err := settings.Resolve()
 	if err != nil {
@@ -225,9 +228,14 @@ type delegationPolicyLayer struct {
 	Settings delegationPolicySettings `json:"settings"`
 }
 
+// delegationPolicySettings is the policy subtree as written into the
+// user layer. Both lists are always emitted, empty ones as `[]`: the
+// card submits the complete set, and an empty list is a value ("no
+// restriction"), not an absent key — the settings object must never
+// marshal to `{}`, which deploy rejects as an empty resource source.
 type delegationPolicySettings struct {
-	AllowedTargets []string `json:"allowed_targets,omitempty"`
-	BlockedTargets []string `json:"blocked_targets,omitempty"`
+	AllowedTargets []string `json:"allowed_targets"`
+	BlockedTargets []string `json:"blocked_targets"`
 }
 
 func decodeDelegationSettings(data []byte) (DelegationSettings, error) {

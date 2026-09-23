@@ -321,9 +321,9 @@ func isLoopbackHost(host string) bool {
 // webSearchSourceLayer is the user-layer resource declaration the
 // settings writer emits.
 type webSearchSourceLayer struct {
-	Kind     string            `json:"kind"`
-	Impl     string            `json:"impl"`
-	Settings WebSearchSettings `json:"settings"`
+	Kind     string             `json:"kind"`
+	Impl     string             `json:"impl"`
+	Settings *WebSearchSettings `json:"settings,omitempty"`
 }
 
 // webSearchLayer is the user-layer document SaveWebSearch writes.
@@ -377,9 +377,12 @@ func SaveWebSearch(configDir string, settings WebSearchSettings) error {
 	}
 	layer := webSearchLayer{Version: "v1"}
 	layer.Resources.ToolWebSearch = &webSearchSourceLayer{
-		Kind:     "tool.Source",
-		Impl:     "opencraft/websearch",
-		Settings: settings,
+		Kind: "tool.Source",
+		Impl: "opencraft/websearch",
+		// Every field is omitempty, so a zero-value save would render the
+		// fatal `settings: {}`; omit the key instead (see
+		// nonEmptySettings).
+		Settings: nonEmptySettings(settings),
 	}
 	fresh, err := yaml.Marshal(layer)
 	if err != nil {

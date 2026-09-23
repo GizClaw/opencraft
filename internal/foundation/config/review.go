@@ -135,7 +135,7 @@ type reviewLayer struct {
 }
 
 type reviewResourceLayer struct {
-	Settings ReviewSettings `json:"settings"`
+	Settings *ReviewSettings `json:"settings,omitempty"`
 }
 
 // LoadReview returns the effective settings: embedded defaults overlaid
@@ -151,7 +151,11 @@ func SaveReview(configDir string, settings ReviewSettings) error {
 		return err
 	}
 	layer := reviewLayer{Version: "v1"}
-	layer.Resources.Review = &reviewResourceLayer{Settings: settings}
+	// Every field is omitempty, so a zero-value save would render the
+	// fatal `settings: {}`; omit the key instead (see nonEmptySettings).
+	layer.Resources.Review = &reviewResourceLayer{
+		Settings: nonEmptySettings(settings),
+	}
 	fresh, err := yaml.Marshal(layer)
 	if err != nil {
 		return fmt.Errorf("config: render review layer: %w", err)
