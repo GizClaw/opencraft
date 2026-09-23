@@ -218,8 +218,8 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	if !ok {
 		t.Fatal("assistant agent missing")
 	}
-	if assistant.Policy.RunTimeout != "1h" {
-		t.Errorf("assistant policy.run_timeout = %q, want 1h",
+	if assistant.Policy.RunTimeout != "2h" {
+		t.Errorf("assistant policy.run_timeout = %q, want 2h",
 			assistant.Policy.RunTimeout)
 	}
 

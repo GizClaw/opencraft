@@ -407,6 +407,17 @@ function archivedTurnEndKind(status?: TurnStatus): TurnEndKind | undefined {
   }
 }
 
+// endedOnDeadline reports whether a canceled ending was the run's own
+// deadline rather than the user's stop. The engine maps both onto the
+// same `canceled` status; the structured error kind (host's "timeout")
+// is the only thing that tells them apart.
+function endedOnDeadline(
+  status: TurnEndKind | undefined,
+  errorKind?: string,
+): boolean {
+  return status === 'canceled' && errorKind === 'timeout';
+}
+
 // TurnEndNotice explains why a turn stopped without embedding an error
 // into the assistant message. It renders after the turn's last message
 // and only exposes a live Dismiss action while that turn is still
@@ -417,7 +428,10 @@ function archivedTurnEndKind(status?: TurnStatus): TurnEndKind | undefined {
 // in flight without running its tools twice), so "continue" means the
 // user's own message again as a fresh turn, with the partial reply
 // already in context. Both callbacks are passed for the newest turn of
-// an idle conversation only, so history keeps the static notice.
+// an idle conversation only, so history keeps the static notice. A turn
+// the run deadline ended is the same kind of ending — cut off mid-work,
+// partial reply in context — and offers the same two actions instead of
+// reading as something the user did.
 function TurnEndNotice({
   status,
   error,
@@ -444,23 +458,25 @@ function TurnEndNotice({
   const { t } = useTranslation();
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
+  const deadline = endedOnDeadline(status, errorKind);
   // User-stopped replies (cancel or barge-in) carry no provider
   // debugging detail worth surfacing; failed/aborted turns and
   // non-user interruptions show the correlation ids and the raw reason
   // beneath the friendly summary.
-  const userStop = isUserStop(status, interruptCause);
+  const userStop = isUserStop(status, interruptCause, errorKind);
   const failure = status === 'failed' || status === 'aborted';
+  const warn = status === 'interrupted' || deadline;
   const container = failure
     ? 'border-err/40 bg-err/10'
-    : status === 'interrupted'
+    : warn
       ? 'border-warn/40 bg-warn/10'
       : 'border-edge bg-panel2';
   const iconBox = failure
     ? 'border-err/30 bg-err/10 text-err'
-    : status === 'interrupted'
+    : warn
       ? 'border-warn/30 bg-warn/10 text-warn'
       : 'border-edge bg-panel text-dim';
-  const Icon = status === 'canceled' ? Ban : AlertTriangle;
+  const Icon = deadline ? Clock : status === 'canceled' ? Ban : AlertTriangle;
   const friendlyError = friendlyFailure(errorKind);
   let title: string;
   let detail: string;
@@ -468,8 +484,13 @@ function TurnEndNotice({
     title = t('chat.lastAborted');
     detail = friendlyError || error || t('chat.lastAbortedDetail');
   } else if (status === 'canceled') {
-    title = t('chat.lastCancelled');
-    detail = t('chat.lastCancelledDetail');
+    if (deadline) {
+      title = t('chat.lastTimedOut');
+      detail = friendlyError || error || t('chat.turnTimeout');
+    } else {
+      title = t('chat.lastCancelled');
+      detail = t('chat.lastCancelledDetail');
+    }
   } else if (status === 'interrupted') {
     title = t('chat.lastInterrupted');
     detail =
@@ -480,7 +501,7 @@ function TurnEndNotice({
   }
   const showRawDetail = !userStop && Boolean(error) && error !== detail;
   const actionable =
-    status === 'interrupted' &&
+    (status === 'interrupted' || deadline) &&
     (onContinue !== undefined || onEditResend !== undefined);
   return (
     <div
@@ -1636,12 +1657,18 @@ const TurnBlock = memo(function TurnBlock({
         live={liveEnd}
         onDismiss={liveEnd ? onDismissFailure : undefined}
         onContinue={
-          latest && !busy && endStatus === 'interrupted'
+          latest &&
+          !busy &&
+          (endStatus === 'interrupted' ||
+            endedOnDeadline(endStatus, turn.errorKind))
             ? onContinue
             : undefined
         }
         onEditResend={
-          latest && !busy && endStatus === 'interrupted'
+          latest &&
+          !busy &&
+          (endStatus === 'interrupted' ||
+            endedOnDeadline(endStatus, turn.errorKind))
             ? onEditResend
             : undefined
         }
@@ -1993,6 +2020,8 @@ const MODE_LABEL_TONE: Record<SessionModeOption['value'], string> = {
 // every end that is not a clean finish, so the tone splits four ways: a
 // failure is an error, an engine interruption is a warning, and the two
 // stop kinds the user asked for (cancel, barge-in) stay quiet.
+// A deadline is reported as `canceled` too, and reads as a warning
+// through endedOnDeadline rather than as a stop the user asked for.
 const TURN_STOP_TONE: Record<TurnEndKind, string> = {
   failed: 'text-err',
   aborted: 'text-err',
@@ -2177,6 +2206,11 @@ export function ChatView() {
     }
   };
   const failedTurn = turnState?.name === 'failed' ? turnState : undefined;
+  // The header badge splits on the same error kind the transcript's
+  // notice does: a deadline is not a user stop.
+  const failedDeadline = Boolean(
+    failedTurn && endedOnDeadline(failedTurn.status, failedTurn.errorKind),
+  );
   const lastTurn = turnArtifacts[turnArtifacts.length - 1];
   const usesTurnBlocks = completeTurnBlocks.length > 0 && !partialTurnVisible;
   // MessagePeek only needs the turn boundaries while rendering ticks.
@@ -3270,14 +3304,24 @@ export function ChatView() {
                 // correlation ids; the header only has to say that the
                 // last turn did not finish.
                 data-tip={failedTurn.error}
-                className={`animate-swap-in flex shrink-0 items-center gap-1.5 ${TURN_STOP_TONE[failedTurn.status]}`}
+                className={`animate-swap-in flex shrink-0 items-center gap-1.5 ${
+                  failedDeadline
+                    ? 'text-warn'
+                    : TURN_STOP_TONE[failedTurn.status]
+                }`}
               >
-                {failedTurn.status === 'canceled' ? (
+                {failedDeadline ? (
+                  <Clock size={ICON.xs} />
+                ) : failedTurn.status === 'canceled' ? (
                   <Ban size={ICON.xs} />
                 ) : (
                   <AlertTriangle size={ICON.xs} />
                 )}
-                {t(TURN_STOP_LABEL[failedTurn.status])}
+                {t(
+                  failedDeadline
+                    ? 'chat.lastTimedOut'
+                    : TURN_STOP_LABEL[failedTurn.status],
+                )}
               </span>
             )}
           </div>
@@ -3466,7 +3510,10 @@ export function ChatView() {
                   // an older one has been answered over since, so its
                   // "continue" would just repeat history.
                   const resumable =
-                    endStatus === 'interrupted' && turn === lastTurn && !busy;
+                    (endStatus === 'interrupted' ||
+                      endedOnDeadline(endStatus, turn?.errorKind)) &&
+                    turn === lastTurn &&
+                    !busy;
                   const isAssistantTurnLast =
                     msg.role === 'assistant' &&
                     (i === messages.length - 1 ||

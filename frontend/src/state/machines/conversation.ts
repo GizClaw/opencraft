@@ -20,6 +20,11 @@ interface ConversationContext {
   lastEndedRunID?: string;
   turnStage?: string;
   failureStatus?: 'failed' | 'aborted' | 'canceled' | 'interrupted';
+  // failureErrorKind is the structured class of the failure (the
+  // harness's "timeout", an inference kind). It carries the one split
+  // status alone cannot: the engine reports a deadline and a user stop
+  // as the same `canceled`.
+  failureErrorKind?: string;
   turnError?: string;
   transcriptError?: string;
   deletedAt?: string;
@@ -40,6 +45,7 @@ export type ConversationEvent =
       // still starting. Its absence means the old run is still live.
       supersededEndedStatus?: TurnEndStatus;
       supersededEndedError?: string;
+      supersededEndedErrorKind?: string;
     }
   | { type: 'RUN_STARTED'; runID: string }
   | { type: 'STREAM'; runID: string; stage?: string }
@@ -48,6 +54,7 @@ export type ConversationEvent =
       runID: string;
       status: TurnEndStatus;
       error?: string;
+      errorKind?: string;
     }
   | { type: 'DISMISS_FAILURE' }
   | { type: 'SESSION_DELETED'; deletedAt?: string };
@@ -212,6 +219,7 @@ export const conversationMachine = createMachine({
                   supersededRunID: () => undefined,
                   turnStage: () => '',
                   failureStatus: () => undefined,
+                  failureErrorKind: () => undefined,
                   turnError: () => undefined,
                 }),
               },
@@ -226,6 +234,7 @@ export const conversationMachine = createMachine({
                   supersededRunID: () => undefined,
                   lastEndedRunID: ({ context }) => context.supersededRunID,
                   failureStatus: () => undefined,
+                  failureErrorKind: () => undefined,
                   turnError: () => undefined,
                 }),
               },
@@ -244,6 +253,8 @@ export const conversationMachine = createMachine({
                     event.supersededEndedStatus === 'interrupted'
                       ? event.supersededEndedStatus
                       : 'failed',
+                  failureErrorKind: ({ event }) =>
+                    event.supersededEndedErrorKind,
                   turnError: ({ event }) =>
                     event.supersededEndedError ?? event.error,
                 }),
@@ -293,6 +304,7 @@ export const conversationMachine = createMachine({
                     event.status === 'interrupted'
                       ? event.status
                       : undefined,
+                  failureErrorKind: ({ event }) => event.errorKind,
                   turnError: ({ event }) => event.error,
                 }),
               },
@@ -305,6 +317,7 @@ export const conversationMachine = createMachine({
                   supersededRunID: () => undefined,
                   lastEndedRunID: ({ event }) => event.runID,
                   failureStatus: () => undefined,
+                  failureErrorKind: () => undefined,
                   turnError: () => undefined,
                 }),
               },
@@ -368,6 +381,7 @@ export const conversationMachine = createMachine({
                     event.status === 'interrupted'
                       ? event.status
                       : undefined,
+                  failureErrorKind: ({ event }) => event.errorKind,
                   turnError: ({ event }) => event.error,
                 }),
               },
@@ -380,6 +394,7 @@ export const conversationMachine = createMachine({
                   supersededRunID: () => undefined,
                   lastEndedRunID: ({ event }) => event.runID,
                   failureStatus: () => undefined,
+                  failureErrorKind: () => undefined,
                   turnError: () => undefined,
                 }),
               },

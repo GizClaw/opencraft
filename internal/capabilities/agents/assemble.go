@@ -35,7 +35,7 @@ func (l *Lifecycle) agentDefinition(spec AgentSpec) (agent.Definition, error) {
 	engineSettings, err := json.Marshal(map[string]any{
 		"graph": graph,
 		"build": map[string]any{
-			"timeout": "1h",
+			"timeout": "2h",
 			// The loop guard counts routed nodes and this graph spends
 			// about three nodes per tool round, so 0 lifts it: long-horizon
 			// subagent work is bounded by the run timeout below instead of
@@ -64,7 +64,7 @@ func (l *Lifecycle) agentDefinition(spec AgentSpec) (agent.Definition, error) {
 		},
 		// Bounds one whole run, revise attempts included; the engine's own
 		// per-Execute timeout stays wired above as the inner deadline.
-		Policy:  &agent.Policy{RunTimeout: "1h"},
+		Policy:  &agent.Policy{RunTimeout: "2h"},
 		Prepare: []agent.Hook{l.prepareHook()},
 	}, nil
 }

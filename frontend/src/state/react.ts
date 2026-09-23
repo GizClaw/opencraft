@@ -50,6 +50,7 @@ function conversationSignature(id: string): string {
       turnStage?: string;
       supersededRunID?: string;
       failureStatus?: string;
+      failureErrorKind?: string;
       turnError?: string;
     };
   };
@@ -64,6 +65,7 @@ function conversationSignature(id: string): string {
     context.turnStage ?? '',
     context.supersededRunID ?? '',
     context.failureStatus ?? '',
+    context.failureErrorKind ?? '',
     context.turnError ?? '',
   ].join('|');
 }

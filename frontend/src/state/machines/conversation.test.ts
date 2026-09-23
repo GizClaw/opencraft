@@ -128,6 +128,26 @@ describe('conversation machine', () => {
     expect(regions(actor).turn).toBe('succeeded');
   });
 
+  it('keeps the error kind a deadline carries alongside the cancel', () => {
+    const actor = start();
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    actor.send({
+      type: 'TURN_ENDED',
+      runID: 'r-1',
+      status: 'canceled',
+      error: 'context deadline exceeded',
+      errorKind: 'timeout',
+    });
+
+    expect(regions(actor).turn).toBe('failed');
+    expect(actor.getSnapshot().context).toMatchObject({
+      failureStatus: 'canceled',
+      failureErrorKind: 'timeout',
+      turnError: 'context deadline exceeded',
+    });
+  });
+
   it('a barge-in send supersedes the old run while it is starting', () => {
     const actor = start();
     actor.send({ type: 'SEND_STARTED' });

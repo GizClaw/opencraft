@@ -619,6 +619,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call site that wants the affordance the engine's spinner used to give
   can ask for −/+ cells, which take their accessible name from the
   field's label.
+- Turns get twice the wall clock, and the subagents the assistant
+  registers get the same pair: `build.timeout` (a single `Execute`) and
+  `policy.run_timeout` (the whole run, revise attempts included) move
+  from 1h to 2h together — the inner deadline is the one a single
+  attempt actually feels, so it cannot stay behind — and the node
+  budget stays lifted (`build.max_iterations: 0`), which leaves the
+  run timeout the one bound a turn can hit. A long-horizon turn was
+  reaching the old hour with its work still in flight.
 
 ### Fixed
 
@@ -817,6 +825,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truncates, and the answer it had to shorten is one hover away and
   spelled out in the expanded body, where every option is still listed
   with the ticked ones marked.
+- A turn the deadline ended no longer reads as a turn the user stopped.
+  The engine reports a timeout and a user stop as the same `canceled`
+  status and the UI believed the status: the transcript's notice said
+  "You stopped this reply", the header's chip said "Reply cancelled",
+  and the reason the archive had kept (`context deadline exceeded`,
+  with `error_kind: "timeout"`) was hidden as user-stop noise. The
+  structured error kind now decides. The notice keeps its own words
+  and tone — "Reply timed out", on the same warning rung an
+  interruption uses — keeps the diagnostics, and offers the continue /
+  edit-and-resend actions an interrupted turn does, because a deadline
+  is the same kind of ending: work cut off mid-flight with the partial
+  reply in context. The header chip reads the same split, and the
+  native turn-finished banner stops calling a deadline "Task
+  cancelled".
 
 ## [0.5.3] - 2026-09-17
 

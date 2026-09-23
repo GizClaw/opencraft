@@ -1059,12 +1059,15 @@ export function friendlyInterruption(cause?: string): string | null {
 // isUserStop reports whether a non-completed turn ended because the
 // user stopped it (the cancel button or a barge-in user message), so
 // the turn-end notice can stay concise and provider diagnostics can
-// be hidden.
+// be hidden. The engine reports a deadline and a user stop as the same
+// `canceled` status; errorKind is what tells them apart, and a turn
+// the deadline ended keeps its diagnostics (and its own words).
 export function isUserStop(
   status: TurnStatus | undefined,
   interruptCause?: string,
+  errorKind?: string,
 ): boolean {
-  if (status === 'canceled') return true;
+  if (status === 'canceled') return errorKind !== 'timeout';
   if (status !== 'interrupted') return false;
   return interruptCause === 'user_cancel' || interruptCause === 'user_input';
 }
@@ -1579,7 +1582,7 @@ export const useStore = create<StoreState>((set, get) => {
   const supersededEndState = (
     convID: string,
     runID: string,
-  ): { status: TurnStatus; error?: string } | undefined => {
+  ): { status: TurnStatus; error?: string; errorKind?: string } | undefined => {
     if (get().runConvs[runID] === convID) return undefined;
     const artifact = get().conversations[convID]?.turnArtifacts.find(
       (t) => t.runID === runID,
@@ -1588,7 +1591,7 @@ export const useStore = create<StoreState>((set, get) => {
       ? normalizeTurnStatus(artifact.status)
       : undefined;
     if (!artifact || !status) return { status: 'interrupted' };
-    return { status, error: artifact.error };
+    return { status, error: artifact.error, errorKind: artifact.errorKind };
   };
 
   // markFailedSend marks the live turn entry of a send that never
@@ -1726,6 +1729,7 @@ export const useStore = create<StoreState>((set, get) => {
             ? {
                 supersededEndedStatus: ended.status,
                 supersededEndedError: ended.error,
+                supersededEndedErrorKind: ended.errorKind,
               }
             : {}),
         });

@@ -901,6 +901,7 @@
     "cancelled": "已取消",
     "lastCancelled": "回复已取消",
     "lastCancelledDetail": "你停止了这次回复，任务没有继续运行。",
+    "lastTimedOut": "回复超时",
     "copyOutput": "复制输出",
     "copyMessage": "复制消息",
     "copied": "已复制",

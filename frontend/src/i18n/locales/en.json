@@ -901,6 +901,7 @@
     "cancelled": "Cancelled",
     "lastCancelled": "Reply cancelled",
     "lastCancelledDetail": "You stopped this reply before it finished.",
+    "lastTimedOut": "Reply timed out",
     "copyOutput": "Copy output",
     "copyMessage": "Copy message",
     "copied": "Copied",

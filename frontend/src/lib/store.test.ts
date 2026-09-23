@@ -1851,6 +1851,43 @@ describe('store: send and stream', () => {
     });
   });
 
+  it('a deadline turn_end records the error kind the notice splits on', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    useStore.setState({
+      runConvs: { 'r-1': 's-1' },
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          turnArtifacts: [{ id: 'live-1', start: 0, runID: 'r-1', docs: [] }],
+          messages: [],
+        },
+      },
+    });
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        status: 'canceled',
+        error: 'context deadline exceeded',
+        error_kind: 'timeout',
+      },
+    });
+
+    // The artifact keeps the raw reason for the notice's diagnostics,
+    // the actor keeps the class for its words.
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.turnArtifacts[0]).toMatchObject({
+      status: 'canceled',
+      error: 'context deadline exceeded',
+      errorKind: 'timeout',
+    });
+    expect(stateRoot.registry.get('s-1')?.getSnapshot().context).toMatchObject({
+      failureStatus: 'canceled',
+      failureErrorKind: 'timeout',
+    });
+  });
+
   it('friendlyFailure maps the error kind the backend classified', () => {
     for (const kind of [
       'provider_failure',
@@ -1885,9 +1922,14 @@ describe('store: send and stream', () => {
 });
 
 describe('isUserStop', () => {
-  it('treats canceled turns as user stops', () => {
+  it('treats canceled turns as user stops unless a deadline ended them', () => {
     expect(isUserStop('canceled', 'user_cancel')).toBe(true);
     expect(isUserStop('canceled')).toBe(true);
+    // The engine reports a deadline and a user stop as the same
+    // `canceled` status; the error kind decides, so a deadline keeps
+    // its diagnostics and never reads as something the user did.
+    expect(isUserStop('canceled', undefined, 'timeout')).toBe(false);
+    expect(isUserStop('canceled', '', 'timeout')).toBe(false);
   });
 
   it('treats user_cancel and user_input interruptions as user stops', () => {

@@ -7,6 +7,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
@@ -55,7 +56,7 @@ func (d *Desktop) handleDesktopNotification(typ string, data any) {
 			title = notifyFallbackTitle
 		}
 		title = truncateRunes(title, notifyTitleLimit)
-		statusText := notifyStatus(texts, ev.Status)
+		statusText := notifyStatus(texts, ev.Status, ev.ErrorKind)
 		snippet := strings.TrimSpace(ev.Output)
 		if snippet != "" {
 			snippet = truncateRunes(snippet, notifySnippetLimit)
@@ -94,7 +95,7 @@ func automationNotification(
 	if snippet == "" {
 		snippet = strings.TrimSpace(errorText)
 	}
-	body = notifyStatus(texts, status)
+	body = notifyStatus(texts, status, "")
 	if snippet != "" {
 		body += "\n" + truncateRunes(snippet, notifySnippetLimit)
 	}
@@ -147,14 +148,25 @@ func (d *Desktop) sessionTitle(contextID string) string {
 }
 
 // notifyStatus maps a terminal status onto localized notification copy.
-func notifyStatus(texts core.DesktopTexts, status string) string {
+// errorKind keeps a deadline out of the cancelled banner: the engine
+// reports a timeout and a user stop as the same status, and only the
+// structured class tells them apart.
+func notifyStatus(texts core.DesktopTexts, status, errorKind string) string {
 	switch status {
 	case "completed":
 		return texts.NotifyDone
 	case "failed", "aborted":
 		return texts.NotifyFailed
 	case "canceled":
+		if errorKind == host.ErrorKindTimeout {
+			return texts.NotifyTimeout
+		}
 		return texts.NotifyCancelled
+	case "timeout":
+		// An automation run cut off at the task's own timeout: its
+		// record carries the status apart from failed/canceled, so the
+		// banner names it instead of leaking the enum.
+		return texts.NotifyTimeout
 	case "interrupted":
 		return texts.NotifyInterrupted
 	}

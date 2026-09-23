@@ -22,7 +22,7 @@ agents:
         # graph: { file: graphs/my-assistant.yaml }.
         graph: { embed: assets/graphs/assistant.yaml }
         build:
-          timeout: 1h
+          timeout: 2h
           # flowcraft's loop guard counts routed nodes (a skipped node
           # still routes), and each tool round in this graph runs
           # compact + llm + tools (3 nodes). 0 lifts the guard so long
@@ -32,7 +32,7 @@ agents:
     # Bounds one whole turn end to end — every revise attempt included —
     # which build.timeout (per Execute) does not: a revise restarts it.
     policy:
-      run_timeout: 1h
+      run_timeout: 2h
     prepare:
       - type: opencraft.media
         settings:
