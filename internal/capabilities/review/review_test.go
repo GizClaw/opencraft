@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -138,29 +139,89 @@ func newObserver(
 	return o, queue, mem, usage
 }
 
-// chatTurn is a completed turn with a user request and an answer.
-func chatTurn() *agent.Result {
-	return &agent.Result{Status: agent.StatusCompleted, Messages: []message.Message{
-		message.NewTextMessage(message.RoleUser, "do the thing"),
-		message.NewTextMessage(message.RoleAssistant, "done"),
-	}}
+// worldPrefix is how many context messages the world node prepends to
+// MainChannel. The fixtures carry them because the review projection has
+// to skip them: reviewing the harness's own context is not reviewing the
+// turn.
+const worldPrefix = 2
+
+// boardTurn builds a finished turn in the shape the engine produces: the
+// conversation sits on the board's MainChannel behind the world-state
+// prefix, while Result.Messages carries only the trailing assistant
+// block — the turn's closing answer, or nothing at all when the turn
+// stopped on a tool result (agent.newAssistantMessages). Tool results
+// live on the board alone, so a fixture that handed them to the review
+// through Result.Messages would be testing a shape the engine never
+// produces.
+func boardTurn(status agent.Status, msgs ...message.Message) *agent.Result {
+	board := agent.NewBoard()
+	board.SetVar("world.sections.count", worldPrefix)
+	board.AppendChannelMessages(agent.MainChannel, []message.Message{
+		message.NewTextMessage(message.RoleSystem, "base prompt"),
+		message.NewTextMessage(message.RoleUser, "## Long-term memory\n(none)"),
+	})
+	board.AppendChannelMessages(agent.MainChannel, msgs)
+	return &agent.Result{
+		Status:    status,
+		LastBoard: board,
+		Messages:  trailingAssistant(msgs),
+	}
 }
 
-// toolTurn is a completed turn whose message list carries n tool results.
-func toolTurn(n int) *agent.Result {
-	msgs := []message.Message{message.NewTextMessage(message.RoleUser, "do the thing")}
-	for i := 0; i < n; i++ {
-		msgs = append(msgs, message.Message{
-			Role: message.RoleTool,
-			Content: message.Content{Parts: []message.Part{
-				message.ToolResultPart{Result: message.ToolResult{
-					CallID: "c1", Content: message.NewTextContent("ok"),
-				}},
+// trailingAssistant mirrors the engine's narrowing of Result.Messages:
+// the trailing block of assistant messages, nil when the turn stopped on
+// a tool result.
+func trailingAssistant(msgs []message.Message) []message.Message {
+	end := len(msgs)
+	for end > 0 && msgs[end-1].Role == message.RoleAssistant {
+		end--
+	}
+	if end == len(msgs) {
+		return nil
+	}
+	return append([]message.Message(nil), msgs[end:]...)
+}
+
+// toolRound is one assistant round that called a tool plus that call's
+// result: the message pair the tool node leaves on the board.
+func toolRound(name string) []message.Message {
+	return []message.Message{
+		{Role: message.RoleAssistant, Content: message.Content{Parts: []message.Part{
+			message.ToolCallPart{Call: message.ToolCall{
+				ID: "c-" + name, Name: name, Arguments: json.RawMessage(`{}`),
 			}},
-		})
+		}}},
+		toolResultMessage(),
+	}
+}
+
+// chatTurn is a completed turn with a user request and an answer.
+func chatTurn() *agent.Result {
+	return boardTurn(agent.StatusCompleted,
+		message.NewTextMessage(message.RoleUser, "do the thing"),
+		message.NewTextMessage(message.RoleAssistant, "done"))
+}
+
+// toolTurn is a completed turn whose conversation ran n tool calls.
+func toolTurn(n int) *agent.Result {
+	msgs := []message.Message{
+		message.NewTextMessage(message.RoleUser, "do the thing"),
+	}
+	for i := 0; i < n; i++ {
+		msgs = append(msgs, toolRound("exec_command")...)
 	}
 	msgs = append(msgs, message.NewTextMessage(message.RoleAssistant, "done"))
-	return &agent.Result{Status: agent.StatusCompleted, Messages: msgs}
+	return boardTurn(agent.StatusCompleted, msgs...)
+}
+
+// interruptedTurn is a turn the user stopped mid-tool-loop: it ends on a
+// tool result, so the engine leaves Result.Messages empty.
+func interruptedTurn() *agent.Result {
+	msgs := []message.Message{
+		message.NewTextMessage(message.RoleUser, "do the thing"),
+	}
+	msgs = append(msgs, toolRound("write_file")...)
+	return boardTurn(agent.StatusInterrupted, msgs...)
 }
 
 // answer is the canned model reply the generateFn seam returns.
@@ -303,15 +364,48 @@ func TestOnRunEndRunsOnFailure(t *testing.T) {
 		calls++
 		return answer(`{"memory":[]}`), nil
 	}
-	failed := &agent.Result{Status: agent.StatusFailed, Messages: []message.Message{
-		message.NewTextMessage(message.RoleUser, "do the thing"),
-	}}
+	failed := boardTurn(agent.StatusFailed,
+		message.NewTextMessage(message.RoleUser, "do the thing"))
 	o.OnRunEnd(context.Background(), agent.Identity{ConversationID: "s-1"}, failed)
 	if err := o.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
 		t.Fatalf("a failed turn ran %d reviews, want one", calls)
+	}
+}
+
+// TestOnRunEndReviewsTurnThatStoppedOnAToolResult pins the failure path
+// the review used to miss: a turn cut mid-tool-loop carries nothing in
+// Result.Messages, so a review that projected that field found neither a
+// request nor an answer and silently did nothing. The board still holds
+// the turn, which is what the review has to read.
+func TestOnRunEndReviewsTurnThatStoppedOnAToolResult(t *testing.T) {
+	cfg := enabledCfg()
+	cfg.EveryTurns = 100
+	cfg.MinToolCalls = 100
+	o, _, _, _ := newObserver(t, cfg)
+	calls := 0
+	gotRequest := ""
+	o.generateFn = func(_ context.Context, in promptInput) (inference.GenerateResponse, error) {
+		calls++
+		gotRequest = in.Turn.Request
+		return answer(`{"memory":[]}`), nil
+	}
+	res := interruptedTurn()
+	if len(res.Messages) != 0 {
+		t.Fatalf("fixture must leave the tail block empty, got %d messages",
+			len(res.Messages))
+	}
+	o.OnRunEnd(context.Background(), agent.Identity{ConversationID: "s-1"}, res)
+	if err := o.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("an interrupted turn ran %d reviews, want one", calls)
+	}
+	if gotRequest != "do the thing" {
+		t.Fatalf("reviewed request = %q, want the turn's user message", gotRequest)
 	}
 }
 
@@ -367,9 +461,8 @@ func TestOnRunEndFailureAdvancesTheCadence(t *testing.T) {
 		return answer(`{"memory":[]}`), nil
 	}
 	id := agent.Identity{ConversationID: "s-1"}
-	failed := &agent.Result{Status: agent.StatusFailed, Messages: []message.Message{
-		message.NewTextMessage(message.RoleUser, "do the thing"),
-	}}
+	failed := boardTurn(agent.StatusFailed,
+		message.NewTextMessage(message.RoleUser, "do the thing"))
 	o.OnRunEnd(context.Background(), id, failed)
 	if err := o.Close(); err != nil {
 		t.Fatal(err)
@@ -402,9 +495,8 @@ func TestOnRunEndSkipsFailureWhenOnFailureOff(t *testing.T) {
 		calls++
 		return answer(`{"memory":[]}`), nil
 	}
-	failed := &agent.Result{Status: agent.StatusFailed, Messages: []message.Message{
-		message.NewTextMessage(message.RoleUser, "do the thing"),
-	}}
+	failed := boardTurn(agent.StatusFailed,
+		message.NewTextMessage(message.RoleUser, "do the thing"))
 	o.OnRunEnd(context.Background(), agent.Identity{ConversationID: "s-1"}, failed)
 	if err := o.Close(); err != nil {
 		t.Fatal(err)
@@ -425,7 +517,7 @@ func TestReviewQueuesCandidatesAndReportsUsage(t *testing.T) {
 		return answer(`{"memory":[{"text":"prefers ripgrep","scope":"global","kind":"preference","reason":"stated"}]}`), nil
 	}
 	id := agent.Identity{ConversationID: "s-1", RunID: "run-1"}
-	if err := o.review(ctx, id, chatTurn(), 0); err != nil {
+	if err := o.review(ctx, id, projectTurn(chatTurn())); err != nil {
 		t.Fatalf("review: %v", err)
 	}
 
@@ -464,7 +556,7 @@ func TestReviewReplayDoesNotDuplicateSuggestions(t *testing.T) {
 	}
 	id := agent.Identity{ConversationID: "s-1", RunID: "run-1"}
 	for i := 0; i < 2; i++ {
-		if err := o.review(ctx, id, chatTurn(), 0); err != nil {
+		if err := o.review(ctx, id, projectTurn(chatTurn())); err != nil {
 			t.Fatalf("review %d: %v", i, err)
 		}
 	}
@@ -495,7 +587,7 @@ func TestReviewKnowsDecidedSuggestions(t *testing.T) {
 		return answer(`{"memory":[{"text":"prefers ripgrep"}]}`), nil
 	}
 	id := agent.Identity{ConversationID: "s-1", RunID: "run-1"}
-	if err := o.review(ctx, id, chatTurn(), 0); err != nil {
+	if err := o.review(ctx, id, projectTurn(chatTurn())); err != nil {
 		t.Fatalf("review: %v", err)
 	}
 	rows, err := queue.List(ctx, "", 0)
@@ -515,7 +607,7 @@ func TestReviewBoundsSuggestionsToMax(t *testing.T) {
 		return answer(`{"memory":[{"text":"one"},{"text":"two"},{"text":"three"},{"text":"four"}]}`), nil
 	}
 	id := agent.Identity{ConversationID: "s-1", RunID: "run-1"}
-	if err := o.review(context.Background(), id, chatTurn(), 0); err != nil {
+	if err := o.review(context.Background(), id, projectTurn(chatTurn())); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := queue.List(context.Background(), "", 0)
@@ -538,7 +630,7 @@ func TestReviewDropsDuplicateCandidates(t *testing.T) {
 		return answer(`{"memory":[{"text":"dup"},{"text":"DUP."},{"text":"four"}]}`), nil
 	}
 	id := agent.Identity{ConversationID: "s-1", RunID: "run-1"}
-	if err := o.review(context.Background(), id, chatTurn(), 0); err != nil {
+	if err := o.review(context.Background(), id, projectTurn(chatTurn())); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := queue.List(context.Background(), "", 0)
@@ -562,7 +654,7 @@ func TestReviewSkipsFactsAlreadyStored(t *testing.T) {
 		return answer(`{"memory":[{"text":"prefers ripgrep"},{"text":"new durable fact"}]}`), nil
 	}
 	id := agent.Identity{ConversationID: "s-1", RunID: "run-1"}
-	if err := o.review(ctx, id, chatTurn(), 0); err != nil {
+	if err := o.review(ctx, id, projectTurn(chatTurn())); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := queue.List(ctx, "", 0)
@@ -582,7 +674,7 @@ func TestReviewSkipsOverlongCandidate(t *testing.T) {
 		return answer(`{"memory":[{"text":"` + huge + `"}]}`), nil
 	}
 	id := agent.Identity{ConversationID: "s-1", RunID: "run-1"}
-	if err := o.review(ctx, id, chatTurn(), 0); err != nil {
+	if err := o.review(ctx, id, projectTurn(chatTurn())); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := queue.List(ctx, "", 0)
@@ -600,7 +692,7 @@ func TestReviewMalformedAnswerIsAnError(t *testing.T) {
 		return answer("no json here"), nil
 	}
 	id := agent.Identity{ConversationID: "s-1", RunID: "run-1"}
-	if err := o.review(context.Background(), id, chatTurn(), 0); err == nil {
+	if err := o.review(context.Background(), id, projectTurn(chatTurn())); err == nil {
 		t.Fatal("a malformed answer must surface as an error")
 	}
 	rows, err := queue.List(context.Background(), "", 0)
@@ -619,18 +711,40 @@ func TestReviewNoopWhenTurnHasNoText(t *testing.T) {
 		calls++
 		return answer(`{"memory":[]}`), nil
 	}
-	res := &agent.Result{Status: agent.StatusCompleted, Messages: []message.Message{
-		{Role: message.RoleTool, Content: message.Content{Parts: []message.Part{
-			message.ToolResultPart{Result: message.ToolResult{
-				CallID: "c1", Content: message.NewTextContent("ok"),
-			}},
-		}}},
-	}}
-	if err := o.review(context.Background(), agent.Identity{ConversationID: "s-1"}, res, 1); err != nil {
+	// Neither a request nor an answer: the degenerate projection (no
+	// board and an empty tail), which has nothing to judge. A review of a
+	// real turn always carries at least the user's request.
+	bare := runTurn{Status: string(agent.StatusCompleted)}
+	if err := o.review(context.Background(),
+		agent.Identity{ConversationID: "s-1"}, bare); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 0 {
 		t.Fatalf("a text-free turn ran %d model calls, want none", calls)
+	}
+}
+
+// TestProbeRefusesToSendKnobsTheRouterCannotCompile pins the review's
+// side of a capability contract this repo spells out in
+// config.ModelReasoning: a model without the reasoning toggle rejects
+// reasoning_enabled outright (unsupported_feature), so a background call
+// that always sends it fails on every turn of a non-reasoning
+// deployment. The probe must therefore answer "no" whenever the router
+// cannot compile the knob — here, because the fixture router has no
+// model to compile against. The end-to-end proof that the review
+// survives such a deployment lives in the headless E2E
+// (TestHeadlessReviewQueuesSuggestionAfterToolTurn).
+func TestProbeRefusesToSendKnobsTheRouterCannotCompile(t *testing.T) {
+	o, _, _, _ := newObserver(t, enabledCfg())
+	request := inference.GenerateRequest{Input: inference.GenerateInput{
+		Role: inference.InputRoleUser,
+		Content: inference.InputContent{
+			Content: message.NewTextContent("review this"),
+			Intent:  inference.Intent{Text: &inference.TextIntent{}},
+		},
+	}}
+	if o.reasoningCanBeDisabled(context.Background(), request) {
+		t.Fatal("the probe would send a knob the router cannot compile")
 	}
 }
 

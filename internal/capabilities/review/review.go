@@ -10,6 +10,11 @@
 // when it starts), bounded by its own timeout, and reports its model
 // usage back so a background call is never invisible in the usage
 // tables.
+//
+// The trigger and the prompt both read the turn's conversation from the
+// board it left behind (see turnMessages): Result.Messages is only the
+// trailing assistant block, so a review built on it could never see a
+// tool result, the user's request or an intermediate round.
 package review
 
 import (
@@ -181,14 +186,6 @@ func (o *Observer) Close() error {
 	return nil
 }
 
-// reasoningDisabled disables provider reasoning for the review call: the
-// answer is a short JSON document, and a thinking pass only costs
-// latency and tokens.
-func reasoningDisabled() *bool {
-	disabled := false
-	return &disabled
-}
-
 // OnRunEnd decides whether this turn is worth reviewing and, when it is,
 // starts the review detached from the turn. Observer side effects are
 // best-effort by contract: a review failure is logged, never returned.
@@ -202,13 +199,16 @@ func (o *Observer) OnRunEnd(
 	if o.router == nil || o.queue.Queue == nil || o.queue.Queue.Empty() {
 		return
 	}
-	toolCalls := countToolResults(res.Messages)
+	// The projection is built once and carried through: the gate and the
+	// prompt must judge the same turn text, or a turn can pass the gate
+	// and then be reviewed with nothing in the prompt.
+	turn := projectTurn(res)
 	failed := res.Status != agent.StatusCompleted
 	if failed {
 		if !cfg.OnFailure {
 			return
 		}
-	} else if toolCalls < cfg.MinToolCalls {
+	} else if turn.ToolCalls < cfg.MinToolCalls {
 		return
 	}
 	// A conversation may only have one review in flight: two reviews of
@@ -239,7 +239,7 @@ func (o *Observer) OnRunEnd(
 		defer o.release(id.ConversationID)
 		runCtx, cancel := context.WithTimeout(detached, timeout)
 		defer cancel()
-		if err := o.review(runCtx, id, res, toolCalls); err != nil {
+		if err := o.review(runCtx, id, turn); err != nil {
 			telemetry.WarnErr(runCtx, "review: post-turn review failed", err,
 				otellog.String("conversation.id", id.ConversationID),
 				otellog.String("run.id", id.RunID))
@@ -342,11 +342,16 @@ type runTurn struct {
 // review performs one review: build the prompt, call the model once,
 // validate the proposals and queue them.
 func (o *Observer) review(
-	ctx context.Context, id agent.Identity, res *agent.Result, toolCalls int,
+	ctx context.Context, id agent.Identity, turn runTurn,
 ) error {
 	ctx = WithReviewContext(ctx)
-	turn := projectTurn(res, toolCalls)
 	if strings.TrimSpace(turn.Request) == "" && strings.TrimSpace(turn.Answer) == "" {
+		// Nothing to judge. A turn that reached the gate always carries
+		// at least its user request, so this is the degenerate shape
+		// (neither a board nor a tail): say so instead of vanishing.
+		telemetry.Debug(ctx, "review: turn has no reviewable text; skipping",
+			otellog.String("conversation.id", id.ConversationID),
+			otellog.String("run.id", id.RunID))
 		return nil
 	}
 	facts, err := o.existingFacts(ctx)
@@ -396,25 +401,67 @@ func (o *Observer) generate(
 	if maxTokens <= 0 {
 		maxTokens = 1024
 	}
-	intent := &inference.TextIntent{
-		MaxOutputTokens:  &maxTokens,
-		ReasoningEnabled: reasoningDisabled(),
-	}
-	response, _, err := o.router.Generate(ctx, inference.GenerateRequest{
+	request := inference.GenerateRequest{
 		Context: prompt.contextMessages(),
 		Input: inference.GenerateInput{
 			Role: inference.InputRoleUser,
 			Content: inference.InputContent{
 				Content: message.NewTextContent(prompt.userText()),
-				Intent:  inference.Intent{Text: intent},
+				Intent: inference.Intent{Text: &inference.TextIntent{
+					MaxOutputTokens: &maxTokens,
+				}},
 			},
 		},
-	})
+	}
+	// Reasoning off is the intent — the answer is a short JSON document
+	// and a thinking pass only costs latency and tokens — but the knob is
+	// a model capability the router cannot honour everywhere: a model
+	// without it refuses the call before anything reaches the provider,
+	// which would leave the review failing on every turn of a
+	// non-reasoning deployment. Ask the compiler first and send the knob
+	// only where it survives.
+	if o.reasoningCanBeDisabled(ctx, request) {
+		disabled := false
+		request.Input.Content.Intent.Text.ReasoningEnabled = &disabled
+	}
+	response, _, err := o.router.Generate(ctx, request)
 	if err != nil {
 		return inference.GenerateResponse{}, fmt.Errorf(
 			"review: generate: %w", err)
 	}
 	return response, nil
+}
+
+// reasoningCanBeDisabled reports whether the routed model publishes the
+// reasoning toggle, by compiling the request with the knob through the
+// router's local compiler (the probe the compaction node uses, minus the
+// effort fallback it needs for its own budget): no provider I/O, and the
+// answer is exactly what Generate would enforce. The output cap is left
+// off the probe — it has no bearing on whether the knob compiles, and a
+// model with a minimum output length would fail the probe for a reason
+// that has nothing to do with reasoning.
+func (o *Observer) reasoningCanBeDisabled(
+	ctx context.Context, base inference.GenerateRequest,
+) bool {
+	probe := base.Clone()
+	if probe.Input.Content.Intent.Text == nil {
+		probe.Input.Content.Intent.Text = &inference.TextIntent{}
+	}
+	probe.Input.Content.Intent.Text.MaxOutputTokens = nil
+	disabled := false
+	probe.Input.Content.Intent.Text.ReasoningEnabled = &disabled
+	explanation, _, err := o.router.ExplainGenerate(ctx, probe)
+	if err != nil {
+		return false
+	}
+	for _, decision := range explanation.Decisions {
+		if decision.Field == inference.FieldGenerateIntentReasoningEnabled {
+			return decision.Disposition == inference.Native
+		}
+	}
+	// A decision that never mentions the field is one the compiler
+	// dropped: sending it would fail the call.
+	return false
 }
 
 // existingFacts reads the facts already stored for this workspace: the
@@ -588,16 +635,32 @@ func suggestionID(id agent.Identity, index int) string {
 	return fmt.Sprintf("rv-%s-%d", run, index)
 }
 
+// turnMessages projects the conversation the turn actually exchanged.
+//
+// Result.Messages is not that: the engine narrows it to the trailing
+// assistant block — the turn's closing answer, or nothing at all when
+// the turn stopped on a tool result — so a reader of that field never
+// sees a tool result, the user's request or an intermediate round. The
+// board is where the turn's conversation lives, and ExtractTurnMessages
+// is the projection that tells the world-state prefix and the
+// compaction summaries apart from what the turn exchanged. It falls
+// back to Result.Messages for boards without the world node's marker
+// (custom graphs, non-graph engines), which is the same fallback the
+// memory archive uses.
+func turnMessages(res *agent.Result) []message.Message {
+	if res == nil {
+		return nil
+	}
+	return opmemory.ExtractTurnMessages(res.LastBoard, nil, res.Messages)
+}
+
 // projectTurn reduces a finished turn to what the prompt needs: the
 // user's request, the last assistant answer, the tools that ran and the
 // outcome. Full message bodies stay out: the review is about durable
 // facts, not about replaying the turn.
-func projectTurn(res *agent.Result, toolCalls int) runTurn {
-	turn := runTurn{
-		ToolCalls: toolCalls,
-		Status:    string(res.Status),
-	}
-	for _, msg := range res.Messages {
+func projectTurn(res *agent.Result) runTurn {
+	turn := runTurn{Status: string(res.Status)}
+	for _, msg := range turnMessages(res) {
 		switch msg.Role {
 		case message.RoleUser:
 			if text := strings.TrimSpace(msg.Content.Text()); text != "" {
@@ -613,12 +676,15 @@ func projectTurn(res *agent.Result, toolCalls int) runTurn {
 			}
 		}
 		for _, part := range msg.Content.Parts {
-			call, ok := part.(message.ToolCallPart)
-			if !ok {
-				continue
-			}
-			if name := strings.TrimSpace(call.Call.Name); name != "" {
-				turn.Tools = appendUnique(turn.Tools, name)
+			switch typed := part.(type) {
+			case message.ToolCallPart:
+				if name := strings.TrimSpace(typed.Call.Name); name != "" {
+					turn.Tools = appendUnique(turn.Tools, name)
+				}
+			case message.ToolResultPart:
+				// One completed tool call produces exactly one
+				// result, so this is the turn's real work volume.
+				turn.ToolCalls++
 			}
 		}
 	}
@@ -646,18 +712,4 @@ func excerpt(text string, limit int) string {
 		return text
 	}
 	return string(runes[:limit]) + "…"
-}
-
-// countToolResults counts the tool results in one turn: each completed
-// tool call produces exactly one, so it is the turn's real work volume.
-func countToolResults(msgs []message.Message) int {
-	n := 0
-	for _, msg := range msgs {
-		for _, part := range msg.Content.Parts {
-			if _, ok := part.(message.ToolResultPart); ok {
-				n++
-			}
-		}
-	}
-	return n
 }
