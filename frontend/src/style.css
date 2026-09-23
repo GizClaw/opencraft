@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import './styles/controls.css';
 
 /* Design tokens.
  *
@@ -323,8 +324,10 @@ body,
 
 /* Text inputs: the composer already signals focus via its container's
    focus-within border, and the caret is the visible indicator; a second
-   ring on the bare textarea reads as a stray highlight. */
-input:focus-visible,
+   ring on the bare textarea reads as a stray highlight. Control inputs
+   stay out of this rule: for a checkbox, radio or range the outline
+   above is the only focus affordance there is. */
+input:not([type='checkbox'], [type='radio'], [type='range']):focus-visible,
 textarea:focus-visible {
   outline: none;
 }

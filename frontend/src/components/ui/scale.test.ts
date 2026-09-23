@@ -8,13 +8,17 @@
 // introduced to remove.
 //
 // The scan covers src/**/*.ts(x) minus test files (selectors inside
-// tests are not styling) and minus this file.
+// tests are not styling) and minus this file. src/styles/*.css -- the
+// native-control skin -- is scanned by the skin rules below: that file
+// is the one surface a future skin overrides, so it has to stay
+// repaintable from tokens alone.
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const STYLES_DIR = join(SRC_DIR, 'styles');
 
 // Raw type sizes: text-[13px], text-[0.7143rem], …
 const RAW_TEXT_SIZE = /\btext-\[\d[^\]]*?(?:rem|px)\]/g;
@@ -92,6 +96,32 @@ function offenders(pattern: RegExp): string[] {
 function brokenLines(pattern: RegExp, ok: (line: string) => boolean): string[] {
   const found: string[] = [];
   for (const file of sourceFiles()) {
+    const lines = readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      pattern.lastIndex = 0;
+      if (pattern.test(line) && !ok(line)) {
+        const rel = file.slice(SRC_DIR.length + 1);
+        found.push(`${rel}:${i + 1}`);
+      }
+    });
+  }
+  return found;
+}
+
+/** styleFiles lists src/styles/*.css, the skin-owned stylesheets. */
+function styleFiles(): string[] {
+  return readdirSync(STYLES_DIR)
+    .filter((name) => name.endsWith('.css'))
+    .map((name) => join(STYLES_DIR, name));
+}
+
+/** cssBrokenLines lists src/styles file:line of matches failing `ok`. */
+function cssBrokenLines(
+  pattern: RegExp,
+  ok: (line: string) => boolean,
+): string[] {
+  const found: string[] = [];
+  for (const file of styleFiles()) {
     const lines = readFileSync(file, 'utf8').split('\n');
     lines.forEach((line, i) => {
       pattern.lastIndex = 0;
@@ -186,6 +216,33 @@ describe('design scale', () => {
 
   it('takes colors from the palette, not from literals', () => {
     expect(offenders(RAW_COLOR)).toEqual([]);
+  });
+
+  it('paints the control skin from tokens, not literals', () => {
+    expect(styleFiles().length).toBeGreaterThan(0);
+    // url() payloads are stripped before the color rule: the check
+    // mark's data URI is the one shaped exception (white on an accent
+    // fill), and everything else has to read from a token.
+    expect(
+      cssBrokenLines(RAW_COLOR, (line) => {
+        const withoutUrls = line.replace(/url\([^)]*\)/g, '');
+        RAW_COLOR.lastIndex = 0;
+        return !RAW_COLOR.test(withoutUrls);
+      }),
+    ).toEqual([]);
+  });
+
+  it('keeps !important out of the control skin', () => {
+    expect(cssBrokenLines(/!important/, () => false)).toEqual([]);
+  });
+
+  it('imports the control skin before any rule block', () => {
+    const css = readFileSync(join(SRC_DIR, 'style.css'), 'utf8');
+    const at = css.indexOf('./styles/controls.css');
+    expect(at).toBeGreaterThan(-1);
+    // A CSS @import after a declaration is ignored, and the skin would
+    // silently fall off the page.
+    expect(css.slice(0, at)).not.toContain('{');
   });
 
   it('hints through data-tip, not the native title attribute', () => {

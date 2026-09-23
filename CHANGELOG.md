@@ -439,6 +439,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on top of it, so a workspace with a live turn shows the turn plus four
   stored rows, and "More sessions" still counts only the stored rows it
   folds away.
+- The app paints its own checkboxes, radios, number fields and sliders.
+  One skin (`frontend/src/styles/controls.css`, imported by
+  `style.css`) covers them from element selectors, so the same control
+  can no longer render three ways depending on which call site spelled
+  `accent-accent`, `accent-[var(--color-accent)]` or a size of its own —
+  and a future theme overrides every control at one address instead of N
+  call sites. The skin reads only design tokens (the check mark's data
+  URI is its one paint literal, and the scale contract test now scans
+  `src/styles/*.css` for raw colors outside `url()` and for
+  `!important`), and number fields lose the engine's spinner.
+  Checkboxes, radios and sliders also keep the keyboard focus ring the
+  text-input rule used to swallow — for them the outline is the only
+  focus affordance there is.
 
 ### Fixed
 
