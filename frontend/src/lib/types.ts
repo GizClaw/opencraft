@@ -364,8 +364,28 @@ export interface SessionTurn {
   error_kind?: string;
   request_id?: string;
   response_id?: string;
+  // kind names the author of a turn the app itself wrote
+  // ("delegation_note"); delegation_note is that turn's decoded record,
+  // so the transcript renders it from fields instead of parsing the
+  // text the model reads. Ordinary turns carry neither.
+  kind?: string;
+  delegation_note?: DelegationNote;
   messages: HistoryMessage[];
   artifacts?: ArtifactDTO[];
+}
+
+// DelegationNote is one finished delegation as the app filed it: the
+// subagent that ran, how it ended, and the answer (or failure) quoted
+// for the model. The values are the note writer's own fields — the
+// prose the model reads is a rendering of these, not the other way
+// around — so a card can show them without parsing the sentence.
+export interface DelegationNote {
+  target: string;
+  status: string;
+  card_id?: string;
+  run_id?: string;
+  parent_run_id?: string;
+  body?: string;
 }
 
 export type HistoryPart =

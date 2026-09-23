@@ -147,6 +147,48 @@ func TestConversationDeleteRemovesAllRows(t *testing.T) {
 	}
 }
 
+func TestListArchiveTurnsAfterKeepsOnlyNewerTurns(t *testing.T) {
+	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
+	ctx := context.Background()
+	conv := state.Conversation{ID: "s-1"}
+	// Seq starts at 1, so the turns below carry seq 1, 2 and 3.
+	for _, run := range []string{"run-1", "run-2", "run-3"} {
+		if err := s.CommitConversationTurn(ctx, conv, state.ArchiveTurn{
+			RunID: run,
+		}, []state.ArchiveMessage{
+			{Role: string(message.RoleUser), Content: message.Content{
+				Parts: []message.Part{message.TextPart{Text: run}},
+			}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	turns, err := s.ListArchiveTurnsAfter(ctx, "s-1", 1, 0)
+	if err != nil {
+		t.Fatalf("ListArchiveTurnsAfter: %v", err)
+	}
+	if len(turns) != 2 || turns[0].RunID != "run-2" || turns[1].RunID != "run-3" {
+		t.Fatalf("turns after seq 1 = %+v", turns)
+	}
+	// Oldest first, and the limit keeps the turns closest to the cursor:
+	// this is a tail read, not a page.
+	turns, err = s.ListArchiveTurnsAfter(ctx, "s-1", 0, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 || turns[0].RunID != "run-1" || turns[1].RunID != "run-2" {
+		t.Fatalf("limited tail = %+v", turns)
+	}
+	turns, err = s.ListArchiveTurnsAfter(ctx, "s-1", 3, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 0 {
+		t.Fatalf("turns past the end = %+v", turns)
+	}
+}
+
 func TestConversationByImportSource(t *testing.T) {
 	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
 	ctx := context.Background()

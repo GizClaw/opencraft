@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -89,6 +90,82 @@ func TestImportPersistsAndDedupes(t *testing.T) {
 	}
 	if again != id {
 		t.Fatalf("duplicate import = %q, want %q", again, id)
+	}
+}
+
+// TestImportRoundTripsAppAuthoredTurns keeps a bundle's fidelity: a
+// delegation note re-imports with its author and its fields, so the
+// transcript card survives the trip, and a bundle whose first turn is
+// such a note is still named after the first turn a person wrote.
+func TestImportRoundTripsAppAuthoredTurns(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.CloseDB() })
+	ctx := context.Background()
+
+	const prose = "[delegated worker \"researcher\" finished: succeeded]\n\n" +
+		"the report"
+	payload := json.RawMessage(`{"target":"researcher","status":"succeeded",` +
+		`"body":"the report"}`)
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	req := ImportRequest{
+		Source: "opencraft:s-exported",
+		Turns: []ImportTurn{
+			{
+				At: at,
+				Messages: []message.Message{
+					message.NewTextMessage(message.RoleUser, prose),
+				},
+				Kind:    "delegation_note",
+				Payload: payload,
+			},
+			{
+				At: at.Add(time.Minute),
+				Messages: []message.Message{
+					message.NewTextMessage(message.RoleUser, "what the user asked"),
+				},
+			},
+		},
+	}
+	id, err := store.Import(ctx, req)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+
+	turns, err := store.Turns(ctx, id)
+	if err != nil {
+		t.Fatalf("turns: %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("turns = %d, want both turns", len(turns))
+	}
+	if turns[0].Kind != "delegation_note" ||
+		string(turns[0].Payload) != string(payload) {
+		t.Fatalf("note turn = %+v", turns[0])
+	}
+	// The note is not the user speaking, here either.
+	if title, err := store.FirstUserMessage(id); err != nil ||
+		title != "what the user asked" {
+		t.Fatalf("first user message = %q (%v)", title, err)
+	}
+	metas, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 0 {
+		t.Fatalf("pending import visible before CompleteImport: %+v", metas)
+	}
+	if err := store.CompleteImport(ctx, id); err != nil {
+		t.Fatalf("CompleteImport: %v", err)
+	}
+	metas, err = store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 || metas[0].Title != "what the user asked" {
+		t.Fatalf("imported title = %+v, want the user's first line", metas)
 	}
 }
 

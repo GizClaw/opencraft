@@ -1,6 +1,7 @@
 package bindings
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,10 +11,13 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
@@ -67,12 +71,36 @@ type SessionTurnDTO struct {
 	// InterruptCause / ErrorKind are the structured class of a failed
 	// turn, so the transcript renders the same copy as the live turn
 	// without parsing Error.
-	InterruptCause string              `json:"interrupt_cause,omitempty"`
-	ErrorKind      string              `json:"error_kind,omitempty"`
-	RequestID      string              `json:"request_id,omitempty"`
-	ResponseID     string              `json:"response_id,omitempty"`
-	Messages       []message.Message   `json:"messages"`
-	Artifacts      []sessions.Artifact `json:"artifacts,omitempty"`
+	InterruptCause string `json:"interrupt_cause,omitempty"`
+	ErrorKind      string `json:"error_kind,omitempty"`
+	RequestID      string `json:"request_id,omitempty"`
+	ResponseID     string `json:"response_id,omitempty"`
+	// Kind names who wrote a turn the app itself archived (a
+	// delegation note); Note is that turn's decoded record. Ordinary
+	// turns carry neither, and a payload that does not decode leaves
+	// Note nil — the transcript then renders the row's text instead of
+	// the card, which loses nothing.
+	Kind      string              `json:"kind,omitempty"`
+	Note      *DelegationNoteDTO  `json:"delegation_note,omitempty"`
+	Messages  []message.Message   `json:"messages"`
+	Artifacts []sessions.Artifact `json:"artifacts,omitempty"`
+}
+
+// DelegationNoteDTO is the structured record of one delegation note
+// turn: a finished subagent's report as the app filed it, so the
+// transcript renders the card without parsing the note's prose.
+type DelegationNoteDTO struct {
+	// Target is the subagent that produced the report.
+	Target string `json:"target"`
+	// Status is its terminal delegation status.
+	Status string `json:"status"`
+	// CardID / RunID / ParentRunID name the delegation on the board.
+	CardID      string `json:"card_id,omitempty"`
+	RunID       string `json:"run_id,omitempty"`
+	ParentRunID string `json:"parent_run_id,omitempty"`
+	// Body is the quoted answer (or failure), the same excerpt the
+	// note carries for the model.
+	Body string `json:"body,omitempty"`
 }
 
 // SessionDeleteResult reports a deleted conversation. When the deleted
@@ -87,7 +115,9 @@ type SessionDeleteResult struct {
 	Model     string `json:"model,omitempty"`
 }
 
-func toSessionTurnDTO(t sessions.TurnRecord) SessionTurnDTO {
+func toSessionTurnDTO(
+	ctx context.Context, conversationID string, t sessions.TurnRecord,
+) SessionTurnDTO {
 	requestedAt := t.RequestedAt
 	if requestedAt.IsZero() {
 		requestedAt = t.At
@@ -119,8 +149,40 @@ func toSessionTurnDTO(t sessions.TurnRecord) SessionTurnDTO {
 		ErrorKind:      t.ErrorKind,
 		RequestID:      t.RequestID,
 		ResponseID:     t.ResponseID,
+		Kind:           t.Kind,
+		Note:           delegationNoteDTO(ctx, conversationID, t),
 		Messages:       t.Messages,
 		Artifacts:      t.Artifacts,
+	}
+}
+
+// delegationNoteDTO decodes a note turn's payload. Only the kind this
+// build knows is decoded; anything else stays a plain turn, so a stored
+// kind from a newer build is carried through (Kind) without being
+// guessed at. A payload that does not decode is dropped with a warning
+// rather than failing the read: the rows that do load must not depend
+// on one row the app itself wrote badly.
+func delegationNoteDTO(
+	ctx context.Context, conversationID string, t sessions.TurnRecord,
+) *DelegationNoteDTO {
+	if t.Kind != subagents.KindDelegationNote || len(t.Payload) == 0 {
+		return nil
+	}
+	var payload subagents.NotePayload
+	if err := json.Unmarshal(t.Payload, &payload); err != nil {
+		telemetry.WarnErr(ctx, "session: decode delegation note payload failed",
+			err,
+			otellog.String("conversation.id", conversationID),
+			otellog.String("kind", t.Kind))
+		return nil
+	}
+	return &DelegationNoteDTO{
+		Target:      payload.Target,
+		Status:      payload.Status,
+		CardID:      payload.CardID,
+		RunID:       payload.RunID,
+		ParentRunID: payload.ParentRunID,
+		Body:        payload.Body,
 	}
 }
 
@@ -206,6 +268,8 @@ func importRequestFromTurns(
 			StartedAt:   optionalTime(turn.StartedAt),
 			FinishedAt:  optionalTime(turn.FinishedAt),
 			Messages:    turn.Messages,
+			Kind:        turn.Kind,
+			Payload:     turn.Payload,
 		})
 	}
 	return bundle
@@ -330,7 +394,33 @@ func (b *Session) Turns(
 	}
 	out := make([]SessionTurnDTO, 0, len(turns))
 	for _, turn := range turns {
-		out = append(out, toSessionTurnDTO(turn))
+		out = append(out, toSessionTurnDTO(ctx, id, turn))
+	}
+	return out, nil
+}
+
+// TurnsSince returns the archived turns appended after one sequence
+// number. A transcript that is already on screen uses it to pick up a
+// turn the app wrote on its own — a delegation note is appended when
+// its subagent finishes, which can be long after the turn that spawned
+// it ended — without re-reading the turns the client already holds.
+func (b *Session) TurnsSince(
+	id string,
+	afterSeq int64,
+	limit int,
+) ([]SessionTurnDTO, error) {
+	ctx := b.core.Shell.Context()
+	h := b.core.Runtime.Current()
+	if h == nil || h.Sessions() == nil {
+		return nil, errNotReady("session")
+	}
+	turns, err := h.Sessions().TurnsSince(ctx, id, afterSeq, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SessionTurnDTO, 0, len(turns))
+	for _, turn := range turns {
+		out = append(out, toSessionTurnDTO(ctx, id, turn))
 	}
 	return out, nil
 }
@@ -354,7 +444,7 @@ func (b *Session) TurnByRunID(
 	if err != nil {
 		return SessionTurnDTO{}, err
 	}
-	return toSessionTurnDTO(turn), nil
+	return toSessionTurnDTO(ctx, conversationID, turn), nil
 }
 
 func (b *Session) exportsDir() (string, error) {
@@ -367,6 +457,24 @@ func (b *Session) exportsDir() (string, error) {
 		return "", err
 	}
 	return layout.ExportsDir, nil
+}
+
+// delegationNoteHeading labels a note turn in the exported markdown:
+// the subagent and how it ended when the payload decodes, and a plain
+// heading otherwise — a note whose fields are missing is still the app
+// reporting, never "User".
+func delegationNoteHeading(
+	ctx context.Context, conversationID string, turn sessions.TurnRecord,
+) string {
+	note := delegationNoteDTO(ctx, conversationID, turn)
+	if note == nil {
+		return "Delegated result"
+	}
+	heading := "Delegated result: " + note.Target
+	if note.Status != "" {
+		heading += " (" + note.Status + ")"
+	}
+	return heading
 }
 
 // ExportMarkdown writes a human-readable transcript and returns path.
@@ -396,12 +504,19 @@ func (b *Session) ExportMarkdown(
 		pending = ""
 	}
 	for _, turn := range turns {
+		// A turn the app wrote (a delegation note) is not the user
+		// speaking: the exported transcript labels it as what it is
+		// instead of putting the app's words in the user's mouth.
+		userHeading := "User"
+		if turn.Kind == subagents.KindDelegationNote {
+			userHeading = delegationNoteHeading(ctx, id, turn)
+		}
 		for _, m := range turn.Messages {
 			switch m.Role {
 			case message.RoleUser:
 				flush()
 				if text := strings.TrimSpace(m.Content.Text()); text != "" {
-					fmt.Fprintf(&bld, "## User\n\n%s\n\n", text)
+					fmt.Fprintf(&bld, "## %s\n\n%s\n\n", userHeading, text)
 				}
 			case message.RoleAssistant:
 				if text := strings.TrimSpace(m.Content.Text()); text != "" {

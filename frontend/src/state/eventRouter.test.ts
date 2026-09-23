@@ -8,6 +8,7 @@ function fakeSink() {
     writeConversationData: () => calls.push('conversation-data'),
     writeGlobalData: () => calls.push('global-data'),
     refreshSessionList: vi.fn(),
+    sessionUpdated: vi.fn(),
     refreshAutomations: vi.fn(),
     refreshAutomationRuns: vi.fn(),
     conversationForRunID: () => undefined,
@@ -133,5 +134,31 @@ describe('event router', () => {
     expect(root.registry.get('s-1')?.getSnapshot().value).toMatchObject({
       turn: 'running',
     });
+  });
+
+  it('hands session_updated to the data layer with its conversation id', () => {
+    const root = new StateRoot();
+    const { sink } = fakeSink();
+    routeBackendEvent(
+      { type: 'session_updated', data: { id: 's-9' } },
+      { root, data: sink },
+    );
+
+    // The list refresh and the transcript tail check are two different
+    // repairs: the sidebar needs the new order, an open conversation
+    // needs the turns the app appended on its own.
+    expect(sink.sessionUpdated).toHaveBeenCalledWith('s-9');
+    expect(sink.refreshSessionList).toHaveBeenCalled();
+  });
+
+  it('ignores a session_updated without a conversation id', () => {
+    const root = new StateRoot();
+    const { sink } = fakeSink();
+    routeBackendEvent(
+      { type: 'session_updated', data: {} },
+      { root, data: sink },
+    );
+
+    expect(sink.sessionUpdated).not.toHaveBeenCalled();
   });
 });

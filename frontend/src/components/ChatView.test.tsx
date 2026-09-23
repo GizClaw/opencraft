@@ -2480,6 +2480,102 @@ describe('ChatView draft session defaults', () => {
   });
 });
 
+// A delegation note is an archived turn the app wrote to the model. It
+// renders as a card from the turn's fields — never as a user bubble,
+// whose accent pill is the transcript's word for "I started this turn".
+describe('ChatView delegation note', () => {
+  const noteRow = (): MessageView => ({
+    id: 'm-note',
+    role: 'user',
+    text: '[delegated worker "researcher" finished: succeeded]\n\n## findings\n\nthe report',
+    items: [],
+    attachments: [],
+    kind: 'delegation_note',
+    note: {
+      target: 'researcher',
+      status: 'succeeded',
+      card_id: 'card-1',
+      run_id: 'run-child',
+      parent_run_id: 'run-parent',
+      body: '## findings\n\nthe report',
+    },
+  });
+
+  it('renders the archived fields as a card instead of a bubble', () => {
+    setConversation([noteRow()]);
+    render(<ChatView />);
+
+    const card = screen.getByTestId('delegation-note');
+    expect(card).toBeInTheDocument();
+    expect(card.dataset.status).toBe('succeeded');
+    expect(document.querySelector('.user-bubble')).toBeNull();
+    // The header names the subagent and the outcome; the body renders
+    // the report as markdown, not as the bracketed line the model got.
+    const scope = within(card);
+    expect(scope.getByText('Delegated result')).toBeInTheDocument();
+    expect(scope.getByText('researcher')).toBeInTheDocument();
+    expect(scope.getByText('Succeeded')).toBeInTheDocument();
+    expect(
+      scope.getByRole('heading', { name: 'findings' }),
+    ).toBeInTheDocument();
+    expect(card.textContent).not.toContain('[delegated worker');
+    // The reference line names the delegation for anyone who wants to
+    // look it up again.
+    expect(card.textContent).toContain('card card-1');
+    expect(card.textContent).toContain('asked by run run-parent');
+  });
+
+  it('collapses and expands', async () => {
+    setConversation([noteRow()]);
+    render(<ChatView />);
+
+    const card = screen.getByTestId('delegation-note');
+    await userEvent.click(
+      within(card).getByRole('button', { name: 'Hide the report' }),
+    );
+    expect(card.textContent).not.toContain('the report');
+    await userEvent.click(
+      within(card).getByRole('button', { name: 'Show the report' }),
+    );
+    await waitFor(() => expect(card.textContent).toContain('the report'));
+  });
+
+  // A note whose fields did not decode (a kind from a newer build, or a
+  // payload the store could not read) still renders as the app's card,
+  // from its own text: dressing it as the user speaking would be wrong
+  // in a way the missing fields are not.
+  it('falls back to the note text when the fields did not decode', () => {
+    setConversation([
+      {
+        id: 'm-note-broken',
+        role: 'user',
+        text: '[delegated worker "researcher" finished: succeeded]\n\nraw text',
+        items: [],
+        attachments: [],
+        kind: 'delegation_note',
+      },
+      {
+        id: 'm-ask',
+        role: 'user',
+        text: 'the real question',
+        items: [],
+        attachments: [],
+      },
+    ]);
+    render(<ChatView />);
+
+    const card = screen.getByTestId('delegation-note');
+    expect(card.textContent).toContain('raw text');
+    expect(card.getAttribute('data-status')).toBeNull();
+    expect(document.querySelector('.user-bubble')).not.toBeNull();
+    expect(
+      within(document.querySelector('.user-bubble') as HTMLElement).getByText(
+        /the real question/,
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('ChatView user bubbles', () => {
   it('renders the sent text as markdown inside the bubble', () => {
     setConversation([

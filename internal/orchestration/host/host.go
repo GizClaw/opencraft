@@ -657,6 +657,42 @@ func (m *Manager) RecordMetric(
 	}
 }
 
+// MetricSample is one local metric observation staged for a batch write.
+// The timestamp is not part of the payload: RecordMetrics stamps every
+// sample in one call with the same ts, so correlated series (the renderer
+// probe reports several per batch) line up on the charts.
+type MetricSample struct {
+	Name  string
+	Value float64
+	Attrs map[string]string
+}
+
+// RecordMetrics persists a batch of samples in one transaction with one
+// shared timestamp. Like RecordMetric it is a no-op before OpenUserDB and
+// never fails the caller.
+func (m *Manager) RecordMetrics(ctx context.Context, samples []MetricSample) {
+	m.mu.Lock()
+	store := m.userMetrics
+	m.mu.Unlock()
+	if store == nil || len(samples) == 0 {
+		return
+	}
+	ts := time.Now().UTC().UnixMilli()
+	batch := make([]metricstore.Sample, 0, len(samples))
+	for _, sample := range samples {
+		batch = append(batch, metricstore.Sample{
+			Name:  sample.Name,
+			Ts:    ts,
+			Value: sample.Value,
+			Attrs: sample.Attrs,
+		})
+	}
+	if err := store.RecordBatch(ctx, batch); err != nil {
+		telemetry.WarnErr(ctx, "host: record local metrics failed", err,
+			otellog.String("count", fmt.Sprint(len(batch))))
+	}
+}
+
 // RecordUsage invokes the currently installed user-level usage
 // recorder. It lets callers persist usage outside a run lifecycle
 // (imports, tests) through the same sink the hosts use.

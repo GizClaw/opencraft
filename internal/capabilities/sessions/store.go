@@ -92,6 +92,12 @@ type TurnRecord struct {
 	ResponseID string            `json:"response_id,omitempty"`
 	Messages   []message.Message `json:"messages"`
 	Artifacts  []Artifact        `json:"artifacts,omitempty"`
+	// Kind names the author of a turn the app itself wrote (a
+	// delegation note, for example); empty for every turn a user or
+	// model produced. Payload is that author's own structured record,
+	// decoded by whoever knows the kind — the store only carries it.
+	Kind    string          `json:"kind,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 // TurnTiming carries the timestamps one turn should display.
@@ -258,14 +264,14 @@ func (s *Store) Create() (string, error) {
 
 // AppendTurn persists one turn without a run id.
 func (s *Store) AppendTurn(ctx context.Context, id string, msgs []message.Message) error {
-	return s.appendTurn(ctx, id, "", msgs, nil)
+	return s.appendTurn(ctx, id, "", TurnOrigin{}, msgs, nil)
 }
 
 // AppendTurnWithRunID persists one turn with a run id.
 func (s *Store) AppendTurnWithRunID(
 	ctx context.Context, id, runID string, msgs []message.Message,
 ) error {
-	return s.appendTurn(ctx, id, runID, msgs, nil)
+	return s.appendTurn(ctx, id, runID, TurnOrigin{}, msgs, nil)
 }
 
 // AppendTurnWithRunIDAndHook persists one turn with a run id and runs
@@ -278,11 +284,37 @@ func (s *Store) AppendTurnWithRunIDAndHook(
 	msgs []message.Message,
 	hook state.CommitHook,
 ) error {
-	return s.appendTurn(ctx, id, runID, msgs, hook)
+	return s.appendTurn(ctx, id, runID, TurnOrigin{}, msgs, hook)
+}
+
+// AppendTurnWithOriginAndRunID persists one turn the app itself wrote
+// (origin.Kind names the author, origin.Payload is its structured
+// record) under a run id. The origin is what every reader of the
+// archived turn goes by: it is the difference between the user
+// speaking and the app reporting something to the model.
+func (s *Store) AppendTurnWithOriginAndRunID(
+	ctx context.Context,
+	id, runID string,
+	origin TurnOrigin,
+	msgs []message.Message,
+) error {
+	return s.appendTurn(ctx, id, runID, origin, msgs, nil)
+}
+
+// TurnOrigin is the author and structured record of an app-authored
+// turn. An empty Kind means the turn is an ordinary one: a user message
+// or a model reply.
+type TurnOrigin struct {
+	// Kind names the author (sessions carries it opaquely; the
+	// capability that writes the turn defines the vocabulary).
+	Kind string
+	// Payload is the author's own JSON record, stored verbatim.
+	Payload []byte
 }
 
 func (s *Store) appendTurn(
-	ctx context.Context, id, runID string, msgs []message.Message,
+	ctx context.Context, id, runID string, origin TurnOrigin,
+	msgs []message.Message,
 	hook state.CommitHook,
 ) error {
 	if err := requireID(id); err != nil {
@@ -307,19 +339,24 @@ func (s *Store) appendTurn(
 	if c.CreatedAt.IsZero() {
 		c.CreatedAt = now
 	}
-	if c.Title == "" || c.TurnCount == 0 {
+	// An app-authored turn never names the conversation: the title
+	// falls back to the user's first line, and a note the app wrote to
+	// the model is not something the user said. Skipping also leaves an
+	// empty title empty, so the first real turn still names the chat.
+	if origin.Kind == "" && (c.Title == "" || c.TurnCount == 0) {
 		if title := firstArchiveTitle(archived); title != "" {
 			c.Title = title
 		}
 	}
-	turn, archiveMsgs := s.archiveTurn(id, runID, now, archived)
+	turn, archiveMsgs := s.archiveTurn(id, runID, origin, now, archived)
 	return s.db.CommitConversationTurnWithHook(
 		ctx, c, turn, archiveMsgs, hook,
 	)
 }
 
 func (s *Store) archiveTurn(
-	id, runID string, now time.Time, archived []message.Message,
+	id, runID string, origin TurnOrigin, now time.Time,
+	archived []message.Message,
 ) (state.ArchiveTurn, []state.ArchiveMessage) {
 	timing := TurnTiming{RequestedAt: now, StartedAt: now}
 	if runID != "" {
@@ -333,6 +370,8 @@ func (s *Store) archiveTurn(
 		RequestedAt: timing.RequestedAt,
 		StartedAt:   timing.StartedAt,
 		FinishedAt:  timing.FinishedAt,
+		Kind:        origin.Kind,
+		PayloadJSON: origin.Payload,
 	}
 	if turn.RequestedAt.IsZero() {
 		turn.RequestedAt = now
@@ -641,6 +680,33 @@ func (s *Store) TurnsPage(
 	if err != nil {
 		return nil, err
 	}
+	return s.turnRecords(ctx, id, turns)
+}
+
+// TurnsSince returns archived turns newer than seq, oldest first. The
+// transcript holds the newest seq it has and asks for what was appended
+// after it: a delegation note is written when its subagent finishes,
+// which can be long after the turn that spawned it ended, so no live
+// stream ever carried it and a full re-read is not worth the payload.
+func (s *Store) TurnsSince(
+	ctx context.Context, id string, afterSeq int64, limit int,
+) ([]TurnRecord, error) {
+	if err := requireID(id); err != nil {
+		return nil, err
+	}
+	turns, err := s.db.ListArchiveTurnsAfter(ctx, id, afterSeq, limit)
+	if err != nil {
+		return nil, err
+	}
+	return s.turnRecords(ctx, id, turns)
+}
+
+// turnRecords lowers archived turn rows and their messages into the
+// shared TurnRecord shape: one message query for the whole page, then
+// grouped back per turn.
+func (s *Store) turnRecords(
+	ctx context.Context, id string, turns []state.ArchiveTurn,
+) ([]TurnRecord, error) {
 	if len(turns) == 0 {
 		return nil, nil
 	}
@@ -706,6 +772,10 @@ func archiveTurnRecord(
 		ErrorKind:      turn.ErrorKind,
 		RequestID:      turn.RequestID,
 		ResponseID:     turn.ResponseID,
+		Kind:           turn.Kind,
+	}
+	if payload := strings.TrimSpace(string(turn.PayloadJSON)); payload != "" {
+		rec.Payload = json.RawMessage(turn.PayloadJSON)
 	}
 	for _, m := range msgs {
 		rec.Messages = append(rec.Messages, message.Message{
@@ -797,12 +867,17 @@ func (s *Store) Title(id string) (string, error) {
 	return c.Title, nil
 }
 
-// FirstUserMessage returns the first non-empty user message text.
+// FirstUserMessage returns the first non-empty user message text. Turns
+// the app itself wrote are skipped: a delegation note is the app
+// reporting to the model, and a title (or anything else asking what the
+// user said) must not read it as speech.
 func (s *Store) FirstUserMessage(id string) (string, error) {
 	if err := requireID(id); err != nil {
 		return "", err
 	}
-	msgs, err := s.db.ListArchiveMessages(context.Background(), id)
+	msgs, err := s.db.ListArchiveMessagesWithoutTurnKind(
+		context.Background(), id,
+	)
 	if err != nil {
 		return "", err
 	}

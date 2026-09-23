@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -46,6 +47,15 @@ type ImportTurn struct {
 	StartedAt   *time.Time        `json:"started_at,omitempty"`
 	FinishedAt  *time.Time        `json:"finished_at,omitempty"`
 	Messages    []message.Message `json:"messages"`
+	// Kind and Payload carry a turn the app itself wrote (a delegation
+	// note): round-tripping them keeps the transcript card and keeps
+	// the note out of title derivation here, exactly as in a store the
+	// note was written to directly. Bundles from before this existed
+	// carry neither, and a bundle naming a kind this build does not
+	// know imports it untouched — the fields are the writer's, not the
+	// importer's.
+	Kind    string          `json:"kind,omitempty"`
+	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
 // Import writes a new conversation from a neutral request into SQLite
@@ -80,6 +90,8 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 		Started   time.Time
 		Finished  time.Time
 		Messages  []message.Message
+		Kind      string
+		Payload   []byte
 	}
 	now := time.Now().UTC()
 	for _, turn := range req.Turns {
@@ -119,8 +131,11 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 			Started   time.Time
 			Finished  time.Time
 			Messages  []message.Message
+			Kind      string
+			Payload   []byte
 		}{At: at, Requested: requested, Started: started,
-			Finished: finished, Messages: msgs})
+			Finished: finished, Messages: msgs,
+			Kind: turn.Kind, Payload: turn.Payload})
 	}
 	if len(archives) == 0 {
 		return "", errdefs.Validationf(
@@ -138,6 +153,12 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
 		for _, arch := range archives {
+			// A turn the app wrote — a delegation note — says nothing
+			// about what the imported conversation is, so the title
+			// falls to the first turn a person wrote.
+			if arch.Kind != "" {
+				continue
+			}
 			title = firstArchiveTitle(arch.Messages)
 			if title != "" {
 				break
@@ -177,6 +198,8 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 			RequestedAt: arch.Requested,
 			StartedAt:   arch.Started,
 			FinishedAt:  arch.Finished,
+			Kind:        arch.Kind,
+			PayloadJSON: arch.Payload,
 		}, turnMsgs); err != nil {
 			telemetry.WarnErr(ctx,
 				"sessions: rollback failed import turn failed",

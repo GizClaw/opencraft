@@ -302,11 +302,14 @@ var (
 			"Renderer web vitals and navigation durations"))
 )
 
-// FrontendPerfSample is one renderer performance measurement.
+// FrontendPerfSample is one renderer performance measurement. Labels
+// carries the renderer-supplied dimensions (surface, build, conversation
+// id); the store side sanitizes them against the whitelist below.
 type FrontendPerfSample struct {
-	Name  string  `json:"name"`
-	Value float64 `json:"value"`
-	Unit  string  `json:"unit,omitempty"`
+	Name   string            `json:"name"`
+	Value  float64           `json:"value"`
+	Unit   string            `json:"unit,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // frontendDurationMetrics are the renderer samples recorded on the duration
@@ -320,29 +323,113 @@ var frontendDurationMetrics = map[string]bool{
 	"load":               true,
 }
 
+// perfLabelKeys is the whitelist of label keys a renderer-perf sample may
+// carry into the local metric store. The renderer is otherwise free to
+// invent attribute names, and every unsanitized key would land as a JSON
+// blob in user.db and widen what the charts and SQL queries see.
+var perfLabelKeys = map[string]bool{
+	"surface":         true,
+	"route":           true,
+	"build":           true,
+	"conversation_id": true,
+	// The slowest top-level interaction of the sample's report window
+	// (send, session switch, opening or saving settings): it names who
+	// caused the stall, where the other labels only say where it happened.
+	"interaction": true,
+}
+
+// perfLabelValueMax caps one label value: labels are dimensions, not
+// payloads, and the renderer is not trusted to keep them small.
+const perfLabelValueMax = 64
+
+// cleanPerfLabelValue keeps a renderer-supplied value printable and
+// bounded, so a compromised renderer cannot split log lines or grow a
+// label without limit.
+func cleanPerfLabelValue(value string) string {
+	var out []rune
+	for _, r := range strings.TrimSpace(value) {
+		if r < 0x20 || r == 0x7f {
+			continue
+		}
+		out = append(out, r)
+		if len(out) == perfLabelValueMax {
+			break
+		}
+	}
+	return string(out)
+}
+
+// sanitizePerfLabels keeps only whitelisted labels with non-empty values.
+func sanitizePerfLabels(labels map[string]string) map[string]string {
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(labels))
+	for key, value := range labels {
+		if !perfLabelKeys[key] {
+			continue
+		}
+		if value = cleanPerfLabelValue(value); value != "" {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // ReportFrontendPerf records renderer web-vitals and navigation samples:
-// every sample is logged, and known samples are also recorded on the
-// opencraft frontend metric instruments so they join the same OTLP export as
-// backend metrics.
+// the batch lands in the local metric store with one shared timestamp
+// (labels sanitized against the whitelist), known names are also recorded
+// on the opencraft frontend metric instruments so they join the same OTLP
+// export as backend metrics, and the whole batch is logged as one line.
 func (b *Diagnostics) ReportFrontendPerf(samples []FrontendPerfSample) {
 	ctx := b.core.Shell.Context()
+	batch := make([]host.MetricSample, 0, len(samples))
+	// One log line per batch: the probe reports a dozen samples every 30s
+	// window, and a line per sample turned the shell log into a telemetry
+	// dump of exactly one shape. The summary keeps "frontend rum"
+	// greppable — name=value pairs, the same numbers the charts and
+	// scripts/perf-review.sh read back from user.db.
+	var report strings.Builder
 	for _, sample := range samples {
-		unit := sample.Unit
+		unit := cleanPerfLabelValue(sample.Unit)
 		if unit == "" {
 			unit = "1"
 		}
-		flowtelemetry.Info(ctx, "frontend rum: "+sample.Name,
-			log.Float64("value", sample.Value),
-			log.String("unit", unit))
-		if mgr := b.core.Runtime.Manager(); mgr != nil {
-			mgr.RecordMetric(ctx, "frontend."+sample.Name,
-				sample.Value, map[string]string{"unit": unit})
+		attrs := sanitizePerfLabels(sample.Labels)
+		if attrs == nil {
+			attrs = make(map[string]string, 1)
+		}
+		attrs["unit"] = unit
+		// An empty name would land as the bare "frontend." series.
+		if sample.Name != "" {
+			if report.Len() > 0 {
+				report.WriteByte(' ')
+			}
+			report.WriteString(sample.Name)
+			report.WriteByte('=')
+			report.WriteString(strconv.FormatFloat(sample.Value, 'f', -1, 64))
+			batch = append(batch, host.MetricSample{
+				Name:  "frontend." + sample.Name,
+				Value: sample.Value,
+				Attrs: attrs,
+			})
 		}
 		if frontendDurationMetrics[sample.Name] {
 			frontendVitalsDuration.Record(ctx, sample.Value,
 				metric.WithAttributes(
 					attribute.String("metric", sample.Name)))
 		}
+	}
+	if report.Len() > 0 {
+		flowtelemetry.Info(ctx, "frontend rum: report",
+			log.String("samples", report.String()),
+			log.Int("count", len(batch)))
+	}
+	if mgr := b.core.Runtime.Manager(); mgr != nil && len(batch) > 0 {
+		mgr.RecordMetrics(ctx, batch)
 	}
 }
 

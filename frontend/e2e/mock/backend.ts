@@ -20,6 +20,12 @@ export interface MockConfig {
   // Per-conversation archive and per-run archive responses used by
   // resume and turn_end reconciliation.
   sessionTurnsByID?: Record<string, unknown[]>;
+  // turnsSince (and its per-conversation form) is the archive tail the
+  // transcript syncs on Session.TurnsSince: the turns appended after a
+  // seq. Without a fixture the mock answers from sessionTurns, which is
+  // what the archive holds anyway.
+  turnsSince?: unknown[];
+  turnsSinceByID?: Record<string, unknown[]>;
   turnByRunID?: Record<string, unknown>;
   listSessions?: unknown[];
   listSessionsInWorkspace?: Record<string, unknown[]>;
@@ -719,6 +725,22 @@ export function mockBackend(cfg?: MockConfig) {
         }
         return turn;
       },
+      // TurnsSince is the tail cursor: only the turns above the seq the
+      // transcript holds. A fixture without a seq cannot be proven newer
+      // than a cursor, so it is not part of an answer to this read.
+      TurnsSince: async (id: string, afterSeq?: number, limit?: number) => {
+        const fixture = (config.turnsSinceByID?.[id] ??
+          config.turnsSince ??
+          config.sessionTurns ??
+          []) as Array<{ seq?: number }>;
+        let turns = fixture.filter(
+          (turn) => typeof turn.seq === 'number' && turn.seq > (afterSeq ?? 0),
+        );
+        if (typeof limit === 'number' && limit > 0 && turns.length > limit) {
+          turns = turns.slice(0, limit);
+        }
+        return turns;
+      },
     },
     Settings: {
       AllowEscalatedPermission: noop,
@@ -821,6 +843,7 @@ export function mockBackend(cfg?: MockConfig) {
     SessionHistory: ['Session', 'History'],
     SessionMode: ['Conversation', 'SessionMode'],
     SessionTurns: ['Session', 'Turns'],
+    SessionTurnsSince: ['Session', 'TurnsSince'],
     SetModel: ['Settings', 'SetModel'],
     SetThink: ['Settings', 'SetThink'],
     Skills: ['Settings', 'Skills'],

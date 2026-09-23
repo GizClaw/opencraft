@@ -1,6 +1,7 @@
 package subagents
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -9,6 +10,13 @@ import (
 	"github.com/GizClaw/flowcraft/core/delegation"
 	"github.com/GizClaw/flowcraft/core/delegation/kanban"
 )
+
+// KindDelegationNote is the turn kind a finished delegation is
+// archived under. It is the archive's answer to "who wrote this row":
+// a note is the app reporting a subagent's result to the model, not
+// the user speaking, and a reader that needs the difference (title
+// derivation, above all) reads the kind instead of the prose.
+const KindDelegationNote = "delegation_note"
 
 // maxNoteBytes bounds the delegation output quoted into the note the
 // parent conversation receives. The full answer stays on the card (and
@@ -46,6 +54,36 @@ type Result struct {
 	// the receipt time is the closest honest answer to "when did this
 	// finish".
 	At time.Time
+}
+
+// NotePayload is the note's structured record, stored on the archive
+// turn next to the text the model reads. Everything the transcript
+// renders lives here, so nothing has to parse the note's prose — the
+// wording in Note is free to change without touching a reader.
+//
+// The JSON keys are a stored contract, not an implementation detail:
+// notes archived before the kind column existed are backfilled into
+// this exact object by the compatibility layer
+// (foundation/compat, step 018), whose test pins the two encodings
+// byte for byte.
+type NotePayload struct {
+	// Target is the delegation target (the subagent's name). It is
+	// never empty: the note text would read "a worker finished
+	// something", and a card needs a subject.
+	Target string `json:"target"`
+	// Status is the terminal delegation status.
+	Status string `json:"status"`
+	// CardID identifies the delegation on the board; empty when the
+	// worker never recorded one.
+	CardID string `json:"card_id,omitempty"`
+	// RunID is the delegated run's id; empty when unknown.
+	RunID string `json:"run_id,omitempty"`
+	// ParentRunID is the delegating run; empty when unknown.
+	ParentRunID string `json:"parent_run_id,omitempty"`
+	// Body is the quoted answer (or failure) — the same excerpt the
+	// note text carries, so the card and the model's copy cannot
+	// disagree. Empty when there was nothing to quote.
+	Body string `json:"body,omitempty"`
 }
 
 // ParseCardEvent reduces one board event to a result, reporting false
@@ -117,6 +155,29 @@ func (r Result) Key() string {
 	return "subagent:" + r.CardID
 }
 
+// Payload returns the note's structured record. It is the single
+// source of every field the note text renders and the transcript card
+// shows.
+func (r Result) Payload() NotePayload {
+	target := r.Target
+	if target == "" {
+		target = "subagent"
+	}
+	return NotePayload{
+		Target:      target,
+		Status:      string(r.Status),
+		CardID:      r.CardID,
+		RunID:       r.RunID,
+		ParentRunID: r.ParentRunID,
+		Body:        r.body(),
+	}
+}
+
+// Encode marshals the payload for the archive's payload column.
+func (p NotePayload) Encode() ([]byte, error) {
+	return json.Marshal(p)
+}
+
 // Note renders the message the parent conversation receives. The
 // header names the subagent and the outcome; the body quotes the
 // answer (or the failure). The wording matters: this row lands in the
@@ -124,43 +185,45 @@ func (r Result) Key() string {
 // model outside a turn, so it has to read as a report rather than as
 // something the user said.
 func (r Result) Note() string {
-	target := r.Target
-	if target == "" {
-		target = "subagent"
-	}
+	payload := r.Payload()
 	var b strings.Builder
 	// This text becomes the first user message of the note's turn, so
 	// keep the header on one line: the store derives empty titles
 	// from a first line.
-	fmt.Fprintf(&b, "[delegated worker %q finished: %s]", target, r.Status)
-	if ref := r.reference(); ref != "" {
+	fmt.Fprintf(&b, "[delegated worker %q finished: %s]",
+		payload.Target, payload.Status)
+	if ref := payload.reference(); ref != "" {
 		b.WriteString("\n")
 		b.WriteString(ref)
 	}
-	switch {
-	case r.Status == delegation.StatusSucceeded:
-		if body := strings.TrimSpace(r.Output); body != "" {
-			b.WriteString("\n\n")
-			b.WriteString(excerpt(body, maxNoteBytes))
-		}
-	case strings.TrimSpace(r.Error) != "":
+	if payload.Body != "" {
 		b.WriteString("\n\n")
-		b.WriteString(excerpt(strings.TrimSpace(r.Error), maxNoteBytes))
+		b.WriteString(payload.Body)
 	}
 	return b.String()
 }
 
+// body is the quoted part of the note: the final answer on success,
+// the failure text otherwise. Both are bounded so one large report
+// cannot ride into every later turn's window.
+func (r Result) body() string {
+	if r.Status == delegation.StatusSucceeded {
+		return excerpt(strings.TrimSpace(r.Output), maxNoteBytes)
+	}
+	return excerpt(strings.TrimSpace(r.Error), maxNoteBytes)
+}
+
 // reference names the delegation so a reader can find the card again.
-func (r Result) reference() string {
+func (p NotePayload) reference() string {
 	parts := make([]string, 0, 3)
-	if r.CardID != "" {
-		parts = append(parts, "card "+r.CardID)
+	if p.CardID != "" {
+		parts = append(parts, "card "+p.CardID)
 	}
-	if r.RunID != "" {
-		parts = append(parts, "run "+r.RunID)
+	if p.RunID != "" {
+		parts = append(parts, "run "+p.RunID)
 	}
-	if r.ParentRunID != "" {
-		parts = append(parts, "asked by run "+r.ParentRunID)
+	if p.ParentRunID != "" {
+		parts = append(parts, "asked by run "+p.ParentRunID)
 	}
 	if len(parts) == 0 {
 		return ""

@@ -82,6 +82,7 @@ func (s *Store) Fork(
 	}()
 
 	copied := make([]TurnRecord, 0, targetIdx+1)
+	titled := false
 	attachmentCache := make(map[string]string)
 	for _, sourceTurn := range turns[:targetIdx+1] {
 		archiveMsgs := make([]state.ArchiveMessage, 0, len(sourceTurn.Messages))
@@ -99,8 +100,12 @@ func (s *Store) Fork(
 			})
 		}
 		conv := state.Conversation{ID: newID}
-		if len(copied) == 0 {
+		// The fork is named after the first turn the user actually
+		// wrote: an app-authored turn (a delegation note) says nothing
+		// about what the forked conversation is.
+		if !titled && sourceTurn.Kind == "" {
 			conv.Title = firstArchiveTitle(sourceTurn.Messages)
+			titled = true
 		}
 		artifacts := []byte("[]")
 		if len(sourceTurn.Artifacts) > 0 {
@@ -120,6 +125,8 @@ func (s *Store) Fork(
 			Status:        sourceTurn.Status,
 			Error:         sourceTurn.Error,
 			ArtifactsJSON: artifacts,
+			Kind:          sourceTurn.Kind,
+			PayloadJSON:   sourceTurn.Payload,
 		}, archiveMsgs); err != nil {
 			return ForkResult{}, fmt.Errorf(
 				"sessions: fork commit %s into %s: %w",
