@@ -452,6 +452,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Checkboxes, radios and sliders also keep the keyboard focus ring the
   text-input rule used to swallow — for them the outline is the only
   focus affordance there is.
+- Number fields read the digits as they are typed and no longer save a
+  zero when the field is cleared. `Number('') || 0` meant a cleared field
+  committed a zero nobody typed; the new `ui/NumberField` (with
+  `ui/Textarea` beside it, and the settings rows rewired onto the first)
+  keeps a cleared field a draft — leaving it restores the last committed
+  value — and clamps to the field's own bounds only on the way out. Where
+  a limit is optional and falls back to a provider default, the call site
+  declares the empty state and the blur commits it. The field stays a
+  native `type="number"`, so min/max/step, the arrow keys and the value
+  hygiene are still the browser's job; the unit keeps its own cell, and a
+  call site that wants the affordance the engine's spinner used to give
+  can ask for −/+ cells, which take their accessible name from the
+  field's label.
 
 ### Fixed
 

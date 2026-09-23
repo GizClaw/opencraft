@@ -1448,5 +1448,9 @@
     "maxInputTokens": "Max input tokens (max_input_tokens)",
     "systemPromptTokens": "System prompt tokens (system_prompt_tokens)",
     "resultsKey": "Results key (results_key)"
+  },
+  "ui": {
+    "stepDown": "Decrease {{label}}",
+    "stepUp": "Increase {{label}}"
   }
 }

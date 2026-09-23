@@ -1448,5 +1448,9 @@
     "maxInputTokens": "最大输入 token (max_input_tokens)",
     "systemPromptTokens": "系统提示 token (system_prompt_tokens)",
     "resultsKey": "结果键 (results_key)"
+  },
+  "ui": {
+    "stepDown": "减少{{label}}",
+    "stepUp": "增加{{label}}"
   }
 }
