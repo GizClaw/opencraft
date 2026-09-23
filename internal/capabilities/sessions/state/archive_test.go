@@ -121,30 +121,95 @@ func TestArchiveTurnByRunReturnsOneTurnAndMessages(t *testing.T) {
 	}
 }
 
+// TestConversationDeleteRemovesAllRows pins what a conversation delete
+// takes with it: the transcript (turns, messages, their search-index
+// rows), the per-conversation state documents, and the summary tree
+// derived from those rows — while the conversations beside it keep
+// everything they own. The second physical copy of the history is gone
+// (migration 020), so there is no third table to keep in step.
 func TestConversationDeleteRemovesAllRows(t *testing.T) {
 	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
 	ctx := context.Background()
-	if err := s.CommitConversationTurn(ctx, state.Conversation{ID: "s-1"}, state.ArchiveTurn{
-		RunID: "r1",
-	}, []state.ArchiveMessage{
-		{Role: string(message.RoleUser), Content: message.Content{
-			Parts: []message.Part{message.TextPart{Text: "x"}},
-		}},
-	}); err != nil {
-		t.Fatal(err)
+	at := time.Date(2026, 9, 4, 0, 0, 0, 0, time.UTC)
+	for _, conv := range []struct{ id, word string }{
+		{"s-1", "alpha"},
+		{"s-2", "beta"},
+	} {
+		commitTurn(t, s, conv.id, "title-"+conv.id, "run-"+conv.id, at,
+			userText(conv.word+" hello"))
+		if err := s.SetConversationState(ctx, conv.id, "plans", []byte("{}")); err != nil {
+			t.Fatal(err)
+		}
+		insertSummaryNode(t, s, "node-"+conv.id, conv.id, at)
 	}
-	if err := s.SetConversationState(ctx, "s-1", "plans", []byte("{}")); err != nil {
-		t.Fatal(err)
-	}
+
 	if err := s.DeleteConversationRows(ctx, "s-1"); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := s.Conversation(ctx, "s-1"); err != state.ErrNotFound {
 		t.Fatalf("conversation after delete: %v", err)
 	}
 	if _, err := s.GetConversationState(ctx, "s-1", "plans"); err != state.ErrNotFound {
 		t.Fatalf("state after delete: %v", err)
 	}
+	if msgs, err := s.ListArchiveMessages(ctx, "s-1"); err != nil || len(msgs) != 0 {
+		t.Fatalf("transcript after delete = %d messages, %v", len(msgs), err)
+	}
+	if n := countSummaryNodes(t, s, "s-1"); n != 0 {
+		t.Fatalf("summary nodes after delete = %d, want 0", n)
+	}
+	if hits, err := s.SearchMessages(ctx, "alpha", state.SearchOptions{}); err != nil {
+		t.Fatalf("search after delete: %v", err)
+	} else if len(hits.Hits) != 0 {
+		t.Fatalf("index hits after delete = %+v, want none", hits.Hits)
+	}
+
+	// The conversation that was not deleted is untouched.
+	if msgs, err := s.ListArchiveMessages(ctx, "s-2"); err != nil || len(msgs) != 1 {
+		t.Fatalf("surviving transcript = %d messages, %v", len(msgs), err)
+	}
+	if n := countSummaryNodes(t, s, "s-2"); n != 1 {
+		t.Fatalf("surviving summary nodes = %d, want 1", n)
+	}
+	if _, err := s.GetConversationState(ctx, "s-2", "plans"); err != nil {
+		t.Fatalf("surviving state: %v", err)
+	}
+	if hits, err := s.SearchMessages(ctx, "beta", state.SearchOptions{}); err != nil {
+		t.Fatalf("search for the survivor: %v", err)
+	} else if len(hits.Hits) != 1 || hits.Hits[0].ConversationID != "s-2" {
+		t.Fatalf("survivor hits = %+v", hits.Hits)
+	}
+}
+
+// insertSummaryNode writes one summary row directly: the summary tree is
+// owned by the memory capability, whose store sits above this layer, so
+// a state-level test seeds the table it asserts the delete cleans up.
+func insertSummaryNode(
+	t *testing.T, s *state.Store, id, conversationID string, at time.Time,
+) {
+	t.Helper()
+	if _, err := s.Handle().SQLDB().ExecContext(context.Background(), `
+		INSERT INTO summary_nodes(
+			id, thread_id, level, parent_ids, source_ids, summary,
+			created_at, updated_at, metadata
+		) VALUES (?, ?, 0, '[]', '[]', 'folded', ?, ?, '{}')`,
+		id, conversationID,
+		at.UTC().Format(time.RFC3339Nano), at.UTC().Format(time.RFC3339Nano),
+	); err != nil {
+		t.Fatalf("insert summary node: %v", err)
+	}
+}
+
+func countSummaryNodes(t *testing.T, s *state.Store, conversationID string) int {
+	t.Helper()
+	var n int
+	if err := s.Handle().SQLDB().QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM summary_nodes WHERE thread_id = ?`,
+		conversationID).Scan(&n); err != nil {
+		t.Fatalf("count summary nodes: %v", err)
+	}
+	return n
 }
 
 func TestListArchiveTurnsAfterKeepsOnlyNewerTurns(t *testing.T) {

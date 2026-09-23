@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
@@ -15,12 +14,11 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
-// atomicTurnSink is implemented by the production memory resource. It
-// appends memory rows inside the caller's archive transaction and can
-// fold after that transaction commits.
-type atomicTurnSink interface {
-	corememory.TurnSink
-	AppendMessagesTx(ctx context.Context, tx *sql.Tx, conversationID, turnID string, msgs []message.Message) error
+// foldSink is implemented by the production memory resource: it folds a
+// conversation's transcript into its summary tree. The commit hook writes
+// the turn to the session store and then folds, in that order — the fold
+// reads the rows the archive just wrote.
+type foldSink interface {
 	FoldOnly(ctx context.Context, conversationID string) error
 }
 
@@ -83,22 +81,19 @@ func (commitHookFactory) New(ctx context.Context, in resource.Input) (any, error
 			return nil
 		}
 		persistCtx := context.WithoutCancel(ctx)
-		if atomic, ok := sink.(atomicTurnSink); ok {
+		if folder, ok := sink.(foldSink); ok {
 			// Same rule as the archive observer: a Referee may accept a
 			// canceled/interrupted run into the committer path, so the
 			// store write must not inherit the run's cancellation.
-			if err := store.AppendTurnWithRunIDAndHook(
+			// The turn is written once, by the store, and the memory
+			// side folds what was written: there is no second copy to
+			// keep in step (see projection.go).
+			if err := store.AppendTurnWithRunID(
 				persistCtx, req.ContextID, res.RunID, raw,
-				func(ctx context.Context, tx *sql.Tx) error {
-					return atomic.AppendMessagesTx(
-						ctx, tx, req.ContextID, res.RunID,
-						renderConversation(raw),
-					)
-				},
 			); err != nil {
 				return err
 			}
-			return atomic.FoldOnly(persistCtx, req.ContextID)
+			return folder.FoldOnly(persistCtx, req.ContextID)
 		}
 		if err := store.AppendTurnWithRunID(
 			persistCtx, req.ContextID, res.RunID, raw,
@@ -109,7 +104,7 @@ func (commitHookFactory) New(ctx context.Context, in resource.Input) (any, error
 			Scope:          settings.scopeFor(id),
 			ConversationID: req.ContextID,
 			IdempotencyKey: res.RunID,
-			Messages:       renderConversation(raw),
+			Messages:       raw,
 		})
 	}), nil
 }
@@ -172,8 +167,8 @@ func ExtractTurnMessages(
 	if board != nil {
 		// Both reads go through ChannelView: this function only slices
 		// and filters, and every path that keeps the messages clones
-		// first (filterArchive, renderConversation), so the board's
-		// storage is never mutated through the view.
+		// first (filterArchive), so the board's storage is never
+		// mutated through the view.
 		channel := board.ChannelView(agent.MainChannel)
 		if n, ok := sectionCount(board); ok && n >= 0 && n <= len(channel) {
 			// The compact node moves the prefix it folds onto a side
@@ -251,19 +246,6 @@ func ExtractTurnMessages(
 			continue
 		}
 		out = append(out, m)
-	}
-	return out
-}
-
-// renderConversation renders raw messages into text-bearing form, so
-// tool calls and results survive the memory raw window (which only
-// reads Content.Text()).
-func renderConversation(msgs []message.Message) []message.Message {
-	out := make([]message.Message, 0, len(msgs))
-	for _, m := range msgs {
-		if rendered := renderConversationMessage(m); rendered != nil {
-			out = append(out, *rendered)
-		}
 	}
 	return out
 }
@@ -355,13 +337,4 @@ func compactTurnStart(board *agent.Board) (int, bool) {
 		return int(n), true
 	}
 	return 0, false
-}
-
-// renderConversationMessage makes one MainChannel message persistable,
-// through the same projection the transcript read path applies (see
-// projection.go): original parts are kept (so tool-role messages stay
-// valid for the memory turn contract) and tool calls/results are appended
-// as plain text.
-func renderConversationMessage(m message.Message) *message.Message {
-	return projectMessage(m)
 }

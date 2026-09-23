@@ -4,10 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"strconv"
-	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
@@ -20,102 +17,13 @@ import (
 
 // sqliteTurnStore is the memory-owned TurnStore over foundation/db.
 type sqliteTurnStore struct {
-	mu sync.Mutex
 	db *db.DB
-}
-
-func (a *sqliteTurnStore) AppendMessages(
-	ctx context.Context, conversationID, turnID string, msgs []message.Message,
-) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	sqlDB := a.db.SQLDB()
-	tx, err := sqlDB.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("memory: begin append: %w", err)
-	}
-	defer func() {
-		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-			telemetry.WarnErr(ctx, "memory: rollback append failed", err)
-		}
-	}()
-	if err := a.appendMessagesTx(ctx, tx, conversationID, turnID, msgs); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// appendMessagesTx inserts memory rows inside an existing transaction.
-// It is used by the atomic archive+memory commit path.
-func (a *sqliteTurnStore) appendMessagesTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	conversationID, turnID string,
-	msgs []message.Message,
-) error {
-	var seq int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(seq), -1) + 1 FROM memory_items
-		 WHERE thread_id = ?`, conversationID).Scan(&seq); err != nil {
-		return fmt.Errorf("memory: next seq: %w", err)
-	}
-	for _, msg := range msgs {
-		text := msg.Content.Text()
-		if text == "" {
-			if len(msg.Content.Parts) > 0 {
-				// A message with parts but no rendered text would
-				// otherwise vanish without a trace: the raw window and
-				// the fold contract index text-bearing rows, so it
-				// cannot be persisted here. Surface the drop instead of
-				// silently losing history.
-				telemetry.Warn(ctx, "memory: skipping message with parts but no rendered text",
-					otellog.String("conversation.id", conversationID),
-					otellog.String("turn.id", turnID),
-					otellog.String("role", string(msg.Role)),
-					otellog.Int("parts", len(msg.Content.Parts)))
-			}
-			continue
-		}
-		// Persist the full content (canonical parts), not just the text
-		// projection: tool_call / tool_result parts carry the call ids
-		// structured history replay needs. Text-only rows written by
-		// older versions are upgraded to canonical parts by workspace
-		// migration 011 on startup.
-		payload, err := json.Marshal(msg.Content)
-		if err != nil {
-			return fmt.Errorf("memory: marshal message payload: %w", err)
-		}
-		id := conversationID + ":" + turnID + ":" + strconv.FormatInt(seq, 10)
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO memory_items(
-				id, thread_id, turn_id, seq, item_type, role, payload, created_at
-			) VALUES (?, ?, ?, ?, 'text', ?, ?, ?)`,
-			id, conversationID, turnID, seq, string(msg.Role),
-			string(payload), timeNow().UTC().Format(time.RFC3339Nano),
-		); err != nil {
-			return fmt.Errorf("memory: append message: %w", err)
-		}
-		seq++
-	}
-	return nil
-}
-
-// AppendMessagesTx appends memory rows inside the caller's transaction.
-func (a *sqliteTurnStore) AppendMessagesTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	conversationID, turnID string,
-	msgs []message.Message,
-) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.appendMessagesTx(ctx, tx, conversationID, turnID, msgs)
 }
 
 // projectionBackfill is how many extra rows LoadBack may ask for beyond
 // the rows it still needs. The SQL page already drops the cheap,
-// structural non-history (system rows, app-authored turns); this covers
-// the remaining case — a row the render step projects to nothing — so a
+// structural non-history (imported system rows); this covers the
+// remaining case — a row the render step cannot project at all — so a
 // page that loses rows to it still fills in one more query instead of
 // returning a short window.
 const projectionBackfill = 32
@@ -190,14 +98,21 @@ func (a *sqliteTurnStore) LoadAll(
 // bounds the rows read (0 means no bound); rows the projection leaves out
 // do not count against it, so a caller asking for n rows may receive
 // fewer if the transcript start was reached first.
+//
+// What the projection did to those rows is reported once per query: a row
+// that entered as a placeholder (an image-only turn) is a fact about the
+// conversation the operator should be able to see, and a row that could
+// not enter at all is a fact nobody should have to guess at.
 func (a *sqliteTurnStore) loadProjectedBefore(
 	ctx context.Context, conversationID string, beforeSeq int64, limit int,
 ) ([]summary.StoredMessage, error) {
-	query := `SELECT m.seq, m.role, m.content_json, COALESCE(t.kind, '')
+	// Every row of the conversation is a candidate, whatever wrote it:
+	// a delegation note is the app speaking to the model and belongs in
+	// the window like any other row. The one structural exclusion is an
+	// imported conversation's own system prompt (see projection.go).
+	query := `SELECT m.seq, m.role, m.content_json
 		FROM archive_messages m
-		LEFT JOIN archive_turns t ON t.id = m.turn_id
-		WHERE m.conversation_id = ? AND m.role != 'system'
-			AND COALESCE(t.kind, '') = ''`
+		WHERE m.conversation_id = ? AND m.role != 'system'`
 	args := []any{conversationID}
 	if beforeSeq > 0 {
 		query += ` AND m.seq < ?`
@@ -215,43 +130,58 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 	defer func() {
 		telemetry.WarnErr(ctx, "memory: close transcript rows failed", rows.Close())
 	}()
+	var placeholders, undecodable, empty int
 	var desc []summary.StoredMessage
 	for rows.Next() {
 		var seq int64
-		var role, payload, kind string
-		if err := rows.Scan(&seq, &role, &payload, &kind); err != nil {
+		var role, payload string
+		if err := rows.Scan(&seq, &role, &payload); err != nil {
 			return nil, fmt.Errorf("memory: scan transcript row: %w", err)
 		}
 		var content message.Content
 		if err := json.Unmarshal([]byte(payload), &content); err != nil {
+			// Canonical content carries at least one valid part, so a
+			// legacy text-only row (migration 011's shape), an
+			// interrupted write and a foreign writer all land here:
+			// nothing can be shown for the row, and guessing at its
+			// content would be worse than counting it.
 			telemetry.WarnErr(ctx, "memory: decode transcript payload failed", err,
 				otellog.String("conversation.id", conversationID),
 				otellog.Int64("seq", seq))
-			continue
-		}
-		if len(content.Parts) == 0 {
-			// Migration 011 rewrites legacy text-only rows to canonical
-			// parts. A row that still has no parts (interrupted write,
-			// foreign writer) is not part of the structured history and
-			// is skipped here, with a warning, rather than failing the
-			// turn or inventing content.
-			telemetry.Warn(ctx, "memory: skipping part-less transcript row",
-				otellog.String("conversation.id", conversationID),
-				otellog.Int64("seq", seq))
+			undecodable++
 			continue
 		}
 		projected, ok := projectRow(message.Role(role), content)
 		if !ok {
+			// Decodable content that has no prompt form: a
+			// signature-only reasoning trace is the shape that reaches
+			// this, and there is nothing of it a prompt can carry.
+			empty++
 			continue
+		}
+		if projected.Placeholder {
+			placeholders++
 		}
 		desc = append(desc, summary.StoredMessage{
 			Seq:     seq,
 			Role:    message.Role(role),
-			Content: projected.Content,
+			Content: projected.Message.Content,
 		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if placeholders > 0 {
+		telemetry.Info(ctx,
+			"memory: transcript rows rendered as placeholders",
+			otellog.String("conversation.id", conversationID),
+			otellog.Int("rows", placeholders))
+	}
+	if undecodable+empty > 0 {
+		telemetry.Warn(ctx, "memory: transcript rows left out of the window",
+			otellog.String("conversation.id", conversationID),
+			otellog.Int("undecodable", undecodable),
+			otellog.Int("unrenderable", empty))
 	}
 	for i, j := 0, len(desc)-1; i < j; i, j = i+1, j-1 {
 		desc[i], desc[j] = desc[j], desc[i]

@@ -39,7 +39,10 @@ type fakeTurnStore struct {
 	nodes []SummaryNode
 }
 
-func (f *fakeTurnStore) AppendMessages(_ context.Context, conversationID, _ string, msgs []message.Message) error {
+// appendRows writes one fixture turn to the transcript the way the
+// session store appends one: seqs count up from zero. The assembly never
+// writes — it reads what this fake holds — so seeding is the test's job.
+func (f *fakeTurnStore) appendRows(conversationID string, msgs ...message.Message) {
 	rows := f.msgs[conversationID]
 	next := int64(len(rows))
 	for _, msg := range msgs {
@@ -51,7 +54,6 @@ func (f *fakeTurnStore) AppendMessages(_ context.Context, conversationID, _ stri
 		next++
 	}
 	f.msgs[conversationID] = rows
-	return nil
 }
 
 // recordingStore wraps fakeTurnStore and records which load path the
@@ -155,6 +157,36 @@ func (f *fakeTurnStore) DeleteSummaryNodesByID(_ context.Context, conversationID
 	return nil
 }
 
+// rowWriter seeds a fixture transcript: the store under test either is a
+// fakeTurnStore or wraps one.
+type rowWriter interface {
+	appendRows(conversationID string, msgs ...message.Message)
+}
+
+// commit is the production sequence in one call for tests about folding:
+// the conversation's owner writes the turn to the transcript
+// (capabilities/sessions, the fake store here) and the assembly's sink
+// folds what is now on disk. CommitTurn writes nothing, so a test that
+// seeded only through it would fold an empty conversation.
+func commit(
+	t *testing.T,
+	a *Assembly,
+	store rowWriter,
+	conversationID, runKey, text string,
+) {
+	t.Helper()
+	msg := message.NewTextMessage(message.RoleUser, text)
+	store.appendRows(conversationID, msg)
+	if err := a.CommitTurn(context.Background(), memory.Turn{
+		Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+		ConversationID: conversationID,
+		IdempotencyKey: runKey,
+		Messages:       []message.Message{msg},
+	}); err != nil {
+		t.Fatalf("commit %s/%s: %v", conversationID, runKey, err)
+	}
+}
+
 func TestAssemblyCommitTurnFoldsOverWindow(t *testing.T) {
 	ctx := context.Background()
 	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
@@ -163,33 +195,13 @@ func TestAssemblyCommitTurnFoldsOverWindow(t *testing.T) {
 	// MaxRaw + PreserveRecent = 4 messages stay raw; folding starts once
 	// the conversation passes 4 text messages.
 	for i := 0; i < 4; i++ {
-		turn := memory.Turn{
-			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
-			ConversationID: "c1",
-			IdempotencyKey: fmt.Sprintf("t%d", i),
-			Messages: []message.Message{
-				message.NewTextMessage(message.RoleUser, "msg"),
-			},
-		}
-		if err := a.CommitTurn(ctx, turn); err != nil {
-			t.Fatal(err)
-		}
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), "msg")
 	}
 	if len(store.nodes) != 0 {
 		t.Fatalf("want no fold at raw+preserve boundary, got %d nodes", len(store.nodes))
 	}
 
-	turn := memory.Turn{
-		Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
-		ConversationID: "c1",
-		IdempotencyKey: "t4",
-		Messages: []message.Message{
-			message.NewTextMessage(message.RoleUser, "fifth"),
-		},
-	}
-	if err := a.CommitTurn(ctx, turn); err != nil {
-		t.Fatal(err)
-	}
+	commit(t, a, store, "c1", "t4", "fifth")
 	if len(store.nodes) != 1 {
 		t.Fatalf("want 1 fold, got %d", len(store.nodes))
 	}
@@ -211,24 +223,13 @@ func TestAssemblyCommitTurnFoldsOverWindow(t *testing.T) {
 }
 
 func TestAssemblyFoldReplacesNodeNoAccumulation(t *testing.T) {
-	ctx := context.Background()
 	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	a := NewAssembly(store, WithAssemblyPolicy(Policy{MaxRawMessages: 1, PreserveRecent: 1}))
 
 	// Every turn past the raw+preserve boundary re-folds; the level-0 node
 	// must be replaced in place so rows never accumulate.
 	for i := 0; i < 10; i++ {
-		turn := memory.Turn{
-			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
-			ConversationID: "c1",
-			IdempotencyKey: fmt.Sprintf("t%d", i),
-			Messages: []message.Message{
-				message.NewTextMessage(message.RoleUser, fmt.Sprintf("msg-%02d", i)),
-			},
-		}
-		if err := a.CommitTurn(ctx, turn); err != nil {
-			t.Fatal(err)
-		}
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("msg-%02d", i))
 	}
 	if len(store.nodes) != 1 {
 		t.Fatalf("want exactly 1 level-0 node after many folds, got %d", len(store.nodes))
@@ -290,17 +291,7 @@ func TestAssemblyRetiresForeignGenerationNodes(t *testing.T) {
 		}
 	}
 
-	turn := memory.Turn{
-		Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
-		ConversationID: "c1",
-		IdempotencyKey: "t4",
-		Messages: []message.Message{
-			message.NewTextMessage(message.RoleUser, "row 3"),
-		},
-	}
-	if err := a.CommitTurn(ctx, turn); err != nil {
-		t.Fatal(err)
-	}
+	commit(t, a, store, "c1", "t4", "row 3")
 	if len(store.nodes) != 1 {
 		t.Fatalf("nodes = %+v, want the foreign node retired and one built", store.nodes)
 	}
@@ -446,17 +437,7 @@ func TestAssemblyCondensesFullSummary(t *testing.T) {
 	// so the rolling window drops the oldest message — the trigger that
 	// fires LLM condensation.
 	for i := 0; i < 12; i++ {
-		turn := memory.Turn{
-			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
-			ConversationID: "c1",
-			IdempotencyKey: fmt.Sprintf("t%d", i),
-			Messages: []message.Message{
-				message.NewTextMessage(message.RoleUser, fmt.Sprintf("m%d", i)),
-			},
-		}
-		if err := a.CommitTurn(ctx, turn); err != nil {
-			t.Fatal(err)
-		}
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
 		a.condenseWG.Wait()
 	}
 	if calls != 1 {
@@ -486,7 +467,6 @@ func TestAssemblyCondensesFullSummary(t *testing.T) {
 }
 
 func TestAssemblyCondenseMergesPreviousSummary(t *testing.T) {
-	ctx := context.Background()
 	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	var prompts []string
 	gen := func(
@@ -512,17 +492,7 @@ func TestAssemblyCondenseMergesPreviousSummary(t *testing.T) {
 	// again at the 8th. The second condensation must merge the first
 	// condensed output, so the facts of the dropped messages survive.
 	for i := 0; i < 8; i++ {
-		turn := memory.Turn{
-			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
-			ConversationID: "c1",
-			IdempotencyKey: fmt.Sprintf("t%d", i),
-			Messages: []message.Message{
-				message.NewTextMessage(message.RoleUser, fmt.Sprintf("m%d", i)),
-			},
-		}
-		if err := a.CommitTurn(ctx, turn); err != nil {
-			t.Fatal(err)
-		}
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
 		a.condenseWG.Wait()
 	}
 	if len(prompts) < 2 {
@@ -537,7 +507,6 @@ func TestAssemblyCondenseMergesPreviousSummary(t *testing.T) {
 }
 
 func TestAssemblyCondenseFailureFallsBackToBuffer(t *testing.T) {
-	ctx := context.Background()
 	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	calls := 0
 	gen := func(
@@ -559,17 +528,7 @@ func TestAssemblyCondenseFailureFallsBackToBuffer(t *testing.T) {
 	// 8th (window advance); the node must keep the raw buffer text and the
 	// algorithm stays summary_buffer so memory is never lost.
 	for i := 0; i < 8; i++ {
-		turn := memory.Turn{
-			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
-			ConversationID: "c1",
-			IdempotencyKey: fmt.Sprintf("t%d", i),
-			Messages: []message.Message{
-				message.NewTextMessage(message.RoleUser, fmt.Sprintf("m%d", i)),
-			},
-		}
-		if err := a.CommitTurn(ctx, turn); err != nil {
-			t.Fatal(err)
-		}
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
 		a.condenseWG.Wait()
 	}
 	if calls != 2 {
@@ -588,7 +547,6 @@ func TestAssemblyCondenseFailureFallsBackToBuffer(t *testing.T) {
 }
 
 func TestAssemblyNoCondenseWhenNothingDropped(t *testing.T) {
-	ctx := context.Background()
 	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	calls := 0
 	gen := func(
@@ -613,17 +571,7 @@ func TestAssemblyNoCondenseWhenNothingDropped(t *testing.T) {
 	// folding happens but nothing is dropped, so LLM condensation must not
 	// fire — small conversations stay pure buffer fold at zero cost.
 	for i := 0; i < 6; i++ {
-		turn := memory.Turn{
-			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
-			ConversationID: "c1",
-			IdempotencyKey: fmt.Sprintf("t%d", i),
-			Messages: []message.Message{
-				message.NewTextMessage(message.RoleUser, fmt.Sprintf("m%d", i)),
-			},
-		}
-		if err := a.CommitTurn(ctx, turn); err != nil {
-			t.Fatal(err)
-		}
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
 	}
 	if calls != 0 {
 		t.Fatalf("condense calls = %d, want 0 (nothing dropped)", calls)
@@ -637,7 +585,6 @@ func TestAssemblyNoCondenseWhenNothingDropped(t *testing.T) {
 }
 
 func TestAssemblyCondenseCapsOutputToBudget(t *testing.T) {
-	ctx := context.Background()
 	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	gen := func(
 		context.Context,
@@ -660,17 +607,7 @@ func TestAssemblyCondenseCapsOutputToBudget(t *testing.T) {
 		withGenerate(gen))
 
 	for i := 0; i < 12; i++ {
-		turn := memory.Turn{
-			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
-			ConversationID: "c1",
-			IdempotencyKey: fmt.Sprintf("t%d", i),
-			Messages: []message.Message{
-				message.NewTextMessage(message.RoleUser, fmt.Sprintf("m%d", i)),
-			},
-		}
-		if err := a.CommitTurn(ctx, turn); err != nil {
-			t.Fatal(err)
-		}
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
 	}
 	a.condenseWG.Wait()
 	if len(store.nodes) != 1 {
@@ -688,20 +625,10 @@ func TestAssemblyFoldAndContextNeverFullLoad(t *testing.T) {
 		MaxRawMessages: 2, PreserveRecent: 2, MaxSummaryBytes: 64,
 	}))
 
-	// 30 turns: every fold must go through CountMessages plus bounded range
-	// loads, never a full LoadMessages of the growing conversation.
+	// 30 turns: every fold must go through MaxSeq plus bounded backward
+	// loads, never a full LoadAll of the growing conversation.
 	for i := 0; i < 30; i++ {
-		turn := memory.Turn{
-			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
-			ConversationID: "c1",
-			IdempotencyKey: fmt.Sprintf("t%d", i),
-			Messages: []message.Message{
-				message.NewTextMessage(message.RoleUser, fmt.Sprintf("msg-%02d", i)),
-			},
-		}
-		if err := a.CommitTurn(ctx, turn); err != nil {
-			t.Fatal(err)
-		}
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("msg-%02d", i))
 	}
 	if store.fullLoads != 0 {
 		t.Fatalf("fold used %d full LoadAll calls, want 0 (incremental)", store.fullLoads)
@@ -789,7 +716,6 @@ func TestAssemblyContextPairLookbackBoundedOnDanglingResult(t *testing.T) {
 }
 
 func TestAssemblyFoldTailMatchesFullBufferFold(t *testing.T) {
-	ctx := context.Background()
 	pol := Policy{MaxRawMessages: 4, PreserveRecent: 2, MaxSummaryBytes: 128}
 	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	a := NewAssembly(store, WithAssemblyPolicy(pol))
@@ -797,17 +723,7 @@ func TestAssemblyFoldTailMatchesFullBufferFold(t *testing.T) {
 	// 40 messages: the foldable region far exceeds the byte budget, so the
 	// tail path loads only the newest foldable messages.
 	for i := 0; i < 40; i++ {
-		turn := memory.Turn{
-			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
-			ConversationID: "c1",
-			IdempotencyKey: fmt.Sprintf("t%d", i),
-			Messages: []message.Message{
-				message.NewTextMessage(message.RoleUser, fmt.Sprintf("m%02d", i)),
-			},
-		}
-		if err := a.CommitTurn(ctx, turn); err != nil {
-			t.Fatal(err)
-		}
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%02d", i))
 	}
 	if len(store.nodes) != 1 {
 		t.Fatalf("nodes = %d, want 1", len(store.nodes))

@@ -10,10 +10,12 @@ import (
 	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
+	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
 // newSQLiteTurnStore opens a throwaway workspace DB, wraps it in the
@@ -180,11 +182,15 @@ func TestSQLiteTurnStoreRendersToolActivityOnRead(t *testing.T) {
 	}
 }
 
-// TestSQLiteTurnStoreSkipsRowsWithoutPromptForm verifies rows that render
-// to nothing stay in the archive but not in the model window, and that
-// skipping them does not renumber the rows around them: seqs are the
+// TestSQLiteTurnStoreProjectsTextlessRows covers the rows that carry no
+// text of their own. An attachment-only row has a prompt form — a
+// placeholder naming what it carries — so it enters the window at its own
+// coordinate; a payload that does not decode as canonical content, or that
+// has nothing a prompt can carry, is left out: counted and warned, never
+// silently. Neither renumbers the rows around them: seqs are the
 // transcript's, not the window's.
-func TestSQLiteTurnStoreSkipsRowsWithoutPromptForm(t *testing.T) {
+func TestSQLiteTurnStoreProjectsTextlessRows(t *testing.T) {
+	capture := logcapture.Install(t)
 	adapter, store := newSQLiteTurnStore(t)
 	ctx := context.Background()
 	const conv = "s-1"
@@ -196,11 +202,39 @@ func TestSQLiteTurnStoreSkipsRowsWithoutPromptForm(t *testing.T) {
 	commitTurn(t, store, conv, "turn-1", []message.Message{
 		message.NewTextMessage(message.RoleUser, "kept"),
 		// An attachment-only row: the archive keeps it (the transcript is
-		// the conversation), the window has no prompt form for it.
+		// the conversation) and the window says what it is.
 		{Role: message.RoleAssistant, Content: message.Content{Parts: []message.Part{
 			message.ImagePart{Source: image},
 		}}},
-		message.NewTextMessage(message.RoleUser, ""),
+	})
+	// Rows no current writer produces, but a legacy or foreign writer can
+	// have left behind: a payload migration 011 never rewrote, and one an
+	// interrupted write truncated.
+	var turnID int64
+	if err := store.Handle().SQLDB().QueryRowContext(ctx,
+		`SELECT id FROM archive_turns WHERE conversation_id = ? ORDER BY id LIMIT 1`,
+		conv).Scan(&turnID); err != nil {
+		t.Fatalf("archive turn id: %v", err)
+	}
+	for seq, payload := range map[int64]string{2: `{}`, 3: `{"text":"legacy"}`} {
+		if _, err := store.Handle().SQLDB().ExecContext(ctx, `
+			INSERT INTO archive_messages(
+				turn_id, conversation_id, seq, role, content_json, created_at
+			) VALUES (?, ?, ?, 'user', ?, '2026-09-01T10:00:00Z')`,
+			turnID, conv, seq, payload,
+		); err != nil {
+			t.Fatalf("seed seq %d: %v", seq, err)
+		}
+	}
+	// A decodable row with nothing to show: a reasoning trace whose text
+	// the provider withheld (signature only). Valid content, no prompt
+	// form.
+	commitTurn(t, store, conv, "turn-2", []message.Message{
+		{Role: message.RoleAssistant, Content: message.Content{Parts: []message.Part{
+			message.ReasoningPart{Signature: "opaque"},
+		}}},
+	})
+	commitTurn(t, store, conv, "turn-3", []message.Message{
 		message.NewTextMessage(message.RoleAssistant, "kept-2"),
 	})
 
@@ -208,22 +242,62 @@ func TestSQLiteTurnStoreSkipsRowsWithoutPromptForm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if maxSeq != 3 {
-		t.Fatalf("MaxSeq = %d, want 3 (every archived row has a seq)", maxSeq)
+	if maxSeq != 5 {
+		t.Fatalf("MaxSeq = %d, want 5 (every archived row has a seq)", maxSeq)
 	}
 	all, err := adapter.LoadAll(ctx, conv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) != 2 {
-		t.Fatalf("rows = %d, want 2 replayable rows", len(all))
+	want := []struct {
+		seq  int64
+		text string
+	}{
+		{0, "kept"},
+		{1, "[attachment: image]"},
+		{5, "kept-2"},
 	}
-	if all[0].Seq != 0 || all[0].Content.Text() != "kept" {
-		t.Errorf("row 0 = %+v, want seq 0 kept", all[0])
+	if len(all) != len(want) {
+		t.Fatalf("rows = %d, want %d (%+v)", len(all), len(want), all)
 	}
-	if all[1].Seq != 3 || all[1].Content.Text() != "kept-2" {
-		t.Errorf("row 1 = %+v, want seq 3 kept-2", all[1])
+	for i, w := range want {
+		if all[i].Seq != w.seq || all[i].Content.Text() != w.text {
+			t.Errorf("row %d = seq %d %q, want seq %d %q",
+				i, all[i].Seq, all[i].Content.Text(), w.seq, w.text)
+		}
 	}
+
+	// The placeholder and the three skipped rows are reported, with counts.
+	bodies := capture.Bodies()
+	placeholder := capturedRecord(capture, "memory: transcript rows rendered as placeholders")
+	if placeholder == nil {
+		t.Fatalf("no placeholder record emitted; bodies: %v", bodies)
+	}
+	if got := logcapture.Attribute(*placeholder, "rows"); got != "1" {
+		t.Errorf("placeholder rows = %q, want 1", got)
+	}
+	skipped := capturedRecord(capture, "memory: transcript rows left out of the window")
+	if skipped == nil {
+		t.Fatalf("no skip record emitted; bodies: %v", bodies)
+	}
+	if got := logcapture.Attribute(*skipped, "undecodable"); got != "2" {
+		t.Errorf("undecodable rows = %q, want 2 (an empty payload and a legacy one)", got)
+	}
+	if got := logcapture.Attribute(*skipped, "unrenderable"); got != "1" {
+		t.Errorf("unrenderable rows = %q, want 1 (the withheld reasoning trace)", got)
+	}
+}
+
+// capturedRecord returns the first record captured so far whose body is
+// want, or nil when nothing matched.
+func capturedRecord(capture *logcapture.Recorder, want string) *sdklog.Record {
+	for _, record := range capture.Records() {
+		if record.Body().AsString() == want {
+			matched := record
+			return &matched
+		}
+	}
+	return nil
 }
 
 // TestSQLiteTurnStoreSeqAdvancesAcrossCommits verifies seqs continue

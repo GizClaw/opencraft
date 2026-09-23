@@ -18,20 +18,18 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
-// TestCommitHookAtomicMemory verifies the production memory resource
-// appends archive and memory rows inside one transaction: both tables
-// are written by the same committer invocation.
-func TestCommitHookAtomicMemory(t *testing.T) {
+// TestCommitHookWritesTranscriptOnce verifies the production memory
+// resource is a reader: one committer invocation writes the turn to the
+// transcript (where the projection reads it back) and keeps no second
+// copy of it.
+func TestCommitHookWritesTranscriptOnce(t *testing.T) {
 	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.CloseDB() }()
 	adapter := &sqliteTurnStore{db: store.Database()}
-	res := &memoryResource{
-		Assembly: summary.NewAssembly(adapter),
-		store:    adapter,
-	}
+	res := summary.NewAssembly(adapter)
 
 	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
 		Settings: []byte(`{}`),
@@ -63,10 +61,18 @@ func TestCommitHookAtomicMemory(t *testing.T) {
 	if rows, err := adapter.LoadAll(ctx, "s-atomic"); err != nil || len(rows) != 2 {
 		t.Fatalf("projected rows = %d, %v; want 2", len(rows), err)
 	}
-	// The same committer invocation still writes the memory copy the
-	// pre-transcript read path read from (increment A keeps both).
-	if stored := loadStoredMemoryRows(t, store.Database(), "s-atomic"); len(stored) != 2 {
-		t.Fatalf("stored memory rows = %d, want 2", len(stored))
+	// The window is a projection of the transcript, and nothing else:
+	// the memory copy the pre-transcript read path served is gone
+	// (migration 020), and no code path may bring a second one back.
+	var copies int
+	if err := store.Database().SQLDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master
+		 WHERE type = 'table' AND name = 'memory_items'`,
+	).Scan(&copies); err != nil {
+		t.Fatal(err)
+	}
+	if copies != 0 {
+		t.Fatal("the transcript has a second copy again")
 	}
 	hist, err := store.History(ctx, "s-atomic", 0)
 	if err != nil {
@@ -160,8 +166,8 @@ func TestCommitHookFactoryCommitsTurn(t *testing.T) {
 }
 
 // TestCommitHookSkipsEmptyResult verifies a turn that produced no messages
-// writes nothing: neither the archive (request alone would be noise) nor the
-// memory sink (CommitTurn requires at least one message).
+// writes nothing: neither the transcript (request alone would be noise) nor
+// the memory sink (CommitTurn requires at least one message).
 func TestCommitHookSkipsEmptyResult(t *testing.T) {
 	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
@@ -361,20 +367,26 @@ func TestCommitHookPersistsFullConversation(t *testing.T) {
 	if len(turn.Messages) != 4 {
 		t.Fatalf("sink messages = %d, want 4", len(turn.Messages))
 	}
-	if !strings.Contains(turn.Messages[1].Content.Text(), "tool_call: webfetch") {
-		t.Errorf("sink assistant tool-call text = %q, want rendered tool_call line",
-			turn.Messages[1].Content.Text())
+	// The sink receives the turn as exchanged, canonical parts included:
+	// rendering the activity for the model is the read path's job (see
+	// projection.go), so one function produces that text for one copy of
+	// the conversation.
+	if call, ok := turn.Messages[1].Content.Parts[0].(message.ToolCallPart); !ok ||
+		call.Call.Name != "webfetch" {
+		t.Errorf("sink tool-call message = %+v, want the structured call",
+			turn.Messages[1])
 	}
-	if !strings.Contains(turn.Messages[2].Content.Text(), "tool_result: sunny 28C") {
-		t.Errorf("sink tool text = %q, want rendered tool_result line",
-			turn.Messages[2].Content.Text())
+	if result, ok := turn.Messages[2].Content.Parts[0].(message.ToolResultPart); !ok ||
+		result.Result.Content.Text() != "sunny 28C" {
+		t.Errorf("sink tool-result message = %+v, want the structured result",
+			turn.Messages[2])
 	}
 }
 
 // TestCommitHookDropsReplayedHistory verifies that full-history replay
 // never re-persists earlier turns: each commit stores only the current
-// user message and the messages produced by this turn, so the archive
-// and memory rows stay linear instead of growing with every replay.
+// user message and the messages produced by this turn, so the transcript
+// stays linear instead of growing with every replay.
 func TestCommitHookDropsReplayedHistory(t *testing.T) {
 	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
@@ -382,10 +394,7 @@ func TestCommitHookDropsReplayedHistory(t *testing.T) {
 	}
 	defer func() { _ = store.CloseDB() }()
 	adapter := &sqliteTurnStore{db: store.Database()}
-	res := &memoryResource{
-		Assembly: summary.NewAssembly(adapter),
-		store:    adapter,
-	}
+	res := summary.NewAssembly(adapter)
 
 	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
 		Settings: []byte(`{}`),

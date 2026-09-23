@@ -134,9 +134,6 @@ type Store struct {
 	mu          sync.Mutex
 	artifactBuf map[string][]Artifact
 	turnTiming  map[string]map[string]TurnTiming
-	// importPending tracks imports that have written history but have
-	// not yet completed their memory seed.
-	importPending map[string]string
 }
 
 // New creates a Store rooted at root. The window is a convenience
@@ -160,12 +157,11 @@ func New(root string, window int) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{
-		root:          root,
-		window:        window,
-		db:            db,
-		artifactBuf:   make(map[string][]Artifact),
-		turnTiming:    make(map[string]map[string]TurnTiming),
-		importPending: make(map[string]string),
+		root:        root,
+		window:      window,
+		db:          db,
+		artifactBuf: make(map[string][]Artifact),
+		turnTiming:  make(map[string]map[string]TurnTiming),
 	}
 	return s, nil
 }
@@ -264,27 +260,14 @@ func (s *Store) Create() (string, error) {
 
 // AppendTurn persists one turn without a run id.
 func (s *Store) AppendTurn(ctx context.Context, id string, msgs []message.Message) error {
-	return s.appendTurn(ctx, id, "", TurnOrigin{}, msgs, nil)
+	return s.appendTurn(ctx, id, "", TurnOrigin{}, msgs)
 }
 
 // AppendTurnWithRunID persists one turn with a run id.
 func (s *Store) AppendTurnWithRunID(
 	ctx context.Context, id, runID string, msgs []message.Message,
 ) error {
-	return s.appendTurn(ctx, id, runID, TurnOrigin{}, msgs, nil)
-}
-
-// AppendTurnWithRunIDAndHook persists one turn with a run id and runs
-// hook inside the same SQLite transaction after the archive rows are
-// written. The hook is how memory appends its rows atomically with the
-// conversation archive.
-func (s *Store) AppendTurnWithRunIDAndHook(
-	ctx context.Context,
-	id, runID string,
-	msgs []message.Message,
-	hook state.CommitHook,
-) error {
-	return s.appendTurn(ctx, id, runID, TurnOrigin{}, msgs, hook)
+	return s.appendTurn(ctx, id, runID, TurnOrigin{}, msgs)
 }
 
 // AppendTurnWithOriginAndRunID persists one turn the app itself wrote
@@ -298,7 +281,7 @@ func (s *Store) AppendTurnWithOriginAndRunID(
 	origin TurnOrigin,
 	msgs []message.Message,
 ) error {
-	return s.appendTurn(ctx, id, runID, origin, msgs, nil)
+	return s.appendTurn(ctx, id, runID, origin, msgs)
 }
 
 // TurnOrigin is the author and structured record of an app-authored
@@ -315,7 +298,6 @@ type TurnOrigin struct {
 func (s *Store) appendTurn(
 	ctx context.Context, id, runID string, origin TurnOrigin,
 	msgs []message.Message,
-	hook state.CommitHook,
 ) error {
 	if err := requireID(id); err != nil {
 		return err
@@ -349,9 +331,7 @@ func (s *Store) appendTurn(
 		}
 	}
 	turn, archiveMsgs := s.archiveTurn(id, runID, origin, now, archived)
-	return s.db.CommitConversationTurnWithHook(
-		ctx, c, turn, archiveMsgs, hook,
-	)
+	return s.db.CommitConversationTurn(ctx, c, turn, archiveMsgs)
 }
 
 func (s *Store) archiveTurn(
@@ -1082,7 +1062,6 @@ func (s *Store) Remove(ctx context.Context, id string) error {
 }
 
 func (s *Store) removeLocked(ctx context.Context, id string) error {
-	delete(s.importPending, id)
 	delete(s.turnTiming, id)
 	delete(s.artifactBuf, id)
 	if err := s.db.DeleteConversationRows(ctx, id); err != nil {

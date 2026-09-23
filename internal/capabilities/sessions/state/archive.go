@@ -137,11 +137,6 @@ func scanArchiveTurn(row rowScanner) (ArchiveTurn, error) {
 	return t, nil
 }
 
-// CommitHook runs inside the conversation turn transaction after the
-// archive rows have been written. It lets the memory owner append its
-// rows atomically with the archive.
-type CommitHook func(ctx context.Context, tx *sql.Tx) error
-
 // EnsureConversation inserts a conversation row when missing.
 func (s *Store) EnsureConversation(ctx context.Context, c Conversation) error {
 	if strings.TrimSpace(c.ID) == "" {
@@ -366,25 +361,21 @@ func (s *Store) SetConversationState(
 	return nil
 }
 
-// CommitArchiveTurn atomically appends one full-fidelity turn and its
-// messages.
+// CommitConversationTurn atomically appends one full-fidelity turn, its
+// messages, the search-index rows for those messages, and the
+// conversation's counter caches.
+//
+// It is the one place a transcript turn is written. Nothing else may
+// join this transaction: the transcript is the conversation, and the
+// only derived state that has to be exact — the full-text index the
+// archive must never lag, and the counters a sidebar sorts by — is
+// written here so it cannot drift. Readers that need more (a summary
+// tree, a model window) derive it from these rows afterwards.
 func (s *Store) CommitConversationTurn(
 	ctx context.Context,
 	c Conversation,
 	turn ArchiveTurn,
 	msgs []ArchiveMessage,
-) error {
-	return s.CommitConversationTurnWithHook(ctx, c, turn, msgs, nil)
-}
-
-// CommitConversationTurnWithHook atomically appends one full-fidelity
-// turn, its messages, and any memory rows the hook writes.
-func (s *Store) CommitConversationTurnWithHook(
-	ctx context.Context,
-	c Conversation,
-	turn ArchiveTurn,
-	msgs []ArchiveMessage,
-	hook CommitHook,
 ) error {
 	if strings.TrimSpace(c.ID) == "" {
 		return fmt.Errorf("state: conversation id is required")
@@ -532,11 +523,6 @@ func (s *Store) CommitConversationTurnWithHook(
 		len(msgs), c.ID,
 	); err != nil {
 		return fmt.Errorf("state: update conversation counts: %w", err)
-	}
-	if hook != nil {
-		if err := hook(ctx, tx); err != nil {
-			return fmt.Errorf("state: conversation turn hook: %w", err)
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("state: commit conversation turn: %w", err)
@@ -887,7 +873,9 @@ func (s *Store) DeleteConversationRows(ctx context.Context, id string) error {
 			return fmt.Errorf("state: delete conversation %s: %w", id, err)
 		}
 	}
-	for _, table := range []string{"memory_items", "summary_nodes"} {
+	// The summary tree is derived from these rows and would outlive them
+	// (migration 020 retired the other derived copy, memory_items).
+	for _, table := range []string{"summary_nodes"} {
 		query := `DELETE FROM ` + table + ` WHERE thread_id = ?`
 		if err := execIfTableExists(ctx, tx, table, query, id); err != nil {
 			return fmt.Errorf("state: delete conversation %s memory: %w", id, err)

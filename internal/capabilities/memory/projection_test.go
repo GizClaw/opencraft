@@ -1,7 +1,6 @@
 package memory
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/message/media"
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
@@ -18,7 +18,9 @@ import (
 )
 
 // commitHook wires the production commit hook over a migrated session
-// store, exactly the way the deploy assembly does.
+// store, exactly the way the deploy assembly does: the memory resource is
+// the summary assembly, so the hook writes the turn to the transcript and
+// the assembly folds what the transcript holds.
 func commitHook(t *testing.T) (agent.CommitterFunc, *sessions.Store, *sqliteTurnStore) {
 	t.Helper()
 	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
@@ -27,10 +29,7 @@ func commitHook(t *testing.T) (agent.CommitterFunc, *sessions.Store, *sqliteTurn
 	}
 	t.Cleanup(func() { _ = store.CloseDB() })
 	adapter := &sqliteTurnStore{db: store.Database()}
-	res := &memoryResource{
-		Assembly: summary.NewAssembly(adapter),
-		store:    adapter,
-	}
+	res := summary.NewAssembly(adapter)
 	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
 		Settings: []byte(`{}`),
 		Deps: map[string]any{
@@ -48,121 +47,9 @@ func commitHook(t *testing.T) (agent.CommitterFunc, *sessions.Store, *sqliteTurn
 	return committer, store, adapter
 }
 
-// TestProjectionMatchesStoredMemoryRows is increment A's safety rope: the
-// window is now projected from the transcript, and the memory copy the
-// previous read path served is still written in the same transaction.
-// Both must answer identically, row for row, or switching the read path
-// changed what the model sees. The test goes away with memory_items.
-func TestProjectionMatchesStoredMemoryRows(t *testing.T) {
-	committer, store, adapter := commitHook(t)
-	ctx := context.Background()
-	const conv = "s-parity"
-
-	turn := func(runID, request string, tail ...message.Message) {
-		t.Helper()
-		id := agent.Identity{
-			RunID: runID, AgentID: "assistant", ConversationID: conv,
-		}
-		req := &agent.Request{
-			ContextID: conv,
-			Message:   message.NewTextMessage(message.RoleUser, request),
-		}
-		res := &agent.Result{
-			RunID:    runID,
-			Status:   agent.StatusCompleted,
-			Messages: tail,
-		}
-		if err := committer(ctx, id, req, res); err != nil {
-			t.Fatalf("commit %s: %v", runID, err)
-		}
-	}
-
-	turn("run-1", "first question",
-		message.NewTextMessage(message.RoleAssistant, "first answer"))
-	// A tool round inside one turn: the pair must survive the projection
-	// with the rendered activity the stored copy carries.
-	turn("run-2", "run the tool",
-		message.Message{
-			Role: message.RoleAssistant,
-			Content: message.Content{Parts: []message.Part{
-				message.ToolCallPart{Call: message.ToolCall{
-					ID: "c1", Name: "fetch",
-					Arguments: json.RawMessage(`{"url":"https://example.invalid"}`),
-				}},
-			}},
-		},
-		message.Message{
-			Role: message.RoleTool,
-			Content: message.Content{Parts: []message.Part{
-				message.ToolResultPart{Result: message.ToolResult{
-					CallID: "c1", Content: message.NewTextContent("tool output"),
-				}},
-			}},
-		},
-		message.NewTextMessage(message.RoleAssistant, "tool done"),
-	)
-	turn("run-3", "and again",
-		message.NewTextMessage(message.RoleAssistant, "third answer"))
-
-	// Rows the write path never put in the window: an app-authored turn
-	// (the delegation note the host appends on its own) and an imported
-	// conversation's system prompt. The transcript keeps both; the
-	// projection must leave both out.
-	const noteText = "[delegated worker scout finished: completed]"
-	if err := store.AppendTurnWithOriginAndRunID(ctx, conv, "run-note",
-		sessions.TurnOrigin{Kind: "delegation_note"},
-		[]message.Message{message.NewTextMessage(message.RoleUser, noteText)},
-	); err != nil {
-		t.Fatal(err)
-	}
-	const systemText = "source app system prompt"
-	if err := store.AppendTurnWithRunID(ctx, conv, "run-system",
-		[]message.Message{message.NewTextMessage(message.RoleSystem, systemText)},
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	stored := loadStoredMemoryRows(t, store.Database(), conv)
-	projected, err := adapter.LoadAll(ctx, conv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Three turns of user + reply, with turn 2 carrying a tool round. The
-	// note turn and the system row are not part of it; an empty comparison
-	// must fail rather than pass vacuously.
-	if len(stored) != 8 {
-		t.Fatalf("stored memory rows = %d, want 8", len(stored))
-	}
-	if len(projected) != len(stored) {
-		t.Fatalf("projected rows = %d, stored memory rows = %d, want equal",
-			len(projected), len(stored))
-	}
-	for i := range stored {
-		got, err := json.Marshal(projected[i].Message().Content)
-		if err != nil {
-			t.Fatalf("marshal projected row %d: %v", i, err)
-		}
-		want, err := json.Marshal(stored[i].Content)
-		if err != nil {
-			t.Fatalf("marshal stored row %d: %v", i, err)
-		}
-		if projected[i].Role != stored[i].Role || !bytes.Equal(got, want) {
-			t.Errorf("row %d:\n project %s %s\n  stored %s %s",
-				i, projected[i].Role, got, stored[i].Role, want)
-		}
-	}
-	for _, row := range projected {
-		text := row.Content.Text()
-		if text == noteText || text == systemText {
-			t.Fatalf("row %d leaked a transcript-only row into the window: %q",
-				row.Seq, text)
-		}
-	}
-}
-
-// TestProjectionServesTheModelWindow drives the same commit path and reads
-// the window the model would get, so the rope above is tied to the real
-// read: raw items carry transcript seqs, and a tool pair arrives intact.
+// TestProjectionServesTheModelWindow drives the commit path and reads the
+// window the model would get: raw items carry transcript seqs, and a tool
+// pair arrives intact with its activity rendered on read.
 func TestProjectionServesTheModelWindow(t *testing.T) {
 	committer, _, adapter := commitHook(t)
 	ctx := context.Background()
@@ -205,31 +92,26 @@ func TestProjectionServesTheModelWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var raws []corememory.ContextItem
-	for _, item := range got.Items {
-		if item.Kind == corememory.ContextRawMessage {
-			raws = append(raws, item)
-		}
-	}
+	raws := rawItems(got)
 	// The window starts at the user request and includes the whole tool
 	// round: call, result, reply.
 	want := []struct {
-		id   string
 		role message.Role
 		text string
 	}{
-		{summary.SourceID(0), message.RoleUser, "run the tool"},
-		{summary.SourceID(1), message.RoleAssistant, ""},
-		{summary.SourceID(2), message.RoleTool, ""},
-		{summary.SourceID(3), message.RoleAssistant, "done"},
+		{message.RoleUser, "run the tool"},
+		{message.RoleAssistant, ""},
+		{message.RoleTool, ""},
+		{message.RoleAssistant, "done"},
 	}
 	if len(raws) != len(want) {
 		t.Fatalf("raw items = %+v, want %d", raws, len(want))
 	}
 	for i, w := range want {
-		if raws[i].ID != w.id || raws[i].MessageRole != w.role {
-			t.Errorf("raw item %d = %s %s, want %s %s",
-				i, raws[i].MessageRole, raws[i].ID, w.role, w.id)
+		id := summary.SourceID(int64(i))
+		if raws[i].ID != id || raws[i].MessageRole != w.role {
+			t.Errorf("raw item %d = %s %s, want %s seq %s",
+				i, raws[i].MessageRole, raws[i].ID, w.role, id)
 		}
 		if w.text != "" && raws[i].Content.Text() != w.text {
 			t.Errorf("raw item %d text = %q, want %q",
@@ -245,4 +127,157 @@ func TestProjectionServesTheModelWindow(t *testing.T) {
 	if calls := raws[1].Content.Parts; len(calls) == 0 {
 		t.Error("call row lost its structured part")
 	}
+}
+
+// TestProjectionWindowIncludesAppAuthoredTurns pins rule 1 and rule 2:
+// every archived row is a candidate whoever wrote it, so an app-authored
+// delegation note reaches the model on the next turn, while an imported
+// conversation's own system prompt stays in the archive. The note arrives
+// as the newest row and must not disturb the tool pair before it.
+func TestProjectionWindowIncludesAppAuthoredTurns(t *testing.T) {
+	committer, store, adapter := commitHook(t)
+	ctx := context.Background()
+	const conv = "s-notes"
+
+	id := agent.Identity{RunID: "run-1", AgentID: "assistant", ConversationID: conv}
+	req := &agent.Request{
+		ContextID: conv,
+		Message:   message.NewTextMessage(message.RoleUser, "run the tool"),
+	}
+	res := &agent.Result{
+		RunID:  "run-1",
+		Status: agent.StatusCompleted,
+		Messages: []message.Message{
+			{Role: message.RoleAssistant, Content: message.Content{Parts: []message.Part{
+				message.ToolCallPart{Call: message.ToolCall{
+					ID: "c1", Name: "fetch", Arguments: json.RawMessage(`{}`),
+				}},
+			}}},
+			{Role: message.RoleTool, Content: message.Content{Parts: []message.Part{
+				message.ToolResultPart{Result: message.ToolResult{
+					CallID: "c1", Content: message.NewTextContent("tool output"),
+				}},
+			}}},
+			message.NewTextMessage(message.RoleAssistant, "done"),
+		},
+	}
+	if err := committer(ctx, id, req, res); err != nil {
+		t.Fatal(err)
+	}
+	const noteText = "[delegated worker scout finished: completed]\nfound the bug"
+	if err := store.AppendTurnWithOriginAndRunID(ctx, conv, "run-note",
+		sessions.TurnOrigin{Kind: "delegation_note"},
+		[]message.Message{message.NewTextMessage(message.RoleUser, noteText)},
+	); err != nil {
+		t.Fatal(err)
+	}
+	const systemText = "source app system prompt"
+	if err := store.AppendTurnWithRunID(ctx, conv, "run-system",
+		[]message.Message{message.NewTextMessage(message.RoleSystem, systemText)},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	assembly := summary.NewAssembly(adapter, summary.WithAssemblyPolicy(summary.Policy{
+		MaxRawMessages: 50, PreserveRecent: 0, MaxSummaryBytes: 4096,
+	}))
+	got, err := assembly.Context(ctx, corememory.ContextRequest{
+		Scope:          corememory.Scope{RuntimeID: "opencraft"},
+		ConversationID: conv,
+		Budget:         corememory.Budget{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raws := rawItems(got)
+	// request, call, result, reply, note — and no system row.
+	if len(raws) != 5 {
+		t.Fatalf("raw items = %d, want 5 (%+v)", len(raws), raws)
+	}
+	note := raws[4]
+	if note.MessageRole != message.RoleUser || note.Content.Text() != noteText {
+		t.Errorf("note row = %s %q, want the user-role note text",
+			note.MessageRole, note.Content.Text())
+	}
+	if note.ID != summary.SourceID(4) {
+		t.Errorf("note id = %q, want its transcript coordinate", note.ID)
+	}
+	for _, item := range raws {
+		if strings.Contains(item.Content.Text(), systemText) {
+			t.Fatalf("imported system prompt reached the window: %+v", item)
+		}
+	}
+	// The tool pair ahead of the note is still a pair.
+	if raws[1].MessageRole != message.RoleAssistant ||
+		raws[2].MessageRole != message.RoleTool {
+		t.Errorf("tool pair = %s / %s, want assistant call then tool result",
+			raws[1].MessageRole, raws[2].MessageRole)
+	}
+}
+
+// TestProjectionServesTextlessRowAsPlaceholder pins rule 3 end to end: an
+// attachment-only turn reaches the model as a placeholder naming what it
+// carries, at its own transcript coordinate, instead of vanishing from the
+// conversation.
+func TestProjectionServesTextlessRowAsPlaceholder(t *testing.T) {
+	committer, _, adapter := commitHook(t)
+	ctx := context.Background()
+	const conv = "s-image"
+
+	image, err := media.NewImageURL("https://example.invalid/a.png", "image/png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := agent.Identity{RunID: "run-1", AgentID: "assistant", ConversationID: conv}
+	req := &agent.Request{
+		ContextID: conv,
+		Message:   message.NewTextMessage(message.RoleUser, "look at this"),
+	}
+	res := &agent.Result{
+		RunID:  "run-1",
+		Status: agent.StatusCompleted,
+		Messages: []message.Message{
+			{Role: message.RoleAssistant, Content: message.Content{Parts: []message.Part{
+				message.ImagePart{Source: image},
+			}}},
+		},
+	}
+	if err := committer(ctx, id, req, res); err != nil {
+		t.Fatal(err)
+	}
+
+	assembly := summary.NewAssembly(adapter, summary.WithAssemblyPolicy(summary.Policy{
+		MaxRawMessages: 10, PreserveRecent: 0, MaxSummaryBytes: 4096,
+	}))
+	got, err := assembly.Context(ctx, corememory.ContextRequest{
+		Scope:          corememory.Scope{RuntimeID: "opencraft"},
+		ConversationID: conv,
+		Budget:         corememory.Budget{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raws := rawItems(got)
+	if len(raws) != 2 {
+		t.Fatalf("raw items = %d, want the request and its placeholder", len(raws))
+	}
+	if got := raws[1].Content.Text(); got != "[attachment: image]" {
+		t.Errorf("image row = %q, want the attachment placeholder", got)
+	}
+	if raws[1].MessageRole != message.RoleAssistant ||
+		raws[1].ID != summary.SourceID(1) {
+		t.Errorf("image row = %s %s, want assistant at seq 1",
+			raws[1].MessageRole, raws[1].ID)
+	}
+}
+
+// rawItems filters a context result down to its raw window rows.
+func rawItems(res corememory.ContextResult) []corememory.ContextItem {
+	var raws []corememory.ContextItem
+	for _, item := range res.Items {
+		if item.Kind == corememory.ContextRawMessage {
+			raws = append(raws, item)
+		}
+	}
+	return raws
 }

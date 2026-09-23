@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/message"
@@ -13,7 +14,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
-func TestHostForkCopiesArchiveAndSeedsMemory(t *testing.T) {
+func TestHostForkCopiesArchive(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "forkable answer"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
@@ -60,15 +61,13 @@ func TestHostForkCopiesArchiveAndSeedsMemory(t *testing.T) {
 	if len(turns) != 1 || turns[0].RunID != run.RunID() {
 		t.Fatalf("forked turns = %+v, want one source turn", turns)
 	}
-	var memoryCount int
-	if err := h.Sessions().Database().SQLDB().QueryRowContext(
-		ctx,
-		`SELECT COUNT(*) FROM memory_items WHERE thread_id = ?`,
-		forkID,
-	).Scan(&memoryCount); err != nil {
-		t.Fatalf("count fork memory: %v", err)
+	// The fork is the transcript: the copied turn carries the source's
+	// messages verbatim, and nothing else answers for them.
+	var texts []string
+	for _, m := range turns[0].Messages {
+		texts = append(texts, m.Content.Text())
 	}
-	if memoryCount == 0 {
-		t.Fatal("forked session has no memory rows")
+	if !slices.Contains(texts, "remember me") {
+		t.Fatalf("forked turn messages = %v, want the source request", texts)
 	}
 }

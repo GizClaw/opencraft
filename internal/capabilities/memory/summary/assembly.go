@@ -17,10 +17,16 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 )
 
-// TurnStore is the storage surface the summary assembly needs. Messages use
-// the canonical flowcraft message.Message type. Implement it with the
-// sessions state store (internal/capabilities/sessions/state, SQLite) or a
-// test double.
+// TurnStore is the storage surface the summary assembly needs: the read
+// side of a conversation's transcript, plus the fold tree it maintains
+// over it. Messages use the canonical flowcraft message.Message type.
+// Implement it with the sessions state store
+// (internal/capabilities/sessions/state, SQLite) or a test double.
+//
+// It has no write side. The transcript is written by the conversation's
+// owner — capabilities/sessions, one writer, in the transaction that also
+// maintains the search index and the counter caches — and this package
+// only reads it and maintains its own summary_nodes.
 //
 // Transcript-coordinate contract: every row carries the immutable Seq it
 // was appended with, and that Seq is the row's identity — the model
@@ -35,7 +41,6 @@ import (
 // arithmetic — windows are sized in replayable rows, not transcript rows,
 // so filtering a row out cannot shrink a window.
 type TurnStore interface {
-	AppendMessages(ctx context.Context, conversationID, turnID string, msgs []message.Message) error
 	// MaxSeq returns the newest transcript Seq, or -1 when the
 	// conversation has no rows.
 	MaxSeq(ctx context.Context, conversationID string) (int64, error)
@@ -152,23 +157,27 @@ var _ memory.Assembly = (*Assembly)(nil)
 // board-level history replay channel.
 func (a *Assembly) ReplayFullHistory() bool { return a.replayFullHistory }
 
-// CommitTurn implements memory.TurnSink: persists canonical messages and
-// folds the buffer when the raw window is exceeded. It is the hook entry
-// point (agent Committer / SessionObserver.OnTurnFinished).
+// CommitTurn implements memory.TurnSink for the assembly: it folds the
+// conversation's buffer when the raw window is exceeded, and writes
+// nothing.
+//
+// The turn's messages are already in the transcript by the time a caller
+// delivers them here: the conversation's owner (capabilities/sessions)
+// writes the archive, and this assembly reads it back (see projection.go
+// for how a stored row becomes a window row). Keeping the call is what
+// lets the sink satisfy the core TurnSink contract, and folding here is
+// the only side effect it can honestly have — a second copy of the
+// messages is exactly what the transcript retired.
 func (a *Assembly) CommitTurn(ctx context.Context, turn memory.Turn) error {
 	if err := turn.Validate(); err != nil {
 		return err
 	}
-	if err := a.store.AppendMessages(ctx, turn.ConversationID, turn.IdempotencyKey, turn.Messages); err != nil {
-		return memory.NewError(memory.KindInternal, "turn", err)
-	}
 	return a.fold(ctx, turn.ConversationID)
 }
 
-// FoldOnly runs the fold over rows already appended atomically with
-// their archive by sessions.Store. It is the production path after
-// CommitConversationTurn; CommitTurn remains for standalone stores and
-// tests that append first.
+// FoldOnly runs the fold over the conversation's transcript. It is the
+// production path: the archive write and the fold are separate steps
+// because the fold must not run inside the write transaction.
 func (a *Assembly) FoldOnly(ctx context.Context, conversationID string) error {
 	return a.fold(ctx, conversationID)
 }

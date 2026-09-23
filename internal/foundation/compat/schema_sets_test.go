@@ -29,7 +29,7 @@ func TestWorkspaceAndUserMigrationSets(t *testing.T) {
 	for _, table := range []string{
 		"conversations", "archive_turns", "archive_messages",
 		"conversation_state", "agent_checkpoints",
-		"memory_items", "summary_nodes", "message_fts",
+		"summary_nodes", "message_fts",
 	} {
 		var n int
 		if err := ws.SQLDB().QueryRowContext(ctx,
@@ -42,7 +42,7 @@ func TestWorkspaceAndUserMigrationSets(t *testing.T) {
 			t.Fatalf("workspace table %s missing after migrations", table)
 		}
 	}
-	for _, table := range []string{"session_settings"} {
+	for _, table := range []string{"session_settings", "memory_items"} {
 		var n int
 		if err := ws.SQLDB().QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM sqlite_master

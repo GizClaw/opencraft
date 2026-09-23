@@ -2,66 +2,56 @@ package host
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	fcmemory "github.com/GizClaw/flowcraft/core/memory"
-	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
 
-	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
 
 // ImportSession writes one neutral session bundle into the Host's
-// store and seeds memory so a later turn can continue with the same
-// context. Store.Import dedupes by Source; when the conversation was
-// already imported and completed, the call returns the existing id
-// without touching memory. Fresh imports also get the same
-// asynchronous LLM display-title generation as normal turns; the
-// bundle title remains the instant fallback when inference is not
-// configured or generation fails.
+// store, from which a later turn continues: the transcript the import
+// writes is what the model's window is projected from, so there is no
+// second history to seed. Store.Import dedupes by Source; a source that
+// is already imported returns the existing id and only backfills the
+// accounting. Fresh imports also get the same asynchronous LLM
+// display-title generation as normal turns; the bundle title remains
+// the instant fallback when inference is not configured or generation
+// fails.
 func (h *Host) ImportSession(
 	ctx context.Context, req ocsessions.ImportRequest,
 ) (string, error) {
 	if h == nil || h.store == nil {
 		return "", ErrSessionStoreNotReady
 	}
-	if h.ctrl == nil || h.ctrl.Runtime() == nil {
-		return "", ErrRuntimeNotReady
-	}
 
 	h.importMu.Lock()
 	defer h.importMu.Unlock()
 
+	source := strings.TrimSpace(req.Source)
+	// ImportedBySources answers with the *ready* conversation for each
+	// source, which is exactly the "this bundle is already here" case:
+	// the import below is a no-op that returns the same id, so the only
+	// work left is accounting it once.
+	existing, err := h.store.ImportedBySources(ctx, []string{source})
+	if err != nil {
+		return "", fmt.Errorf("host: import dedupe lookup: %w", err)
+	}
 	id, err := h.store.Import(ctx, req)
 	if err != nil {
 		return "", err
 	}
-	ready, err := h.store.ImportReady(ctx, id)
-	if err != nil {
-		h.abortImport(ctx, id)
-		return "", fmt.Errorf("host: import readiness %s: %w", id, err)
-	}
 	// Account the source-reported token totals exactly once. An import
 	// arrives as a pre-aggregated cumulative total, so it is written
 	// only when the session has no recorded usage yet: fresh imports
-	// record after memory seeding and CompleteImport succeed, and a
-	// ready legacy import gets a backfill when no usage was captured.
-	if ready {
+	// record right after the transcript lands, and an already-imported
+	// bundle gets a backfill when no usage was captured.
+	if _, ready := existing[source]; ready {
 		h.recordImportUsage(ctx, id, req.Usage, importUsageAt(req))
 		return id, nil
-	}
-	if err := h.seedImportMemory(ctx, id, req); err != nil {
-		h.abortImport(ctx, id)
-		return "", fmt.Errorf("host: import memory seed %s: %w", id, err)
-	}
-	if err := h.store.CompleteImport(ctx, id); err != nil {
-		h.abortImport(ctx, id)
-		return "", fmt.Errorf("host: import complete %s: %w", id, err)
 	}
 	h.recordImportUsage(ctx, id, req.Usage, importUsageAt(req))
 	h.launchAutoTitle(context.WithoutCancel(ctx), id)
@@ -127,36 +117,4 @@ func (h *Host) forwardUsageRecorder(
 	}
 	telemetry.WarnErr(ctx, "host: record user-level usage failed",
 		h.usageRecorder(ctx, h.workspaceID, contextID, usage, at))
-}
-
-func (h *Host) abortImport(ctx context.Context, id string) {
-	if err := h.store.AbortImport(ctx, id); err != nil {
-		telemetry.WarnErr(ctx, "host: abort failed import failed", err,
-			otellog.String("conversation.id", id))
-	}
-}
-
-func (h *Host) seedImportMemory(
-	ctx context.Context, id string, req ocsessions.ImportRequest,
-) error {
-	source := strings.TrimSpace(req.Source)
-	if source == "" {
-		return errors.New("host: import source is required for memory seed")
-	}
-	value, ok := h.ctrl.Runtime().Resource("mem")
-	if !ok {
-		return errors.New("host: memory resource is missing")
-	}
-	sink, ok := value.(fcmemory.TurnSink)
-	if !ok {
-		return errors.New("host: memory resource is not a turn sink")
-	}
-	var msgs []message.Message
-	for _, turn := range req.Turns {
-		msgs = append(msgs, turn.Messages...)
-	}
-	if len(msgs) == 0 {
-		return errors.New("host: imported session has no messages to seed")
-	}
-	return opmemory.SeedConversation(ctx, sink, id, source, msgs)
 }

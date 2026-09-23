@@ -2,14 +2,11 @@ package memory
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"time"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/route"
-	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
@@ -22,24 +19,6 @@ const ResourceKind = "memory"
 // Factory builds the summary memory assembly from deploy settings,
 // depending on the session store (which owns the SQLite state).
 type Factory struct{}
-
-// memoryResource exposes the summary assembly plus its SQLite turn
-// store so lifecycle hooks can append memory rows inside the same
-// transaction as the conversation archive.
-type memoryResource struct {
-	*summary.Assembly
-	store *sqliteTurnStore
-}
-
-// AppendMessagesTx appends memory rows inside the caller's transaction.
-func (r *memoryResource) AppendMessagesTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	conversationID, turnID string,
-	msgs []message.Message,
-) error {
-	return r.store.AppendMessagesTx(ctx, tx, conversationID, turnID, msgs)
-}
 
 var _ resource.Factory = Factory{}
 
@@ -132,10 +111,5 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		}
 	}
 	adapter := &sqliteTurnStore{db: sessionsStore.Database()}
-	return &memoryResource{
-		Assembly: summary.NewAssembly(adapter, opts...),
-		store:    adapter,
-	}, nil
+	return summary.NewAssembly(adapter, opts...), nil
 }
-
-func timeNow() time.Time { return time.Now().UTC() }

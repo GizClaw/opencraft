@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
+
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 )
 
 func importFixture() ImportRequest {
@@ -32,7 +34,7 @@ func importFixture() ImportRequest {
 	}
 }
 
-func TestImportPersistsAndDedupes(t *testing.T) {
+func TestImportPersistsReadyAndDedupes(t *testing.T) {
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
@@ -47,21 +49,22 @@ func TestImportPersistsAndDedupes(t *testing.T) {
 	if !ValidID(id) {
 		t.Fatalf("imported id %q is not an s- id", id)
 	}
+	// The transcript is the import: the call writes it whole, so the
+	// conversation is complete — ready and listed — when it returns.
 	ready, err := store.ImportReady(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ready {
-		t.Fatal("import reported ready before memory seed")
+	if !ready {
+		t.Fatal("import reported incomplete after writing its transcript")
 	}
 
-	// Pending imports stay out of the resume list.
 	metas, err := store.List()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(metas) != 0 {
-		t.Fatalf("pending import visible in List: %+v", metas)
+	if len(metas) != 1 || metas[0].ID != id || metas[0].Title != "Imported title" {
+		t.Fatalf("list = %+v, want the finished import", metas)
 	}
 
 	history, err := store.History(ctx, id, -1)
@@ -72,17 +75,6 @@ func TestImportPersistsAndDedupes(t *testing.T) {
 		t.Fatalf("history = %+v", history)
 	}
 
-	if err := store.CompleteImport(ctx, id); err != nil {
-		t.Fatalf("CompleteImport: %v", err)
-	}
-	metas, err = store.List()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(metas) != 1 || metas[0].ID != id || metas[0].Title != "Imported title" {
-		t.Fatalf("list after complete = %+v", metas)
-	}
-
 	// Idempotent import returns the same session.
 	again, err := store.Import(ctx, importFixture())
 	if err != nil {
@@ -90,6 +82,59 @@ func TestImportPersistsAndDedupes(t *testing.T) {
 	}
 	if again != id {
 		t.Fatalf("duplicate import = %q, want %q", again, id)
+	}
+}
+
+// TestImportReplacesAnIncompleteConversation covers the one state an
+// import can leave behind: a conversation row whose transcript never
+// finished. It is unready and therefore invisible, and the next import
+// of the same source replaces it instead of deduping onto half a session.
+func TestImportReplacesAnIncompleteConversation(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.CloseDB() })
+	ctx := context.Background()
+
+	const interrupted = "s-interrupted"
+	now := time.Now().UTC()
+	if err := store.State().EnsureConversation(ctx, state.Conversation{
+		ID:           interrupted,
+		Title:        "half an import",
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		ImportSource: "codex:conv-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	metas, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 0 {
+		t.Fatalf("incomplete import is visible: %+v", metas)
+	}
+	if ready, err := store.ImportReady(ctx, interrupted); err != nil || ready {
+		t.Fatalf("incomplete import ready = %v (%v)", ready, err)
+	}
+
+	id, err := store.Import(ctx, importFixture())
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	if id == interrupted {
+		t.Fatal("import reused the interrupted conversation")
+	}
+	if store.Exists(interrupted) {
+		t.Fatal("the interrupted conversation survived its replacement")
+	}
+	got, err := store.ImportedBySources(ctx, []string{"codex:conv-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["codex:conv-1"] != id {
+		t.Fatalf("imported source = %+v, want the finished import", got)
 	}
 }
 
@@ -154,16 +199,6 @@ func TestImportRoundTripsAppAuthoredTurns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(metas) != 0 {
-		t.Fatalf("pending import visible before CompleteImport: %+v", metas)
-	}
-	if err := store.CompleteImport(ctx, id); err != nil {
-		t.Fatalf("CompleteImport: %v", err)
-	}
-	metas, err = store.List()
-	if err != nil {
-		t.Fatal(err)
-	}
 	if len(metas) != 1 || metas[0].Title != "what the user asked" {
 		t.Fatalf("imported title = %+v, want the user's first line", metas)
 	}
@@ -190,23 +225,9 @@ func TestImportedBySources(t *testing.T) {
 	}
 	sources := []string{"codex:conv-1", "codex:conv-2", "codex:conv-1"}
 
-	// Pending imports (memory seed not complete) are not reported as
-	// importable duplicates.
+	// A finished import is reported as an already-imported source, so the
+	// caller does not import it twice.
 	got, err := store.ImportedBySources(ctx, sources)
-	if err != nil {
-		t.Fatalf("ImportedBySources: %v", err)
-	}
-	if len(got) != 0 {
-		t.Fatalf("pending imports reported: %+v", got)
-	}
-
-	if err := store.CompleteImport(ctx, id1); err != nil {
-		t.Fatalf("CompleteImport: %v", err)
-	}
-	if err := store.CompleteImport(ctx, id2); err != nil {
-		t.Fatalf("CompleteImport: %v", err)
-	}
-	got, err = store.ImportedBySources(ctx, sources)
 	if err != nil {
 		t.Fatalf("ImportedBySources: %v", err)
 	}
@@ -219,7 +240,7 @@ func TestImportedBySources(t *testing.T) {
 	}
 }
 
-func TestImportPendingReturnsSameIDWhileInFlight(t *testing.T) {
+func TestImportDuplicateReturnsSameID(t *testing.T) {
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
@@ -230,18 +251,24 @@ func TestImportPendingReturnsSameIDWhileInFlight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Simulate the memory seed still running by keeping the session
-	// pending, then make sure the duplicate maps to the same id and
-	// does not delete it.
+	// A second import of the same source maps to the same id, deletes
+	// nothing, and appends nothing: the transcript is already there.
 	again, err := store.Import(context.Background(), importFixture())
 	if err != nil {
-		t.Fatalf("duplicate while pending: %v", err)
+		t.Fatalf("duplicate import: %v", err)
 	}
 	if again != id {
-		t.Fatalf("duplicate while pending = %q, want %q", again, id)
+		t.Fatalf("duplicate import = %q, want %q", again, id)
 	}
 	if !store.Exists(id) {
-		t.Fatal("pending session was deleted by duplicate import")
+		t.Fatal("session was deleted by duplicate import")
+	}
+	turns, err := store.Turns(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("turns = %d, want the two imported turns and no re-append", len(turns))
 	}
 }
 
