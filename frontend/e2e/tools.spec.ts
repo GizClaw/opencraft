@@ -246,7 +246,12 @@ test('configures the delegation policy from the tools tab', async ({
   const dialog = page.getByRole('dialog', { name: 'Delegation' });
   await expect(dialog).toBeVisible();
 
-  await dialog.getByLabel('Concurrent delegations').fill('6');
+  // The steppers name themselves after the field ("Increase Concurrent
+  // delegations"), so the label alone matches three controls; the role
+  // picks out the digits.
+  await dialog
+    .getByRole('spinbutton', { name: 'Concurrent delegations' })
+    .fill('6');
   // One target from the registered list, one pattern typed by hand.
   await dialog.getByRole('button', { name: 'Allow assistant' }).click();
   const addFields = dialog.getByLabel('Add');
