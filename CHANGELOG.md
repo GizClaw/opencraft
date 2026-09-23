@@ -442,6 +442,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Opening an agent in the graph editor no longer takes the page down when
+  its source omits the `edges` (or `nodes`) key. A single-node subagent
+  has no transitions at all, so the key can legitimately be absent, and
+  the binding marshals the parsed nil slice as `null` — which the canvas
+  layout iterated. The api adapter normalizes both lists to arrays on the
+  way in, and a test pins the path from the raw payload to the rendered
+  canvas.
 - Saving MCP servers no longer drops the rest of a hand-written `tools`
   resource. The user-layer merge that is supposed to deep-merge the
   generated keys into the existing resource inserted them into the
