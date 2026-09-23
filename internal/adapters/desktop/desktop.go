@@ -75,6 +75,10 @@ type Desktop struct {
 	execPool           *execd.Pool
 	runtimeMetricsStop chan struct{}
 	runtimeMetricsDone chan struct{}
+	// runtimeMetricTicks counts the sampler's ticks so the process-family
+	// snapshot runs at its own, slower cadence (procMetricEvery). Only the
+	// sampler goroutine touches it.
+	runtimeMetricTicks int
 	// media streams workspace files (generated videos) to the webview
 	// over a loopback listener; nil disables inline media playback.
 	media *mediaServer

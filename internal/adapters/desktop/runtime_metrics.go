@@ -40,9 +40,10 @@ func (d *Desktop) startRuntimeMetrics() {
 	}()
 }
 
-// sampleRuntimeMetrics reads MemStats once and persists one batch. Writes
-// use a background context because the application context is already
-// canceled when service shutdown starts.
+// sampleRuntimeMetrics reads MemStats once, takes one process family
+// snapshot, and persists the two as one batch. Writes use a background
+// context because the application context is already canceled when service
+// shutdown starts.
 func (d *Desktop) sampleRuntimeMetrics() {
 	ctx := context.Background()
 	store := d.metricsStore()
@@ -70,6 +71,14 @@ func (d *Desktop) sampleRuntimeMetrics() {
 		{Name: "go.runtime.goroutines", Ts: now,
 			Value: float64(runtime.NumGoroutine())},
 	}
+	// The Go heap is one process of the family; the sampler records what
+	// the whole app costs the machine alongside it so the two read against
+	// each other, on the family's own cadence: it writes a row per process
+	// and moves slowly.
+	if d.runtimeMetricTicks%procMetricEvery == 0 {
+		samples = append(samples, procSamples(now)...)
+	}
+	d.runtimeMetricTicks++
 	if err := store.RecordBatch(ctx, samples); err != nil {
 		telemetry.WarnErr(ctx,
 			"desktop: record runtime metrics failed", err)

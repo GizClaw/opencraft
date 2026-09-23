@@ -256,6 +256,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not decode still renders as a card from the row's own text, and a
   kind from a newer build is carried through without being guessed at.
 
+- The Diagnostics charts now measure the app the way the machine does, not
+  only the Go heap: a new "The app's processes" section charts
+  `proc.mem.family_total` — every process this app is running — and
+  `proc.mem.footprint`, the same number split by role: `self` is the Go
+  host process, `child` everything it spawns (sandbox children, MCP
+  servers, plugin binaries, and what they run), and `webcontent` / `gpu` /
+  `networking` / `helper` the platform processes that work on the app's
+  behalf while being reparented to launchd. That last group is what no Go
+  gauge can see: on macOS the WKWebView renderers are several times the
+  heap, they hold on to freed memory after a large conversation or a
+  preview pane, and this series is what tells that apart from ordinary heap
+  growth. The reading comes from the OS itself, in the new
+  `internal/foundation/procmem` package: libproc, with the same
+  process-ownership API Activity Monitor groups by (resolved with `dlsym`,
+  so a platform that stops exporting it degrades to the pid tree instead of
+  losing the series) and `/proc` on Linux. A full-system scan costs about
+  2.7ms, and the sampler takes one a minute, next to the 15-second Go
+  gauges. Each sample carries the role, the process name and its pid; the
+  total carries the process count and how membership was resolved. Samples
+  land in the same `metric_samples` table (30-day retention) and need no
+  permission prompts, because every family member runs as this user.
+  Windows has no probe yet, so the section is empty there.
+
 ### Changed
 
 - A conversation's model-side history is now a projection of the
