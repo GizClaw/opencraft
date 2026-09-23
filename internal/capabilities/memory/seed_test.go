@@ -10,7 +10,7 @@ import (
 )
 
 func TestSeedConversationRendersToolActivityAndSkipsSystem(t *testing.T) {
-	adapter, _ := newSQLiteTurnStore(t)
+	adapter, store := newSQLiteTurnStore(t)
 	assembly := summary.NewAssembly(adapter)
 	ctx := context.Background()
 
@@ -34,22 +34,21 @@ func TestSeedConversationRendersToolActivityAndSkipsSystem(t *testing.T) {
 		t.Fatalf("SeedConversation: %v", err)
 	}
 
-	loaded, err := adapter.LoadMessages(ctx, "s-1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The seed writes the memory copy; increment A reads the transcript,
+	// so what the seed must keep producing is exactly these rows.
+	loaded := loadStoredMemoryRows(t, store.Handle(), "s-1")
 	if len(loaded) != 3 {
 		t.Fatalf("seeded messages = %d, want 3 (system skipped)", len(loaded))
 	}
-	if loaded[0].Content.Text() != "fix the build" {
-		t.Errorf("first message = %q", loaded[0].Content.Text())
+	if got := loaded[0].Content.Text(); got != "fix the build" {
+		t.Errorf("first message = %q", got)
 	}
 	if loaded[1].Role != message.RoleTool ||
 		loaded[1].Content.Text() != "tool_result: build output" {
 		t.Errorf("tool message = %+v", loaded[1])
 	}
-	if loaded[2].Content.Text() != "done" {
-		t.Errorf("last message = %q", loaded[2].Content.Text())
+	if got := loaded[2].Content.Text(); got != "done" {
+		t.Errorf("last message = %q", got)
 	}
 }
 

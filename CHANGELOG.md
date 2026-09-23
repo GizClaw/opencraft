@@ -258,6 +258,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A conversation's model-side history is now a projection of the
+  transcript instead of a second copy of it, and a message's identity is
+  the transcript coordinate it was appended with rather than a hash of
+  the position it happened to be loaded at. The window, the fold
+  coverage set and the context item ids all speak that coordinate
+  (`summary_nodes.source_ids` holds seqs, `stableMessageID` is gone), so
+  a row that is skipped, filtered or absent can no longer shift the
+  identity of every row after it. The memory read path reads
+  `archive_messages` and renders on read: tool calls and results keep
+  their canonical parts and gain their `tool_call:` / `tool_result:`
+  text when the window is built, and a row that has no prompt form (an
+  attachment-only turn) is left out of the window without moving the
+  rows around it. Nodes carry `metadata.identity = "seq-v1"`; a node
+  from an older build holds position hashes that no reader can map onto
+  rows, so it is ignored and retired by the next fold, which rebuilds it
+  from the transcript (deterministic and idempotent — nothing is
+  translated, since the old ids were never paired with transcript rows).
+  `memory_items` is still written in the commit transaction during this
+  step, and a parity test holds the projection and the stored copy to
+  the same answer row by row; the table and its write path leave in the
+  next step of docs/conversation-model-plan.md.
 - flowcraft core moves to v0.4.8, closing an interrupt that could
   silently do nothing: a sandbox session is spawned with the signal mask
   cleared on a pinned thread and restored afterwards, so a child no

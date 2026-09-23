@@ -357,18 +357,11 @@ func compactTurnStart(board *agent.Board) (int, bool) {
 	return 0, false
 }
 
-// renderConversationMessage makes one MainChannel message persistable:
-// original parts are kept (so tool-role messages stay valid for the
-// memory turn contract) and tool calls/results are appended as plain
-// text. Without this the memory raw window (which stores
-// Content.Text()) and the session archive (text/reasoning only) would
-// silently drop the turn's intermediate tool activity.
+// renderConversationMessage makes one MainChannel message persistable,
+// through the same projection the transcript read path applies (see
+// projection.go): original parts are kept (so tool-role messages stay
+// valid for the memory turn contract) and tool calls/results are appended
+// as plain text.
 func renderConversationMessage(m message.Message) *message.Message {
-	out := m.Clone()
-	if len(summarytext.ToolActivity(m)) == 0 {
-		return &out
-	}
-	out.Content.Parts = append(out.Content.Parts,
-		message.TextPart{Text: summarytext.RenderMessage(m)})
-	return &out
+	return projectMessage(m)
 }

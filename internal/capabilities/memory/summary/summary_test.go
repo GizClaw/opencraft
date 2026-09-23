@@ -8,16 +8,22 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 )
 
-func textMessages(threadID string, texts ...string) []message.Message {
-	out := make([]message.Message, 0, len(texts))
-	for _, text := range texts {
-		out = append(out, message.NewTextMessage(message.RoleUser, text))
+// textRows builds a transcript fixture: user messages with seqs counting
+// up from zero.
+func textRows(texts ...string) []StoredMessage {
+	out := make([]StoredMessage, 0, len(texts))
+	for i, text := range texts {
+		out = append(out, StoredMessage{
+			Seq:     int64(i),
+			Role:    message.RoleUser,
+			Content: message.NewTextContent(text),
+		})
 	}
 	return out
 }
 
 func TestBufferFoldBelowWindow(t *testing.T) {
-	got, err := BufferFold(Policy{}, "t1", textMessages("t1", "a", "b"), nil, time.Now())
+	got, err := BufferFold(Policy{}, "t1", textRows("a", "b"), nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +35,7 @@ func TestBufferFoldBelowWindow(t *testing.T) {
 func TestBufferFoldFoldsAndDedups(t *testing.T) {
 	now := time.Now()
 	pol := Policy{MaxRawMessages: 2, PreserveRecent: 2}
-	msgs := textMessages("t1", "m01", "m02", "m03", "m04", "m05", "m06")
+	msgs := textRows("m01", "m02", "m03", "m04", "m05", "m06")
 	// foldBoundary = 6 - 2 - 2 = 2 -> m01, m02 are fold candidates.
 	prev, err := BufferFold(pol, "t1", msgs, nil, now)
 	if err != nil {
@@ -59,7 +65,7 @@ func TestBufferFoldFoldsAndDedups(t *testing.T) {
 func TestBufferFoldRuneSafeTruncation(t *testing.T) {
 	now := time.Now()
 	big := strings.Repeat("中", 5000)
-	msgs := textMessages("t1", big, "mid", "recent")
+	msgs := textRows(big, "mid", "recent")
 	// foldBoundary = 3 - 1 - 1 = 1 -> only `big` is a fold candidate; it
 	// alone overflows MaxSummaryBytes=100 and must be kept, truncated.
 	got, err := BufferFold(Policy{MaxRawMessages: 1, PreserveRecent: 1, MaxSummaryBytes: 100}, "t1", msgs, nil, now)
@@ -87,7 +93,7 @@ func TestBufferFoldRollingWindowKeepsNewestWhenFull(t *testing.T) {
 	// and tail-truncating discarded every new fold. The rolling window must
 	// keep the NEWEST foldable messages and drop the OLDEST instead.
 	now := time.Now()
-	msgs := textMessages("t1", "old-01", "old-02", "old-03", "new-01", "new-02", "new-03", "new-04")
+	msgs := textRows("old-01", "old-02", "old-03", "new-01", "new-02", "new-03", "new-04")
 	// foldBoundary = 7 - 2 - 2 = 3 -> foldable = old-01..old-03. The budget
 	// fits exactly one message ("user: old-03" = 12 bytes).
 	node, err := BufferFold(Policy{MaxRawMessages: 2, PreserveRecent: 2, MaxSummaryBytes: 12}, "t1", msgs, nil, now)
@@ -116,7 +122,7 @@ func TestBufferFoldAdvancesWhenSummaryFull(t *testing.T) {
 	now := time.Now()
 	pol := Policy{MaxRawMessages: 1, PreserveRecent: 1, MaxSummaryBytes: 10}
 
-	first, err := BufferFold(pol, "t1", textMessages("t1", "a", "b", "c", "d"), nil, now)
+	first, err := BufferFold(pol, "t1", textRows("a", "b", "c", "d"), nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +130,7 @@ func TestBufferFoldAdvancesWhenSummaryFull(t *testing.T) {
 		t.Fatalf("first fold = %+v, want newest foldable 'b'", first)
 	}
 
-	second, err := BufferFold(pol, "t1", textMessages("t1", "a", "b", "c", "d", "e"), first, now)
+	second, err := BufferFold(pol, "t1", textRows("a", "b", "c", "d", "e"), first, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,11 +150,11 @@ func TestBufferFoldNodeIDStableAcrossFolds(t *testing.T) {
 	now := time.Now()
 	pol := Policy{MaxRawMessages: 2, PreserveRecent: 2, MaxSummaryBytes: 4096}
 
-	first, err := BufferFold(pol, "t1", textMessages("t1", "m1", "m2", "m3", "m4", "m5", "m6", "m7"), nil, now)
+	first, err := BufferFold(pol, "t1", textRows("m1", "m2", "m3", "m4", "m5", "m6", "m7"), nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := BufferFold(pol, "t1", textMessages("t1", "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"), first, now)
+	second, err := BufferFold(pol, "t1", textRows("m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"), first, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +174,7 @@ func TestBufferFoldSourceIDsMatchRenderedText(t *testing.T) {
 	// A message dropped by the rolling window must not appear in SourceIDs.
 	now := time.Now()
 	pol := Policy{MaxRawMessages: 1, PreserveRecent: 1, MaxSummaryBytes: 10}
-	msgs := textMessages("t1", "aaaaaaaaaaaaaaaaaaaaaaaaaa", "bb", "cc", "dd")
+	msgs := textRows("aaaaaaaaaaaaaaaaaaaaaaaaaa", "bb", "cc", "dd")
 	// foldBoundary = 4 - 1 - 1 = 2 -> foldable = [aa, bb]. `bb` fits, `aa`
 	// (32 bytes) does not, so `aa` is dropped.
 	node, err := BufferFold(pol, "t1", msgs, nil, now)
@@ -191,7 +197,7 @@ func TestBufferFoldSourceIDsMatchRenderedText(t *testing.T) {
 
 func TestBufferFoldPreserveRecentParticipates(t *testing.T) {
 	now := time.Now()
-	msgs := textMessages("t1", "a", "b", "c", "d")
+	msgs := textRows("a", "b", "c", "d")
 
 	// MaxRaw=1, PreserveRecent=1: foldBoundary = 4-1-1 = 2 -> folds.
 	folded, err := BufferFold(Policy{MaxRawMessages: 1, PreserveRecent: 1}, "t1", msgs, nil, now)
@@ -216,7 +222,7 @@ func TestBufferFoldPreserveRecentParticipates(t *testing.T) {
 func TestBufferFoldLineSafeTruncation(t *testing.T) {
 	now := time.Now()
 	big := "line1\nline2\nline3\n" + strings.Repeat("x", 5000)
-	msgs := textMessages("t1", big, "mid", "recent")
+	msgs := textRows(big, "mid", "recent")
 	// foldBoundary = 3 - 1 - 1 = 1 -> only `big` is a fold candidate and it
 	// alone overflows, so it is truncated at a line boundary.
 	node, err := BufferFold(Policy{MaxRawMessages: 1, PreserveRecent: 1, MaxSummaryBytes: 100}, "t1", msgs, nil, now)
@@ -238,14 +244,31 @@ func TestBufferFoldLineSafeTruncation(t *testing.T) {
 	}
 }
 
-func TestStableMessageIDDeterministic(t *testing.T) {
-	a := stableMessageID("t1", 0, message.NewTextMessage(message.RoleUser, "hello"))
-	b := stableMessageID("t1", 0, message.NewTextMessage(message.RoleUser, "hello"))
-	if a != b {
-		t.Fatalf("stable id differs: %s vs %s", a, b)
+// TestSourceIDIsTheTranscriptCoordinate pins the identity scheme: a
+// source id is the row's Seq, so the same row read twice (from a window,
+// a fold tail or a full load) covers the same coordinate, and two rows
+// can never share one.
+func TestSourceIDIsTheTranscriptCoordinate(t *testing.T) {
+	if got := SourceID(0); got != "0" {
+		t.Fatalf("SourceID(0) = %q, want \"0\"", got)
 	}
-	c := stableMessageID("t2", 0, message.NewTextMessage(message.RoleUser, "hello"))
-	if a == c {
-		t.Fatalf("stable id must differ across threads")
+	if got := SourceID(41); got != "41" {
+		t.Fatalf("SourceID(41) = %q, want \"41\"", got)
+	}
+	rows := textRows("hello", "world", "again")
+	node, err := BufferFold(
+		Policy{MaxRawMessages: 1, PreserveRecent: 1}, "t1", rows, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node == nil {
+		t.Fatal("want a fold over three rows with raw 1 + preserve 1")
+	}
+	if len(node.SourceIDs) != 1 || node.SourceIDs[0] != SourceID(rows[0].Seq) {
+		t.Fatalf("source ids = %v, want [%s]", node.SourceIDs, SourceID(rows[0].Seq))
+	}
+	if node.Generation() != IdentitySeqV1 || !node.CurrentGeneration() {
+		t.Fatalf("node generation = %q, want %q",
+			node.Generation(), IdentitySeqV1)
 	}
 }

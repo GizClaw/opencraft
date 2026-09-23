@@ -7,69 +7,103 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
 )
 
+// storedRows assigns transcript coordinates to fixture messages: seqs
+// count up from zero, the way the session store appends them.
+func storedRows(msgs ...message.Message) []StoredMessage {
+	out := make([]StoredMessage, 0, len(msgs))
+	for i, msg := range msgs {
+		out = append(out, StoredMessage{
+			Seq:     int64(i),
+			Role:    msg.Role,
+			Content: msg.Content,
+		})
+	}
+	return out
+}
+
+// storedValues is storedRows for a message list built elsewhere (a row
+// slice a fixture assembled before assigning it).
+func storedSlice(msgs []message.Message) []StoredMessage {
+	return storedRows(msgs...)
+}
+
 type fakeTurnStore struct {
-	msgs  map[string][]message.Message
+	msgs  map[string][]StoredMessage
 	nodes []SummaryNode
 }
 
 func (f *fakeTurnStore) AppendMessages(_ context.Context, conversationID, _ string, msgs []message.Message) error {
-	f.msgs[conversationID] = append(f.msgs[conversationID], msgs...)
+	rows := f.msgs[conversationID]
+	next := int64(len(rows))
+	for _, msg := range msgs {
+		rows = append(rows, StoredMessage{
+			Seq:     next,
+			Role:    msg.Role,
+			Content: msg.Content,
+		})
+		next++
+	}
+	f.msgs[conversationID] = rows
 	return nil
 }
 
-// recordingStore wraps fakeTurnStore and counts which load path the
+// recordingStore wraps fakeTurnStore and records which load path the
 // assembly takes, so tests can assert the incremental fold and context
 // never fall back to a full conversation scan.
 type recordingStore struct {
 	*fakeTurnStore
-	fullLoads  int
-	rangeLoads int
-	countCalls int
-	ranges     [][2]int
+	fullLoads int
+	backLoads int
+	// oldest is the oldest Seq any LoadBack walked back to.
+	oldest     int64
+	walkedBack bool
 }
 
-func (r *recordingStore) LoadMessages(ctx context.Context, conversationID string) ([]message.Message, error) {
+func (r *recordingStore) LoadAll(ctx context.Context, conversationID string) ([]StoredMessage, error) {
 	r.fullLoads++
-	return r.fakeTurnStore.LoadMessages(ctx, conversationID)
+	return r.fakeTurnStore.LoadAll(ctx, conversationID)
 }
 
-func (r *recordingStore) CountMessages(ctx context.Context, conversationID string) (int, error) {
-	r.countCalls++
-	return r.fakeTurnStore.CountMessages(ctx, conversationID)
+func (r *recordingStore) LoadBack(ctx context.Context, conversationID string, beforeSeq int64, n int) ([]StoredMessage, error) {
+	r.backLoads++
+	page, err := r.fakeTurnStore.LoadBack(ctx, conversationID, beforeSeq, n)
+	if len(page) > 0 && (!r.walkedBack || page[0].Seq < r.oldest) {
+		r.walkedBack = true
+		r.oldest = page[0].Seq
+	}
+	return page, err
 }
 
-func (r *recordingStore) LoadMessagesRange(ctx context.Context, conversationID string, from, to int) ([]message.Message, error) {
-	r.rangeLoads++
-	r.ranges = append(r.ranges, [2]int{from, to})
-	return r.fakeTurnStore.LoadMessagesRange(ctx, conversationID, from, to)
+func (f *fakeTurnStore) MaxSeq(_ context.Context, conversationID string) (int64, error) {
+	return int64(len(f.msgs[conversationID])) - 1, nil
 }
 
-func (f *fakeTurnStore) LoadMessages(_ context.Context, conversationID string) ([]message.Message, error) {
+func (f *fakeTurnStore) LoadAll(_ context.Context, conversationID string) ([]StoredMessage, error) {
 	return f.msgs[conversationID], nil
 }
 
-func (f *fakeTurnStore) CountMessages(_ context.Context, conversationID string) (int, error) {
-	return len(f.msgs[conversationID]), nil
-}
-
-func (f *fakeTurnStore) LoadMessagesRange(_ context.Context, conversationID string, from, to int) ([]message.Message, error) {
-	msgs := f.msgs[conversationID]
-	if from < 0 {
-		from = 0
-	}
-	if to >= len(msgs) {
-		to = len(msgs) - 1
-	}
-	if from > to {
+func (f *fakeTurnStore) LoadBack(_ context.Context, conversationID string, beforeSeq int64, n int) ([]StoredMessage, error) {
+	if n <= 0 {
 		return nil, nil
 	}
-	return msgs[from : to+1], nil
+	rows := f.msgs[conversationID]
+	var out []StoredMessage
+	for i := len(rows) - 1; i >= 0 && len(out) < n; i-- {
+		if rows[i].Seq < beforeSeq {
+			out = append(out, rows[i])
+		}
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
 }
 
 func (f *fakeTurnStore) UpsertSummaryNode(_ context.Context, n SummaryNode) error {
@@ -105,9 +139,25 @@ func (f *fakeTurnStore) DeleteSummaryNodes(_ context.Context, conversationID str
 	return nil
 }
 
+func (f *fakeTurnStore) DeleteSummaryNodesByID(_ context.Context, conversationID string, ids []string) error {
+	drop := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		drop[id] = true
+	}
+	out := make([]SummaryNode, 0, len(f.nodes))
+	for _, n := range f.nodes {
+		if n.ThreadID == conversationID && drop[n.ID] {
+			continue
+		}
+		out = append(out, n)
+	}
+	f.nodes = out
+	return nil
+}
+
 func TestAssemblyCommitTurnFoldsOverWindow(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	a := NewAssembly(store, WithAssemblyPolicy(Policy{MaxRawMessages: 2, PreserveRecent: 2}))
 
 	// MaxRaw + PreserveRecent = 4 messages stay raw; folding starts once
@@ -162,7 +212,7 @@ func TestAssemblyCommitTurnFoldsOverWindow(t *testing.T) {
 
 func TestAssemblyFoldReplacesNodeNoAccumulation(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	a := NewAssembly(store, WithAssemblyPolicy(Policy{MaxRawMessages: 1, PreserveRecent: 1}))
 
 	// Every turn past the raw+preserve boundary re-folds; the level-0 node
@@ -191,20 +241,92 @@ func TestAssemblyFoldReplacesNodeNoAccumulation(t *testing.T) {
 }
 
 func TestAssemblyRejectsDocuments(t *testing.T) {
-	a := NewAssembly(&fakeTurnStore{msgs: map[string][]message.Message{}})
+	a := NewAssembly(&fakeTurnStore{msgs: map[string][]StoredMessage{}})
 	err := a.PutDocument(context.Background(), memory.Document{})
 	if err == nil {
 		t.Fatal("want error for document sink")
 	}
 }
 
+// TestAssemblyRetiresForeignGenerationNodes covers the upgrade path: a
+// node written before the identity change carries source ids that are
+// positions in a load order, not transcript coordinates. It covers
+// nothing the reader can map, so Context ignores it, the next fold
+// deletes it, and the fold that replaces it holds a coverage set that
+// really is a subset of the transcript's seqs.
+func TestAssemblyRetiresForeignGenerationNodes(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
+	// A node from the previous build: no identity marker, a position
+	// hash as its source id, and enough raw rows beside it that the next
+	// turn has something to fold.
+	store.nodes = append(store.nodes, SummaryNode{
+		ID:        "node-from-old-build",
+		ThreadID:  "c1",
+		Level:     0,
+		SourceIDs: []string{"9f2c…"}, // sha256 of a load position
+		Content:   message.Content{Parts: []message.Part{message.TextPart{Text: "old summary"}}},
+		CreatedAt: time.Now().Add(-time.Hour),
+		UpdatedAt: time.Now().Add(-time.Hour),
+	})
+	store.msgs["c1"] = storedRows(
+		message.NewTextMessage(message.RoleUser, "row 0"),
+		message.NewTextMessage(message.RoleUser, "row 1"),
+		message.NewTextMessage(message.RoleUser, "row 2"),
+	)
+	a := NewAssembly(store, WithAssemblyPolicy(Policy{MaxRawMessages: 1, PreserveRecent: 1}))
+
+	res, err := a.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+		ConversationID: "c1",
+		Budget:         memory.Budget{MaxItems: 8, MaxChars: 1 << 16},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range res.Items {
+		if item.Kind == memory.ContextSummary {
+			t.Fatalf("foreign-generation summary reached the window: %+v", item)
+		}
+	}
+
+	turn := memory.Turn{
+		Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+		ConversationID: "c1",
+		IdempotencyKey: "t4",
+		Messages: []message.Message{
+			message.NewTextMessage(message.RoleUser, "row 3"),
+		},
+	}
+	if err := a.CommitTurn(ctx, turn); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.nodes) != 1 {
+		t.Fatalf("nodes = %+v, want the foreign node retired and one built", store.nodes)
+	}
+	node := store.nodes[0]
+	if !node.CurrentGeneration() {
+		t.Fatalf("rebuilt node generation = %q, want %q", node.Generation(), IdentitySeqV1)
+	}
+	seqs := map[string]bool{}
+	for _, row := range store.msgs["c1"] {
+		seqs[SourceID(row.Seq)] = true
+	}
+	for _, id := range node.SourceIDs {
+		if !seqs[id] {
+			t.Fatalf("source id %q is not a transcript row; coverage = %v",
+				id, node.SourceIDs)
+		}
+	}
+}
+
 func TestAssemblyContextReturnsRecentRawMessages(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{
-		"c1": {
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{
+		"c1": storedRows(
 			message.NewTextMessage(message.RoleUser, "first"),
 			message.NewTextMessage(message.RoleAssistant, "answer one"),
-		},
+		),
 	}}
 	a := NewAssembly(store)
 
@@ -233,17 +355,18 @@ func TestAssemblyContextSkipsFoldedRawMessages(t *testing.T) {
 	ctx := context.Background()
 	first := message.NewTextMessage(message.RoleUser, "first")
 	store := &fakeTurnStore{
-		msgs: map[string][]message.Message{
-			"c1": {first, message.NewTextMessage(message.RoleAssistant, "answer one")},
+		msgs: map[string][]StoredMessage{
+			"c1": storedRows(first, message.NewTextMessage(message.RoleAssistant, "answer one")),
 		},
 		nodes: []SummaryNode{{
 			ID:        "node-1",
 			ThreadID:  "c1",
 			Level:     0,
-			SourceIDs: []string{stableMessageID("c1", 0, first)},
+			SourceIDs: []string{SourceID(0)},
 			Content: message.Content{Parts: []message.Part{
 				message.TextPart{Text: "summary of first"},
 			}},
+			Metadata: map[string]any{IdentityKey: IdentitySeqV1},
 		}},
 	}
 	a := NewAssembly(store)
@@ -268,12 +391,12 @@ func TestAssemblyContextSkipsFoldedRawMessages(t *testing.T) {
 
 func TestAssemblyContextBudgetKeepsRecentTail(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{
-		"c1": {
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{
+		"c1": storedRows(
 			message.NewTextMessage(message.RoleUser, "first"),
 			message.NewTextMessage(message.RoleUser, "second"),
 			message.NewTextMessage(message.RoleUser, "third"),
-		},
+		),
 	}}
 	a := NewAssembly(store)
 
@@ -295,7 +418,7 @@ func TestAssemblyContextBudgetKeepsRecentTail(t *testing.T) {
 
 func TestAssemblyCondensesFullSummary(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	calls := 0
 	gen := func(
 		_ context.Context,
@@ -364,7 +487,7 @@ func TestAssemblyCondensesFullSummary(t *testing.T) {
 
 func TestAssemblyCondenseMergesPreviousSummary(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	var prompts []string
 	gen := func(
 		_ context.Context,
@@ -415,7 +538,7 @@ func TestAssemblyCondenseMergesPreviousSummary(t *testing.T) {
 
 func TestAssemblyCondenseFailureFallsBackToBuffer(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	calls := 0
 	gen := func(
 		context.Context,
@@ -466,7 +589,7 @@ func TestAssemblyCondenseFailureFallsBackToBuffer(t *testing.T) {
 
 func TestAssemblyNoCondenseWhenNothingDropped(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	calls := 0
 	gen := func(
 		context.Context,
@@ -515,7 +638,7 @@ func TestAssemblyNoCondenseWhenNothingDropped(t *testing.T) {
 
 func TestAssemblyCondenseCapsOutputToBudget(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	gen := func(
 		context.Context,
 		inference.GenerateRequest,
@@ -560,7 +683,7 @@ func TestAssemblyCondenseCapsOutputToBudget(t *testing.T) {
 
 func TestAssemblyFoldAndContextNeverFullLoad(t *testing.T) {
 	ctx := context.Background()
-	store := &recordingStore{fakeTurnStore: &fakeTurnStore{msgs: map[string][]message.Message{}}}
+	store := &recordingStore{fakeTurnStore: &fakeTurnStore{msgs: map[string][]StoredMessage{}}}
 	a := NewAssembly(store, WithAssemblyPolicy(Policy{
 		MaxRawMessages: 2, PreserveRecent: 2, MaxSummaryBytes: 64,
 	}))
@@ -581,11 +704,10 @@ func TestAssemblyFoldAndContextNeverFullLoad(t *testing.T) {
 		}
 	}
 	if store.fullLoads != 0 {
-		t.Fatalf("fold used %d full LoadMessages calls, want 0 (incremental)", store.fullLoads)
+		t.Fatalf("fold used %d full LoadAll calls, want 0 (incremental)", store.fullLoads)
 	}
-	if store.countCalls == 0 || store.rangeLoads == 0 {
-		t.Fatalf("fold must use CountMessages + LoadMessagesRange (count=%d range=%d)",
-			store.countCalls, store.rangeLoads)
+	if store.backLoads == 0 {
+		t.Fatal("fold must walk the transcript tail with LoadBack")
 	}
 	if len(store.nodes) != 1 {
 		t.Fatalf("nodes = %d, want 1 rolling node", len(store.nodes))
@@ -629,8 +751,8 @@ func TestAssemblyContextPairLookbackBoundedOnDanglingResult(t *testing.T) {
 			}},
 		}},
 	})
-	store := &recordingStore{fakeTurnStore: &fakeTurnStore{msgs: map[string][]message.Message{
-		"c1": msgs,
+	store := &recordingStore{fakeTurnStore: &fakeTurnStore{msgs: map[string][]StoredMessage{
+		"c1": storedSlice(msgs),
 	}}}
 	a := NewAssembly(store, WithAssemblyPolicy(Policy{
 		MaxRawMessages: 2, PreserveRecent: 1,
@@ -647,30 +769,29 @@ func TestAssemblyContextPairLookbackBoundedOnDanglingResult(t *testing.T) {
 		t.Fatal("want context items")
 	}
 	if store.fullLoads != 0 {
-		t.Fatalf("context used %d full LoadMessages calls, want 0", store.fullLoads)
+		t.Fatalf("context used %d full LoadAll calls, want 0", store.fullLoads)
 	}
-	if len(store.ranges) == 0 {
+	if store.backLoads == 0 {
 		t.Fatal("context must load a bounded raw window")
 	}
 	// The dangling result forces pairPrefix to walk backward; it must
 	// stop pairLookbackMax rows before the boundary instead of reaching
-	// index 0 and re-scanning the whole conversation on every turn.
-	minLo := store.ranges[0][0]
-	for _, r := range store.ranges[1:] {
-		if r[0] < minLo {
-			minLo = r[0]
-		}
+	// seq 0 and re-scanning the whole conversation on every turn. The
+	// window is the newest 3 rows, so its first seq is len(msgs)-3 and
+	// the lookback may reach at most pairLookbackMax rows below it.
+	if !store.walkedBack {
+		t.Fatal("context must walk the transcript back")
 	}
-	if want := len(msgs) - pairLookbackMax - 3; minLo < want {
-		t.Fatalf("pair lookback walked to %d, want no farther than %d (ranges=%v)",
-			minLo, want, store.ranges)
+	if want := int64(len(msgs) - 3 - pairLookbackMax); store.oldest < want {
+		t.Fatalf("pair lookback walked to seq %d, want no farther than %d",
+			store.oldest, want)
 	}
 }
 
 func TestAssemblyFoldTailMatchesFullBufferFold(t *testing.T) {
 	ctx := context.Background()
 	pol := Policy{MaxRawMessages: 4, PreserveRecent: 2, MaxSummaryBytes: 128}
-	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	a := NewAssembly(store, WithAssemblyPolicy(pol))
 
 	// 40 messages: the foldable region far exceeds the byte budget, so the
@@ -726,7 +847,7 @@ func TestAssemblyContextLoadsOnlyRawWindow(t *testing.T) {
 		msgs = append(msgs, message.NewTextMessage(message.RoleUser, fmt.Sprintf("m%02d", i)))
 	}
 	store := &recordingStore{fakeTurnStore: &fakeTurnStore{
-		msgs: map[string][]message.Message{"c1": msgs},
+		msgs: map[string][]StoredMessage{"c1": storedSlice(msgs)},
 	}}
 	a := NewAssembly(store, WithAssemblyPolicy(Policy{
 		MaxRawMessages: 4, PreserveRecent: 2,
@@ -741,12 +862,16 @@ func TestAssemblyContextLoadsOnlyRawWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if store.fullLoads != 0 {
-		t.Fatalf("context used %d full LoadMessages calls, want 0", store.fullLoads)
+		t.Fatalf("context used %d full LoadAll calls, want 0", store.fullLoads)
 	}
-	// Raw window = the last MaxRaw + PreserveRecent = 6 messages:
-	// original indices [44, 49].
-	if len(store.ranges) != 1 || store.ranges[0] != [2]int{44, 49} {
-		t.Fatalf("ranges = %v, want [[44 49]]", store.ranges)
+	// Raw window = the newest MaxRaw + PreserveRecent = 6 rows, i.e. seqs
+	// [44, 49]; one backward walk must fetch exactly that window.
+	if store.backLoads != 1 {
+		t.Fatalf("context walked the transcript %d times, want one window walk",
+			store.backLoads)
+	}
+	if store.oldest != 44 {
+		t.Fatalf("window walked back to seq %d, want 44", store.oldest)
 	}
 	if len(res.Items) != 6 {
 		t.Fatalf("items = %d, want 6 raw messages", len(res.Items))
@@ -755,16 +880,16 @@ func TestAssemblyContextLoadsOnlyRawWindow(t *testing.T) {
 
 func TestAssemblyReplayFullHistoryContext(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	a := NewAssembly(store, WithReplayFullHistory(true))
 	if !a.ReplayFullHistory() {
 		t.Fatal("ReplayFullHistory must be true when configured")
 	}
-	store.msgs["s-1"] = []message.Message{
+	store.msgs["s-1"] = storedRows(
 		message.NewTextMessage(message.RoleUser, "hello"),
 		message.NewTextMessage(message.RoleAssistant, "hi there"),
 		message.NewTextMessage(message.RoleTool, "tool output"),
-	}
+	)
 
 	res, err := a.Context(ctx, memory.ContextRequest{
 		Scope:          memory.Scope{RuntimeID: "rt"},
@@ -807,10 +932,10 @@ func TestAssemblyReplayFullHistoryContext(t *testing.T) {
 
 func TestAssemblyContextExtendsBoundaryForToolPair(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{
-		"c1": {
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{
+		"c1": storedRows(
 			message.NewTextMessage(message.RoleUser, "hello"),
-			{
+			message.Message{
 				Role: message.RoleAssistant,
 				Content: message.Content{Parts: []message.Part{
 					message.ToolCallPart{Call: message.ToolCall{
@@ -819,7 +944,7 @@ func TestAssemblyContextExtendsBoundaryForToolPair(t *testing.T) {
 					}},
 				}},
 			},
-			{
+			message.Message{
 				Role: message.RoleTool,
 				Content: message.Content{Parts: []message.Part{
 					message.ToolResultPart{Result: message.ToolResult{
@@ -829,7 +954,7 @@ func TestAssemblyContextExtendsBoundaryForToolPair(t *testing.T) {
 			},
 			message.NewTextMessage(message.RoleUser, "next"),
 			message.NewTextMessage(message.RoleAssistant, "done"),
-		},
+		),
 	}}
 	// MaxRawMessages 2 + PreserveRecent 1 = window 3: without pair
 	// awareness the boundary would land at index 2, cutting the
@@ -867,10 +992,10 @@ func TestAssemblyContextExtendsBoundaryForToolPair(t *testing.T) {
 
 func TestAssemblyFoldKeepsToolPairRaw(t *testing.T) {
 	ctx := context.Background()
-	store := &fakeTurnStore{msgs: map[string][]message.Message{
-		"c1": {
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{
+		"c1": storedRows(
 			message.NewTextMessage(message.RoleUser, "hello"),
-			{
+			message.Message{
 				Role: message.RoleAssistant,
 				Content: message.Content{Parts: []message.Part{
 					message.ToolCallPart{Call: message.ToolCall{
@@ -879,7 +1004,7 @@ func TestAssemblyFoldKeepsToolPairRaw(t *testing.T) {
 					}},
 				}},
 			},
-			{
+			message.Message{
 				Role: message.RoleTool,
 				Content: message.Content{Parts: []message.Part{
 					message.ToolResultPart{Result: message.ToolResult{
@@ -889,7 +1014,7 @@ func TestAssemblyFoldKeepsToolPairRaw(t *testing.T) {
 			},
 			message.NewTextMessage(message.RoleUser, "next"),
 			message.NewTextMessage(message.RoleAssistant, "done"),
-		},
+		),
 	}}
 	a := NewAssembly(store, WithAssemblyPolicy(Policy{
 		MaxRawMessages: 2, PreserveRecent: 1,

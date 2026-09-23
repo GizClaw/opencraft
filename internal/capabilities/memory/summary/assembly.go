@@ -13,6 +13,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 )
 
 // TurnStore is the storage surface the summary assembly needs. Messages use
@@ -20,26 +22,38 @@ import (
 // sessions state store (internal/capabilities/sessions/state, SQLite) or a
 // test double.
 //
-// Index-space contract: the store's conversation messages are all
-// text-bearing (empty text is skipped at append), so every stored message
-// has a stable seq in [0, N) and the N-th message's original index equals
-// its seq. LoadMessagesRange returns the messages with original indices in
-// [from, to]; message i of the result has original index from+i. Stable
-// source IDs are derived from these original indices, so incremental paths
-// can load only a bounded tail without shifting IDs.
+// Transcript-coordinate contract: every row carries the immutable Seq it
+// was appended with, and that Seq is the row's identity — the model
+// window, the fold coverage set and the context item ids are all
+// expressed in it. Reads are addressed by Seq and walk toward older rows,
+// so a window, a fold tail or a pair lookback costs O(rows read) and
+// never scans the conversation.
+//
+// The store owns the projection: it decides which transcript rows are
+// replayable for the model (the memory adapter states the rules) and
+// returns those rows only. Skipped rows never enter the assembly's
+// arithmetic — windows are sized in replayable rows, not transcript rows,
+// so filtering a row out cannot shrink a window.
 type TurnStore interface {
 	AppendMessages(ctx context.Context, conversationID, turnID string, msgs []message.Message) error
-	LoadMessages(ctx context.Context, conversationID string) ([]message.Message, error)
-	// CountMessages returns the thread's total text-message count.
-	CountMessages(ctx context.Context, conversationID string) (int, error)
-	// LoadMessagesRange returns messages with original index in [from, to]
-	// (inclusive), ordered by index.
-	LoadMessagesRange(ctx context.Context, conversationID string, from, to int) ([]message.Message, error)
+	// MaxSeq returns the newest transcript Seq, or -1 when the
+	// conversation has no rows.
+	MaxSeq(ctx context.Context, conversationID string) (int64, error)
+	// LoadBack returns the newest n replayable rows with Seq < beforeSeq,
+	// in chronological order. Fewer than n rows means the start of the
+	// conversation was reached.
+	LoadBack(ctx context.Context, conversationID string, beforeSeq int64, n int) ([]StoredMessage, error)
+	// LoadAll returns every replayable row, oldest first.
+	LoadAll(ctx context.Context, conversationID string) ([]StoredMessage, error)
 	UpsertSummaryNode(ctx context.Context, node SummaryNode) error
 	ListSummaryNodes(ctx context.Context, conversationID string) ([]SummaryNode, error)
 	// DeleteSummaryNodes removes a thread's nodes at level except the node
 	// whose id equals keepID (pass "" to delete all at that level).
 	DeleteSummaryNodes(ctx context.Context, conversationID string, level int, keepID string) error
+	// DeleteSummaryNodesByID removes the given nodes. It retires coverage
+	// written in another identity generation, which no reader can map onto
+	// transcript rows.
+	DeleteSummaryNodesByID(ctx context.Context, conversationID string, ids []string) error
 }
 
 // Assembly implements flowcraft's sdk/memory.Assembly on top of the summary
@@ -165,37 +179,41 @@ func (a *Assembly) FoldOnly(ctx context.Context, conversationID string) error {
 // conversation length — instead of scanning the whole thread on every turn.
 func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 	p := a.policy.Normalize()
-	total, err := a.store.CountMessages(ctx, conversationID)
+	maxSeq, err := a.store.MaxSeq(ctx, conversationID)
 	if err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
+	if maxSeq < 0 {
+		return nil
+	}
 	w := p.MaxRawMessages + p.PreserveRecent
-	// Nothing has left the raw window yet: there is nothing to fold.
-	if total <= w {
+	// The raw window is the newest w replayable rows; if the conversation
+	// has not filled it yet, nothing has left it and there is nothing to
+	// fold.
+	rawTail, err := a.store.LoadBack(ctx, conversationID, maxSeq+1, w)
+	if err != nil {
+		return memory.NewError(memory.KindInternal, "turn", err)
+	}
+	if len(rawTail) < w {
 		return nil
 	}
 	// Pair-aware fold boundary: if the count-based boundary would fold
 	// an assistant tool_call whose result stays raw, leave the call raw
 	// too so structured history can replay the pair.
-	foldBoundary := total - w
-	rawTail, err := a.store.LoadMessagesRange(
-		ctx, conversationID, foldBoundary, total-1)
-	if err != nil {
-		return memory.NewError(memory.KindInternal, "turn", err)
-	}
-	if safe, _, err := a.pairPrefix(
-		ctx, conversationID, foldBoundary, rawTail,
+	foldBefore := rawTail[0].Seq
+	if prefix, err := a.pairPrefix(
+		ctx, conversationID, foldBefore, rawTail,
 	); err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
-	} else if safe < foldBoundary {
-		foldBoundary = safe
+	} else if len(prefix) > 0 {
+		foldBefore = prefix[0].Seq
 	}
-	if foldBoundary <= 0 {
+	if foldBefore <= 0 {
 		// Everything would be folded or a pair reaches the start of the
 		// thread: keep the whole conversation raw for this turn.
 		return nil
 	}
-	candidates, err := a.loadFoldTail(ctx, conversationID, foldBoundary-1)
+	candidates, err := a.loadFoldTail(ctx, conversationID, foldBefore)
 	if err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
@@ -203,9 +221,11 @@ func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 	if err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
+	if err := a.retireStaleNodes(ctx, conversationID, nodes); err != nil {
+		return memory.NewError(memory.KindInternal, "turn", err)
+	}
 	node, err := bufferFoldCandidates(
-		p, conversationID, candidates, total, foldBoundary,
-		latestNode(nodes), a.now())
+		p, conversationID, candidates, latestNode(nodes), a.now())
 	if err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
@@ -328,142 +348,136 @@ const pairLookbackChunk = 32
 // into a full-history scan while still covering far more than the window.
 const pairLookbackMax = 64
 
-// loadFoldTail loads only the newest foldable messages the rolling
-// window can keep, walking backward from end (the newest foldable
-// message index, inclusive) in bounded chunks until the loaded foldable
-// content exceeds the byte budget (the budget is then provably full
-// within the loaded tail) or the start of the conversation is reached.
-// Messages older than the loaded tail are provably dropped by the
-// budget, so they never need to be loaded: a fold costs O(budget)
-// instead of an O(n) full scan. The returned candidates carry their
-// original indices so stable source IDs stay identical to a full load.
+// loadFoldTail loads only the newest foldable rows the rolling window can
+// keep, walking backward from beforeSeq (exclusive) in bounded chunks
+// until the loaded foldable content exceeds the byte budget (the budget is
+// then provably full within the loaded tail) or the start of the
+// conversation is reached. Rows older than the loaded tail are provably
+// dropped by the budget, so they never need to be loaded: a fold costs
+// O(budget) instead of an O(n) full scan. The returned candidates carry
+// their transcript Seq, so source IDs are identical to a full load's.
 func (a *Assembly) loadFoldTail(
-	ctx context.Context, conversationID string, end int,
+	ctx context.Context, conversationID string, beforeSeq int64,
 ) ([]foldMsg, error) {
 	p := a.policy.Normalize()
-	if end < 0 {
+	if beforeSeq <= 0 {
 		return nil, nil
 	}
-	var tail []message.Message
-	startIndex := 0
+	var tail []StoredMessage
 	foldBytes := 0
-	from := end
-	for {
-		lo := from - foldTailChunk + 1
-		if lo < 0 {
-			lo = 0
-		}
-		batch, err := a.store.LoadMessagesRange(ctx, conversationID, lo, from)
+	cursor := beforeSeq
+	for cursor > 0 {
+		batch, err := a.store.LoadBack(ctx, conversationID, cursor, foldTailChunk)
 		if err != nil {
 			return nil, err
 		}
-		// batch is chronological within [lo, from]; prepend to keep the
-		// accumulated tail chronological.
-		tail = append(append([]message.Message{}, batch...), tail...)
-		// Account rendered size (role prefix + text + separator), the same
-		// budget the rolling window applies, so termination is exact.
-		for i := lo; i <= from; i++ {
-			foldBytes += len(renderMessage(batch[i-lo])) + 1
-		}
-		startIndex = lo
-		if lo == 0 || foldBytes > p.MaxSummaryBytes {
+		if len(batch) == 0 {
 			break
 		}
-		from = lo - 1
+		// batch is chronological; prepend to keep the accumulated tail
+		// chronological.
+		tail = append(append([]StoredMessage{}, batch...), tail...)
+		// Account rendered size (role prefix + text + separator), the same
+		// budget the rolling window applies, so termination is exact.
+		for _, row := range batch {
+			foldBytes += len(renderMessage(row.Message())) + 1
+		}
+		cursor = batch[0].Seq
+		if len(batch) < foldTailChunk || foldBytes > p.MaxSummaryBytes {
+			break
+		}
 	}
-	out := make([]foldMsg, len(tail))
-	for i, msg := range tail {
-		idx := startIndex + i
-		out[i] = foldMsg{index: idx, id: stableMessageID(conversationID, idx, msg), msg: msg}
-	}
-	return out, nil
+	return foldCandidates(tail), nil
 }
 
-// pairPrefix returns the messages needed to complete every tool
+// pairPrefix returns the rows needed to complete every tool
 // pairing that starts at or after boundary. It reports the adjusted
-// boundary (the earliest required assistant call) and the prefix
-// messages between the new and old boundaries. When a required call is
-// not found within the bounded lookback (already folded or missing) the
-// original boundary is kept; worldstate normalization then drops the
-// orphaned result (or synthesizes an aborted output for an unmatched
-// call) instead of emitting an invalid tool message.
+// boundary (the earliest required assistant call) as the prefix rows
+// between it and the window start. When a required call is not found
+// within the bounded lookback (already folded or missing) no prefix is
+// returned; worldstate normalization then drops the orphaned result (or
+// synthesizes an aborted output for an unmatched call) instead of
+// emitting an invalid tool message.
 func (a *Assembly) pairPrefix(
 	ctx context.Context,
 	conversationID string,
-	boundary int,
-	raw []message.Message,
-) (int, []message.Message, error) {
-	if boundary <= 0 {
-		return boundary, nil, nil
+	windowStartSeq int64,
+	raw []StoredMessage,
+) ([]StoredMessage, error) {
+	if windowStartSeq <= 0 {
+		return nil, nil
 	}
 	required := map[string]bool{}
-	for _, msg := range raw {
-		if msg.Role != message.RoleTool {
+	for _, row := range raw {
+		if row.Role != message.RoleTool {
 			continue
 		}
-		for _, result := range msg.ToolResults() {
+		for _, result := range row.Message().ToolResults() {
 			required[result.CallID] = true
 		}
 	}
 	if len(required) == 0 {
-		return boundary, nil, nil
+		return nil, nil
 	}
 	// Calls already inside the window need no lookback.
-	for _, msg := range raw {
-		for _, call := range msg.ToolCalls() {
+	for _, row := range raw {
+		for _, call := range row.Message().ToolCalls() {
 			delete(required, call.ID)
 		}
 	}
 	if len(required) == 0 {
-		return boundary, nil, nil
+		return nil, nil
 	}
 
 	found := map[string]bool{}
-	earliest := -1
+	earliest := int64(-1)
+	// walked holds every row scanned so far in chronological order;
+	// the lookback cap bounds it.
+	var walked []StoredMessage
 	scanned := 0
-	from := boundary - 1
-	for from >= 0 && scanned < pairLookbackMax {
-		remaining := pairLookbackMax - scanned
-		lo := from - pairLookbackChunk + 1
-		if lo < 0 {
-			lo = 0
+	cursor := windowStartSeq
+	for cursor > 0 && scanned < pairLookbackMax {
+		n := pairLookbackChunk
+		if remaining := pairLookbackMax - scanned; remaining < n {
+			n = remaining
 		}
-		if from-lo+1 > remaining {
-			lo = from - remaining + 1
-		}
-		batch, err := a.store.LoadMessagesRange(ctx, conversationID, lo, from)
+		batch, err := a.store.LoadBack(ctx, conversationID, cursor, n)
 		if err != nil {
-			return boundary, nil, err
+			return nil, err
 		}
-		for i := len(batch) - 1; i >= 0; i-- {
-			idx := lo + i
-			for _, call := range batch[i].ToolCalls() {
+		if len(batch) == 0 {
+			break
+		}
+		walked = append(append([]StoredMessage{}, batch...), walked...)
+		for _, row := range batch {
+			for _, call := range row.Message().ToolCalls() {
 				if !required[call.ID] || found[call.ID] {
 					continue
 				}
 				found[call.ID] = true
-				if earliest < 0 || idx < earliest {
-					earliest = idx
+				if earliest < 0 || row.Seq < earliest {
+					earliest = row.Seq
 				}
 			}
 		}
 		if len(found) == len(required) {
-			// Load exactly [earliest, boundary) so the window grows by
-			// only the messages needed to complete the pair.
-			prefix, err := a.store.LoadMessagesRange(
-				ctx, conversationID, earliest, boundary-1)
-			if err != nil {
-				return boundary, nil, err
+			// Return exactly the rows from the earliest required call so
+			// the window grows by only the messages needed to complete
+			// the pair.
+			for i, row := range walked {
+				if row.Seq >= earliest {
+					return walked[i:], nil
+				}
 			}
-			return earliest, prefix, nil
+			return walked, nil
 		}
-		if lo == 0 {
+		scanned += len(batch)
+		cursor = batch[0].Seq
+		if len(batch) < n {
 			break
 		}
-		scanned += from - lo + 1
-		from = lo - 1
 	}
-	return boundary, nil, nil
+	return nil, nil
 }
 
 // shouldCondense reports whether the folded buffer benefits from LLM
@@ -558,7 +572,13 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 	covered := make(map[string]struct{}, 32)
 	totalChars := 0
 	truncated := false
-	for i, node := range nodes {
+	for _, node := range nodes {
+		// Coverage from another identity generation describes positions in
+		// a load order, not transcript rows: it cannot cover anything here
+		// and is retired by the next fold.
+		if !node.CurrentGeneration() {
+			continue
+		}
 		text := node.Content.Text()
 		if !fitsBudget(req.Budget, len(items), totalChars, len(text)) {
 			truncated = true
@@ -577,84 +597,77 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 			Score:       1,
 			Sources:     sources,
 			Level:       node.Level,
-			Sequence:    uint64(i),
+			Sequence:    uint64(len(items)),
 			Timestamp:   node.CreatedAt,
 		})
 		totalChars += len(text)
 	}
 
 	// Recent raw messages carry the conversation between folds. Only the
-	// raw window (the last MaxRawMessages + PreserveRecent text messages)
+	// raw window (the newest MaxRawMessages + PreserveRecent replayable
+	// rows)
 	// is eligible: messages older than the window that the rolling summary
 	// dropped are not covered, so without this bound they would leak back
 	// into context and crowd out genuinely recent messages. The window is
-	// loaded by original index (CountMessages + a single bounded range),
-	// so context costs O(raw window + bounded pair lookback) instead of
-	// an O(n) full scan. The newest messages are kept first so a tight
-	// budget preserves the most relevant tail; the appended chunk is
-	// reversed afterwards to keep chronological order.
+	// one bounded backward walk from the newest row, so context costs
+	// O(raw window + bounded pair lookback) instead of an O(n) full scan.
+	// The newest messages are kept first so a tight budget preserves the
+	// most relevant tail; the appended chunk is reversed afterwards to
+	// keep chronological order.
 	p := a.policy.Normalize()
-	total, err := a.store.CountMessages(ctx, req.ConversationID)
+	maxSeq, err := a.store.MaxSeq(ctx, req.ConversationID)
 	if err != nil {
 		return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
 	}
-	boundary := total - p.MaxRawMessages - p.PreserveRecent
-	if boundary < 0 {
-		boundary = 0
-	}
-	var raw []message.Message
-	if boundary < total {
-		raw, err = a.store.LoadMessagesRange(ctx, req.ConversationID, boundary, total-1)
+	var raw []StoredMessage
+	if maxSeq >= 0 {
+		raw, err = a.store.LoadBack(
+			ctx, req.ConversationID, maxSeq+1, p.MaxRawMessages+p.PreserveRecent)
 		if err != nil {
 			return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
 		}
 	}
 	// Never cut an assistant tool_call from its tool result: extend the
-	// window start backward when the count-based boundary splits a pair,
-	// so structured tool history can replay with its tool role.
-	newBoundary, prefix, err := a.pairPrefix(
-		ctx, req.ConversationID, boundary, raw)
-	if err != nil {
-		return memory.ContextResult{}, memory.NewError(
-			memory.KindInternal, "context", err)
+	// window start backward when the boundary splits a pair, so structured
+	// tool history can replay with its tool role.
+	if len(raw) > 0 {
+		prefix, err := a.pairPrefix(ctx, req.ConversationID, raw[0].Seq, raw)
+		if err != nil {
+			return memory.ContextResult{}, memory.NewError(
+				memory.KindInternal, "context", err)
+		}
+		if len(prefix) > 0 {
+			raw = append(prefix, raw...)
+		}
 	}
-	if len(prefix) > 0 {
-		boundary = newBoundary
-		raw = append(prefix, raw...)
-	}
-	// raw[i] carries original index boundary+i.
-	type rawCandidate struct {
-		id  string
-		msg message.Message
-		seq int
-	}
-	candidates := make([]rawCandidate, 0, len(raw))
-	for i, msg := range raw {
-		id := stableMessageID(req.ConversationID, boundary+i, msg)
+	candidates := make([]StoredMessage, 0, len(raw))
+	for _, row := range raw {
+		id := SourceID(row.Seq)
 		if _, ok := covered[id]; ok {
 			continue
 		}
-		candidates = append(candidates, rawCandidate{id: id, msg: msg, seq: boundary + i})
+		candidates = append(candidates, row)
 	}
 	rawCount := len(candidates)
 	appended := make([]memory.ContextItem, 0, rawCount)
 	for k := len(candidates) - 1; k >= 0; k-- {
-		c := candidates[k]
-		if !fitsBudget(req.Budget, len(items)+len(appended), totalChars, len(c.msg.Content.Text())) {
+		row := candidates[k]
+		if !fitsBudget(req.Budget, len(items)+len(appended), totalChars, len(row.Content.Text())) {
 			truncated = true
 			break
 		}
+		id := SourceID(row.Seq)
 		appended = append(appended, memory.ContextItem{
-			ID:          c.id,
+			ID:          id,
 			Kind:        memory.ContextRawMessage,
 			SourceClass: memory.ContextSourceRecent,
-			Content:     c.msg.Content.Clone(),
+			Content:     row.Content.Clone(),
 			Score:       1,
-			Sources:     []memory.SourceRef{{Kind: memory.SourceMessage, ID: c.id}},
-			MessageRole: c.msg.Role,
-			Sequence:    uint64(c.seq),
+			Sources:     []memory.SourceRef{{Kind: memory.SourceMessage, ID: id}},
+			MessageRole: row.Role,
+			Sequence:    uint64(row.Seq),
 		})
-		totalChars += len(c.msg.Content.Text())
+		totalChars += len(row.Content.Text())
 	}
 	for i, j := 0, len(appended)-1; i < j; i, j = i+1, j-1 {
 		appended[i], appended[j] = appended[j], appended[i]
@@ -677,22 +690,15 @@ func (a *Assembly) replayContext(
 	ctx context.Context,
 	req memory.ContextRequest,
 ) (memory.ContextResult, error) {
-	total, err := a.store.CountMessages(ctx, req.ConversationID)
+	rows, err := a.store.LoadAll(ctx, req.ConversationID)
 	if err != nil {
 		return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
 	}
-	if total == 0 {
-		return memory.ContextResult{}, nil
-	}
-	msgs, err := a.store.LoadMessagesRange(ctx, req.ConversationID, 0, total-1)
-	if err != nil {
-		return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
-	}
-	items := make([]memory.ContextItem, 0, len(msgs))
+	items := make([]memory.ContextItem, 0, len(rows))
 	totalChars := 0
 	truncated := false
-	for i, msg := range msgs {
-		text := msg.Content.Text()
+	for _, row := range rows {
+		text := row.Content.Text()
 		if text == "" {
 			continue
 		}
@@ -700,16 +706,16 @@ func (a *Assembly) replayContext(
 			truncated = true
 			break
 		}
-		id := stableMessageID(req.ConversationID, i, msg)
+		id := SourceID(row.Seq)
 		items = append(items, memory.ContextItem{
 			ID:          id,
 			Kind:        memory.ContextRawMessage,
 			SourceClass: memory.ContextSourceRecent,
-			Content:     msg.Content.Clone(),
+			Content:     row.Content.Clone(),
 			Score:       1,
 			Sources:     []memory.SourceRef{{Kind: memory.SourceMessage, ID: id}},
-			MessageRole: msg.Role,
-			Sequence:    uint64(i),
+			MessageRole: row.Role,
+			Sequence:    uint64(row.Seq),
 		})
 		totalChars += len(text)
 	}
@@ -737,9 +743,39 @@ func (a *Assembly) PutDocument(context.Context, memory.Document) error {
 		errors.New("summary assembly does not support documents"))
 }
 
+// retireStaleNodes deletes coverage written in another identity
+// generation. Its source ids describe positions in a load order, so no
+// reader can map them onto transcript rows; the nodes are ignored on read
+// and the next fold rebuilds the summary from the transcript. Retirement
+// is lazy: a conversation pays for it when it next folds.
+func (a *Assembly) retireStaleNodes(
+	ctx context.Context, conversationID string, nodes []SummaryNode,
+) error {
+	var stale []string
+	for _, node := range nodes {
+		if !node.CurrentGeneration() {
+			stale = append(stale, node.ID)
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	telemetry.Info(ctx,
+		"memory: retiring summary nodes from a previous identity generation",
+		otellog.String("conversation.id", conversationID),
+		otellog.Int("nodes", len(stale)))
+	return a.store.DeleteSummaryNodesByID(ctx, conversationID, stale)
+}
+
+// latestNode returns the newest summary node whose coverage is expressed
+// in this build's coordinate system; nodes from another generation are
+// treated as absent.
 func latestNode(nodes []SummaryNode) *SummaryNode {
 	var latest *SummaryNode
 	for i := range nodes {
+		if !nodes[i].CurrentGeneration() {
+			continue
+		}
 		if latest == nil || nodes[i].CreatedAt.After(latest.CreatedAt) {
 			latest = &nodes[i]
 		}

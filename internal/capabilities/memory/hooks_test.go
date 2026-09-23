@@ -60,8 +60,13 @@ func TestCommitHookAtomicMemory(t *testing.T) {
 	if err := committer(ctx, id, req, resp); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := adapter.CountMessages(ctx, "s-atomic"); err != nil || n != 2 {
-		t.Fatalf("memory messages = %d, %v; want 2", n, err)
+	if rows, err := adapter.LoadAll(ctx, "s-atomic"); err != nil || len(rows) != 2 {
+		t.Fatalf("projected rows = %d, %v; want 2", len(rows), err)
+	}
+	// The same committer invocation still writes the memory copy the
+	// pre-transcript read path read from (increment A keeps both).
+	if stored := loadStoredMemoryRows(t, store.Database(), "s-atomic"); len(stored) != 2 {
+		t.Fatalf("stored memory rows = %d, want 2", len(stored))
 	}
 	hist, err := store.History(ctx, "s-atomic", 0)
 	if err != nil {
@@ -459,8 +464,8 @@ func TestCommitHookDropsReplayedHistory(t *testing.T) {
 	if history[3].Role != message.RoleAssistant || history[3].Content.Text() != "我是助手" {
 		t.Errorf("fourth message = %+v, want current assistant reply only", history[3])
 	}
-	if n, err := adapter.CountMessages(ctx, "s-replay"); err != nil || n != 4 {
-		t.Fatalf("memory messages = %d, %v; want 4", n, err)
+	if rows, err := adapter.LoadAll(ctx, "s-replay"); err != nil || len(rows) != 4 {
+		t.Fatalf("projected rows = %d, %v; want 4", len(rows), err)
 	}
 
 	turns, err := store.Turns(ctx, "s-replay")
