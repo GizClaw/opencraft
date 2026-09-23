@@ -69,12 +69,16 @@
   --text-micro: 0.7143rem;
   /* 11 design px: field labels, captions, tab strips. */
   --text-label: 0.7857rem;
-  /* 16 design px: card and dialog titles. Section headings used to be
-     the same size as body text, which is why a settings card and its
-     own description read as one undifferentiated block. */
-  --text-title: 1.1429rem;
-  /* 20 design px: page headlines (settings, tools, empty states). */
-  --text-display: 1.4286rem;
+  /* 14 design px: card, drawer and dialog titles. Section headings used
+     to be the same size as body text, which is why a settings card and
+     its own description read as one undifferentiated block; the rung
+     that fixed that then overshot, because everything a heading sits
+     above in a settings card — the description, the row labels, the
+     hints — is 10–12, so a 16 was a display size doing a label's job. */
+  --text-title: 1rem;
+  /* 16 design px: the one page headline left, the settings panel's own
+     title. It sits in a 48px header bar, where a 20 read as a marquee. */
+  --text-display: 1.1429rem;
 
   /* 4 design px: badges, keycaps, tree rows. */
   --radius-tight: 0.2857rem;

@@ -1244,13 +1244,13 @@ export function ConfigPage() {
       panelClassName="flex h-[45.7143rem] max-h-[calc(100vh-6.8571rem)] w-[68.5714rem] max-w-[calc(100vw-3.4286rem)] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal"
     >
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-edge px-4">
-        <Settings size={ICON.lg} className="text-accent" />
+        <Settings size={ICON.md} className="text-accent" />
         <h2 id="settings-title" className="text-display font-semibold">
           {t('config.title')}
         </h2>
         <span className="flex-1" />
         <IconButton label={t('tools.close')} onClick={closeConfig}>
-          <X size={ICON.lg} />
+          <X size={ICON.md} />
         </IconButton>
       </header>
 
