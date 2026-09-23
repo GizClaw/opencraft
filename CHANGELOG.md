@@ -279,6 +279,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   step, and a parity test holds the projection and the stored copy to
   the same answer row by row; the table and its write path leave in the
   next step of docs/conversation-model-plan.md.
+- A conversation's own settings — reasoning effort, model hint, sandbox
+  permission mode — are now one `conversation_state` document
+  (`settings`) instead of a `session_settings` table sitting beside it,
+  so a session's state is one row of the workspace's single
+  per-conversation key/value table (workspace migration 019). The step
+  is written in Go rather than as a SQL file for two reasons: a database
+  that never created the legacy table is simply recorded as migrated,
+  and each row's three columns have to become one JSON document, which
+  SQL would need `json_object()` — an optional build of the SQLite
+  amalgamation — for. The store's own API is unchanged
+  (`sessions.Store.SetThink`/`Think`/`SetModel`/`Model`/`SetMode`/`Mode`,
+  and `sessions/state/settings.go` holds the read-modify-write in one
+  transaction so two writers touching different keys cannot lose one of
+  them); a document is written only when a value was actually set, so
+  "never set" and "set to empty" remain the same thing to every reader.
+  Which column of `conversations` is a fact and which is a cache is now
+  written down where it is read (`state.Conversation`) and in a new
+  reference page, docs/session-data-model.md: the transcript is the
+  fact, the row is an index over it, a chosen title lives in
+  `conversation_state["title"]` with the column as the derived fallback,
+  and the turn/message counters and the usage totals are recomputable
+  caches that no reader may treat as the only copy.
 - flowcraft core moves to v0.4.8, closing an interrupt that could
   silently do nothing: a sandbox session is spawned with the signal mask
   cleared on a pinned thread and restored afterwards, so a child no

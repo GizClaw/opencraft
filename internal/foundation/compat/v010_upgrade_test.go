@@ -88,16 +88,6 @@ func TestWorkspaceUpgradesV010(t *testing.T) {
 		t.Fatalf("Workspace upgrade from v0.1.0: %v", err)
 	}
 
-	var hasMode int
-	if err := handle.SQLDB().QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM pragma_table_info('session_settings')
-		WHERE name = 'mode'`).Scan(&hasMode); err != nil {
-		t.Fatal(err)
-	}
-	if hasMode != 1 {
-		t.Fatal("mode column was not added by migration 008")
-	}
-
 	var applied8 int
 	if err := handle.SQLDB().QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM schema_migrations WHERE version = 8`,
@@ -106,6 +96,19 @@ func TestWorkspaceUpgradesV010(t *testing.T) {
 	}
 	if applied8 != 1 {
 		t.Fatal("migration 8 was not recorded")
+	}
+	// 008 added the mode column and 019 folded the table into the
+	// conversation state document; the schema this build runs on has
+	// neither the old table nor an unrecorded step.
+	var settingsTable int
+	if err := handle.SQLDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master
+		 WHERE type = 'table' AND name = 'session_settings'`,
+	).Scan(&settingsTable); err != nil {
+		t.Fatal(err)
+	}
+	if settingsTable != 0 {
+		t.Fatal("session_settings survived the v0.1.0 upgrade")
 	}
 
 	var copied int

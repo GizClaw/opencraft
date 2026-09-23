@@ -16,6 +16,29 @@ import (
 // Conversation is the SQLite-backed session index row. It replaces the
 // legacy per-session meta.json and is the source of truth for the
 // resume list.
+//
+// Column ownership (docs/session-data-model.md §1 has the full model):
+// this row is an index over the transcript, never a second copy of it.
+//
+//   - ID / CreatedAt / UpdatedAt: identity and bookkeeping.
+//   - Title: the fallback title, derived from the first user message of
+//     the first archived turn (Store.appendTurn writes it, then the
+//     CASE in CommitConversationTurn keeps it stable; Store.
+//     SeedStartTitle seeds it before that turn commits). A title a
+//     person or the auto-titler chose lives in the conversation_state
+//     document "title" and overlays this column wherever the UI reads
+//     it (bindings.listStoredMetas, host/title.go); the column keeps
+//     the fallback, so losing the document only loses the rename.
+//   - TurnCount / MessageCount: caches of what archive_turns and
+//     archive_messages hold, bumped in the same transaction that
+//     appends a turn. They serve the session list; the archive is the
+//     fact, and recomputing them from the archive must give these
+//     numbers.
+//   - UsageJSON: the cumulative usage cache, maintained by
+//     sessions.Store.RecordUsage/AddUsage. Same rule as the counters.
+//   - ImportSource / ImportReady: import bookkeeping — which legacy
+//     session this came from, and whether its import finished. Written
+//     by the import path only.
 type Conversation struct {
 	ID           string
 	Title        string
@@ -855,8 +878,9 @@ func (s *Store) DeleteConversationRows(ctx context.Context, id string) error {
 	for _, stmt := range []string{
 		`DELETE FROM archive_messages WHERE conversation_id = ?`,
 		`DELETE FROM archive_turns WHERE conversation_id = ?`,
+		// conversation_state holds every per-conversation document,
+		// settings included: one statement removes the lot.
 		`DELETE FROM conversation_state WHERE conversation_id = ?`,
-		`DELETE FROM session_settings WHERE context_id = ?`,
 		`DELETE FROM conversations WHERE id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt, id); err != nil {

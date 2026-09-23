@@ -19,8 +19,9 @@ import (
 // TestDeleteSessionClosesLiveSession verifies the desktop deletion path
 // at the runtime layer: deleting one conversation by key closes the
 // session manager's live Session for that key (so a later Open starts
-// fresh), and removing the conversation clears its session_settings row
-// (think level / model hint). opencraft runs sessions ephemeral and the
+// fresh), and removing the conversation clears its per-conversation
+// state documents (think level / model hint / mode, plus the other
+// conversation_state rows). opencraft runs sessions ephemeral and the
 // runtime has resume disabled, so the checkpoint store carries no
 // per-session durable state for the manager to remove.
 func TestDeleteSessionClosesLiveSession(t *testing.T) {

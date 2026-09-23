@@ -852,7 +852,10 @@ func (s *Store) List() ([]Meta, error) {
 	return out, nil
 }
 
-// Title returns the archived conversation title.
+// Title returns the conversation's fallback title, as written by the
+// archive (see state.Conversation). A user- or model-chosen title lives
+// in the conversation_state document "title" and is overlaid by the
+// readers that display one.
 func (s *Store) Title(id string) (string, error) {
 	if err := requireID(id); err != nil {
 		return "", err
@@ -939,7 +942,10 @@ func (s *Store) LoadUsage(ctx context.Context, id string) (Usage, error) {
 	return usage, nil
 }
 
-// RecordUsage persists the cumulative token usage for a session.
+// RecordUsage persists the cumulative token usage for a session. The
+// number lives on the conversations row as a cache beside the archive
+// (state.Conversation documents the ownership): it answers "how much
+// did this chat cost" for the UI without summing the transcript.
 func (s *Store) RecordUsage(ctx context.Context, id string, usage Usage) error {
 	if err := requireID(id); err != nil {
 		return err

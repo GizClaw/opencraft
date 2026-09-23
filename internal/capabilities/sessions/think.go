@@ -35,7 +35,7 @@ func (l ThinkLevel) Valid() bool {
 }
 
 // SetThink persists the reasoning effort for the session in the
-// SQLite session store (session_settings table).
+// session store (the conversation_state document "settings").
 func (s *Store) SetThink(ctx context.Context, id string, level ThinkLevel) error {
 	if !level.Valid() {
 		return errdefs.Validationf(
