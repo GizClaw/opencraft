@@ -8,11 +8,46 @@ import (
 	"encoding/hex"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/message"
+)
+
+// StoredMessage is one replayable transcript row: the canonical message
+// plus its immutable transcript coordinate. The session store assigns
+// Seq on append and never reuses or reorders it, so a row's identity is
+// its Seq — the model window, the fold coverage set and the context item
+// ids are all expressed in transcript coordinates. Nothing here is
+// derived from a load position: an inserted, skipped or removed row no
+// longer shifts the identity of every row after it.
+type StoredMessage struct {
+	Seq     int64
+	Role    message.Role
+	Content message.Content
+}
+
+// Message lowers the row into the canonical message shape.
+func (m StoredMessage) Message() message.Message {
+	return message.Message{Role: m.Role, Content: m.Content}
+}
+
+// SourceID renders a transcript coordinate in the string form
+// SummaryNode.SourceIDs and context item ids carry.
+func SourceID(seq int64) string {
+	return strconv.FormatInt(seq, 10)
+}
+
+// SummaryNode.Metadata keys owned by the identity scheme.
+const (
+	// IdentityKey names the coordinate system a node's SourceIDs are
+	// expressed in.
+	IdentityKey = "identity"
+	// IdentitySeqV1 is transcript coordinates: SourceIDs are the Seq of
+	// the rows the summary covers.
+	IdentitySeqV1 = "seq-v1"
 )
 
 // Policy configures summarization. Zero values select defaults.
@@ -73,12 +108,29 @@ type SummaryNode struct {
 	Metadata  map[string]any
 }
 
-// foldMsg pairs a canonical sdk message with its original index (used to
-// derive the stable source ID) and the precomputed stable source ID.
+// Generation reports the coordinate system this node's SourceIDs are
+// expressed in. An empty string means the node predates the marker:
+// those nodes carry message-position hashes, which no reader can map
+// onto transcript rows.
+func (n SummaryNode) Generation() string {
+	g, _ := n.Metadata[IdentityKey].(string)
+	return g
+}
+
+// CurrentGeneration reports whether the node's coverage is expressed in
+// the coordinate system this build reads. Coverage from another
+// generation is ignored (and lazily rebuilt) rather than translated:
+// the mapping between position hashes and transcript rows was never
+// recorded, so a translation could only be a guess.
+func (n SummaryNode) CurrentGeneration() bool {
+	return n.Generation() == IdentitySeqV1
+}
+
+// foldMsg pairs a canonical message with its transcript coordinate.
 type foldMsg struct {
-	index int
-	id    string
-	msg   message.Message
+	seq int64
+	id  string
+	msg message.Message
 }
 
 // BufferFold folds messages older than the raw window into the thread's
@@ -108,46 +160,32 @@ type foldMsg struct {
 //     MaxRawMessages + PreserveRecent messages raw, so the newest messages
 //     get extra protection from folding.
 //
-// sdk/message.Message has no identity field, so each folded message gets a
-// stable ID derived from (thread, original index, role, text). The same turn
-// committed twice produces the same IDs, which keeps folding idempotent.
-func BufferFold(policy Policy, threadID string, messages []message.Message, prev *SummaryNode, now time.Time) (*SummaryNode, error) {
+// sdk/message.Message has no identity field, so each folded row is
+// identified by its transcript Seq. The same row read twice produces the
+// same source ID, which keeps folding idempotent.
+func BufferFold(policy Policy, threadID string, rows []StoredMessage, prev *SummaryNode, now time.Time) (*SummaryNode, error) {
 	p := policy.Normalize()
-	candidates := foldCandidates(threadID, messages)
+	candidates := foldCandidates(rows)
 	foldBoundary := len(candidates) - p.MaxRawMessages - p.PreserveRecent
-	return bufferFoldCandidates(
-		p, threadID, candidates, len(candidates), foldBoundary, prev, now)
+	if foldBoundary <= 0 {
+		return nil, nil
+	}
+	return bufferFoldCandidates(p, threadID, candidates[:foldBoundary], prev, now)
 }
 
 // bufferFoldCandidates is the rolling fold over an explicit candidate list.
-// totalText is the thread's total text-message count (the boundary is a
-// count of text messages, not a message index). candidates must be in
-// chronological order and cover the NEWEST foldable messages the rolling
-// window can keep: either the whole foldable region (positions
-// [0, foldBoundary)) or a suffix of it that already overflows the byte
-// budget. Anything older than that suffix is provably dropped by the budget,
-// so it never needs to be loaded.
+// candidates must be in chronological order and cover the NEWEST foldable
+// rows older than the raw window: either the whole foldable region or a
+// suffix of it that already overflows the byte budget. Anything older than
+// that suffix is provably dropped by the budget, so it never needs to be
+// loaded — which is what keeps a fold O(budget) instead of O(history).
 func bufferFoldCandidates(
 	p Policy,
 	threadID string,
 	candidates []foldMsg,
-	totalText int,
-	foldBoundary int,
 	prev *SummaryNode,
 	now time.Time,
 ) (*SummaryNode, error) {
-	if foldBoundary <= 0 {
-		return nil, nil
-	}
-	if foldBoundary > totalText {
-		foldBoundary = totalText
-	}
-	// Trim defensively to the foldable region (position-based; a caller may
-	// pass the full candidate list including raw-window messages). A suffix
-	// shorter than the boundary passes through untouched.
-	if len(candidates) > foldBoundary {
-		candidates = candidates[:foldBoundary]
-	}
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -160,8 +198,10 @@ func bufferFoldCandidates(
 	// dropped counts every foldable message the budget could not hold,
 	// including any older than a loaded suffix: the rolling window keeps
 	// the NEWEST foldable messages that fit, so everything older than the
-	// kept tail is dropped by construction.
-	dropped := foldBoundary - len(kept)
+	// kept tail is dropped by construction. Rows older than a
+	// budget-truncated walk are dropped too but are not counted — the
+	// count is a condensation trigger, not a ledger.
+	dropped := len(candidates) - len(kept)
 	if dropped < 0 {
 		dropped = 0
 	}
@@ -184,6 +224,7 @@ func bufferFoldCandidates(
 		UpdatedAt: now,
 		Metadata: map[string]any{
 			"algorithm":            "summary_buffer",
+			"identity":             IdentitySeqV1,
 			"max_raw_messages":     p.MaxRawMessages,
 			"preserve_recent":      p.PreserveRecent,
 			"max_summary_bytes":    p.MaxSummaryBytes,
@@ -196,19 +237,19 @@ func bufferFoldCandidates(
 	}, nil
 }
 
-// foldCandidates keeps text-bearing messages and assigns stable IDs. The
-// original index is part of the ID so interleaved non-text messages do not
-// shift previously folded IDs.
-func foldCandidates(threadID string, messages []message.Message) []foldMsg {
-	out := make([]foldMsg, 0, len(messages))
-	for i, msg := range messages {
-		if msg.Content.Text() == "" {
+// foldCandidates keeps text-bearing rows and pairs each with its source
+// ID. Only text-bearing rows are foldable: the summary renders text, and a
+// row with no text contributes nothing to it.
+func foldCandidates(rows []StoredMessage) []foldMsg {
+	out := make([]foldMsg, 0, len(rows))
+	for _, row := range rows {
+		if row.Content.Text() == "" {
 			continue
 		}
 		out = append(out, foldMsg{
-			index: i,
-			id:    stableMessageID(threadID, i, msg),
-			msg:   msg,
+			seq: row.Seq,
+			id:  SourceID(row.Seq),
+			msg: row.Message(),
 		})
 	}
 	return out
@@ -299,15 +340,6 @@ func truncateRunes(s string, maxBytes int) string {
 		end--
 	}
 	return s[:end]
-}
-
-func stableMessageID(threadID string, index int, msg message.Message) string {
-	h := sha256.New()
-	if _, err := fmt.Fprintf(h, "%s|%d|%s|%s",
-		threadID, index, msg.Role, msg.Content.Text()); err != nil {
-		panic(fmt.Sprintf("summary: hash write failed: %v", err))
-	}
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 // stableID returns the stable node id for a thread's summary node at level.

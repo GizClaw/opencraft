@@ -258,6 +258,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A conversation's model-side history is now a projection of the
+  transcript instead of a second copy of it, and a message's identity is
+  the transcript coordinate it was appended with rather than a hash of
+  the position it happened to be loaded at. The window, the fold
+  coverage set and the context item ids all speak that coordinate
+  (`summary_nodes.source_ids` holds seqs, `stableMessageID` is gone), so
+  a row that is skipped, filtered or absent can no longer shift the
+  identity of every row after it. The memory read path reads
+  `archive_messages` and renders on read: tool calls and results keep
+  their canonical parts and gain their `tool_call:` / `tool_result:`
+  text when the window is built, and a row that has no prompt form (an
+  attachment-only turn) is left out of the window without moving the
+  rows around it. Nodes carry `metadata.identity = "seq-v1"`; a node
+  from an older build holds position hashes that no reader can map onto
+  rows, so it is ignored and retired by the next fold, which rebuilds it
+  from the transcript (deterministic and idempotent — nothing is
+  translated, since the old ids were never paired with transcript rows).
+  `memory_items` is still written in the commit transaction during this
+  step, and a parity test holds the projection and the stored copy to
+  the same answer row by row; the table and its write path leave in the
+  next step of docs/conversation-model-plan.md.
+- A conversation's own settings — reasoning effort, model hint, sandbox
+  permission mode — are now one `conversation_state` document
+  (`settings`) instead of a `session_settings` table sitting beside it,
+  so a session's state is one row of the workspace's single
+  per-conversation key/value table (workspace migration 019). The step
+  is written in Go rather than as a SQL file for two reasons: a database
+  that never created the legacy table is simply recorded as migrated,
+  and each row's three columns have to become one JSON document, which
+  SQL would need `json_object()` — an optional build of the SQLite
+  amalgamation — for. The store's own API is unchanged
+  (`sessions.Store.SetThink`/`Think`/`SetModel`/`Model`/`SetMode`/`Mode`,
+  and `sessions/state/settings.go` holds the read-modify-write in one
+  transaction so two writers touching different keys cannot lose one of
+  them); a document is written only when a value was actually set, so
+  "never set" and "set to empty" remain the same thing to every reader.
+  Which column of `conversations` is a fact and which is a cache is now
+  written down where it is read (`state.Conversation`) and in a new
+  reference page, docs/session-data-model.md: the transcript is the
+  fact, the row is an index over it, a chosen title lives in
+  `conversation_state["title"]` with the column as the derived fallback,
+  and the turn/message counters and the usage totals are recomputable
+  caches that no reader may treat as the only copy.
+- A conversation now has one history, not two. The model's window is a
+  projection of the transcript, built at read time by one rule set
+  (`capabilities/memory/projection.go`), so the second physical copy of
+  every message — `memory_items`, written inside the archive's
+  transaction and kept in step by convention — is gone (workspace
+  migration 020, a Go step that reports what the copy held, by category
+  and by conversation, before it drops the table). Two behaviors change
+  with it, deliberately: a delegation note is now in the model's
+  context, because it is a user-role row the app wrote and its `kind`
+  tells a *reader* what it is rather than keeping it out of the window;
+  and a turn that carries no text of its own enters the window as a
+  placeholder naming what it does carry (`[attachment: image]`, with a
+  counter and a warning when a row cannot be rendered at all) instead of
+  silently disappearing. Imported conversations are ready when their
+  transcript lands — there is no second history left to seed — so the
+  import/replace/abort dance and `Store.AbortImport` collapse into
+  `Store.Import`, and fork and import no longer seed memory. The
+  migration is one-way (an older binary fails on the missing table), so
+  this step is its own release decision (docs/conversation-model-plan.md
+  §6.4); in `replay_full_history` deployments the whole-history read now
+  comes from the transcript, which is the read opencraft#191 will bring
+  down to one.
 - flowcraft core moves to v0.4.8, closing an interrupt that could
   silently do nothing: a sandbox session is spawned with the signal mask
   cleared on a pinned thread and restored afterwards, so a child no

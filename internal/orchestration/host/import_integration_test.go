@@ -17,7 +17,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
-func TestHostImportSessionWritesArchiveAndSeedsMemory(t *testing.T) {
+func TestHostImportSessionWritesArchive(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "imported"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
@@ -108,11 +108,6 @@ func TestHostImportSessionWritesArchiveAndSeedsMemory(t *testing.T) {
 		t.Fatalf("first recorded at = %v, want earliest turn %v",
 			firstRecordedAt, at)
 	}
-	memoryCount := countThreadMemory(t, h, id)
-	if memoryCount == 0 {
-		t.Fatal("imported session has no memory rows")
-	}
-
 	// The asynchronous LLM title also reports usage. Wait for the title
 	// (its recorder call completes before the title is written), then
 	// drain the remaining deltas so the store snapshot below cannot
@@ -131,7 +126,7 @@ func TestHostImportSessionWritesArchiveAndSeedsMemory(t *testing.T) {
 	}
 
 	// A duplicate import with the same Source returns the existing
-	// session and never seeds memory twice.
+	// session and appends nothing: the transcript is written once.
 	again, err := h.ImportSession(ctx, req)
 	if err != nil {
 		t.Fatalf("duplicate ImportSession: %v", err)
@@ -139,9 +134,13 @@ func TestHostImportSessionWritesArchiveAndSeedsMemory(t *testing.T) {
 	if again != id {
 		t.Fatalf("duplicate import = %q, want %q", again, id)
 	}
-	if got := countThreadMemory(t, h, id); got != memoryCount {
-		t.Fatalf("memory rows after duplicate import = %d, want %d",
-			got, memoryCount)
+	turnsAgain, err := h.Sessions().Turns(ctx, id)
+	if err != nil {
+		t.Fatalf("turns after duplicate import: %v", err)
+	}
+	if len(turnsAgain) != len(turns) {
+		t.Fatalf("turns after duplicate import = %d, want %d",
+			len(turnsAgain), len(turns))
 	}
 	if len(recorded) != 0 {
 		t.Fatalf("duplicate import recorded usage again: %d calls", len(recorded))
@@ -274,17 +273,4 @@ func sumUsage(total, delta ocsessions.Usage) ocsessions.Usage {
 	total.LatencyMs += delta.LatencyMs
 	total.Calls += delta.Calls
 	return total
-}
-
-func countThreadMemory(t *testing.T, h *host.Host, id string) int {
-	t.Helper()
-	var count int
-	if err := h.Sessions().Database().SQLDB().QueryRowContext(
-		context.Background(),
-		`SELECT COUNT(*) FROM memory_items WHERE thread_id = ?`,
-		id,
-	).Scan(&count); err != nil {
-		t.Fatalf("count imported memory: %v", err)
-	}
-	return count
 }

@@ -60,7 +60,13 @@ type ImportTurn struct {
 
 // Import writes a new conversation from a neutral request into SQLite
 // and returns the generated s-xxx id. The same Source maps to the same
-// session id. Memory seeding is deliberately not performed here.
+// session id.
+//
+// The call is the whole import: the transcript it writes is the
+// conversation, so the conversation is ready — visible in the list,
+// eligible for "already imported" — as soon as it returns. A failure
+// leaves the row unready and therefore invisible (List skips it), and
+// the next import of the same source replaces it.
 func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 	if err := validateImportRequest(req); err != nil {
 		return "", err
@@ -74,9 +80,6 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 		return "", err
 	} else if found {
 		if existing.ImportReady {
-			return existing.ID, nil
-		}
-		if _, active := s.importPending[existing.ID]; active {
 			return existing.ID, nil
 		}
 		if err := s.removeLocked(ctx, existing.ID); err != nil {
@@ -215,6 +218,7 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 		TurnCount:    len(archives),
 		MessageCount: messageCount,
 		ImportSource: source,
+		ImportReady:  true,
 	}
 	if err := s.db.UpsertConversation(ctx, conv); err != nil {
 		telemetry.WarnErr(ctx,
@@ -222,37 +226,12 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 			s.removeLocked(ctx, id))
 		return "", err
 	}
-	s.importPending[id] = source
 	return id, nil
 }
 
-// CompleteImport marks an imported session as memory-seeded and
-// visible in the session list.
-func (s *Store) CompleteImport(ctx context.Context, id string) error {
-	if err := requireID(id); err != nil {
-		return err
-	}
-	c, err := s.db.Conversation(ctx, id)
-	if err != nil {
-		return err
-	}
-	if c.ImportSource == "" {
-		return errdefs.Validationf(
-			"sessions: session %s is not an import", id)
-	}
-	if c.ImportReady {
-		return nil
-	}
-	s.mu.Lock()
-	delete(s.importPending, id)
-	s.mu.Unlock()
-	c.ImportReady = true
-	c.UpdatedAt = time.Now().UTC()
-	return s.db.UpsertConversation(ctx, c)
-}
-
-// ImportReady reports whether an imported session has completed its
-// memory seed.
+// ImportReady reports whether an imported session is complete: its
+// transcript was written, so it is listed and counts as already
+// imported for its source.
 func (s *Store) ImportReady(ctx context.Context, id string) (bool, error) {
 	if err := requireID(id); err != nil {
 		return false, err
@@ -275,11 +254,6 @@ func (s *Store) ImportedBySources(
 	ctx context.Context, sources []string,
 ) (map[string]string, error) {
 	return s.db.ImportReadyBySources(ctx, sources)
-}
-
-// AbortImport rolls back an import that failed before CompleteImport.
-func (s *Store) AbortImport(ctx context.Context, id string) error {
-	return s.Remove(ctx, id)
 }
 
 func validateImportRequest(req ImportRequest) error {

@@ -88,16 +88,6 @@ func TestWorkspaceUpgradesV010(t *testing.T) {
 		t.Fatalf("Workspace upgrade from v0.1.0: %v", err)
 	}
 
-	var hasMode int
-	if err := handle.SQLDB().QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM pragma_table_info('session_settings')
-		WHERE name = 'mode'`).Scan(&hasMode); err != nil {
-		t.Fatal(err)
-	}
-	if hasMode != 1 {
-		t.Fatal("mode column was not added by migration 008")
-	}
-
 	var applied8 int
 	if err := handle.SQLDB().QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM schema_migrations WHERE version = 8`,
@@ -107,15 +97,32 @@ func TestWorkspaceUpgradesV010(t *testing.T) {
 	if applied8 != 1 {
 		t.Fatal("migration 8 was not recorded")
 	}
-
-	var copied int
+	// 008 added the mode column and 019 folded the table into the
+	// conversation state document; the schema this build runs on has
+	// neither the old table nor an unrecorded step.
+	var settingsTable int
 	if err := handle.SQLDB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM memory_items WHERE thread_id = 's-legacy'`,
-	).Scan(&copied); err != nil {
+		`SELECT COUNT(*) FROM sqlite_master
+		 WHERE type = 'table' AND name = 'session_settings'`,
+	).Scan(&settingsTable); err != nil {
 		t.Fatal(err)
 	}
-	if copied != 1 {
-		t.Fatalf("memory_items rows = %d, want 1 after v0.1.0 upgrade", copied)
+	if settingsTable != 0 {
+		t.Fatal("session_settings survived the v0.1.0 upgrade")
+	}
+
+	// 009 copied the old items table into memory_items; 020 retired that
+	// second copy of the history, so the legacy row lives in the
+	// transcript only.
+	var memoryTable int
+	if err := handle.SQLDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master
+		 WHERE type = 'table' AND name = 'memory_items'`,
+	).Scan(&memoryTable); err != nil {
+		t.Fatal(err)
+	}
+	if memoryTable != 0 {
+		t.Fatal("memory_items survived the v0.1.0 upgrade")
 	}
 	var oldItems int
 	if err := handle.SQLDB().QueryRowContext(ctx,

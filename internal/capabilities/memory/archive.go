@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
@@ -148,8 +147,8 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 // RecoverTurn persists one turn crash recovery reconstructed from a run
 // checkpoint (see orchestration/host/recover.go). The write is the same
 // as the one the archive observer performs for an in-process
-// interruption: archive rows and memory rows in a single transaction,
-// then a memory fold. The archive's (conversation, run) uniqueness
+// interruption: the turn's transcript rows through the store that owns
+// them, then a memory fold. The archive's (conversation, run) uniqueness
 // makes a second recovery of the same run a no-op.
 //
 // scope is only consulted by sinks that cannot join the archive
@@ -175,10 +174,11 @@ func RecoverTurn(
 	)
 }
 
-// commitArchivedTurn writes one unfinished turn: the archive rows and
-// the memory rows land in one transaction when the sink can join it,
-// and the memory assembly folds afterwards. Sinks that cannot join fall
-// back to appending memory after the archive write.
+// commitArchivedTurn writes one unfinished turn to the transcript
+// through the conversation's owner, then folds. The write is the whole
+// persistence story now that the window is a projection of the
+// transcript: the fold only maintains the summary tree over rows that
+// are already there.
 func commitArchivedTurn(
 	ctx context.Context,
 	store *sessions.Store,
@@ -187,26 +187,6 @@ func commitArchivedTurn(
 	conversationID, runID string,
 	msgs []message.Message,
 ) error {
-	if atomic, ok := sink.(atomicTurnSink); ok {
-		if err := store.AppendTurnWithRunIDAndHook(
-			ctx, conversationID, runID, msgs,
-			func(ctx context.Context, tx *sql.Tx) error {
-				return atomic.AppendMessagesTx(
-					ctx, tx, conversationID, runID,
-					renderConversation(msgs),
-				)
-			},
-		); err != nil {
-			return err
-		}
-		if len(msgs) <= 1 {
-			return nil
-		}
-		if err := atomic.FoldOnly(ctx, conversationID); err != nil {
-			return fmt.Errorf("memory: fold after archive: %w", err)
-		}
-		return nil
-	}
 	if err := store.AppendTurnWithRunID(
 		ctx, conversationID, runID, msgs,
 	); err != nil {
@@ -215,11 +195,17 @@ func commitArchivedTurn(
 	if len(msgs) <= 1 {
 		return nil
 	}
+	if folder, ok := sink.(foldSink); ok {
+		if err := folder.FoldOnly(ctx, conversationID); err != nil {
+			return fmt.Errorf("memory: fold after archive: %w", err)
+		}
+		return nil
+	}
 	if err := sink.CommitTurn(ctx, corememory.Turn{
 		Scope:          scope,
 		ConversationID: conversationID,
 		IdempotencyKey: runID,
-		Messages:       renderConversation(msgs),
+		Messages:       msgs,
 	}); err != nil {
 		return fmt.Errorf("memory: commit after archive: %w", err)
 	}

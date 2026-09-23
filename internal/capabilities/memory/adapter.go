@@ -4,10 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"strconv"
-	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
@@ -20,170 +17,176 @@ import (
 
 // sqliteTurnStore is the memory-owned TurnStore over foundation/db.
 type sqliteTurnStore struct {
-	mu sync.Mutex
 	db *db.DB
 }
 
-func (a *sqliteTurnStore) AppendMessages(
-	ctx context.Context, conversationID, turnID string, msgs []message.Message,
-) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	sqlDB := a.db.SQLDB()
-	tx, err := sqlDB.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("memory: begin append: %w", err)
-	}
-	defer func() {
-		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
-			telemetry.WarnErr(ctx, "memory: rollback append failed", err)
-		}
-	}()
-	if err := a.appendMessagesTx(ctx, tx, conversationID, turnID, msgs); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
+// projectionBackfill is how many extra rows LoadBack may ask for beyond
+// the rows it still needs. The SQL page already drops the cheap,
+// structural non-history (imported system rows); this covers the
+// remaining case — a row the render step cannot project at all — so a
+// page that loses rows to it still fills in one more query instead of
+// returning a short window.
+const projectionBackfill = 32
 
-// appendMessagesTx inserts memory rows inside an existing transaction.
-// It is used by the atomic archive+memory commit path.
-func (a *sqliteTurnStore) appendMessagesTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	conversationID, turnID string,
-	msgs []message.Message,
-) error {
-	var seq int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(seq), -1) + 1 FROM memory_items
-		 WHERE thread_id = ?`, conversationID).Scan(&seq); err != nil {
-		return fmt.Errorf("memory: next seq: %w", err)
-	}
-	for _, msg := range msgs {
-		text := msg.Content.Text()
-		if text == "" {
-			if len(msg.Content.Parts) > 0 {
-				// A message with parts but no rendered text would
-				// otherwise vanish without a trace: the raw window and
-				// the fold contract index text-bearing rows, so it
-				// cannot be persisted here. Surface the drop instead of
-				// silently losing history.
-				telemetry.Warn(ctx, "memory: skipping message with parts but no rendered text",
-					otellog.String("conversation.id", conversationID),
-					otellog.String("turn.id", turnID),
-					otellog.String("role", string(msg.Role)),
-					otellog.Int("parts", len(msg.Content.Parts)))
-			}
-			continue
-		}
-		// Persist the full content (canonical parts), not just the text
-		// projection: tool_call / tool_result parts carry the call ids
-		// structured history replay needs. Text-only rows written by
-		// older versions are upgraded to canonical parts by workspace
-		// migration 011 on startup.
-		payload, err := json.Marshal(msg.Content)
-		if err != nil {
-			return fmt.Errorf("memory: marshal message payload: %w", err)
-		}
-		id := conversationID + ":" + turnID + ":" + strconv.FormatInt(seq, 10)
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO memory_items(
-				id, thread_id, turn_id, seq, item_type, role, payload, created_at
-			) VALUES (?, ?, ?, ?, 'text', ?, ?, ?)`,
-			id, conversationID, turnID, seq, string(msg.Role),
-			string(payload), timeNow().UTC().Format(time.RFC3339Nano),
-		); err != nil {
-			return fmt.Errorf("memory: append message: %w", err)
-		}
-		seq++
-	}
-	return nil
-}
-
-// AppendMessagesTx appends memory rows inside the caller's transaction.
-func (a *sqliteTurnStore) AppendMessagesTx(
-	ctx context.Context,
-	tx *sql.Tx,
-	conversationID, turnID string,
-	msgs []message.Message,
-) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.appendMessagesTx(ctx, tx, conversationID, turnID, msgs)
-}
-
-func (a *sqliteTurnStore) LoadMessages(
+// MaxSeq returns the newest transcript seq, or -1 when the conversation
+// has no rows.
+func (a *sqliteTurnStore) MaxSeq(
 	ctx context.Context, conversationID string,
-) ([]message.Message, error) {
-	return a.loadRange(ctx, conversationID, -1, -1)
-}
-
-func (a *sqliteTurnStore) CountMessages(
-	ctx context.Context, conversationID string,
-) (int, error) {
-	var n int
+) (int64, error) {
+	var seq sql.NullInt64
 	if err := a.db.SQLDB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM memory_items WHERE thread_id = ?`,
-		conversationID).Scan(&n); err != nil {
-		return 0, fmt.Errorf("memory: count messages: %w", err)
+		`SELECT MAX(seq) FROM archive_messages WHERE conversation_id = ?`,
+		conversationID).Scan(&seq); err != nil {
+		return -1, fmt.Errorf("memory: max transcript seq: %w", err)
 	}
-	return n, nil
+	if !seq.Valid {
+		return -1, nil
+	}
+	return seq.Int64, nil
 }
 
-func (a *sqliteTurnStore) LoadMessagesRange(
-	ctx context.Context, conversationID string, from, to int,
-) ([]message.Message, error) {
-	return a.loadRange(ctx, conversationID, from, to)
-}
-
-func (a *sqliteTurnStore) loadRange(
-	ctx context.Context, conversationID string, from, to int,
-) ([]message.Message, error) {
-	if from > to {
+// LoadBack returns the newest n replayable rows older than beforeSeq, in
+// chronological order. It walks the transcript backward in pages, so a
+// short window costs a bounded query rather than a scan of the
+// conversation.
+func (a *sqliteTurnStore) LoadBack(
+	ctx context.Context, conversationID string, beforeSeq int64, n int,
+) ([]summary.StoredMessage, error) {
+	if n <= 0 || beforeSeq <= 0 {
 		return nil, nil
 	}
-	query := `SELECT role, payload FROM memory_items WHERE thread_id = ?`
-	args := []any{conversationID}
-	if from >= 0 && to >= from {
-		query += ` AND seq BETWEEN ? AND ?`
-		args = append(args, from, to)
+	var pages [][]summary.StoredMessage
+	total := 0
+	cursor := beforeSeq
+	for total < n && cursor > 0 {
+		limit := n - total + projectionBackfill
+		page, err := a.loadProjectedBefore(ctx, conversationID, cursor, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		pages = append(pages, page)
+		total += len(page)
+		cursor = page[0].Seq
+		if len(page) < limit {
+			// The page came up short: the transcript start was reached.
+			break
+		}
 	}
-	query += ` ORDER BY seq`
+	// pages are newest-batch-first, each in chronological order.
+	var tail []summary.StoredMessage
+	for i := len(pages) - 1; i >= 0; i-- {
+		tail = append(tail, pages[i]...)
+	}
+	if len(tail) > n {
+		tail = tail[len(tail)-n:]
+	}
+	return tail, nil
+}
+
+// LoadAll returns every replayable row, oldest first.
+func (a *sqliteTurnStore) LoadAll(
+	ctx context.Context, conversationID string,
+) ([]summary.StoredMessage, error) {
+	return a.loadProjectedBefore(ctx, conversationID, 0, 0)
+}
+
+// loadProjectedBefore reads the transcript backward from beforeSeq and
+// returns the replayable rows among them in chronological order. limit
+// bounds the rows read (0 means no bound); rows the projection leaves out
+// do not count against it, so a caller asking for n rows may receive
+// fewer if the transcript start was reached first.
+//
+// What the projection did to those rows is reported once per query: a row
+// that entered as a placeholder (an image-only turn) is a fact about the
+// conversation the operator should be able to see, and a row that could
+// not enter at all is a fact nobody should have to guess at.
+func (a *sqliteTurnStore) loadProjectedBefore(
+	ctx context.Context, conversationID string, beforeSeq int64, limit int,
+) ([]summary.StoredMessage, error) {
+	// Every row of the conversation is a candidate, whatever wrote it:
+	// a delegation note is the app speaking to the model and belongs in
+	// the window like any other row. The one structural exclusion is an
+	// imported conversation's own system prompt (see projection.go).
+	query := `SELECT m.seq, m.role, m.content_json
+		FROM archive_messages m
+		WHERE m.conversation_id = ? AND m.role != 'system'`
+	args := []any{conversationID}
+	if beforeSeq > 0 {
+		query += ` AND m.seq < ?`
+		args = append(args, beforeSeq)
+	}
+	query += ` ORDER BY m.seq DESC`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
 	rows, err := a.db.SQLDB().QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("memory: load messages: %w", err)
+		return nil, fmt.Errorf("memory: load transcript rows: %w", err)
 	}
 	defer func() {
-		telemetry.WarnErr(ctx, "memory: close message rows failed", rows.Close())
+		telemetry.WarnErr(ctx, "memory: close transcript rows failed", rows.Close())
 	}()
-	var out []message.Message
+	var placeholders, undecodable, empty int
+	var desc []summary.StoredMessage
 	for rows.Next() {
+		var seq int64
 		var role, payload string
-		if err := rows.Scan(&role, &payload); err != nil {
-			return nil, fmt.Errorf("memory: scan message: %w", err)
+		if err := rows.Scan(&seq, &role, &payload); err != nil {
+			return nil, fmt.Errorf("memory: scan transcript row: %w", err)
 		}
 		var content message.Content
 		if err := json.Unmarshal([]byte(payload), &content); err != nil {
-			telemetry.WarnErr(ctx, "memory: decode message payload failed", err,
-				otellog.String("conversation.id", conversationID))
+			// Canonical content carries at least one valid part, so a
+			// legacy text-only row (migration 011's shape), an
+			// interrupted write and a foreign writer all land here:
+			// nothing can be shown for the row, and guessing at its
+			// content would be worse than counting it.
+			telemetry.WarnErr(ctx, "memory: decode transcript payload failed", err,
+				otellog.String("conversation.id", conversationID),
+				otellog.Int64("seq", seq))
+			undecodable++
 			continue
 		}
-		if len(content.Parts) == 0 {
-			// Migration 011 rewrites legacy text-only rows to canonical
-			// parts. A row that still has no parts (interrupted write,
-			// foreign writer) is not part of the structured history and
-			// is skipped here, with a warning, rather than failing the
-			// turn or inventing content.
-			telemetry.Warn(ctx, "memory: skipping part-less message payload",
-				otellog.String("conversation.id", conversationID))
+		projected, ok := projectRow(message.Role(role), content)
+		if !ok {
+			// Decodable content that has no prompt form: a
+			// signature-only reasoning trace is the shape that reaches
+			// this, and there is nothing of it a prompt can carry.
+			empty++
 			continue
 		}
-		out = append(out, message.Message{
+		if projected.Placeholder {
+			placeholders++
+		}
+		desc = append(desc, summary.StoredMessage{
+			Seq:     seq,
 			Role:    message.Role(role),
-			Content: content,
+			Content: projected.Message.Content,
 		})
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if placeholders > 0 {
+		telemetry.Info(ctx,
+			"memory: transcript rows rendered as placeholders",
+			otellog.String("conversation.id", conversationID),
+			otellog.Int("rows", placeholders))
+	}
+	if undecodable+empty > 0 {
+		telemetry.Warn(ctx, "memory: transcript rows left out of the window",
+			otellog.String("conversation.id", conversationID),
+			otellog.Int("undecodable", undecodable),
+			otellog.Int("unrenderable", empty))
+	}
+	for i, j := 0, len(desc)-1; i < j; i, j = i+1, j-1 {
+		desc[i], desc[j] = desc[j], desc[i]
+	}
+	return desc, nil
 }
 
 func (a *sqliteTurnStore) UpsertSummaryNode(
@@ -292,6 +295,35 @@ func (a *sqliteTurnStore) DeleteSummaryNodes(
 		conversationID, level, keepID)
 	if err != nil {
 		return fmt.Errorf("memory: delete summary nodes: %w", err)
+	}
+	return nil
+}
+
+// DeleteSummaryNodesByID removes the named nodes, which is how coverage
+// written in another identity generation is retired.
+func (a *sqliteTurnStore) DeleteSummaryNodesByID(
+	ctx context.Context, conversationID string, ids []string,
+) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]byte, 0, len(ids)*2)
+	for i := range ids {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+	}
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, conversationID)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	_, err := a.db.SQLDB().ExecContext(ctx, `
+		DELETE FROM summary_nodes
+		WHERE thread_id = ? AND id IN (`+string(placeholders)+`)`, args...)
+	if err != nil {
+		return fmt.Errorf("memory: delete summary nodes by id: %w", err)
 	}
 	return nil
 }

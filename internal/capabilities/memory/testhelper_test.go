@@ -8,6 +8,8 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
 )
 
+// newMigratedSessions opens a workspace session store with the full
+// schema applied, the way the desktop and headless shells open one.
 func newMigratedSessions(root string, window int) (*sessions.Store, error) {
 	store, err := sessions.New(root, window)
 	if err != nil {

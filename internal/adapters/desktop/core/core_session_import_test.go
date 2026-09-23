@@ -13,7 +13,6 @@ import (
 	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
@@ -93,11 +92,13 @@ func TestPluginSessionImportWiresHostWritePath(t *testing.T) {
 	if err != nil || !ready {
 		t.Fatalf("ImportReady(%q) = %v, %v", res.SessionID, ready, err)
 	}
-	memoryCount := countTestMemory(t, h, res.SessionID)
-	if memoryCount == 0 {
-		t.Fatal("imported session has no memory rows")
+	turns, err := h.Sessions().Turns(ctx, res.SessionID)
+	if err != nil {
+		t.Fatalf("imported turns: %v", err)
 	}
-
+	if len(turns) != 1 || len(turns[0].Messages) != 2 {
+		t.Fatalf("imported turns = %+v, want one two-message turn", turns)
+	}
 	again, err := c.handlePluginSessionImport("plug",
 		pluginruntime.SessionImportRequest{BundlePath: bundlePath})
 	if err != nil {
@@ -107,9 +108,14 @@ func TestPluginSessionImportWiresHostWritePath(t *testing.T) {
 		t.Fatalf("duplicate import = %q, want %q",
 			again.SessionID, res.SessionID)
 	}
-	if got := countTestMemory(t, h, res.SessionID); got != memoryCount {
-		t.Fatalf("memory rows after duplicate import = %d, want %d",
-			got, memoryCount)
+	// The duplicate returns the existing session and appends nothing.
+	turnsAgain, err := h.Sessions().Turns(ctx, res.SessionID)
+	if err != nil {
+		t.Fatalf("turns after duplicate import: %v", err)
+	}
+	if len(turnsAgain) != len(turns) {
+		t.Fatalf("turns after duplicate import = %d, want %d",
+			len(turnsAgain), len(turns))
 	}
 }
 
@@ -244,17 +250,4 @@ func writeProviderConfig(t *testing.T, configDir, baseURL string) {
 	if err := configseed.Write(configDir, cfg); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func countTestMemory(t *testing.T, h *host.Host, id string) int {
-	t.Helper()
-	var count int
-	if err := h.Sessions().Database().SQLDB().QueryRowContext(
-		context.Background(),
-		`SELECT COUNT(*) FROM memory_items WHERE thread_id = ?`,
-		id,
-	).Scan(&count); err != nil {
-		t.Fatalf("count imported memory: %v", err)
-	}
-	return count
 }

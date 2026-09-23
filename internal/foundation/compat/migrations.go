@@ -92,6 +92,12 @@ func WorkspaceSchema(ctx context.Context, handle *db.DB) error {
 	if err := upgradeDelegationNotes(ctx, handle); err != nil {
 		return err
 	}
+	if err := mergeSessionSettings(ctx, handle); err != nil {
+		return err
+	}
+	if err := dropMemoryItems(ctx, handle); err != nil {
+		return err
+	}
 	// Workspace handles open with foreign_keys=OFF because pre-012
 	// schemas reference the tables 009 drops. Once every migration
 	// ran, the schema is clean and enforcement can come back on for

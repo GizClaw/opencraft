@@ -60,15 +60,15 @@ func crashCheckpoint(conversationID, runID string) agent.Checkpoint {
 	}
 }
 
-func countMemoryRows(t *testing.T, h *host.Host, conversationID string) int {
+func countArchiveMessages(t *testing.T, h *host.Host, conversationID string) int {
 	t.Helper()
 	var n int
 	if err := h.Sessions().Database().SQLDB().QueryRowContext(
 		context.Background(),
-		`SELECT COUNT(*) FROM memory_items WHERE thread_id = ?`,
+		`SELECT COUNT(*) FROM archive_messages WHERE conversation_id = ?`,
 		conversationID,
 	).Scan(&n); err != nil {
-		t.Fatalf("count memory rows: %v", err)
+		t.Fatalf("count archive messages: %v", err)
 	}
 	return n
 }
@@ -199,7 +199,7 @@ func TestHostRecoversCrashedTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("turns before recovery: %v", err)
 	}
-	baselineMemory := countMemoryRows(t, h1, conversationID)
+	baselineMessages := countArchiveMessages(t, h1, conversationID)
 
 	// The crash: a run checkpoint survives with no archive row.
 	const runID = "run-crashed0001"
@@ -256,17 +256,17 @@ func TestHostRecoversCrashedTurn(t *testing.T) {
 	if strings.Contains(joined, "world context section") {
 		t.Fatalf("recovered turn archived world-state context:\n%s", joined)
 	}
-	if after := countMemoryRows(t, h2, conversationID); after <= baselineMemory {
-		t.Fatalf("memory rows = %d, want more than %d after recovery",
-			after, baselineMemory)
+	if after := countArchiveMessages(t, h2, conversationID); after <= baselineMessages {
+		t.Fatalf("transcript messages = %d, want more than %d after recovery",
+			after, baselineMessages)
 	}
 	if ids := runCheckpointIDs(t, h2); len(ids) != 0 {
 		t.Fatalf("checkpoints after recovery = %v, want none", ids)
 	}
 
 	// A crash between the write and the checkpoint delete (or any
-	// repeated pass) must not duplicate the turn or its memory rows.
-	memoryAfterRecovery := countMemoryRows(t, h2, conversationID)
+	// repeated pass) must not duplicate the turn or its messages.
+	messagesAfterRecovery := countArchiveMessages(t, h2, conversationID)
 	if err := h2.Sessions().State().Save(ctx, cp); err != nil {
 		t.Fatalf("re-save crash checkpoint: %v", err)
 	}
@@ -285,9 +285,9 @@ func TestHostRecoversCrashedTurn(t *testing.T) {
 	if len(turns3) != len(turns) {
 		t.Fatalf("turns after second pass = %d, want %d", len(turns3), len(turns))
 	}
-	if after := countMemoryRows(t, h3, conversationID); after != memoryAfterRecovery {
-		t.Fatalf("memory rows after second pass = %d, want %d",
-			after, memoryAfterRecovery)
+	if after := countArchiveMessages(t, h3, conversationID); after != messagesAfterRecovery {
+		t.Fatalf("transcript messages after second pass = %d, want %d",
+			after, messagesAfterRecovery)
 	}
 	if ids := runCheckpointIDs(t, h3); len(ids) != 0 {
 		t.Fatalf("checkpoints after second pass = %v, want none", ids)
