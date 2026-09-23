@@ -391,7 +391,12 @@ test('keeps a hint on the composer while the card scrolls', async ({
   await startChat(page);
   await page.getByRole('button', { name: 'Stop' }).hover();
   const hint = page.getByRole('tooltip');
-  await expect(hint).toHaveText('Stop');
+  // The hint carries the key as well as the action (data-tip-keys), and the
+  // card spells it per platform: ⌘. on macOS, Ctrl+. elsewhere.
+  await expect(hint).toContainText('Stop');
+  await expect(hint).toContainText(
+    process.platform === 'darwin' ? '⌘.' : 'Ctrl+.',
+  );
 
   // Enough thought to overflow the tail, so the section re-pins itself
   // the way it does through a long reasoning phase.

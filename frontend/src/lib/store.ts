@@ -1119,6 +1119,9 @@ interface StoreState {
   // paletteOpen drives the ⌘K command palette, which is mounted once by
   // the shell (not by whoever opened it).
   paletteOpen: boolean;
+  // shortcutsOpen drives the ⌘/ shortcut sheet, the same way: mounted
+  // once, opened from anywhere (key, palette, macOS Help menu).
+  shortcutsOpen: boolean;
   toolsView: ToolPage | null;
   // viewers keeps one file-viewer state per conversation id.
   viewers: Record<string, FileViewerState>;
@@ -1192,6 +1195,9 @@ interface StoreState {
   openPalette: () => void;
   closePalette: () => void;
   togglePalette: () => void;
+  openShortcuts: () => void;
+  closeShortcuts: () => void;
+  toggleShortcuts: () => void;
   openTools: (view: ToolPage) => void;
   closeTools: () => void;
   openFiles: () => void;
@@ -1937,6 +1943,7 @@ export const useStore = create<StoreState>((set, get) => {
               toolsView: null,
               configOpen: false,
               paletteOpen: false,
+              shortcutsOpen: false,
             });
             void get().loadSessions();
             const restoreFor = suppressRestoreFor;
@@ -2270,6 +2277,7 @@ export const useStore = create<StoreState>((set, get) => {
     configOpen: false,
     configTab: 'general',
     paletteOpen: false,
+    shortcutsOpen: false,
     toolsView: null,
     viewers: {},
     workspace: '',
@@ -2736,6 +2744,11 @@ export const useStore = create<StoreState>((set, get) => {
     openPalette: () => set({ paletteOpen: true }),
     closePalette: () => set({ paletteOpen: false }),
     togglePalette: () => set((state) => ({ paletteOpen: !state.paletteOpen })),
+
+    openShortcuts: () => set({ shortcutsOpen: true }),
+    closeShortcuts: () => set({ shortcutsOpen: false }),
+    toggleShortcuts: () =>
+      set((state) => ({ shortcutsOpen: !state.shortcutsOpen })),
 
     openTools: (view) => set({ toolsView: view, configOpen: false }),
     closeTools: () => set({ toolsView: null }),

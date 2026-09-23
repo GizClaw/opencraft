@@ -6,6 +6,7 @@ import {
   useSyncExternalStore,
   type RefObject,
 } from 'react';
+import { imeKeyOwner } from './ime';
 
 // Floating-surface behaviour, shared by every overlay in the app: the
 // Escape stack, the focus trap, the scroll lock and the enter/exit
@@ -56,7 +57,10 @@ function overlayOpen(): boolean {
 }
 
 function onEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || event.isComposing) return;
+  // The IME owns its keys: a composition cancel is not a request to close
+  // the dialog, and the stray Escape Chromium delivers after the cancel
+  // (lib/ime.ts) is cancelled at the source before it reaches this layer.
+  if (event.key !== 'Escape' || imeKeyOwner(event) !== null) return;
   if (event.defaultPrevented) return;
   const top = layers[layers.length - 1];
   if (top === undefined) return;

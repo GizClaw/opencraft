@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
 import { Events, System } from '@wailsio/runtime';
@@ -12,7 +12,10 @@ import { Toaster } from './components/Toaster';
 import { TooltipLayer } from './components/ui/Tooltip';
 import { WelcomeView } from './components/WelcomeView';
 import { CommandPalette } from './components/CommandPalette';
+import { ShortcutSheet } from './components/ShortcutSheet';
 import { useStore } from './lib/store';
+import { useShellCommands } from './lib/shellCommands';
+import { useShortcuts } from './lib/useShortcuts';
 import { readSidebarWidth } from './lib/sidebarWidth';
 import { usePluginStore } from './plugins/store';
 import type { UIEvent } from './lib/types';
@@ -33,10 +36,6 @@ export default function App() {
   const configOpen = useStore((s) => s.configOpen);
   const toolsView = useStore((s) => s.toolsView);
   const workspace = useStore((s) => s.workspace);
-  const openDraftChat = useStore((s) => s.openDraftChat);
-  const openConfig = useStore((s) => s.openConfig);
-  const openFiles = useStore((s) => s.openFiles);
-  const togglePalette = useStore((s) => s.togglePalette);
   const { t } = useTranslation();
   const [sidebarW, setSidebarW] = useState(readSidebarWidth);
   // The settings page is a lazy chunk that outlives its own close: it stays
@@ -52,6 +51,10 @@ export default function App() {
   const [isMac, setIsMac] = useState(() =>
     /Macintosh|Mac OS X/i.test(navigator.userAgent),
   );
+  // Every keyboard command in the app comes through here — the window
+  // listener below, the command palette, and the native menu's bridge.
+  const runShortcut = useShellCommands();
+  useShortcuts(runShortcut, isMac);
 
   useEffect(() => {
     void init();
@@ -116,21 +119,22 @@ export default function App() {
     return off;
   }, [init, handleEvent]);
 
-  // ⌘K / Ctrl+K toggles the command palette. A capture-phase listener on
-  // window so the shortcut still works while a text field (or the
-  // composer's editor) has focus.
+  // The native menu (macOS) is a second front for the commands the shell
+  // already owns: an item bridges its shortcut id here instead of running
+  // anything itself, so a menu click and its key equivalent land in the
+  // same place. The ref keeps the subscription stable while `runShortcut`
+  // is rebuilt for fresh turn state.
+  const runShortcutRef = useRef(runShortcut);
+  runShortcutRef.current = runShortcut;
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== 'k') return;
-      if (!event.metaKey && !event.ctrlKey) return;
-      if (event.altKey || event.shiftKey) return;
-      event.preventDefault();
-      event.stopPropagation();
-      togglePalette();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [togglePalette]);
+    return Events.On('opencraft:menu', (e) => {
+      const data = e.data as { command?: unknown } | null | undefined;
+      const command = data?.command;
+      if (typeof command === 'string' && command !== '') {
+        runShortcutRef.current(command);
+      }
+    });
+  }, []);
 
   // Feed the pet mind coarse "user is around" pulses from the main
   // window. Throttled to 2s; the pet only needs to notice presence,
@@ -150,25 +154,6 @@ export default function App() {
       window.removeEventListener('keydown', report);
     };
   }, []);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.metaKey && !e.ctrlKey) return;
-      const key = e.key.toLowerCase();
-      if (key === 'n') {
-        e.preventDefault();
-        void openDraftChat();
-      } else if (key === ',') {
-        e.preventDefault();
-        openConfig();
-      } else if (key === 'o') {
-        e.preventDefault();
-        openFiles();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [openDraftChat, openConfig, openFiles]);
 
   if (fatal) {
     return (
@@ -220,15 +205,16 @@ export default function App() {
         )}
       </div>
       {workspace && !toolsView && <SubagentDock />}
-      <StatusBar />
+      <StatusBar isMac={isMac} />
       {settingsMounted && (
         <Suspense fallback={null}>
           <ConfigPage />
         </Suspense>
       )}
       <Toaster />
-      <CommandPalette />
-      <TooltipLayer />
+      <CommandPalette isMac={isMac} runShortcut={runShortcut} />
+      <ShortcutSheet isMac={isMac} />
+      <TooltipLayer isMac={isMac} />
     </div>
   );
 }

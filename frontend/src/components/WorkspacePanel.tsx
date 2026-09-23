@@ -104,12 +104,14 @@ export function WorkspacePanel({ sessionID }: { sessionID: string }) {
             active={modeSafe === 'files'}
             icon={<Files size={ICON.xs} />}
             label={t('git.files')}
+            shortcut="panel.files"
             onClick={() => setPanelMode('files')}
           />
           <Segment
             active={modeSafe === 'git'}
             icon={<GitBranch size={ICON.xs} />}
             label={t('git.git')}
+            shortcut="panel.git"
             onClick={() => setPanelMode('git')}
           />
         </div>
@@ -129,16 +131,23 @@ function Segment({
   active,
   icon,
   label,
+  shortcut,
   onClick,
 }: {
   active: boolean;
   icon: ReactNode;
   label: string;
+  /** Shortcut id (lib/keys.ts) whose combo the hint names. The segment is
+   * the only control the Git panel's key has, so the hint is where the key
+   * is discoverable outside the sheet. */
+  shortcut: string;
   onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
+      data-tip={label}
+      data-tip-keys={shortcut}
       className={`flex items-center gap-1.5 rounded-control px-2.5 py-1 text-xs transition-colors ${
         active
           ? 'bg-accent/15 text-accent'

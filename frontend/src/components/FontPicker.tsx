@@ -6,6 +6,7 @@ import {
   quoteFontFamily,
   type FontPreset,
 } from '../lib/appearance';
+import { imeKeyOwner, useComposition } from '../lib/ime';
 import { Popover } from './ui/Popover';
 import { ICON } from './ui/icon';
 
@@ -49,7 +50,10 @@ export function FontPicker({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [composing, setComposing] = useState(false);
+  // The search field's composition state (lib/ime.ts): the family list
+  // below holds still until the typed characters are committed, so the
+  // menu cannot re-render out from under the candidate window.
+  const { composing, bind, reset } = useComposition(setQuery);
   const [active, setActive] = useState(0);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -90,7 +94,7 @@ export function FontPicker({
 
   const toggle = () => {
     setQuery('');
-    setComposing(false);
+    reset();
     setActive(0);
     setOpen((wasOpen) => !wasOpen);
   };
@@ -105,9 +109,9 @@ export function FontPicker({
   };
 
   const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    // The input method owns the keyboard until its candidate is committed;
-    // keyCode 229 covers the engines that do not report isComposing.
-    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+    // The input method owns the keyboard until its candidate is committed
+    // (lib/ime.ts).
+    if (imeKeyOwner(event.nativeEvent) !== null) return;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       const delta = event.key === 'ArrowDown' ? 1 : -1;
@@ -191,11 +195,8 @@ export function FontPicker({
               placeholder={t('config.uiFontSearch')}
               spellCheck={false}
               onChange={(event) => setQuery(event.target.value)}
-              onCompositionStart={() => setComposing(true)}
-              onCompositionEnd={(event) => {
-                setComposing(false);
-                setQuery(event.currentTarget.value);
-              }}
+              onCompositionStart={bind.onCompositionStart}
+              onCompositionEnd={bind.onCompositionEnd}
               onKeyDown={onSearchKeyDown}
               className="min-w-0 flex-1 bg-transparent text-xs text-fg outline-none placeholder:text-dim"
             />

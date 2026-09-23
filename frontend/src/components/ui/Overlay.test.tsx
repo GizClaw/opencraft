@@ -126,4 +126,25 @@ describe('Overlay focus', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(trigger).toHaveFocus();
   });
+
+  it('stays open when the Escape was the IME dropping a candidate', () => {
+    // Cancelling a composition ends it with Escape on both sides of the
+    // IME: the keydown while composing, and — on Chromium/WebView2 — a
+    // stray one after compositionend (lib/ime.ts). Neither is a request
+    // to close the dialog the user is typing into.
+    render(
+      <Shell initialFocus="[data-search]">
+        <input data-search aria-label="search" />
+      </Shell>,
+    );
+    open();
+    const search = screen.getByLabelText('search');
+
+    fireEvent.keyDown(search, { key: 'Escape', isComposing: true });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    fireEvent.compositionEnd(search);
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
 });

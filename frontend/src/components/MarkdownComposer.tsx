@@ -33,6 +33,7 @@ import type { SuggestionProps } from '@tiptap/suggestion';
 import { File, Folder, Loader2, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { imeKeyOwner } from '../lib/ime';
 import type { SkillDTO } from '../lib/types';
 import { ICON } from './ui/icon';
 
@@ -82,7 +83,7 @@ const MentionPopup = forwardRef<MentionPopupHandle, MentionPopupProps>(
       ref,
       () => ({
         handleKeyDown(event) {
-          if (event.isComposing || event.keyCode === 229) return false;
+          if (imeKeyOwner(event) !== null) return false;
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
             event.preventDefault();
             if (items.length > 0) {
@@ -287,8 +288,9 @@ function createMentionRenderer(
     },
     onKeyDown({ event }: { event: KeyboardEvent }) {
       // Let the IME finish composing before the popup handles keys, or
-      // Enter would swallow the candidate-confirmation keystroke.
-      if (event.isComposing || event.keyCode === 229) return false;
+      // Enter would swallow the candidate-confirmation keystroke
+      // (lib/ime.ts).
+      if (imeKeyOwner(event) !== null) return false;
       if (event.key === 'Enter') {
         component?.ref?.handleKeyDown(event);
         return true;
@@ -552,6 +554,14 @@ interface MarkdownComposerProps {
   // meaning). It returns true when the draft was taken, so the editor
   // suppresses the default modifier+Enter behavior.
   onInterrupt?: () => boolean;
+  // onStop handles Escape while a turn is running: it is the composer's
+  // own key, taken here rather than by the shell (lib/keys.ts leaves
+  // Escape to text surfaces, because a rename field or a path field
+  // means "cancel me" by it). A mention popup's keymap gets there first
+  // — see the suggestionOpenRef guard in handleKeyDown. It returns true
+  // when it stopped something, so the editor suppresses the default
+  // Escape behavior.
+  onStop?: () => boolean;
   // onPasteImages receives raster files pasted into the composer so
   // the parent can stage them as attachments. Pasting an image never
   // inserts into the markdown document itself.
@@ -588,6 +598,7 @@ export const MarkdownComposer = forwardRef<
     onSubmit,
     onQueue,
     onInterrupt,
+    onStop,
     onPasteImages,
   },
   ref,
@@ -599,6 +610,7 @@ export const MarkdownComposer = forwardRef<
   const onSubmitRef = useRef(onSubmit);
   const onQueueRef = useRef(onQueue);
   const onInterruptRef = useRef(onInterrupt);
+  const onStopRef = useRef(onStop);
   const onPasteImagesRef = useRef(onPasteImages);
   useEffect(() => {
     onChangeRef.current = onValueChange;
@@ -612,6 +624,9 @@ export const MarkdownComposer = forwardRef<
   useEffect(() => {
     onInterruptRef.current = onInterrupt;
   }, [onInterrupt]);
+  useEffect(() => {
+    onStopRef.current = onStop;
+  }, [onStop]);
   useEffect(() => {
     onPasteImagesRef.current = onPasteImages;
   }, [onPasteImages]);
@@ -672,15 +687,20 @@ export const MarkdownComposer = forwardRef<
         'aria-multiline': 'true',
       },
       handleKeyDown: (_view, event) => {
+        // The IME owns its keys (lib/ime.ts): mid-composition the
+        // candidate window needs Enter, Escape and Backspace for itself.
+        // A stray delivery after a commit is already cancelled at the
+        // source; if one reaches this handler by another route, swallow
+        // it rather than let a branch below send, queue or split a block.
+        const ime = imeKeyOwner(event);
+        if (ime !== null) {
+          if (ime === 'committed') event.preventDefault();
+          return false;
+        }
         // While a mention popup is open its own keymap owns Enter/arrows;
         // let the plugin handle them instead of submitting the message.
         if (suggestionOpenRef.current) return false;
-        if (
-          event.key === 'Tab' &&
-          !event.isComposing &&
-          event.keyCode !== 229 &&
-          onQueueRef.current?.()
-        ) {
+        if (event.key === 'Tab' && onQueueRef.current?.()) {
           event.preventDefault();
           return true;
         }
@@ -703,12 +723,15 @@ export const MarkdownComposer = forwardRef<
           _view.dispatch(tr);
           return true;
         }
-        if (
-          event.key === 'Enter' &&
-          event.shiftKey &&
-          !event.isComposing &&
-          event.keyCode !== 229
-        ) {
+        // Escape stops the running reply, which is the composer's own
+        // key: the shell leaves Escape to text surfaces (lib/keys.ts),
+        // and a mention popup never reaches here (the guard above hands
+        // its keys to the plugin, which exits on Escape itself).
+        if (event.key === 'Escape' && onStopRef.current?.()) {
+          event.preventDefault();
+          return true;
+        }
+        if (event.key === 'Enter' && event.shiftKey) {
           if (leaveMarkdownBlock(_view)) {
             event.preventDefault();
             return true;
@@ -717,8 +740,6 @@ export const MarkdownComposer = forwardRef<
         }
         if (
           event.key === 'Backspace' &&
-          !event.isComposing &&
-          event.keyCode !== 229 &&
           !event.metaKey &&
           !event.ctrlKey &&
           !event.altKey
@@ -733,19 +754,12 @@ export const MarkdownComposer = forwardRef<
           event.key === 'Enter' &&
           (event.metaKey || event.ctrlKey) &&
           !event.shiftKey &&
-          !event.isComposing &&
-          event.keyCode !== 229 &&
           onInterruptRef.current?.()
         ) {
           event.preventDefault();
           return true;
         }
-        if (
-          event.key === 'Enter' &&
-          !event.shiftKey &&
-          !event.isComposing &&
-          event.keyCode !== 229
-        ) {
+        if (event.key === 'Enter' && !event.shiftKey) {
           const type = _view.state.selection.$from.parent.type;
           // Inside a code block Enter writes a new line; the send button
           // still submits normally.
