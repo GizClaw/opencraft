@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, HelpCircle, ShieldAlert, X } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { useStore } from '../lib/store';
+import { overlayLayerOpen, useOverlayOpen } from '../lib/overlay';
 import type { InteractDTO, InteractSeverity } from '../lib/types';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -103,11 +104,22 @@ export function InteractionCard({
   // as it arrives: the first choice (or the answer field) is focused,
   // and Enter answers from there. The first control in DOM order is the
   // same one a mouse user would reach for first.
+  //
+  // A layer that is already open (the ⌘K palette, a settings dialog)
+  // owns the keyboard, though: pulling the caret into a card the user
+  // cannot see would send their next keystrokes into the prompt. The
+  // card stays passive for as long as that layer is open and takes the
+  // keyboard the moment it closes.
+  const overlayOpen = useOverlayOpen();
   useLayoutEffect(() => {
+    // Both reads matter: the snapshot above covers a layer that was
+    // already open when this render happened, the live read covers one
+    // that registered earlier in this same commit.
+    if (overlayOpen || overlayLayerOpen()) return;
     const card = cardRef.current;
     if (card === null) return;
     (card.querySelector<HTMLElement>('input, textarea') ?? card).focus();
-  }, []);
+  }, [overlayOpen]);
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Enter') return;

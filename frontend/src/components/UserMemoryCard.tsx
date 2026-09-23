@@ -288,7 +288,7 @@ export function UserMemoryCard({
               <Badge>
                 {t('config.memoryFactsCount', {
                   live: state.live,
-                  max: state.max_items,
+                  count: state.max_items,
                 })}
               </Badge>
               {state.stale > 0 && (

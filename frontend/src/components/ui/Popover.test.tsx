@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { useRef, useState } from 'react';
 import { Popover } from './Popover';
 
@@ -84,5 +85,54 @@ describe('Popover scroll dismissal', () => {
     const onClose = openMenu();
     fireEvent.scroll(screen.getByRole('menuitem'));
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('gives focus back to its trigger when it closes', async () => {
+    // A keyboard user who opens a menu must not lose their place when
+    // it closes (this is the contract useOverlayLayer documents).
+    const user = userEvent.setup();
+    render(<Harness onClose={() => {}} />);
+    const trigger = screen.getByRole('button', { name: 'Open menu' });
+    await user.click(trigger);
+    expect(screen.getByRole('menuitem')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it('does not pull focus back when the close came from another control', async () => {
+    // Clicking a control outside the menu closes it; focus belongs to
+    // whatever the user just clicked, not to the trigger.
+    function HarnessWithOther() {
+      const triggerRef = useRef<HTMLButtonElement | null>(null);
+      const [open, setOpen] = useState(false);
+      return (
+        <div>
+          <button ref={triggerRef} type="button" onClick={() => setOpen(true)}>
+            Open menu
+          </button>
+          <button type="button" data-testid="other-control">
+            Other control
+          </button>
+          <Popover
+            open={open}
+            onClose={() => setOpen(false)}
+            anchor={triggerRef.current}
+            role="menu"
+          >
+            <button type="button" role="menuitem">
+              Option
+            </button>
+          </Popover>
+        </div>
+      );
+    }
+    const user = userEvent.setup();
+    render(<HarnessWithOther />);
+    await user.click(screen.getByRole('button', { name: 'Open menu' }));
+    expect(screen.getByRole('menuitem')).toBeInTheDocument();
+    const other = screen.getByTestId('other-control');
+    await user.click(other);
+    await waitFor(() => expect(screen.queryByRole('menuitem')).toBeNull());
+    expect(other).toHaveFocus();
   });
 });

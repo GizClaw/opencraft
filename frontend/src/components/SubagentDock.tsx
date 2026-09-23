@@ -50,8 +50,8 @@ function phaseDot(phase: PetActivityDTO['phase']): string {
 }
 
 /** MAX_DEPTH bounds the nesting a delegation chain is drawn to. A chain
- *  deeper than this is still clickable, it is just drawn at the last
- *  indent instead of marching off the dock. */
+ *  deeper than this is still clickable and still drawn: rows below the
+ *  last level share the last indent instead of marching off the dock. */
 const MAX_DEPTH = 3;
 
 /**
@@ -202,8 +202,7 @@ export function SubagentDock() {
           </button>
         )}
         {!folded &&
-          depth < MAX_DEPTH &&
-          nested.map((child) => pill(child, depth + 1))}
+          nested.map((child) => pill(child, Math.min(depth + 1, MAX_DEPTH)))}
       </div>
     );
   };

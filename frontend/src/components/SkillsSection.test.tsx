@@ -122,6 +122,51 @@ describe('SkillsSection lifecycle', () => {
     expect(apiMock.unpinSkill).toHaveBeenCalledWith('plan', 'user');
   });
 
+  // The Pin direction is the one the widget can get backwards (the
+  // handler takes the current state and inverts it internally), so it
+  // gets its own case: an unpinned row must call pinSkill, not
+  // unpinSkill.
+  it('pins an unpinned skill through the row menu', async () => {
+    const user = userEvent.setup();
+    apiMock.skills.mockResolvedValue([
+      ...skills,
+      {
+        name: 'draft',
+        description: 'Drafting helper',
+        scope: 'user',
+        path: '/u/skills/draft/SKILL.md',
+      },
+    ]);
+    apiMock.skillLifecycle.mockResolvedValue({
+      ...lifecycle,
+      skills: [
+        ...usageRows,
+        {
+          name: 'draft',
+          scope: 'user',
+          path: '/u/skills/draft/SKILL.md',
+          uses: 0,
+          pinned: false,
+          retired: false,
+          builtin: false,
+          suggested_retire: false,
+        },
+      ],
+    });
+    render(<SkillsSection />);
+    const draftRow = (await screen.findByText('draft')).closest('li');
+    expect(draftRow).not.toBeNull();
+    await user.click(
+      within(draftRow as HTMLElement).getByRole('button', {
+        name: 'More actions',
+      }),
+    );
+    await user.click(screen.getByRole('menuitem', { name: 'Pin' }));
+    await waitFor(() => expect(apiMock.pinSkill).toHaveBeenCalled());
+    expect(apiMock.pinSkill).toHaveBeenCalledWith('draft', 'user');
+    expect(apiMock.unpinSkill).not.toHaveBeenCalled();
+  });
+
   it('archives a skill only after the confirm', async () => {
     const user = userEvent.setup();
     render(<SkillsSection />);

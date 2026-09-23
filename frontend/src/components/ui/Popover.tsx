@@ -62,7 +62,6 @@ export function Popover({
     onDismiss: onClose,
     trap: false,
     lock: false,
-    restoreFocus: false,
   });
 
   const measure = useCallback(() => {

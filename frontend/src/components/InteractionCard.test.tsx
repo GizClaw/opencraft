@@ -1,6 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useRef } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
+import { useOverlayLayer } from '../lib/overlay';
 import type { InteractDTO } from '../lib/types';
 import { InteractionCard } from './InteractionCard';
 
@@ -74,6 +76,39 @@ describe('InteractionCard keyboard', () => {
     // required to reach it.
     render(<InteractionCard spec={spec({ options: [ALLOW, DENY] })} />);
     expect(screen.getByLabelText('Allow once')).toHaveFocus();
+  });
+
+  it('stays passive while another layer owns the keyboard', async () => {
+    // A prompt can arrive while the palette or a settings dialog is
+    // open. Taking the caret then would send the user's next keystrokes
+    // into a card they cannot see; the card waits for the layer and
+    // takes the keyboard as soon as it closes.
+    function FakeLayer({ open }: { open: boolean }) {
+      const panelRef = useRef<HTMLDivElement | null>(null);
+      useOverlayLayer({
+        active: open,
+        containerRef: panelRef,
+        trap: false,
+        lock: false,
+        restoreFocus: false,
+      });
+      return open ? <div ref={panelRef} data-testid="layer" /> : null;
+    }
+    const view = render(
+      <>
+        <FakeLayer open />
+        <InteractionCard spec={spec({ options: [ALLOW, DENY] })} />
+      </>,
+    );
+    const choice = screen.getByLabelText('Allow once');
+    expect(choice).not.toHaveFocus();
+    view.rerender(
+      <>
+        <FakeLayer open={false} />
+        <InteractionCard spec={spec({ options: [ALLOW, DENY] })} />
+      </>,
+    );
+    await waitFor(() => expect(choice).toHaveFocus());
   });
 
   it('answers the choice the user made on Enter', () => {

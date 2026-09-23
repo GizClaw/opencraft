@@ -1494,7 +1494,7 @@ export function SkillsSection() {
                           {usage?.suggested_retire === true && (
                             <Badge tone="warn">
                               {t('config.skillsSuggestedArchive', {
-                                days: usage.idle_days ?? 0,
+                                count: usage.idle_days ?? 0,
                               })}
                             </Badge>
                           )}

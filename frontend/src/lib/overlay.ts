@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type RefObject,
 } from 'react';
 
@@ -37,6 +38,22 @@ interface Layer {
 
 const layers: Layer[] = [];
 let listening = false;
+const layerListeners = new Set<() => void>();
+
+function notifyLayers() {
+  for (const listener of layerListeners) listener();
+}
+
+function subscribeLayers(listener: () => void): () => void {
+  layerListeners.add(listener);
+  return () => {
+    layerListeners.delete(listener);
+  };
+}
+
+function overlayOpen(): boolean {
+  return layers.length > 0;
+}
 
 function onEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.isComposing) return;
@@ -52,6 +69,7 @@ function onEscape(event: KeyboardEvent) {
 function track(dismiss: (() => void) | undefined): () => void {
   const layer: Layer = { dismiss };
   layers.push(layer);
+  notifyLayers();
   if (!listening) {
     window.addEventListener('keydown', onEscape, true);
     listening = true;
@@ -59,6 +77,7 @@ function track(dismiss: (() => void) | undefined): () => void {
   return () => {
     const index = layers.indexOf(layer);
     if (index >= 0) layers.splice(index, 1);
+    notifyLayers();
     if (layers.length === 0 && listening) {
       window.removeEventListener('keydown', onEscape, true);
       listening = false;
@@ -117,6 +136,40 @@ function focusBack(target: HTMLElement | null) {
 }
 
 /**
+ * panelKeepsFocus reports whether a closing layer should hand focus back
+ * to its anchor: true while the layer, or nothing at all, owns the
+ * keyboard. A close caused by a click on another control has already
+ * moved focus there, and pulling it back would steal the caret from what
+ * the user just reached for.
+ */
+function panelKeepsFocus(panel: HTMLElement | null): boolean {
+  const current = document.activeElement;
+  if (current === null || current === document.body) return true;
+  return panel !== null && panel.contains(current);
+}
+
+/**
+ * useOverlayOpen reports whether any overlay layer currently owns the
+ * keyboard. Surfaces outside the layer registry (the transcript's
+ * interaction card) use it to stay passive while a menu, a palette or a
+ * dialog is open — and to take the keyboard as soon as the last one
+ * closes.
+ */
+export function useOverlayOpen(): boolean {
+  return useSyncExternalStore(subscribeLayers, overlayOpen, overlayOpen);
+}
+
+/**
+ * overlayLayerOpen reads the registry directly rather than subscribing:
+ * a surface that checks it inside an effect sees a layer that
+ * registered earlier in the same commit, which the render-time snapshot
+ * above cannot.
+ */
+export function overlayLayerOpen(): boolean {
+  return layers.length > 0;
+}
+
+/**
  * useOverlayLayer wires one floating surface into the shared overlay
  * behaviour while `active`. `onDismiss` runs when this layer owns
  * Escape; omit it for a surface Escape must not close (a destructive
@@ -166,7 +219,9 @@ export function useOverlayLayer({
     return () => {
       release();
       if (lock) unlockScroll();
-      if (restoreFocus) focusBack(restoreTo);
+      if (restoreFocus && panelKeepsFocus(containerRef.current)) {
+        focusBack(restoreTo);
+      }
     };
   }, [active, lock, restoreFocus]);
 

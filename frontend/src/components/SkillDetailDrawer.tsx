@@ -135,7 +135,7 @@ export function SkillDetailDrawer({
               {lifecycle.suggested_retire && (
                 <Badge tone="warn">
                   {t('config.skillsSuggestedArchive', {
-                    days: lifecycle.idle_days ?? 0,
+                    count: lifecycle.idle_days ?? 0,
                   })}
                 </Badge>
               )}
