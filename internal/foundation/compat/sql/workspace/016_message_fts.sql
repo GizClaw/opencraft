@@ -4,10 +4,13 @@
 -- lines — rendered in Go by the store, never the stored JSON: a
 -- snippet must read like the conversation, not like a payload.
 --
--- Rows mirror archive_messages one-to-one, keyed by that row's id
--- (INSERT ... rowid = archive_messages.id), so a search joins the
--- conversation, turn and message rows without a second lookup and a
--- conversation delete drops its index rows by conversation_id.
+-- Rows mirror the archive_messages rows that have a projection, keyed
+-- by that row's id (INSERT ... rowid = archive_messages.id), so a
+-- search joins the conversation, turn and message rows without a second
+-- lookup and a conversation delete drops its index rows by
+-- conversation_id. A message whose projection is empty (an image-only
+-- turn) has nothing to index and gets no row: FTS5's trigram tokenizer
+-- would index an empty string to nothing anyway.
 --
 -- tokenize = 'trigram' is deliberate. unicode61 tokenizes a run of CJK
 -- as one token, so substring recall inside Chinese text — the common

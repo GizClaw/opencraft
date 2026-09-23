@@ -56,10 +56,14 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
 
-// Workspace migrates one workspace session.db, imports legacy JSON
-// transcripts found under root, and backfills the message full-text
-// index for databases that predate it. root is the workspace sessions
+// Workspace migrates one workspace session.db and imports legacy JSON
+// transcripts found under root. root is the workspace sessions
 // directory (the parent of each s-* session folder).
+//
+// The message-index backfill is deliberately not part of this path: it
+// walks the whole archive, so the caller runs it once the store is
+// already usable (BackfillSearchIndex), and a failure there never
+// keeps a workspace from opening.
 func Workspace(
 	ctx context.Context, handle *db.DB, root string,
 	importer WorkspaceImporter,
@@ -67,10 +71,7 @@ func Workspace(
 	if err := WorkspaceSchema(ctx, handle); err != nil {
 		return err
 	}
-	if err := WorkspaceData(ctx, root, importer); err != nil {
-		return err
-	}
-	return backfillSearchIndex(ctx, handle, importer)
+	return WorkspaceData(ctx, root, importer)
 }
 
 // WorkspaceSchema applies only the versioned workspace schema

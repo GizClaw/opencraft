@@ -291,10 +291,16 @@ func TestBackfillSearchIndexesUnindexedMessages(t *testing.T) {
 		t.Fatalf("unbackfilled hits = %+v, want none", hits.Hits)
 	}
 
-	// The migration path: Workspace runs the schema, the legacy import
-	// and then the recorded backfill through the importer port.
+	// The migration path: Workspace runs the schema and the legacy
+	// import, the recorded backfill through the importer port follows
+	// (the host schedules it detached from the open path).
 	if err := compat.Workspace(ctx, s.Handle(), root, state.Importer(s.Handle())); err != nil {
 		t.Fatalf("compat.Workspace: %v", err)
+	}
+	if err := compat.BackfillSearchIndex(
+		ctx, s.Handle(), state.Importer(s.Handle()),
+	); err != nil {
+		t.Fatalf("compat.BackfillSearchIndex: %v", err)
 	}
 	res2, err := s.SearchMessages(ctx, "跨会话", state.SearchOptions{})
 	if err != nil {

@@ -47,12 +47,15 @@ func TestCreateDefaultsStatusAndMintsID(t *testing.T) {
 	s := newQueue(t)
 	ctx := context.Background()
 
-	got, err := s.Create(ctx, Suggestion{
+	got, inserted, err := s.Create(ctx, Suggestion{
 		Kind:    KindMemory,
 		Payload: payload("remember this"),
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
+	}
+	if !inserted {
+		t.Fatal("Create reported a fresh row as a replay")
 	}
 	if got.Status != StatusPending {
 		t.Fatalf("status = %q, want a pending default", got.Status)
@@ -77,19 +80,19 @@ func TestCreateValidatesKindAndPayload(t *testing.T) {
 	s := newQueue(t)
 	ctx := context.Background()
 
-	if _, err := s.Create(ctx, Suggestion{Payload: payload("x")}); !errdefs.IsValidation(err) {
+	if _, _, err := s.Create(ctx, Suggestion{Payload: payload("x")}); !errdefs.IsValidation(err) {
 		t.Fatalf("Create(no kind) err = %v, want a validation error", err)
 	}
-	if _, err := s.Create(ctx, Suggestion{Kind: KindMemory}); !errdefs.IsValidation(err) {
+	if _, _, err := s.Create(ctx, Suggestion{Kind: KindMemory}); !errdefs.IsValidation(err) {
 		t.Fatalf("Create(no payload) err = %v, want a validation error", err)
 	}
-	if _, err := s.Create(ctx, Suggestion{
+	if _, _, err := s.Create(ctx, Suggestion{
 		Kind:    KindMemory,
 		Payload: json.RawMessage("not json"),
 	}); !errdefs.IsValidation(err) {
 		t.Fatalf("Create(bad payload) err = %v, want a validation error", err)
 	}
-	if _, err := s.Create(ctx, Suggestion{
+	if _, _, err := s.Create(ctx, Suggestion{
 		Kind:    KindMemory,
 		Payload: payload("x"),
 		Status:  "unknown",
@@ -105,16 +108,21 @@ func TestCreateIsIdempotentForStableID(t *testing.T) {
 	s := newQueue(t)
 	ctx := context.Background()
 
-	first, err := s.Create(ctx, Suggestion{
+	first, inserted, err := s.Create(ctx, Suggestion{
 		ID: "rv-run-1-0", Kind: KindMemory, Payload: payload("first"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Create(ctx, Suggestion{
+	if !inserted {
+		t.Fatal("the first write reported a replay")
+	}
+	if _, inserted, err := s.Create(ctx, Suggestion{
 		ID: "rv-run-1-0", Kind: KindMemory, Payload: payload("second"),
 	}); err != nil {
 		t.Fatal(err)
+	} else if inserted {
+		t.Fatal("the replay of a stable id reported a fresh insert")
 	}
 
 	count, err := s.Count(ctx, "")
@@ -137,11 +145,11 @@ func TestListFiltersByStatusAndLimit(t *testing.T) {
 	s := newQueue(t)
 	ctx := context.Background()
 
-	pending, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("p")})
+	pending, _, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("p")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Create(ctx, Suggestion{
+	if _, _, err := s.Create(ctx, Suggestion{
 		Kind: KindMemory, Payload: payload("a"), Status: StatusAccepted,
 	}); err != nil {
 		t.Fatal(err)
@@ -193,15 +201,15 @@ func TestListOrdersNewestFirst(t *testing.T) {
 		return at
 	}
 
-	first, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("one")})
+	first, _, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("one")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("two")})
+	second, _, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("two")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	third, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("three")})
+	third, _, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("three")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +241,7 @@ func TestSetStatusRecordsVerdictAndStaysDecided(t *testing.T) {
 	s := newQueue(t)
 	ctx := context.Background()
 
-	created, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("x")})
+	created, _, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("x")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +274,7 @@ func TestSetStatusRejectsNonDecisionStatusesAndUnknownID(t *testing.T) {
 	s := newQueue(t)
 	ctx := context.Background()
 
-	created, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("x")})
+	created, _, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("x")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,10 +293,10 @@ func TestCountByStatus(t *testing.T) {
 	s := newQueue(t)
 	ctx := context.Background()
 
-	if _, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("a")}); err != nil {
+	if _, _, err := s.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("a")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Create(ctx, Suggestion{
+	if _, _, err := s.Create(ctx, Suggestion{
 		Kind: KindMemory, Payload: payload("b"), Status: StatusDiscarded,
 	}); err != nil {
 		t.Fatal(err)
@@ -332,7 +340,7 @@ func TestEmptyQueueDegradesQuietly(t *testing.T) {
 	if n, err := q.Count(ctx, StatusPending); err != nil || n != 0 {
 		t.Fatalf("empty Count = %d, %v, want 0 and no error", n, err)
 	}
-	if _, err := q.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("x")}); !errdefs.IsNotAvailable(err) {
+	if _, _, err := q.Create(ctx, Suggestion{Kind: KindMemory, Payload: payload("x")}); !errdefs.IsNotAvailable(err) {
 		t.Fatalf("empty Create err = %v, want NotAvailable", err)
 	}
 	if _, err := q.Get(ctx, "rs-x"); !errdefs.IsNotAvailable(err) {

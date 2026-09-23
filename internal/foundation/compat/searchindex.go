@@ -27,11 +27,14 @@ const (
 	searchIndexName    = "017_message_fts_backfill"
 )
 
-// backfillSearchIndex indexes the messages of a database that predates
-// the full-text index. The store's backfill is idempotent (it skips
+// BackfillSearchIndex indexes the messages of a database that predates
+// the full-text index. It is not part of Workspace: the walk is
+// proportional to the archive (minutes on a large database), so the
+// caller schedules it after the store is already usable and treats a
+// failure as recoverable — the store's backfill is idempotent (it skips
 // rows the index already holds), so an interrupted run simply finishes
 // on the next open.
-func backfillSearchIndex(
+func BackfillSearchIndex(
 	ctx context.Context, handle *db.DB, importer WorkspaceImporter,
 ) error {
 	if handle == nil {

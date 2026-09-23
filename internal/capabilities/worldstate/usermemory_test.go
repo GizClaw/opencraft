@@ -151,6 +151,11 @@ func TestUserMemorySectionBounds(t *testing.T) {
 		!strings.Contains(body, "second fact") {
 		t.Fatalf("newest two facts must survive the count cap: %q", body)
 	}
+	// The omitted count reports the count cap as well as the byte
+	// budget: a section cut by either bound must say it is partial.
+	if !strings.Contains(body, "(1 older fact(s) not shown)") {
+		t.Fatalf("count-cap omission not reported: %q", body)
+	}
 
 	// The byte budget is the second bound: a long fact list must be cut
 	// down to the configured size.

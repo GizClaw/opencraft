@@ -219,7 +219,9 @@ func (s *Service) RenderTurn(
 	// context that only changes on an explicit user action, so neither
 	// belongs in the per-turn tail block.
 	if memory, err := s.userMemorySection(ctx); err != nil {
-		return err
+		// The user database is shared across processes and can be
+		// transiently locked: a memory read must never fail the turn.
+		telemetry.WarnErr(ctx, "worldstate: user memory section failed", err)
 	} else if memory.Content.Text() != "" {
 		sections = append(sections, memory)
 	}

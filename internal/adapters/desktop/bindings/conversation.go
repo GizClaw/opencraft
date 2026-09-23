@@ -104,7 +104,7 @@ func (b *Conversation) StartTurn(
 	// it is routed to that workspace's Host without becoming current.
 	background := workDir != "" && !core.SameWorkspace(workDir, active)
 	requestedAt := time.Now().UTC()
-	sink := agent.StreamSinkFunc(func(
+	rawSink := agent.StreamSinkFunc(func(
 		ctx context.Context,
 		env event.Envelope,
 		delta agent.StreamDeltaPayload,
@@ -125,8 +125,10 @@ func (b *Conversation) StartTurn(
 	// delegation submitted by this turn describes its destination as
 	// this conversation, and the worker materializes it back into this
 	// sink when the in-process escrow is gone. Registration lives
-	// exactly as long as the turn does.
-	releaseSink := b.core.RegisterConversationSink(contextID, sink)
+	// exactly as long as the turn does, and the registry hands back the
+	// wrapped, describable sink: the turn has to stream through that
+	// same object, or the exporter cannot describe it at all.
+	sink, releaseSink := b.core.RegisterConversationSink(contextID, rawSink)
 	opts := host.RunOptions{
 		Message:   req.Message,
 		ContextID: contextID,

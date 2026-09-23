@@ -42,6 +42,15 @@ func (s *Service) userMemorySection(ctx context.Context) (Section, error) {
 	if len(facts) == 0 {
 		return Section{}, nil
 	}
+	// The count cap and the byte budget both hide facts; the omitted
+	// count has to report both or the model reads a partial section as
+	// the whole memory.
+	total, err := binding.Memory.Count(ctx, userstore.Query{
+		Workspace: s.opts.WorkBase,
+	})
+	if err != nil {
+		return Section{}, fmt.Errorf("worldstate: count user memory: %w", err)
+	}
 
 	// The byte budget bounds the fact list, not the fixed header above
 	// it. A fact that does not fit is skipped rather than truncated (a
@@ -67,14 +76,15 @@ func (s *Service) userMemorySection(ctx context.Context) (Section, error) {
 	}
 	rendered, err := render(userMemoryTmpl, userMemoryData{
 		Facts:   kept,
-		Omitted: len(facts) - len(kept),
+		Omitted: total - len(kept),
 	})
 	if err != nil {
 		return Section{}, err
 	}
 	telemetry.Info(ctx, "worldstate: user memory injected",
 		log.Int("facts", len(kept)),
-		log.Int("omitted", len(facts)-len(kept)),
+		log.Int("omitted", total-len(kept)),
+		log.Int("total", total),
 		log.Int("bytes", len(rendered)),
 		log.Int("max_chars", cfg.InjectMaxChars))
 	return newTextSection(

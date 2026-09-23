@@ -76,7 +76,12 @@ func Attach(handle *db.DB) (*Store, error) {
 // in this runtime": the review hook stores nothing and the page shows
 // an empty queue.
 type Queue interface {
-	Create(ctx context.Context, suggestion Suggestion) (Suggestion, error)
+	// Create inserts one suggestion and reports whether the row is new.
+	// A stable-id replay (the same review of the same turn) leaves the
+	// existing row alone and returns inserted=false, so the caller can
+	// tell a queued candidate from a no-op instead of counting it as
+	// one.
+	Create(ctx context.Context, suggestion Suggestion) (Suggestion, bool, error)
 	List(ctx context.Context, status string, limit int) ([]Suggestion, error)
 	Get(ctx context.Context, id string) (Suggestion, error)
 	SetStatus(ctx context.Context, id, status string) (Suggestion, error)
@@ -99,8 +104,9 @@ func Empty() Queue { return emptyQueue{} }
 
 func (emptyQueue) Empty() bool { return true }
 
-func (emptyQueue) Create(context.Context, Suggestion) (Suggestion, error) {
-	return Suggestion{}, errdefs.NotAvailablef("review: no user database in this runtime")
+func (emptyQueue) Create(context.Context, Suggestion) (Suggestion, bool, error) {
+	return Suggestion{}, false,
+		errdefs.NotAvailablef("review: no user database in this runtime")
 }
 
 func (emptyQueue) List(context.Context, string, int) ([]Suggestion, error) {
@@ -132,19 +138,20 @@ func ValidStatus(status string) bool {
 // so replaying a review cannot queue the same candidate twice.
 func (s *Store) Create(
 	ctx context.Context, suggestion Suggestion,
-) (Suggestion, error) {
+) (Suggestion, bool, error) {
 	if strings.TrimSpace(suggestion.Kind) == "" {
-		return Suggestion{}, errdefs.Validationf("review: suggestion kind is required")
+		return Suggestion{}, false,
+			errdefs.Validationf("review: suggestion kind is required")
 	}
 	if len(suggestion.Payload) == 0 || !json.Valid(suggestion.Payload) {
-		return Suggestion{}, errdefs.Validationf(
+		return Suggestion{}, false, errdefs.Validationf(
 			"review: suggestion payload must be valid JSON")
 	}
 	if suggestion.Status == "" {
 		suggestion.Status = StatusPending
 	}
 	if !ValidStatus(suggestion.Status) {
-		return Suggestion{}, errdefs.Validationf(
+		return Suggestion{}, false, errdefs.Validationf(
 			"review: unknown status %q", suggestion.Status)
 	}
 	now := s.now()
@@ -155,11 +162,11 @@ func (s *Store) Create(
 	if suggestion.ID == "" {
 		id, err := newID()
 		if err != nil {
-			return Suggestion{}, err
+			return Suggestion{}, false, err
 		}
 		suggestion.ID = id
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO review_suggestions(
 			id, created_at, updated_at, status, kind, payload_json, reason,
 			source_workspace, source_conversation, source_run
@@ -170,10 +177,17 @@ func (s *Store) Create(
 		suggestion.Status, suggestion.Kind, string(suggestion.Payload),
 		suggestion.Reason, suggestion.SourceWorkspace,
 		suggestion.SourceConversation, suggestion.SourceRun,
-	); err != nil {
-		return Suggestion{}, fmt.Errorf("review: create suggestion: %w", err)
+	)
+	if err != nil {
+		return Suggestion{}, false,
+			fmt.Errorf("review: create suggestion: %w", err)
 	}
-	return suggestion, nil
+	inserted, err := res.RowsAffected()
+	if err != nil {
+		return Suggestion{}, false,
+			fmt.Errorf("review: create suggestion: %w", err)
+	}
+	return suggestion, inserted > 0, nil
 }
 
 // List returns suggestions in one status, newest first. An empty status

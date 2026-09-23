@@ -32,5 +32,12 @@ func Open(t *testing.T, root string, window int) (*sessions.Store, error) {
 	); err != nil {
 		return nil, err
 	}
+	// Production schedules the index walk detached from the open path;
+	// tests want it finished before they search.
+	if err := compat.BackfillSearchIndex(
+		context.Background(), store.Database(), state.Importer(store.Database()),
+	); err != nil {
+		return nil, err
+	}
 	return store, nil
 }

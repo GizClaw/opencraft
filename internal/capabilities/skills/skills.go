@@ -367,9 +367,10 @@ func (s *Service) List() []SkillMetadata {
 // the retired ones. Everything that puts skills in front of the user
 // or the model (the per-turn list, $mention resolution, skill_search)
 // goes through this or through the equivalent filters in Mentioned /
-// RankScored, so a retired skill cannot come back through a side door.
-// List itself stays unfiltered: the skills page and the curator need to
-// see retired skills, that is how they are restored.
+// RankScored, and the body readers (ReadFull / ReadByPath) refuse a
+// retired skill outright, so a retired skill cannot come back through a
+// side door. List itself stays unfiltered: the skills page and the
+// curator need to see retired skills, that is how they are restored.
 func (s *Service) Available() []SkillMetadata {
 	out := s.List()
 	kept := out[:0]
@@ -491,6 +492,10 @@ func (s *Service) ReadFull(name string) (SkillMetadata, string, error) {
 	if !ok {
 		return SkillMetadata{}, "", fmt.Errorf("skills: %q not found", name)
 	}
+	if s.retired(sk.Name) {
+		return SkillMetadata{}, "", fmt.Errorf(
+			"skills: %q is retired and serves no body", name)
+	}
 	body, err := s.readBody(sk)
 	if err != nil {
 		return SkillMetadata{}, "", err
@@ -507,6 +512,10 @@ func (s *Service) ReadByPath(path string) (SkillMetadata, string, error) {
 	sk, ok := snap.byPath[path]
 	if !ok {
 		return SkillMetadata{}, "", fmt.Errorf("skills: %q not found", path)
+	}
+	if s.retired(sk.Name) {
+		return SkillMetadata{}, "", fmt.Errorf(
+			"skills: %q is retired and serves no body", sk.Name)
 	}
 	body, err := s.readBody(sk)
 	if err != nil {

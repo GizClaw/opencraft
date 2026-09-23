@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Chinese text matches too). The index stores the message's prompt
   projection — its text plus the tool lines a reader would see, never the
   stored JSON — is written in the same transaction as the archive row,
-  and databases written before it existed are backfilled once at open.
+  and databases written before it existed are backfilled once, off the
+  open path and retried on the next open if interrupted.
   Queries shorter than three characters fall back to a substring scan
   with the fallback reported in the tool's note, hits are de-duplicated
   per conversation, and each hit carries a snippet with the match marked.

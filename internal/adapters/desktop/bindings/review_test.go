@@ -37,7 +37,7 @@ func seedSuggestion(
 	if queue == nil {
 		t.Fatal("review store is not attached")
 	}
-	if _, err := queue.Create(context.Background(), reviewstore.Suggestion{
+	if _, _, err := queue.Create(context.Background(), reviewstore.Suggestion{
 		ID:                 id,
 		Kind:               reviewstore.KindMemory,
 		Payload:            payload,
@@ -245,7 +245,7 @@ func TestAcceptReviewSuggestionRejectsUndecodablePayload(t *testing.T) {
 	b := reviewBinding(t, "")
 	openUserDBOn(t, b.core)
 	queue := b.core.Runtime.Manager().ReviewStore()
-	if _, err := queue.Create(context.Background(), reviewstore.Suggestion{
+	if _, _, err := queue.Create(context.Background(), reviewstore.Suggestion{
 		ID:      "rs-bad",
 		Kind:    reviewstore.KindMemory,
 		Payload: json.RawMessage(`{"text":123}`),

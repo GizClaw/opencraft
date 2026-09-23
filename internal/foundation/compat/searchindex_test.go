@@ -36,9 +36,11 @@ func (i *countingImporter) BackfillSearchIndex(context.Context) error {
 var _ WorkspaceImporter = (*countingImporter)(nil)
 
 // TestWorkspaceBackfillSearchIndexRunsOnce pins the migration contract:
-// the index creation is a schema step, and the backfill that fills it
-// for a database written before it exists runs through the importer
-// port exactly once, recorded as version 17.
+// the index creation is a schema step that the open path (Workspace)
+// performs, the backfill that fills the index for a database written
+// before it exists is a separate step through the importer port —
+// scheduled by the caller because it walks the whole archive — and runs
+// exactly once, recorded as version 17.
 func TestWorkspaceBackfillSearchIndexRunsOnce(t *testing.T) {
 	ctx := context.Background()
 	handle, err := db.Open(filepath.Join(t.TempDir(), "session.db"))
@@ -50,6 +52,13 @@ func TestWorkspaceBackfillSearchIndexRunsOnce(t *testing.T) {
 	importer := &countingImporter{}
 	if err := Workspace(ctx, handle, t.TempDir(), importer); err != nil {
 		t.Fatalf("workspace migration: %v", err)
+	}
+	// The open path is cheap: the index walk is not part of it.
+	if importer.calls != 0 {
+		t.Fatalf("backfill calls during Workspace = %d, want 0", importer.calls)
+	}
+	if err := BackfillSearchIndex(ctx, handle, importer); err != nil {
+		t.Fatalf("backfill: %v", err)
 	}
 	if importer.calls != 1 {
 		t.Fatalf("backfill calls = %d, want 1", importer.calls)
@@ -73,9 +82,13 @@ func TestWorkspaceBackfillSearchIndexRunsOnce(t *testing.T) {
 		t.Fatal("message_fts table is missing after the workspace migration")
 	}
 
-	// Second open: the step is recorded, so the backfill does not run.
+	// Second open: the step is recorded, so the backfill does not run
+	// again (the host schedules it on every open).
 	if err := Workspace(ctx, handle, t.TempDir(), importer); err != nil {
 		t.Fatalf("second workspace migration: %v", err)
+	}
+	if err := BackfillSearchIndex(ctx, handle, importer); err != nil {
+		t.Fatalf("second backfill: %v", err)
 	}
 	if importer.calls != 1 {
 		t.Fatalf("backfill calls after reopen = %d, want 1", importer.calls)

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -87,6 +88,40 @@ type Query struct {
 	Limit int
 }
 
+// textRedactor is the process-wide guard on text written to user
+// memory. The deploy document defines what a secret looks like once
+// (the same rules the tool-result middleware and the remember tool
+// use), and the host compiles them at user-db open and installs them
+// here: every write path — the remember tool, the settings card, an
+// accepted review suggestion — funnels through this package, but only
+// the tool carries deployment settings of its own.
+var textRedactor atomic.Pointer[func(string) string]
+
+// SetTextRedactor installs the secret-rule guard. A nil redactor
+// removes it (a runtime without a user database or without a loaded
+// document). Safe to call concurrently with writes.
+func SetTextRedactor(redact func(string) string) {
+	if redact == nil {
+		textRedactor.Store(nil)
+		return
+	}
+	textRedactor.Store(&redact)
+}
+
+// refuseSecretText rejects text a configured secret rule rewrites. The
+// rules read the whole string: a fact that looks like a credential is
+// refused, never stored redacted (a silently altered memory is worse
+// than a refusal the caller can report).
+func refuseSecretText(text string) error {
+	redact := textRedactor.Load()
+	if redact == nil || (*redact)(text) == text {
+		return nil
+	}
+	return errdefs.Validationf(
+		"memory: text matches a configured secret rule and was not stored; " +
+			"credentials do not belong in long-term memory")
+}
+
 // Store persists user-level facts in the shared user database.
 type Store struct {
 	db *sql.DB
@@ -115,6 +150,7 @@ type Memory interface {
 	Remove(ctx context.Context, id string) error
 	SetStale(ctx context.Context, id string, stale bool) (Fact, error)
 	List(ctx context.Context, query Query) ([]Fact, error)
+	Count(ctx context.Context, query Query) (int, error)
 	Get(ctx context.Context, id string) (Fact, error)
 	Empty() bool
 }
@@ -153,6 +189,8 @@ func (emptyMemory) SetStale(context.Context, string, bool) (Fact, error) {
 }
 
 func (emptyMemory) List(context.Context, Query) ([]Fact, error) { return nil, nil }
+
+func (emptyMemory) Count(context.Context, Query) (int, error) { return 0, nil }
 
 func (emptyMemory) Get(context.Context, string) (Fact, error) {
 	return Fact{}, errdefs.NotAvailablef("memory: no user database in this runtime")
@@ -200,6 +238,19 @@ func (s *Store) Add(ctx context.Context, fact Fact) (Fact, error) {
 		// The row keeps its id and creation time: the fact is the
 		// same fact, restated. An empty kind or source in the new
 		// call never erases what the original write recorded.
+		if existing.Stale {
+			// Reviving a retired fact puts a live row back: the cap
+			// applies here too, or retire/restate cycles grow past it.
+			live, err := countLive(ctx, tx)
+			if err != nil {
+				return Fact{}, err
+			}
+			if live >= MaxItems {
+				return Fact{}, errdefs.Validationf(
+					"memory: %d facts is the limit; remove one before reviving a retired fact",
+					MaxItems)
+			}
+		}
 		existing.Text = normalized.Text
 		existing.Kind = firstNonEmpty(normalized.Kind, existing.Kind)
 		existing.SourceConversation = firstNonEmpty(
@@ -250,6 +301,9 @@ func (s *Store) Replace(ctx context.Context, id, text string) (Fact, error) {
 	if len(text) > MaxTextBytes {
 		return Fact{}, errdefs.Validationf(
 			"memory: text is %d bytes, the limit is %d", len(text), MaxTextBytes)
+	}
+	if err := refuseSecretText(text); err != nil {
+		return Fact{}, err
 	}
 	now := s.now()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -311,18 +365,43 @@ func (s *Store) SetStale(ctx context.Context, id string, stale bool) (Fact, erro
 	if strings.TrimSpace(id) == "" {
 		return Fact{}, errdefs.Validationf("memory: fact id is required")
 	}
-	flag := 0
-	if stale {
-		flag = 1
-	}
 	fact, err := s.Get(ctx, id)
 	if err != nil {
 		return Fact{}, err
 	}
-	if _, err := s.db.ExecContext(ctx,
+	flag := 0
+	if stale {
+		flag = 1
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Fact{}, fmt.Errorf("userstore: begin set stale: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			telemetry.WarnErr(ctx, "userstore: rollback set stale failed", err)
+		}
+	}()
+	if !stale && fact.Stale {
+		// Un-retiring adds a live row back: the cap applies, exactly as
+		// it does when the fact is first inserted.
+		live, err := countLive(ctx, tx)
+		if err != nil {
+			return Fact{}, err
+		}
+		if live >= MaxItems {
+			return Fact{}, errdefs.Validationf(
+				"memory: %d facts is the limit; remove one before reviving a retired fact",
+				MaxItems)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE user_memory SET stale = ?, updated_at = ? WHERE id = ?`,
 		flag, s.now().Format(timeLayout), id); err != nil {
 		return Fact{}, fmt.Errorf("userstore: set stale %s: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Fact{}, fmt.Errorf("userstore: commit set stale: %w", err)
 	}
 	fact.Stale = stale
 	return fact, nil
@@ -367,6 +446,28 @@ func (s *Store) List(ctx context.Context, query Query) ([]Fact, error) {
 		return nil, fmt.Errorf("userstore: list: %w", err)
 	}
 	return out, nil
+}
+
+// Count returns how many facts the query matches, ignoring its limit.
+// A caller that shows a capped list (the injected section) uses it to
+// report how much was left out.
+func (s *Store) Count(ctx context.Context, query Query) (int, error) {
+	var (
+		conds []string
+		args  []any
+	)
+	conds = append(conds, `(scope = ? OR (scope = ? AND workspace = ?))`)
+	args = append(args, ScopeGlobal, ScopeWorkspace, query.Workspace)
+	if !query.IncludeStale {
+		conds = append(conds, "stale = 0")
+	}
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM user_memory WHERE `+strings.Join(conds, " AND "),
+		args...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("userstore: count facts: %w", err)
+	}
+	return n, nil
 }
 
 // Get reads one fact by id.
@@ -486,8 +587,6 @@ func countLive(ctx context.Context, tx *sql.Tx) (int, error) {
 	return n, nil
 }
 
-// normalizeFact validates one incoming fact and fills the derived
-// fields (scope, kind, dedupe key).
 // Validate normalizes one incoming fact under exactly the rules Add
 // applies. Callers that must not write (the review queue accepting a
 // suggestion, a dry run in the settings page) use it so a candidate is
@@ -499,8 +598,40 @@ func Validate(fact Fact) (Fact, error) { return normalizeFact(fact) }
 // writing it first.
 func DedupeKeyOf(text string) string { return dedupeKey(text) }
 
+// foldFactText replaces line breaks (and the runs they come in) with a
+// single space and trims the result. A fact occupies one bullet of the
+// injected section, so a newline is the one character that could forge
+// structure in the prompt's stable prefix; inner spacing is the user's
+// and stays.
+func foldFactText(text string) string {
+	var b strings.Builder
+	b.Grow(len(text))
+	pendingSpace := false
+	for _, r := range text {
+		if r == '\n' || r == '\r' {
+			pendingSpace = true
+			continue
+		}
+		if pendingSpace {
+			b.WriteByte(' ')
+			pendingSpace = false
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// normalizeFact validates one incoming fact and fills the derived
+// fields (scope, kind, dedupe key).
 func normalizeFact(fact Fact) (Fact, error) {
-	fact.Text = strings.TrimSpace(fact.Text)
+	// A fact occupies one line of the injected section
+	// (worldstate/templates/user_memory.gotmpl renders each as a single
+	// bullet): an embedded newline could forge a heading in the stable
+	// prompt prefix of every later turn, right after AGENTS.md. Fold
+	// whitespace runs — newlines included — into single spaces rather
+	// than refusing the write: the text still reads, it just cannot
+	// span lines.
+	fact.Text = foldFactText(fact.Text)
 	if fact.Text == "" {
 		return Fact{}, errdefs.Validationf("memory: fact text is required")
 	}
@@ -508,6 +639,9 @@ func normalizeFact(fact Fact) (Fact, error) {
 		return Fact{}, errdefs.Validationf(
 			"memory: text is %d bytes, the limit is %d",
 			len(fact.Text), MaxTextBytes)
+	}
+	if err := refuseSecretText(fact.Text); err != nil {
+		return Fact{}, err
 	}
 	fact.Scope = strings.TrimSpace(fact.Scope)
 	switch fact.Scope {

@@ -41,7 +41,9 @@ type ReviewSettings struct {
 	// the suggestions before letting the review run unattended).
 	Enabled *bool `json:"enabled,omitempty"`
 	// EveryTurns runs a review on every Nth completed turn of a
-	// conversation (0 disables the cadence).
+	// conversation. An absent (zero) value takes the default cadence;
+	// the accepted range is ReviewMinEveryTurns..ReviewMaxEveryTurns.
+	// Switching the review off is what Enabled is for.
 	EveryTurns int `json:"every_turns,omitempty"`
 	// MinToolCalls skips turns that used fewer tools than this: a turn
 	// that only chatted rarely yields something worth remembering.

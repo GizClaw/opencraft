@@ -19,5 +19,11 @@ func newMigratedStore(root string, window int) (*Store, error) {
 		_ = store.CloseDB()
 		return nil, err
 	}
+	if err := compat.BackfillSearchIndex(
+		context.Background(), store.Database(), state.Importer(store.Database()),
+	); err != nil {
+		_ = store.CloseDB()
+		return nil, err
+	}
 	return store, nil
 }

@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -82,7 +84,7 @@ func (c *Curator) Candidates(ctx context.Context) ([]Candidate, error) {
 	if !c.Enabled() {
 		return nil, nil
 	}
-	stats, err := c.store.Stats(ctx, time.Time{})
+	stats, err := c.store.Stats(ctx, c.usageWindowStart())
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +161,15 @@ func (c *Curator) Retire(
 	if sk.Scope == "builtin" {
 		return skillusage.Archive{}, errdefs.Validationf(
 			"skills: builtin skill %q is not managed by the curator", name)
+	}
+	// Retiring is not idempotent: a second pass snapshots again and
+	// would leave the record the first one is restored from pointing at
+	// a snapshot the second one overwrote.
+	if states, err := c.store.States(ctx); err != nil {
+		return skillusage.Archive{}, err
+	} else if state, ok := states[name]; ok && state.Retired {
+		return skillusage.Archive{}, errdefs.Validationf(
+			"skills: %q is already retired", name)
 	}
 	if strings.TrimSpace(c.archiveDir) == "" {
 		return skillusage.Archive{}, errdefs.Validationf(
@@ -241,11 +252,25 @@ func (c *Curator) Archives(ctx context.Context) ([]skillusage.Archive, error) {
 // how many rows went away. Aggregates the page shows all live inside
 // the window, so pruning only bounds the table.
 func (c *Curator) Prune(ctx context.Context) (int64, error) {
-	if !c.Enabled() || c.settings.UsageWindowDays <= 0 {
+	if !c.Enabled() {
 		return 0, nil
 	}
-	before := c.now().AddDate(0, 0, -c.settings.UsageWindowDays)
+	before := c.usageWindowStart()
+	if before.IsZero() {
+		return 0, nil
+	}
 	return c.store.Prune(ctx, before)
+}
+
+// usageWindowStart is the oldest usage event the statistics consider: a
+// configured window bounds both the candidate verdict and the prune, so
+// a skill last used a year ago reads as "never used inside the window"
+// rather than as used. A zero window means all time.
+func (c *Curator) usageWindowStart() time.Time {
+	if c.settings.UsageWindowDays <= 0 {
+		return time.Time{}
+	}
+	return c.now().AddDate(0, 0, -c.settings.UsageWindowDays)
 }
 
 // snapshot writes one tar.gz of dir under the archive directory and
@@ -356,7 +381,12 @@ func extractArchive(archivePath, dir string) error {
 			return fmt.Errorf("skills: read archive %s: %w", archivePath, err)
 		}
 		rel := filepath.Clean(filepath.FromSlash(header.Name))
-		if rel == "." || filepath.IsAbs(rel) || strings.HasPrefix(rel, "..") {
+		// A traversal entry is the parent directory itself or something
+		// below it: a ".." prefix test would also refuse legitimate
+		// names like "..notes.md".
+		belowParent := ".." + string(filepath.Separator)
+		if rel == "." || filepath.IsAbs(rel) || rel == ".." ||
+			strings.HasPrefix(rel, belowParent) {
 			return errdefs.Validationf(
 				"skills: archive %s holds an unsafe entry %q",
 				archivePath, header.Name)
@@ -394,8 +424,11 @@ func writeFile(path string, r io.Reader) error {
 	return nil
 }
 
-// archiveID is the snapshot's stable name: the skill name plus the
-// moment it was archived, sanitized for a file name.
+// archiveID is the snapshot's name: the skill name, the moment it was
+// archived, and a random suffix, sanitized for a file name. The suffix
+// is what makes two retires inside one wall-clock second land in two
+// files: the snapshot path is opened with O_TRUNC, so a shared name
+// would destroy the first archive while its record kept pointing at it.
 func archiveID(name string, at time.Time) string {
 	safe := strings.Map(func(r rune) rune {
 		switch {
@@ -409,7 +442,18 @@ func archiveID(name string, at time.Time) string {
 			return '-'
 		}
 	}, name)
-	return fmt.Sprintf("%s-%s", safe, at.UTC().Format("20060102T150405"))
+	return fmt.Sprintf("%s-%s-%s", safe,
+		at.UTC().Format("20060102T150405"), randomSuffix())
+}
+
+// randomSuffix returns four hex characters from the platform CSPRNG,
+// falling back to the clock when the source is unavailable.
+func randomSuffix() string {
+	var buf [2]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return fmt.Sprintf("%04x", uint16(time.Now().UnixNano()))
+	}
+	return hex.EncodeToString(buf[:])
 }
 
 // skillModTime is the skill's own timestamp, used as the fallback

@@ -54,6 +54,11 @@ const maxPromptFacts = 40
 // maxPromptSkills bounds the skill-name list in the prompt.
 const maxPromptSkills = 20
 
+// knownSuggestionLimit bounds the queue read the dedupe consults: a
+// fresh review plays against the recent decisions, not the whole
+// history.
+const knownSuggestionLimit = 500
+
 // maxTurnExcerptBytes bounds one excerpt in the prompt.
 const maxTurnExcerptBytes = 2000
 
@@ -102,6 +107,11 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 	settings, err := resource.DecodeTyped[Settings](ctx, in.Settings)
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(settings.WorkDir) == "" {
+		telemetry.Warn(ctx,
+			"review: hook assembled without work_dir; "+
+				"workspace-scoped candidates will be rejected")
 	}
 	o := &Observer{
 		queue:    queue,
@@ -198,18 +208,24 @@ func (o *Observer) OnRunEnd(
 		if !cfg.OnFailure {
 			return
 		}
-	} else {
-		if toolCalls < cfg.MinToolCalls {
-			return
-		}
-		if !o.countTurn(id.ConversationID, cfg.EveryTurns) {
-			return
-		}
+	} else if toolCalls < cfg.MinToolCalls {
+		return
 	}
 	// A conversation may only have one review in flight: two reviews of
 	// the same prefix would spend two model calls to queue the same
 	// candidates.
 	if !o.claim(id.ConversationID) {
+		return
+	}
+	// A turn advances the cadence counter only once it holds the slot:
+	// a turn that lost the single-flight race is not a review
+	// opportunity, and counting it would shift the next scheduled
+	// review by a full period. Failed turns count too — only a
+	// successful turn has to land on the cadence, a failure is
+	// reviewed because it failed.
+	onCadence := o.countTurn(id.ConversationID, cfg.EveryTurns)
+	if !failed && !onCadence {
+		o.release(id.ConversationID)
 		return
 	}
 	// The turn is already committed; the review outlives its context but
@@ -292,6 +308,8 @@ func (o *Observer) release(conversationID string) {
 // right trade for not paying a query on every turn.
 func (o *Observer) countTurn(conversationID string, everyTurns int) bool {
 	if everyTurns <= 0 {
+		// No cadence (and a modulo by zero would panic): the caller
+		// only reviews turns that fail.
 		return false
 	}
 	o.mu.Lock()
@@ -344,10 +362,14 @@ func (o *Observer) review(
 		MaxItems: o.queue.Config.MaxSuggestions,
 	})
 	response, err := o.generate(ctx, prompt)
+	// A call that failed may still have been metered (a router that
+	// streams usage before the failure, a retried request): report what
+	// came back before returning, or failed reviews spend tokens
+	// invisibly.
+	o.reportUsage(ctx, id, response.Usage)
 	if err != nil {
 		return err
 	}
-	o.reportUsage(ctx, id, response.Usage)
 	candidates, err := parseCandidates(response.Message.Content.Text(),
 		maxParsedCandidates)
 	if err != nil {
@@ -447,6 +469,25 @@ func (o *Observer) queueCandidates(
 	for _, fact := range facts {
 		known[userstore.DedupeKeyOf(fact.Text)] = true
 	}
+	// Queued suggestions count as known too — pending and decided
+	// alike. The queue keeps decided rows precisely so a candidate the
+	// user discarded is not proposed again, which only works if the
+	// next review reads them back.
+	if suggestions, err := o.queue.Queue.List(
+		ctx, "", knownSuggestionLimit,
+	); err != nil {
+		telemetry.WarnErr(ctx, "review: list queued suggestions failed", err)
+	} else {
+		for _, suggestion := range suggestions {
+			var candidate Candidate
+			if err := json.Unmarshal(suggestion.Payload, &candidate); err != nil {
+				continue
+			}
+			if text := strings.TrimSpace(candidate.Text); text != "" {
+				known[userstore.DedupeKeyOf(text)] = true
+			}
+		}
+	}
 	queued := 0
 	for i, candidate := range candidates {
 		fact := userstore.Fact{
@@ -480,7 +521,7 @@ func (o *Observer) queueCandidates(
 		if err != nil {
 			return fmt.Errorf("review: marshal suggestion: %w", err)
 		}
-		if _, err := o.queue.Queue.Create(ctx, reviewstore.Suggestion{
+		if _, inserted, err := o.queue.Queue.Create(ctx, reviewstore.Suggestion{
 			// A stable id: replaying the same review of the same turn
 			// cannot queue the same candidate twice.
 			ID:                 suggestionID(id, i),
@@ -492,6 +533,10 @@ func (o *Observer) queueCandidates(
 			SourceRun:          id.RunID,
 		}); err != nil {
 			return err
+		} else if !inserted {
+			// The row was already there (a replay): it must not consume
+			// the max_suggestions budget of this run.
+			continue
 		}
 		queued++
 		if queued >= o.queue.Config.MaxSuggestions {
@@ -515,14 +560,16 @@ func (o *Observer) queueCandidates(
 func (o *Observer) reportUsage(
 	ctx context.Context, id agent.Identity, usage inference.Usage,
 ) {
+	delta := ocsessions.UsageFromReport(usage)
+	if delta.TotalTokens <= 0 {
+		// Nothing was metered (a provider that reports no usage): a
+		// zero report would only add noise to the tables and the UI.
+		return
+	}
 	if o.usage != nil {
 		o.usage.ReportUsage(ctx, usage)
 	}
 	if o.sessions == nil || id.ConversationID == "" {
-		return
-	}
-	delta := ocsessions.UsageFromReport(usage)
-	if delta.TotalTokens <= 0 {
 		return
 	}
 	if err := o.sessions.AddUsage(ctx, id.ConversationID, delta); err != nil {

@@ -315,6 +315,84 @@ func TestOnRunEndRunsOnFailure(t *testing.T) {
 	}
 }
 
+// TestOnRunEndDoesNotCountTurnsThatLostTheSlot pins the cadence/slot
+// interplay: a turn that loses the single-flight race is not a review
+// opportunity, and counting it would slide the next scheduled review a
+// full period later.
+func TestOnRunEndDoesNotCountTurnsThatLostTheSlot(t *testing.T) {
+	cfg := enabledCfg()
+	cfg.EveryTurns = 2
+	o, _, _, _ := newObserver(t, cfg)
+	calls := 0
+	o.generateFn = func(context.Context, promptInput) (inference.GenerateResponse, error) {
+		calls++
+		return answer(`{"memory":[]}`), nil
+	}
+	id := agent.Identity{ConversationID: "s-1"}
+	// An in-flight review holds the slot.
+	if !o.claim(id.ConversationID) {
+		t.Fatal("claim")
+	}
+	o.OnRunEnd(context.Background(), id, chatTurn())
+	o.release(id.ConversationID)
+	// That turn lost the slot, so this one is still the first of the
+	// period, not the second.
+	o.OnRunEnd(context.Background(), id, chatTurn())
+	if err := o.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("the turn after the lost slot ran %d reviews, want none", calls)
+	}
+	o.OnRunEnd(context.Background(), id, chatTurn())
+	if err := o.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("the third turn ran %d reviews in total, want one", calls)
+	}
+}
+
+// TestOnRunEndFailureAdvancesTheCadence pins that a failure review —
+// which runs regardless of the cadence — still advances the counter, so
+// the next scheduled review is a full period away instead of firing on
+// the very next turn.
+func TestOnRunEndFailureAdvancesTheCadence(t *testing.T) {
+	cfg := enabledCfg()
+	cfg.EveryTurns = 2
+	o, _, _, _ := newObserver(t, cfg)
+	calls := 0
+	o.generateFn = func(context.Context, promptInput) (inference.GenerateResponse, error) {
+		calls++
+		return answer(`{"memory":[]}`), nil
+	}
+	id := agent.Identity{ConversationID: "s-1"}
+	failed := &agent.Result{Status: agent.StatusFailed, Messages: []message.Message{
+		message.NewTextMessage(message.RoleUser, "do the thing"),
+	}}
+	o.OnRunEnd(context.Background(), id, failed)
+	if err := o.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("the failed turn ran %d reviews, want one", calls)
+	}
+	o.OnRunEnd(context.Background(), id, chatTurn())
+	if err := o.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("failure + one turn ran %d reviews, want the cadence on turn two", calls)
+	}
+	o.OnRunEnd(context.Background(), id, chatTurn())
+	if err := o.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("the third turn ran %d reviews in total, want no more", calls)
+	}
+}
+
 func TestOnRunEndSkipsFailureWhenOnFailureOff(t *testing.T) {
 	cfg := enabledCfg()
 	cfg.OnFailure = false
@@ -396,6 +474,36 @@ func TestReviewReplayDoesNotDuplicateSuggestions(t *testing.T) {
 	}
 	if len(rows) != 1 {
 		t.Fatalf("queued = %d, want the stable id to dedupe the replay", len(rows))
+	}
+}
+
+// TestReviewKnowsDecidedSuggestions pins the queue-side dedupe: a
+// candidate the user already decided on is not proposed again, which is
+// what keeping the decided row in the queue is for.
+func TestReviewKnowsDecidedSuggestions(t *testing.T) {
+	ctx := context.Background()
+	o, queue, _, _ := newObserver(t, enabledCfg())
+	if _, _, err := queue.Create(ctx, reviewstore.Suggestion{
+		ID:      "rv-run-0-0",
+		Kind:    reviewstore.KindMemory,
+		Payload: []byte(`{"text":"prefers ripgrep"}`),
+		Status:  reviewstore.StatusDiscarded,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	o.generateFn = func(context.Context, promptInput) (inference.GenerateResponse, error) {
+		return answer(`{"memory":[{"text":"prefers ripgrep"}]}`), nil
+	}
+	id := agent.Identity{ConversationID: "s-1", RunID: "run-1"}
+	if err := o.review(ctx, id, chatTurn(), 0); err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	rows, err := queue.List(ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want the discarded row alone", len(rows))
 	}
 }
 
@@ -681,8 +789,9 @@ func TestDeployWiresReviewHook(t *testing.T) {
 	// The observe hook itself lives in agents.yaml, which is merged as
 	// its own layer and is not reachable through Document.Resources.
 	type hookSpec struct {
-		Type string            `yaml:"type"`
-		Deps map[string]string `yaml:"deps"`
+		Type     string            `yaml:"type"`
+		Deps     map[string]string `yaml:"deps"`
+		Settings map[string]any    `yaml:"settings"`
 	}
 	var agents struct {
 		Agents map[string]struct {
@@ -720,6 +829,13 @@ func TestDeployWiresReviewHook(t *testing.T) {
 		if hook.Deps[name] != ref {
 			t.Fatalf("review hook dep %s = %q, want %q", name, hook.Deps[name], ref)
 		}
+	}
+	// The hook files workspace-scoped facts under the workspace its
+	// turn ran in: without the resolved work_dir the store rejects
+	// every workspace candidate and the review silently degrades to
+	// global facts (and never sees the workspace's existing ones).
+	if got := hook.Settings["work_dir"]; got != "${ocraft:WORKDIR}" {
+		t.Fatalf("review hook settings.work_dir = %v, want ${ocraft:WORKDIR}", got)
 	}
 
 	// The stores the two bindings are bound to are the host-attached

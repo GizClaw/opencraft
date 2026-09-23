@@ -94,3 +94,9 @@ agents:
           sessions: sessions
           router: router
           observer: observer
+        # The workspace the reviewed turn ran in: a workspace-scoped
+        # fact is filed under it, and it is the key the prompt lists
+        # the already-stored facts by. Without it the store refuses
+        # every workspace candidate.
+        settings:
+          work_dir: ${ocraft:WORKDIR}
