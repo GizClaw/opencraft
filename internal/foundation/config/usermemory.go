@@ -119,7 +119,7 @@ type userMemoryLayer struct {
 }
 
 type userMemoryResourceLayer struct {
-	Settings UserMemorySettings `json:"settings"`
+	Settings *UserMemorySettings `json:"settings,omitempty"`
 }
 
 // LoadUserMemory returns the effective settings: embedded defaults
@@ -142,7 +142,11 @@ func SaveUserMemory(configDir string, settings UserMemorySettings) error {
 		return err
 	}
 	layer := userMemoryLayer{Version: "v1"}
-	layer.Resources.UserMemory = &userMemoryResourceLayer{Settings: settings}
+	// Every field is omitempty, so a zero-value save would render the
+	// fatal `settings: {}`; omit the key instead (see nonEmptySettings).
+	layer.Resources.UserMemory = &userMemoryResourceLayer{
+		Settings: nonEmptySettings(settings),
+	}
 	fresh, err := yaml.Marshal(layer)
 	if err != nil {
 		return fmt.Errorf("config: render user memory layer: %w", err)

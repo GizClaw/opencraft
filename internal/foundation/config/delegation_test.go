@@ -224,3 +224,43 @@ func TestDelegationUserLayerRoundTrip(t *testing.T) {
 		t.Fatalf("user layer mode = %o, want 0600", perm)
 	}
 }
+
+// TestDelegationEmptyListsWriteEveryKey pins the stored shape of a
+// cleared policy: both lists are written as `[]` rather than dropped.
+// The keys are the card's whole payload, and an empty settings object —
+// what `omitempty` on both lists used to produce — is not a valid
+// deploy source: flowcraft fails the build of the entire document with
+// "resource source: empty object is not valid".
+func TestDelegationEmptyListsWriteEveryKey(t *testing.T) {
+	dir := t.TempDir()
+	if err := SaveDelegation(dir, DelegationSettings{
+		MaxConcurrency: 8,
+		MaxDepth:       4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{"allowed_targets: []", "blocked_targets: []"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("cleared policy is missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "settings: {}") {
+		t.Errorf("cleared policy wrote an empty settings object:\n%s", text)
+	}
+	// The lists still reload as the empty policy, not as a missing one.
+	loaded, err := LoadDelegation(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.AllowedTargets) != 0 || len(loaded.BlockedTargets) != 0 {
+		t.Fatalf("cleared lists reloaded as %+v", loaded)
+	}
+	if loaded.MaxConcurrency != 8 || loaded.MaxDepth != 4 {
+		t.Fatalf("limits reloaded as %+v", loaded)
+	}
+}

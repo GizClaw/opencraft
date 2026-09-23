@@ -119,7 +119,7 @@ type skillLifecycleLayer struct {
 }
 
 type skillLifecycleResourceLayer struct {
-	Settings SkillLifecycleSettings `json:"settings"`
+	Settings *SkillLifecycleSettings `json:"settings,omitempty"`
 }
 
 // LoadSkillLifecycle returns the effective settings: embedded defaults
@@ -137,7 +137,10 @@ func SaveSkillLifecycle(configDir string, settings SkillLifecycleSettings) error
 	}
 	layer := skillLifecycleLayer{Version: "v1"}
 	layer.Resources.SkillLifecycle = &skillLifecycleResourceLayer{
-		Settings: settings,
+		// Every field is omitempty, so an all-zero save would render the
+		// fatal `settings: {}`; omit the key instead (see
+		// nonEmptySettings).
+		Settings: nonEmptySettings(settings),
 	}
 	fresh, err := yaml.Marshal(layer)
 	if err != nil {

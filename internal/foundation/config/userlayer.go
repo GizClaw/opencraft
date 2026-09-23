@@ -158,6 +158,29 @@ func setMappingValue(mapping *yamlv4.Node, key string, value *yamlv4.Node) {
 	}
 }
 
+// nonEmptySettings returns the settings object of one generated
+// resource entry, or nil when the settings carry nothing at all, so a
+// writer that has nothing to record leaves the key out instead of
+// shipping an empty object.
+//
+// Why: a resource's settings subtree is a whole-subtree deploy source,
+// and flowcraft rejects the empty forms of one — `settings: {}` is
+// "resource source: empty object is not valid", `settings: null` is
+// "scalar values must be JSON strings" — as a failure of the whole
+// document build, not just of that resource. A settings struct whose
+// fields are all omitempty marshals to `{}` on a zero-value save, which
+// is what once bricked every workspace after a save from the delegation
+// card. An absent key is not a loss: the layer merge treats an empty
+// object as the identity, so both spellings contribute the same (that
+// is, nothing).
+func nonEmptySettings[T comparable](settings T) *T {
+	var zero T
+	if settings == zero {
+		return nil
+	}
+	return &settings
+}
+
 // mergeMapping deep-merges src into dst in place: mapping pairs merge
 // recursively, every other value replaces. The src nodes are appended
 // as-is so their comments survive.

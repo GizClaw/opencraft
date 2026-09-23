@@ -1,11 +1,61 @@
 package config
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"io/fs"
 	"path"
 	"strings"
 	"testing"
 )
+
+// TestEmbeddedDocumentCarriesNoEmptySource pins the shipped side of the
+// deploy-source rule: flowcraft parses a resource's settings subtree —
+// and an agent's engine graph reference inside its settings — as a
+// whole-subtree source and rejects the empty object, which fails the
+// build of the whole document rather than of that one entry. An asset
+// edit that leaves one behind would brick every workspace, so the
+// shipped layers never carry one (see nonEmptySettings for the writer
+// side of the same rule).
+func TestEmbeddedDocumentCarriesNoEmptySource(t *testing.T) {
+	mgr, err := Open(Options{UserDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mgr.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, res := range view.Document.Resources {
+		if isEmptySource(res.Settings) {
+			t.Errorf("resource %q carries settings %s",
+				name, strings.TrimSpace(string(res.Settings)))
+		}
+	}
+	for name, def := range view.Document.Agents {
+		var settings map[string]json.RawMessage
+		if err := json.Unmarshal(def.Engine.Settings, &settings); err != nil {
+			t.Errorf("agent %q engine settings: %v", name, err)
+			continue
+		}
+		if isEmptySource(settings["graph"]) {
+			t.Errorf("agent %q carries graph %s",
+				name, strings.TrimSpace(string(settings["graph"])))
+		}
+	}
+}
+
+// isEmptySource reports whether raw is one of the empty spellings the
+// deploy source parser rejects.
+func isEmptySource(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return false
+	}
+	return bytes.Equal(trimmed, []byte("{}")) ||
+		bytes.Equal(trimmed, []byte("null"))
+}
 
 // TestEmbeddedAssetsKeepContentOffTheStateRoot pins the two-root split
 // the deploy document relies on: content and credentials (keyring,
