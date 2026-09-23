@@ -146,18 +146,35 @@ func (s *Server) Calls() int {
 // actually reached the provider (system prompt, world sections, and
 // the user turn).
 func (s *Server) LastMessages() ([]map[string]any, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.bodies) == 0 {
-		return nil, nil
-	}
-	var req struct {
-		Messages []map[string]any `json:"messages"`
-	}
-	if err := json.Unmarshal(s.bodies[len(s.bodies)-1], &req); err != nil {
+	all, err := s.MessagesForCalls()
+	if err != nil || len(all) == 0 {
 		return nil, err
 	}
-	return req.Messages, nil
+	return all[len(all)-1], nil
+}
+
+// MessagesForCalls decodes the `messages` array of every completion
+// request received so far, oldest first. Several host-side generations
+// share one provider (a turn, an auto-title, the post-turn review) and
+// their completion order is not the test's to decide, so a test that
+// wants to know what one of them sent reads the sequence instead of
+// assuming which call came last.
+func (s *Server) MessagesForCalls() ([][]map[string]any, error) {
+	s.mu.Lock()
+	bodies := make([][]byte, len(s.bodies))
+	copy(bodies, s.bodies)
+	s.mu.Unlock()
+	out := make([][]map[string]any, 0, len(bodies))
+	for _, body := range bodies {
+		var req struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			return nil, err
+		}
+		out = append(out, req.Messages)
+	}
+	return out, nil
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {

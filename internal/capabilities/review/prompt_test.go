@@ -284,24 +284,24 @@ func TestExcerptTruncatesOnRuneBoundary(t *testing.T) {
 }
 
 func TestProjectTurnKeepsRequestAnswerToolsAndStatus(t *testing.T) {
-	res := &agent.Result{
-		Status: agent.StatusCompleted,
-		Messages: []message.Message{
-			message.NewTextMessage(message.RoleUser, "first"),
-			message.NewTextMessage(message.RoleUser, "second"),
-			{
-				Role: message.RoleAssistant,
-				Content: message.Content{Parts: []message.Part{
-					message.ToolCallPart{Call: message.ToolCall{Name: "exec_command"}},
-					message.ToolCallPart{Call: message.ToolCall{Name: "exec_command"}},
-					message.ToolCallPart{Call: message.ToolCall{Name: "files"}},
-				}},
-			},
-			message.NewTextMessage(message.RoleAssistant, "answer one"),
-			message.NewTextMessage(message.RoleAssistant, "answer two"),
+	res := boardTurn(agent.StatusCompleted,
+		message.NewTextMessage(message.RoleUser, "first"),
+		message.NewTextMessage(message.RoleUser, "second"),
+		message.Message{
+			Role: message.RoleAssistant,
+			Content: message.Content{Parts: []message.Part{
+				message.ToolCallPart{Call: message.ToolCall{Name: "exec_command"}},
+				message.ToolCallPart{Call: message.ToolCall{Name: "exec_command"}},
+				message.ToolCallPart{Call: message.ToolCall{Name: "files"}},
+			}},
 		},
-	}
-	turn := projectTurn(res, 3)
+		toolResultMessage(),
+		toolResultMessage(),
+		toolResultMessage(),
+		message.NewTextMessage(message.RoleAssistant, "answer one"),
+		message.NewTextMessage(message.RoleAssistant, "answer two"),
+	)
+	turn := projectTurn(res)
 	if turn.Request != "first\nsecond" {
 		t.Fatalf("request = %q, want every user message joined", turn.Request)
 	}
@@ -309,7 +309,7 @@ func TestProjectTurnKeepsRequestAnswerToolsAndStatus(t *testing.T) {
 		t.Fatalf("answer = %q, want the last assistant text", turn.Answer)
 	}
 	if turn.ToolCalls != 3 {
-		t.Fatalf("tool calls = %d, want the passed-in count", turn.ToolCalls)
+		t.Fatalf("tool calls = %d, want the three tool results counted", turn.ToolCalls)
 	}
 	if turn.Status != "completed" {
 		t.Fatalf("status = %q", turn.Status)
@@ -319,17 +319,44 @@ func TestProjectTurnKeepsRequestAnswerToolsAndStatus(t *testing.T) {
 	}
 }
 
-func TestCountToolResults(t *testing.T) {
-	msgs := []message.Message{
-		message.NewTextMessage(message.RoleUser, "do it"),
-		toolResultMessage(),
-		message.NewTextMessage(message.RoleAssistant, "done"),
+// TestProjectTurnReadsTheBoardNotTheTrailingBlock pins the shape the
+// review shipped broken on: Result.Messages is the turn's trailing
+// assistant block, so a projection that read it found no request, no
+// tools and zero tool calls in a turn that ran four of them — and the
+// min_tool_calls gate then skipped every successful turn forever.
+func TestProjectTurnReadsTheBoardNotTheTrailingBlock(t *testing.T) {
+	res := toolTurn(4)
+	if len(res.Messages) != 1 || res.Messages[0].Role != message.RoleAssistant {
+		t.Fatalf("fixture must carry the engine's narrowed tail, got %+v",
+			res.Messages)
 	}
-	if got := countToolResults(msgs); got != 1 {
-		t.Fatalf("count = %d, want 1", got)
+	turn := projectTurn(res)
+	if turn.Request != "do the thing" {
+		t.Fatalf("request = %q, want the board's user message", turn.Request)
 	}
-	if got := countToolResults(nil); got != 0 {
-		t.Fatalf("count(nil) = %d, want 0", got)
+	if turn.Answer != "done" {
+		t.Fatalf("answer = %q, want the closing assistant text", turn.Answer)
+	}
+	if turn.ToolCalls != 4 {
+		t.Fatalf("tool calls = %d, want the four the board holds", turn.ToolCalls)
+	}
+	if got := strings.Join(turn.Tools, ","); got != "exec_command" {
+		t.Fatalf("tools = %q, want the called tool once", got)
+	}
+
+	// The world-state prefix is context the review must not read as the
+	// turn's own request.
+	for _, unwanted := range []string{"base prompt", "Long-term memory"} {
+		if strings.Contains(turn.Request, unwanted) {
+			t.Fatalf("request carries seeded context %q: %q", unwanted, turn.Request)
+		}
+	}
+
+	// A projection without a board and without a tail degrades to empty
+	// instead of panicking: the review skips a turn it cannot see.
+	bare := projectTurn(&agent.Result{Status: agent.StatusCompleted})
+	if bare.Request != "" || bare.Answer != "" || bare.ToolCalls != 0 {
+		t.Fatalf("projection of an empty result = %+v, want the zero value", bare)
 	}
 }
 
