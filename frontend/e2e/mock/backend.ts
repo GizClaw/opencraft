@@ -156,6 +156,15 @@ export function mockBackend(cfg?: MockConfig) {
     live: 0,
     stale: 0,
   });
+  // The context card spells out what its two counts add up to and prints
+  // the byte budget in a human unit, so the mock answers numbers instead
+  // of `{}` (which would render as NaN in both).
+  const memoryConfig: Handler = async () => ({
+    max_raw_messages: 36,
+    preserve_recent: 4,
+    max_summary_bytes: 4096,
+    replay_full_history: false,
+  });
   const reviewState: Handler = async () => ({
     enabled: false,
     every_turns: 5,
@@ -245,7 +254,7 @@ export function mockBackend(cfg?: MockConfig) {
       Profile: async () => ({ yolo_only: false }),
       MCPConfig: async () => [],
       MCPStatus: emptyList,
-      MemoryConfig: async () => ({}),
+      MemoryConfig: memoryConfig,
       ModelCatalog: emptyList,
       ModelOptions: emptyList,
       ModelUsage: emptyList,

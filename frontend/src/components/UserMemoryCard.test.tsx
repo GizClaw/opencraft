@@ -164,7 +164,13 @@ describe('UserMemoryCard', () => {
       screen.getByPlaceholderText('One sentence that stands on its own'),
       'Prefers exit codes over tracebacks',
     );
-    await user.selectOptions(screen.getByLabelText('Scope'), 'workspace');
+    // The scope cell is the app's own listbox, not a native select: the
+    // trigger opens a floating menu of options.
+    const scope = screen.getByLabelText('Scope');
+    expect(scope.tagName).toBe('BUTTON');
+    expect(scope).toHaveAttribute('aria-haspopup', 'listbox');
+    await user.click(scope);
+    await user.click(screen.getByRole('option', { name: 'Workspace' }));
     await user.click(screen.getByRole('button', { name: /Remember/i }));
     await waitFor(() => expect(apiMock.addMemoryFact).toHaveBeenCalledTimes(1));
     expect(apiMock.addMemoryFact).toHaveBeenCalledWith({
@@ -220,7 +226,7 @@ describe('UserMemoryCard', () => {
     const items = screen.getByLabelText(/Facts per turn/);
     await user.clear(items);
     await user.type(items, '8');
-    const chars = screen.getByLabelText(/Injected bytes/);
+    const chars = screen.getByLabelText(/Injection budget/);
     await user.clear(chars);
     await user.type(chars, '3072');
     await user.click(screen.getAllByRole('button', { name: /Save/i })[0]);
