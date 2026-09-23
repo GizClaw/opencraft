@@ -121,6 +121,12 @@ func (b *Conversation) StartTurn(
 		})
 		return nil
 	})
+	// Make this turn's sink resolvable for delegated runs: an async
+	// delegation submitted by this turn describes its destination as
+	// this conversation, and the worker materializes it back into this
+	// sink when the in-process escrow is gone. Registration lives
+	// exactly as long as the turn does.
+	releaseSink := b.core.RegisterConversationSink(contextID, sink)
 	opts := host.RunOptions{
 		Message:   req.Message,
 		ContextID: contextID,
@@ -172,7 +178,10 @@ func (b *Conversation) StartTurn(
 				startedAt := time.Now().UTC()
 				b.core.Conversation.TrackRun(workDir, contextID, run.RunID())
 				b.core.Shell.Emit("status", core.StatusEvent{Busy: true})
-				go b.waitTurn(ctx, run, contextID)
+				go func() {
+					defer releaseSink()
+					b.waitTurn(ctx, run, contextID)
+				}()
 				return TurnStart{
 					RunID:          run.RunID(),
 					ConversationID: contextID,
@@ -196,6 +205,9 @@ func (b *Conversation) StartTurn(
 			return TurnStart{}, err
 		}
 	}
+	// No run ever started, so the sink registration would outlive its
+	// reason to exist.
+	releaseSink()
 	return TurnStart{}, lastErr
 }
 

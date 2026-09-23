@@ -629,6 +629,9 @@ func (d *Desktop) RegisterServices(app *application.App) {
 	reg(application.NewService(bindings.NewSecretBinding(d.core)))
 	reg(application.NewService(bindings.NewAutomationBinding(d.core)))
 	reg(application.NewService(bindings.NewPetBinding(d.core)))
+	reg(application.NewService(bindings.NewReviewBinding(d.core)))
+	reg(application.NewService(bindings.NewSkillLifecycleBinding(d.core)))
+	reg(application.NewService(bindings.NewDelegationBinding(d.core)))
 	reg(application.NewService(d.notifications))
 }
 

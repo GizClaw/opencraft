@@ -416,15 +416,29 @@ func (s *Store) CommitConversationTurnWithHook(
 		if err != nil {
 			return fmt.Errorf("state: marshal archive message: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `
+		res, err := tx.ExecContext(ctx, `
 			INSERT INTO archive_messages(
 				conversation_id, turn_id, seq, role, content_json, created_at
 			) VALUES (?, ?, ?, ?, ?, ?)`,
 			c.ID, turnID, msgs[i].Seq, msgs[i].Role,
 			string(content),
 			msgs[i].CreatedAt.UTC().Format(time.RFC3339Nano),
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("state: insert archive message: %w", err)
+		}
+		// The message's search index row is written here, inside the
+		// same transaction: the index can never lag the archive, and a
+		// rolled-back turn leaves no orphan hit behind.
+		messageID, err := res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("state: archive message id: %w", err)
+		}
+		if err := insertMessageFTS(ctx, tx, c.ID, msgs[i].Role,
+			msgs[i].CreatedAt.UTC().Format(time.RFC3339Nano), messageID,
+			indexMessageText(msgs[i].Content),
+		); err != nil {
+			return err
 		}
 	}
 
@@ -789,6 +803,13 @@ func (s *Store) DeleteConversationRows(ctx context.Context, id string) error {
 		if err := execIfTableExists(ctx, tx, table, query, id); err != nil {
 			return fmt.Errorf("state: delete conversation %s memory: %w", id, err)
 		}
+	}
+	// The message search index (migration 016) mirrors archive_messages
+	// by row key; dropping the archive rows without it would leave hits
+	// that join to nothing.
+	if err := execIfTableExists(ctx, tx, "message_fts",
+		`DELETE FROM message_fts WHERE conversation_id = ?`, id); err != nil {
+		return fmt.Errorf("state: delete conversation %s search index: %w", id, err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("state: commit delete conversation %s: %w", id, err)

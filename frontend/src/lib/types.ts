@@ -423,6 +423,203 @@ export interface PetsSettings {
   assistantCharacter?: string;
 }
 
+// ---- Long-term memory, review queue and skill lifecycle ----
+//
+// These mirror the Go DTOs in internal/adapters/desktop/bindings
+// (memory.go, review.go, skilllifecycle.go). Timestamps arrive as
+// RFC3339 strings, empty when the Go side has no value to report.
+
+/** One user-level fact the host injects into every turn. */
+export interface MemoryFact {
+  id: string;
+  kind: string;
+  /** 'global' for the user/machine, 'workspace' for this project. */
+  scope: string;
+  workspace?: string;
+  text: string;
+  source_conversation?: string;
+  source_run?: string;
+  created_at?: string;
+  updated_at?: string;
+  /** Kept but no longer injected. */
+  stale: boolean;
+}
+
+/** The settings and counts the long-term memory card shows. */
+export interface UserMemoryState {
+  enabled: boolean;
+  inject_max_items: number;
+  inject_max_chars: number;
+  min_inject_max_items: number;
+  max_inject_max_items: number;
+  default_inject_max_items: number;
+  min_inject_max_chars: number;
+  max_inject_max_chars: number;
+  default_inject_max_chars: number;
+  /** The store's hard rails: 200 facts, 4096 bytes each. */
+  max_items: number;
+  max_text_bytes: number;
+  /** False when this runtime has no user database. */
+  available: boolean;
+  workspace?: string;
+  /** Counts of the facts visible from the active workspace. */
+  live: number;
+  stale: number;
+}
+
+export interface UserMemorySettingsRequest {
+  enabled: boolean;
+  inject_max_items: number;
+  inject_max_chars: number;
+}
+
+export interface MemoryFactRequest {
+  text: string;
+  /** Empty picks the narrower scope that fits. */
+  scope?: string;
+  workspace?: string;
+  kind?: string;
+}
+
+/** One queued memory candidate awaiting the user's verdict. */
+export interface ReviewSuggestion {
+  id: string;
+  created_at?: string;
+  updated_at?: string;
+  /** 'pending' | 'accepted' | 'discarded'. */
+  status: string;
+  kind: string;
+  reason?: string;
+  source_workspace?: string;
+  source_conversation?: string;
+  source_run?: string;
+  /** The candidate fact, decoded from payload. */
+  text?: string;
+  scope?: string;
+  candidate_kind?: string;
+  /** The raw JSON as it was queued. */
+  payload?: string;
+}
+
+export interface ReviewState {
+  enabled: boolean;
+  every_turns: number;
+  min_tool_calls: number;
+  on_failure: boolean;
+  max_suggestions: number;
+  timeout_seconds: number;
+  min_every_turns: number;
+  max_every_turns: number;
+  default_every_turns: number;
+  min_min_tool_calls: number;
+  max_min_tool_calls: number;
+  default_min_tool_calls: number;
+  min_max_suggestions: number;
+  max_max_suggestions: number;
+  min_timeout_seconds: number;
+  max_timeout_seconds: number;
+  available: boolean;
+  pending: number;
+  accepted: number;
+  discarded: number;
+}
+
+export interface ReviewSettingsRequest {
+  enabled: boolean;
+  every_turns: number;
+  min_tool_calls: number;
+}
+
+/** What accepting a suggestion wrote: the decided row and the fact. */
+export interface ReviewAcceptResult {
+  suggestion: ReviewSuggestion;
+  fact: MemoryFact;
+}
+
+/** One skill row: registry metadata plus usage and decisions. */
+export interface SkillUsageRow {
+  name: string;
+  description?: string;
+  scope?: string;
+  path?: string;
+  uses: number;
+  last_used?: string;
+  pinned: boolean;
+  retired: boolean;
+  builtin: boolean;
+  /** The curator calls this skill idle: a retirement candidate. */
+  suggested_retire: boolean;
+  idle_days?: number;
+  reason?: string;
+}
+
+export interface SkillArchiveRow {
+  id: string;
+  name: string;
+  scope?: string;
+  skill_path: string;
+  archive_path: string;
+  created_at?: string;
+  restored_at?: string;
+  restored: boolean;
+}
+
+export interface SkillLifecycleState {
+  enabled: boolean;
+  stale_after_days: number;
+  min_uses: number;
+  usage_window_days: number;
+  min_stale_after_days: number;
+  max_stale_after_days: number;
+  default_stale_after_days: number;
+  min_min_uses: number;
+  max_min_uses: number;
+  default_min_uses: number;
+  min_usage_window_days: number;
+  max_usage_window_days: number;
+  default_usage_window_days: number;
+  skills: SkillUsageRow[];
+  archives: SkillArchiveRow[];
+  /** False without a user database: nothing is recorded, nothing retires. */
+  usage_available: boolean;
+  /** False without the skills registry: nothing may be archived. */
+  curator_available: boolean;
+}
+
+export interface SkillLifecycleSettingsRequest {
+  enabled: boolean;
+  stale_after_days: number;
+  min_uses: number;
+  usage_window_days: number;
+}
+
+// DelegationState is the delegation policy card's whole state: the
+// effective service limits, the target policy, and the writable bounds
+// plus the targets this runtime currently offers.
+export interface DelegationState {
+  max_concurrency: number;
+  max_depth: number;
+  allowed_targets: string[];
+  blocked_targets: string[];
+  min_max_concurrency: number;
+  max_max_concurrency: number;
+  default_max_concurrency: number;
+  min_max_depth: number;
+  max_max_depth: number;
+  default_max_depth: number;
+  max_targets: number;
+  targets: string[];
+  /** False without a live runtime: the policy is still editable. */
+  targets_available: boolean;
+}
+
+export interface DelegationSettingsRequest {
+  max_concurrency: number;
+  max_depth: number;
+  allowed_targets: string[];
+  blocked_targets: string[];
+}
+
 // ActiveRunDTO mirrors App.ActiveRun: the run id currently executing
 // in one conversation, or empty when the conversation is idle.
 export interface ActiveRunDTO {

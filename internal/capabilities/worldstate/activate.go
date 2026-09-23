@@ -60,6 +60,12 @@ func (activateObserverFactory) New(_ context.Context, in resource.Input) (any, e
 
 // activateObserver persists model-requested skill mentions. Observer
 // side effects are best-effort: failures must not fail the run.
+//
+// It deliberately records no usage: a request is a wish, and the use
+// happens when the next turn actually injects the skill. That write
+// lives in skillsSections, which sees the mentions, the ranked list and
+// the model-requested activations together and can therefore count each
+// skill once per turn instead of twice.
 type activateObserver struct {
 	agent.BaseObserver
 

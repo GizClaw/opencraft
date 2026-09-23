@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, Sparkles, X } from 'lucide-react';
 import { api } from '../lib/api';
-import type { SkillDTO } from '../lib/types';
+import { formatDateTime } from '../lib/datetime';
+import type { SkillDTO, SkillUsageRow } from '../lib/types';
 import { Markdown } from './Markdown';
+import { Badge } from './ui/Badge';
 import { ICON } from './ui/icon';
 import { Overlay } from './ui/Overlay';
 import { useFilePreview } from './viewer/FilePreviewModal';
@@ -14,9 +16,12 @@ import { useFilePreview } from './viewer/FilePreviewModal';
 // in that body open in a preview dialog above the drawer.
 export function SkillDetailDrawer({
   skill,
+  lifecycle,
   onClose,
 }: {
   skill: SkillDTO;
+  /** Usage and the pin/retire decisions, when a user database is open. */
+  lifecycle?: SkillUsageRow;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -105,6 +110,37 @@ export function SkillDetailDrawer({
               {skill.path}
             </p>
           </div>
+
+          {lifecycle !== undefined && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-dim">
+              <span>
+                {lifecycle.uses === 0
+                  ? t('config.skillsNeverUsed')
+                  : t('config.skillsUses', { uses: lifecycle.uses })}
+              </span>
+              {lifecycle.last_used !== undefined &&
+                lifecycle.last_used !== '' && (
+                  <span>
+                    {t('config.skillsLastUsed', {
+                      when: formatDateTime(lifecycle.last_used),
+                    })}
+                  </span>
+                )}
+              {lifecycle.pinned && (
+                <Badge tone="accent">{t('config.skillsPinned')}</Badge>
+              )}
+              {lifecycle.retired && (
+                <Badge tone="warn">{t('config.skillsRetired')}</Badge>
+              )}
+              {lifecycle.suggested_retire && (
+                <Badge tone="warn">
+                  {t('config.skillsSuggestedArchive', {
+                    days: lifecycle.idle_days ?? 0,
+                  })}
+                </Badge>
+              )}
+            </div>
+          )}
 
           <section className="min-w-0">
             <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-dim">

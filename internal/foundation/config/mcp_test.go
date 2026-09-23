@@ -203,3 +203,43 @@ func TestWriteMCPRejectsNonMappingUserLayer(t *testing.T) {
 		t.Fatal("WriteMCP over a non-mapping user layer must fail")
 	}
 }
+
+// TestWriteMCPMergesHandWrittenToolsResource guards the merge path of
+// the user-layer writer: a layer that declares its own tools deps keeps
+// them when MCP servers are saved on top, because only tool.mcp is
+// generator-owned inside that resource.
+func TestWriteMCPMergesHandWrittenToolsResource(t *testing.T) {
+	dir := t.TempDir()
+	existing := `version: v1
+resources:
+  tools:
+    kind: tool.Assembly
+    impl: opencraft
+    deps:
+      hand: tool.hand
+`
+	if err := os.WriteFile(
+		filepath.Join(dir, "opencraft.yaml"), []byte(existing), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMCP(dir, []MCPServer{{
+		Name:      "my-server",
+		Transport: "stdio",
+		Command:   "my-mcp-server",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"hand: tool.hand", "impl: opencraft", "tool.mcp: tool.mcp",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("the merged layer lost %q:\n%s", want, text)
+		}
+	}
+}

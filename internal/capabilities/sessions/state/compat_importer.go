@@ -45,6 +45,12 @@ func (i workspaceImporter) SetState(
 	return i.store.SetConversationState(ctx, conversationID, name, data)
 }
 
+// BackfillSearchIndex indexes the archived messages a database written
+// before the full-text index (migration 016) holds.
+func (i workspaceImporter) BackfillSearchIndex(ctx context.Context) error {
+	return i.store.BackfillSearchIndex(ctx)
+}
+
 // ImportConversation writes one legacy session: its row, every archived
 // turn with its messages, the per-session state documents, and finally
 // the metadata the legacy schema carried (title, usage, import origin).

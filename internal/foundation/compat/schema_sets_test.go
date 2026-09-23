@@ -29,7 +29,7 @@ func TestWorkspaceAndUserMigrationSets(t *testing.T) {
 	for _, table := range []string{
 		"conversations", "archive_turns", "archive_messages",
 		"conversation_state", "agent_checkpoints", "session_settings",
-		"memory_items", "summary_nodes",
+		"memory_items", "summary_nodes", "message_fts",
 	} {
 		var n int
 		if err := ws.SQLDB().QueryRowContext(ctx,
@@ -55,7 +55,8 @@ func TestWorkspaceAndUserMigrationSets(t *testing.T) {
 		t.Fatalf("user migrations must be idempotent: %v", err)
 	}
 	for _, table := range []string{"model_usage", "model_usage_hourly",
-		"automations", "automation_runs"} {
+		"automations", "automation_runs", "user_memory", "skill_usage",
+		"skill_state", "skill_archive", "review_suggestions"} {
 		var n int
 		if err := user.SQLDB().QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM sqlite_master

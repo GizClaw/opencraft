@@ -136,6 +136,84 @@ export function mockBackend(cfg?: MockConfig) {
 
   const emptyList: Handler = async () => [];
   const noop: Handler = async () => undefined;
+  // The long-term memory card renders its counts from UserMemoryState and
+  // its rows from MemoryFacts, so the mock answers a complete state
+  // instead of `undefined` (which would render as an empty-looking crash).
+  const userMemoryState: Handler = async () => ({
+    enabled: true,
+    inject_max_items: 12,
+    inject_max_chars: 2048,
+    min_inject_max_items: 1,
+    max_inject_max_items: 50,
+    default_inject_max_items: 12,
+    min_inject_max_chars: 256,
+    max_inject_max_chars: 16384,
+    default_inject_max_chars: 2048,
+    max_items: 200,
+    max_text_bytes: 4096,
+    available: true,
+    workspace: config.workspace ?? '/workspace',
+    live: 0,
+    stale: 0,
+  });
+  const reviewState: Handler = async () => ({
+    enabled: false,
+    every_turns: 5,
+    min_tool_calls: 4,
+    on_failure: true,
+    max_suggestions: 3,
+    timeout_seconds: 90,
+    min_every_turns: 1,
+    max_every_turns: 100,
+    default_every_turns: 5,
+    min_min_tool_calls: 0,
+    max_min_tool_calls: 100,
+    default_min_tool_calls: 4,
+    min_max_suggestions: 1,
+    max_max_suggestions: 10,
+    min_timeout_seconds: 15,
+    max_timeout_seconds: 600,
+    available: true,
+    pending: 0,
+    accepted: 0,
+    discarded: 0,
+  });
+  const skillLifecycleState: Handler = async () => ({
+    enabled: true,
+    stale_after_days: 45,
+    min_uses: 3,
+    usage_window_days: 90,
+    min_stale_after_days: 7,
+    max_stale_after_days: 365,
+    default_stale_after_days: 45,
+    min_min_uses: 1,
+    max_min_uses: 50,
+    default_min_uses: 3,
+    min_usage_window_days: 14,
+    max_usage_window_days: 365,
+    default_usage_window_days: 90,
+    skills: [],
+    archives: [],
+    usage_available: true,
+    curator_available: true,
+  });
+  // The delegation policy card reads its limits, bounds and the
+  // registered targets in one state call.
+  const delegationState: Handler = async () => ({
+    max_concurrency: 4,
+    max_depth: 8,
+    allowed_targets: [],
+    blocked_targets: [],
+    min_max_concurrency: 1,
+    max_max_concurrency: 16,
+    default_max_concurrency: 4,
+    min_max_depth: 1,
+    max_max_depth: 16,
+    default_max_depth: 8,
+    max_targets: 64,
+    targets: ['assistant'],
+    targets_available: true,
+  });
 
   const defaults: Record<string, Record<string, Handler>> = {
     Agent: {
@@ -177,6 +255,13 @@ export function mockBackend(cfg?: MockConfig) {
       SaveInstances: noop,
       SaveMCP: noop,
       SaveMemory: noop,
+      UserMemoryState: userMemoryState,
+      MemoryFacts: emptyList,
+      AddMemoryFact: noop,
+      UpdateMemoryFact: noop,
+      RemoveMemoryFact: noop,
+      SetMemoryFactStale: noop,
+      SaveUserMemorySettings: noop,
       SaveToolOptions: noop,
       TestMCP: noop,
       ToolOptions: async () => ({
@@ -220,6 +305,26 @@ export function mockBackend(cfg?: MockConfig) {
       SaveWebSearch: noop,
       TestWebSearch: async () => ({ provider: 'parallel', results: [] }),
       Version: async () => '0.1.0-test',
+    },
+    Review: {
+      AcceptReviewSuggestion: noop,
+      DiscardReviewSuggestion: noop,
+      ReviewSettings: reviewState,
+      ReviewSuggestions: emptyList,
+      SaveReviewSettings: noop,
+    },
+    SkillLifecycle: {
+      PinSkill: noop,
+      RestoreSkill: noop,
+      RetireSkill: noop,
+      SkillArchives: emptyList,
+      SkillUsage: skillLifecycleState,
+      UnpinSkill: noop,
+      SaveSkillLifecycleSettings: noop,
+    },
+    Delegation: {
+      DelegationState: delegationState,
+      SaveDelegationSettings: noop,
     },
     Conversation: {
       CancelTurn: noop,

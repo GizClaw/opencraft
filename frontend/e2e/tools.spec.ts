@@ -225,3 +225,41 @@ test('configures web search from the tools tab', async ({ page }) => {
     keys: { brave: 'bv-123' },
   });
 });
+
+test('configures the delegation policy from the tools tab', async ({
+  page,
+}) => {
+  await page.addInitScript(
+    mockBackend as never,
+    {
+      handlers: {
+        'Delegation.SaveDelegationSettings':
+          'async (req) => { globalThis.__savedDelegation = req; }',
+      },
+    } as never,
+  );
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'Tools' }).click();
+
+  await page.getByText('Delegation', { exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delegation' });
+  await expect(dialog).toBeVisible();
+
+  await dialog.getByLabel('Concurrent delegations').fill('6');
+  // One target from the registered list, one pattern typed by hand.
+  await dialog.getByRole('button', { name: 'Allow assistant' }).click();
+  const addFields = dialog.getByLabel('Add');
+  await addFields.nth(1).fill('danger*');
+  await addFields.nth(1).press('Enter');
+  await dialog.getByRole('button', { name: 'Save & apply' }).click();
+
+  const saved = await page.evaluate(
+    () => (globalThis as { __savedDelegation?: unknown }).__savedDelegation,
+  );
+  expect(saved).toMatchObject({
+    max_concurrency: 6,
+    allowed_targets: ['assistant'],
+    blocked_targets: ['danger*'],
+  });
+});

@@ -44,6 +44,9 @@ agents:
           execpolicy: execpolicy
           sessions: sessions
           skills: skills
+          # Optional: the user-level long-term memory binding. A runtime
+          # without a user database injects no memory section.
+          usermemory: usermemory
         settings:
           work_dir: ${ocraft:WORKDIR}
           user_dir: ${ocraft:APP_HOME}
@@ -78,3 +81,16 @@ agents:
         deps:
           skills: skills
           sessions: sessions
+      # Post-turn write-back review: after a turn that looks worth
+      # reviewing (the configured cadence, enough tool use, or a
+      # failure) one bounded inference call proposes durable facts and
+      # queues them for the user's verdict. Off by default; nothing is
+      # written into long-term memory without acceptance.
+      - type: opencraft.review
+        deps:
+          queue: review
+          memory: usermemory
+          skills: skills
+          sessions: sessions
+          router: router
+          observer: observer

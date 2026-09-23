@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useStore } from '../lib/store';
 import type { InteractDTO } from '../lib/types';
 import { InteractionCard } from './InteractionCard';
 
@@ -54,5 +55,119 @@ describe('InteractionCard severity', () => {
     // Go marshals a nil body slice as null.
     render(<InteractionCard spec={spec({ body: null as never })} />);
     expect(screen.getByText('Allow running rm -rf?')).toBeInTheDocument();
+  });
+});
+
+const ALLOW = { label: 'Allow once', value: 'allow_once' };
+const DENY = { label: 'Deny', value: 'deny' };
+
+describe('InteractionCard keyboard', () => {
+  const replyInteract = vi.fn(async () => undefined);
+
+  beforeEach(() => {
+    replyInteract.mockClear();
+    useStore.setState({ replyInteract });
+  });
+
+  it('takes the keyboard when the prompt arrives', () => {
+    // The host is blocked on this prompt; the mouse should not be
+    // required to reach it.
+    render(<InteractionCard spec={spec({ options: [ALLOW, DENY] })} />);
+    expect(screen.getByLabelText('Allow once')).toHaveFocus();
+  });
+
+  it('answers the choice the user made on Enter', () => {
+    render(<InteractionCard spec={spec({ options: [ALLOW, DENY] })} />);
+    const deny = screen.getByLabelText('Deny');
+    fireEvent.click(deny);
+    fireEvent.keyDown(deny, { key: 'Enter' });
+    expect(replyInteract).toHaveBeenCalledTimes(1);
+    expect(replyInteract).toHaveBeenCalledWith('p-1', {
+      text: '',
+      option: 'deny',
+      options: undefined,
+    });
+  });
+
+  it('leaves a bare Enter unanswered', () => {
+    // Nothing is preselected, so Enter can never approve a prompt by
+    // itself.
+    render(<InteractionCard spec={spec({ options: [ALLOW, DENY] })} />);
+    fireEvent.keyDown(screen.getByLabelText('Allow once'), { key: 'Enter' });
+    expect(replyInteract).not.toHaveBeenCalled();
+  });
+
+  it('submits a typed answer from the answer field', () => {
+    render(<InteractionCard spec={spec({ kind: 'text', options: [] })} />);
+    const field = screen.getByPlaceholderText('Type your answer…');
+    expect(field).toHaveFocus();
+    fireEvent.change(field, { target: { value: 'use the staging bucket' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(replyInteract).toHaveBeenCalledWith('p-1', {
+      text: 'use the staging bucket',
+      option: null,
+      options: undefined,
+    });
+  });
+
+  it('leaves Shift+Enter to the answer field', () => {
+    render(<InteractionCard spec={spec({ kind: 'text', options: [] })} />);
+    const field = screen.getByPlaceholderText('Type your answer…');
+    fireEvent.change(field, { target: { value: 'first line' } });
+    fireEvent.keyDown(field, { key: 'Enter', shiftKey: true });
+    expect(replyInteract).not.toHaveBeenCalled();
+  });
+
+  it('ignores the Enter that confirms an IME candidate', () => {
+    render(<InteractionCard spec={spec({ kind: 'text', options: [] })} />);
+    const field = screen.getByPlaceholderText('Type your answer…');
+    fireEvent.change(field, { target: { value: '提交' } });
+    fireEvent.keyDown(field, { key: 'Enter', isComposing: true });
+    // WebKit reports the composing Enter as keyCode 229 instead.
+    fireEvent.keyDown(field, { key: 'Enter', keyCode: 229 });
+    expect(replyInteract).not.toHaveBeenCalled();
+  });
+
+  it('sends a custom answer typed into the other field', () => {
+    render(
+      <InteractionCard
+        spec={spec({ options: [ALLOW, DENY], allow_other: true })}
+      />,
+    );
+    const other = screen.getByPlaceholderText('Other (custom input)…');
+    fireEvent.change(other, { target: { value: 'only for this run' } });
+    fireEvent.keyDown(other, { key: 'Enter' });
+    expect(replyInteract).toHaveBeenCalledWith('p-1', {
+      text: 'only for this run',
+      option: null,
+      options: undefined,
+    });
+  });
+
+  it('lets the buttons keep their own Enter', () => {
+    // Enter on a button clicks it; submitting here as well would send
+    // the prompt twice.
+    render(<InteractionCard spec={spec({ kind: 'text', options: [] })} />);
+    fireEvent.change(screen.getByPlaceholderText('Type your answer…'), {
+      target: { value: 'hi' },
+    });
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Submit' }), {
+      key: 'Enter',
+    });
+    expect(replyInteract).not.toHaveBeenCalled();
+  });
+
+  it('hands the keyboard back once answered', () => {
+    const onAnswered = vi.fn();
+    render(
+      <InteractionCard
+        spec={spec({ kind: 'text', options: [] })}
+        onAnswered={onAnswered}
+      />,
+    );
+    const field = screen.getByPlaceholderText('Type your answer…');
+    fireEvent.change(field, { target: { value: 'done' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(onAnswered).toHaveBeenCalledTimes(1);
   });
 });

@@ -23,6 +23,35 @@ type RedactSettings struct {
 	Rules   []RedactRuleSettings `json:"rules,omitempty"`
 }
 
+// CompileTextRedactor compiles the configured rules into a whole-string
+// rewriter, or returns nil when redaction is off (or configured with no
+// rules). Tools that persist free text reuse the middleware's rule
+// shape, so the deploy document says once what a secret looks like —
+// [compileRedactRules] is the same compilation the result middleware
+// uses.
+func CompileTextRedactor(settings RedactSettings) (func(string) string, error) {
+	if !settings.Enabled {
+		return nil, nil
+	}
+	rules, err := compileRedactRules(settings.Rules)
+	if err != nil {
+		return nil, err
+	}
+	if len(rules) == 0 {
+		return nil, nil
+	}
+	return func(text string) string {
+		for _, rule := range rules {
+			replacement := rule.Replacement
+			if replacement == "" {
+				replacement = toolmiddleware.DefaultRedaction
+			}
+			text = rule.Pattern.ReplaceAllString(text, replacement)
+		}
+		return text
+	}, nil
+}
+
 // compileRedactRules validates and compiles the configured rules.
 func compileRedactRules(specs []RedactRuleSettings) ([]toolmiddleware.RedactRule, error) {
 	rules := make([]toolmiddleware.RedactRule, 0, len(specs))

@@ -101,6 +101,17 @@ resources:
     impl: opencraft/plan
     deps:
       sessions: sessions
+  # Cross-session recall: full-text search over this workspace's
+  # archived conversations, so a decision made in an earlier session is
+  # found instead of repeated. Discovery stays deferred (the tool is
+  # not listed under dynamic.exposures), so the model finds it through
+  # tool_search — recall requests are infrequent and the definition
+  # does not need a permanent slot in the prompt.
+  tool.sessionsearch:
+    kind: tool.Source
+    impl: opencraft/sessionsearch
+    deps:
+      sessions: sessions
   tool.skills:
     kind: tool.Source
     impl: opencraft/skills
@@ -176,6 +187,10 @@ resources:
     impl: opencraft
     deps:
       hooks: hooks
+      # Optional: the curated delegation target policy. The assembly
+      # enforces it on delegate calls, so a deployment without the
+      # resource simply allows every registered target.
+      policy: delegate.policy
       tool: tool.exec
       tool.applypatch: tool.applypatch
       tool.webfetch: tool.webfetch
@@ -187,6 +202,8 @@ resources:
       tool.imagegen: tool.imagegen
       tool.videogen: tool.videogen
       tool.plan: tool.plan
+      tool.sessionsearch: tool.sessionsearch
+      tool.remember: tool.remember
       tool.skills: tool.skills
       tool.plugins: tool.plugins
       tool.plugininstall: tool.plugininstall
@@ -225,10 +242,13 @@ resources:
           work_dir: ${ocraft:WORKDIR}
         # Best-effort secret stripping from tool results before the
         # model sees them. The same rules always apply to the audit
-        # trail below, even when this middleware is disabled.
+        # trail below, even when this middleware is disabled. The list
+        # is anchored so the remember tool (defined further down) can
+        # refuse the same text: one place decides what a secret looks
+        # like, for both what leaves the runtime and what is stored.
         redact:
           enabled: true
-          rules:
+          rules: &secret_rules
             - pattern: "sk-(?:[A-Za-z0-9]{16,})"
             # OpenAI project keys and Anthropic API keys contain hyphens
             # (sk-proj-..., sk-ant-...), which the legacy sk- rule does
@@ -300,3 +320,22 @@ resources:
           # Internal machinery: callable by exact name (the compact
           # graph node), never offered to the model.
           compact: hidden
+  # Durable memory: the model stores a preference, an environment fact
+  # or a project convention in the user-level long-term memory, where it
+  # is injected into every later turn. The source is contributed only
+  # when a user database is open, so a headless run without one simply
+  # has no remember tool. Defined after the tools assembly because it
+  # aliases the secret rules anchored there: a fact that matches a rule
+  # is refused, not stored.
+  tool.remember:
+    kind: tool.Source
+    impl: opencraft/remember
+    deps:
+      usermemory: usermemory
+    settings:
+      work_dir: ${ocraft:WORKDIR}
+      max_operations: 5
+      max_text_chars: 600
+      redact:
+        enabled: true
+        rules: *secret_rules

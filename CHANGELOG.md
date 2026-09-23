@@ -8,6 +8,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Past sessions are searchable by the assistant, not only by the UI: the
+  `session_search` tool runs a full-text recall over this workspace's
+  archived turns (SQLite FTS5, trigram tokenizer, so a substring inside
+  Chinese text matches too). The index stores the message's prompt
+  projection — its text plus the tool lines a reader would see, never the
+  stored JSON — is written in the same transaction as the archive row,
+  and databases written before it existed are backfilled once at open.
+  Queries shorter than three characters fall back to a substring scan
+  with the fallback reported in the tool's note, hits are de-duplicated
+  per conversation, and each hit carries a snippet with the match marked.
+  The tool is deferred: the model discovers it through tool_search.
+- The assistant can remember facts across sessions. A user-level store
+  (`user.db`) holds them with the workspace and conversation they came
+  from; the `remember` tool asks for confirmation before writing,
+  applies the same secret rules the tool-result middleware applies and
+  refuses text that looks like a credential instead of storing a
+  redacted version. Dedupe, caps and provenance live in the store, so
+  the settings page, the tool and an accepted review suggestion all
+  write through one path. Live facts are injected at the top of every
+  turn (bounded by count and by a byte budget, newest first, with the
+  number that did not fit reported) and the section is re-read each
+  turn, so an accepted fact is live on the next one. Settings ▸ Memory
+  gained a card for browsing, editing, staling and deleting facts.
+- A post-turn write-back review proposes facts worth keeping. When
+  enabled — it ships off — and the turn meets the configured cadence and
+  tool-use threshold, one inference call reviews the finished turn and
+  returns strict JSON candidates; they wait in a pending queue in the
+  settings card, and accepting one writes it through the same user-memory
+  path as the tool. A review never reviews its own work (the recursion
+  guard covers the marker, the conversation and the in-flight slot),
+  never spends calls on subagent traffic, and records its own usage.
+- Skills track how they are used and can be retired without losing
+  anything. Each activation records a use under the skill's key; the
+  skills page shows uses, last used, pins and retirement state, and the
+  curator marks idle rarely-used skills as candidates. Retiring a skill
+  snapshots it to a tar.gz under the app home and records the archive;
+  restoring puts it back. Builtin skills are never candidates and no
+  file is ever deleted.
+- Delegated runs are visible end to end. The desktop now supplies the
+  stream resolver and exporter core's delegation service takes, so an
+  asynchronous delegated run's deltas land in the conversation that
+  asked for it and the finished run's result flows back into the parent
+  transcript once (idempotent by child run). The SubagentDock nests a
+  delegated run under the run that spawned it (collapse/expand, open the
+  child conversation), and Settings ▸ Tools gained a delegation card:
+  the concurrency and depth limits plus the curated allow/block target
+  lists, enforced on every delegate call — hiding a target from the
+  listing is a hint, a call that names a restricted target is refused.
 - Mid-turn steering: a message submitted while a turn is running now
   reaches the model at the next tool-round boundary instead of waiting
   for the turn to end. Enter in the composer sends it
@@ -306,6 +354,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Saving MCP servers no longer drops the rest of a hand-written `tools`
+  resource. The user-layer merge that is supposed to deep-merge the
+  generated keys into the existing resource inserted them into the
+  document that gets discarded instead of the one that is written, so a
+  layer that declared its own `tools` deps (or its `kind`/`impl`) came
+  out with only the generated `tool.mcp` dep. The merged node now
+  reaches the file, which is what the delegation policy's save also
+  relies on: saving the limits keeps the `delegate` resource's deps and
+  any hand-added key.
+- The ⌘K palette opens with the caret already in its search field, and
+  closing a dialog hands focus back to where it came from. The panel
+  mounted one commit after the overlay that wires keyboard behaviour,
+  so it found nothing to trap; and React's own focus restore undid
+  the restore while a panel was still on screen for its exit animation,
+  which is how the composer lost the caret every time the palette
+  closed. An approval prompt that arrives while the caret is in the
+  composer now owns the keyboard (nothing is pre-selected; Space picks,
+  Enter answers), and answering it returns the caret to the composer.
 - A generation tool's dialog no longer opens inside the settings panel
   it was launched from. The panel clips its own overflow, and its
   entrance animation — like every panel's, drawer's, popover's and

@@ -102,7 +102,14 @@ export function Overlay({
     restoreFocus,
   });
 
-  if (!mounted) return null;
+  // The panel has to exist in the commit that flips `open`: the layer's
+  // focus/Tab-trap effect runs when `active` changes and inspects the
+  // container then, so a panel that mounts one commit later (mounted
+  // catches up in a layout effect) is never wired — that is how the ⌘K
+  // palette opened onto an unfocused input. Rendering on `open` as well
+  // keeps the panel in that commit; `mounted` still holds it through the
+  // exit animation.
+  if (!open && !mounted) return null;
   const [enter, leave] = PANEL_ANIM[variant];
   const scrim = variant === 'bare' ? null : SCRIM[variant];
   // A press that starts inside the panel and ends on the scrim (a drag

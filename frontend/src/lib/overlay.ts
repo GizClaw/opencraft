@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 
 // Floating-surface behaviour, shared by every overlay in the app: the
 // Escape stack, the focus trap, the scroll lock and the enter/exit
@@ -102,6 +108,15 @@ function focusable(container: HTMLElement): HTMLElement[] {
 }
 
 /**
+ * focusBack returns focus to a stored anchor. The anchor can outlive the
+ * layer that stored it (a menu trigger inside a dialog that just closed);
+ * focusing an orphan would throw focus to the body.
+ */
+function focusBack(target: HTMLElement | null) {
+  if (target?.isConnected) target.focus({ preventScroll: true });
+}
+
+/**
  * useOverlayLayer wires one floating surface into the shared overlay
  * behaviour while `active`. `onDismiss` runs when this layer owns
  * Escape; omit it for a surface Escape must not close (a destructive
@@ -137,22 +152,38 @@ export function useOverlayLayer({
 }) {
   const dismissRef = useRef(onDismiss);
   dismissRef.current = onDismiss;
+  // Where focus goes when the layer closes. The layout effect below
+  // reads it at open time; the effect after it re-asserts the same
+  // target once the commit is over.
+  const restoreToRef = useRef<HTMLElement | null>(null);
 
   useLayoutEffect(() => {
     if (!active) return;
     const restoreTo = document.activeElement as HTMLElement | null;
+    restoreToRef.current = restoreTo;
     const release = trackLatest(() => dismissRef.current);
     if (lock) lockScroll();
     return () => {
       release();
       if (lock) unlockScroll();
-      if (restoreFocus && restoreTo?.isConnected) {
-        // The anchor can outlive us (a menu trigger inside a dialog that
-        // just closed); focusing an orphan would throw focus to the body.
-        restoreTo.focus({ preventScroll: true });
-      }
+      if (restoreFocus) focusBack(restoreTo);
     };
   }, [active, lock, restoreFocus]);
+
+  // React restores focus itself at the end of the commit's mutation
+  // phase: it remembers what had it when the commit started and puts it
+  // back. A panel that is still on screen for its exit animation is a
+  // live element, so the restore above gets undone and the focus dies
+  // with the panel — the composer lost the caret every time the ⌘K
+  // palette closed. Re-assert once the commit is over, and only when the
+  // panel took focus back, so a surface that opened in the same commit
+  // keeps it.
+  useEffect(() => {
+    if (active || !restoreFocus) return;
+    const panel = containerRef.current;
+    if (panel === null || !panel.contains(document.activeElement)) return;
+    focusBack(restoreToRef.current);
+  }, [active, containerRef, restoreFocus]);
 
   useLayoutEffect(() => {
     if (!active) return;
@@ -208,6 +239,13 @@ export function useOverlayLayer({
  * animation. `open` drives the children; `closing` is true from the
  * moment it flips false until the unmount, so the caller can swap in the
  * exit animation class.
+ *
+ * `mounted` catches up to `open` in a layout effect, so a caller that
+ * renders nothing while it is false spends the opening commit off-DOM —
+ * and the effects that wire the surface up (initial focus, the Tab trap,
+ * measuring) then run against a null ref and never run again. Surfaces
+ * whose wiring must see the panel in that commit render on
+ * `open || mounted` instead.
  */
 export function usePresence(open: boolean, exitMs: number = MOTION.fast) {
   const [mounted, setMounted] = useState(open);

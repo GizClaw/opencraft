@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, HelpCircle, ShieldAlert, X } from 'lucide-react';
 import { Markdown } from './Markdown';
@@ -34,12 +34,23 @@ const SEVERITY: Record<
   },
 };
 
-export function InteractionCard({ spec }: { spec: InteractDTO }) {
+export function InteractionCard({
+  spec,
+  onAnswered,
+}: {
+  spec: InteractDTO;
+  /**
+   * The prompt is finished (answered or dismissed). The page uses it to
+   * hand the caret back to the composer, where the user goes next.
+   */
+  onAnswered?: () => void;
+}) {
   const replyInteract = useStore((s) => s.replyInteract);
   const openFileTarget = useStore((s) => s.openFileTarget);
   const [text, setText] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [other, setOther] = useState('');
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const { t } = useTranslation();
 
   // An unknown severity renders as notice: a prompt that arrived
@@ -77,10 +88,60 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
       option: !spec.multi && selected[0] ? selected[0] : null,
       options: spec.multi ? choices : undefined,
     });
+    onAnswered?.();
+  };
+
+  // What Enter is allowed to send: an answer the user actually made.
+  // Nothing is preselected, so Enter can never approve a prompt on its
+  // own — it only saves the click on Submit.
+  const hasAnswer =
+    spec.kind === 'text'
+      ? text.trim() !== ''
+      : selected.length > 0 || (spec.allow_other && other.trim() !== '');
+
+  // The host is waiting on this prompt, so the card takes the keyboard
+  // as it arrives: the first choice (or the answer field) is focused,
+  // and Enter answers from there. The first control in DOM order is the
+  // same one a mouse user would reach for first.
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (card === null) return;
+    (card.querySelector<HTMLElement>('input, textarea') ?? card).focus();
+  }, []);
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter') return;
+    // An Enter that is still confirming an IME candidate belongs to the
+    // field, not to us. 229 is the keyCode WebKit reports while a
+    // composition is in flight.
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+      return;
+    }
+    // Shift+Enter is the answer field's newline, and the modifier
+    // chords belong to the composer (⌘Enter interrupts the turn).
+    if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) {
+      return;
+    }
+    // The buttons answer on their own Enter; submitting here as well
+    // would send the prompt twice.
+    if (
+      event.target instanceof Element &&
+      event.target.closest('button') !== null
+    ) {
+      return;
+    }
+    if (!hasAnswer) return;
+    event.preventDefault();
+    submit();
   };
 
   return (
-    <div className={`my-3 rounded-card border bg-panel2 p-4 ${tone.border}`}>
+    <div
+      ref={cardRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      className={`my-3 rounded-card border bg-panel2 p-4 ${tone.border}`}
+    >
       <div className="flex items-center gap-2 text-sm font-medium">
         <Icon size={ICON.md} className={`shrink-0 ${tone.icon}`} />
         {spec.title || t('interact.needConfirm')}
@@ -126,7 +187,6 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={3}
-          autoFocus
           placeholder={t('interact.answerPlaceholder')}
           className="mt-3 w-full resize-y rounded-control border border-edge bg-panel px-3 py-2 text-sm outline-none focus:border-accent"
         />
@@ -138,12 +198,18 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
         </Button>
         <Button
           variant="quiet"
-          onClick={() =>
-            void replyInteract(spec.id, { text: '', cancel: true })
-          }
+          onClick={() => {
+            void replyInteract(spec.id, { text: '', cancel: true });
+            onAnswered?.();
+          }}
         >
           <X size={ICON.sm} /> {t('interact.cancel')}
         </Button>
+        <span className="ml-auto self-center text-micro text-faint">
+          {spec.kind === 'text'
+            ? t('interact.enterNewlineHint')
+            : t('interact.enterHint')}
+        </span>
       </div>
     </div>
   );

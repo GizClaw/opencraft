@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
 import { CommandPalette } from './CommandPalette';
@@ -19,6 +25,17 @@ beforeEach(() => {
 });
 
 describe('CommandPalette', () => {
+  it('moves focus into the search field when the shortcut opens it', () => {
+    // The app mounts the palette closed and opens it with ⌘K, so the
+    // caret has to land in the commit that brings the panel up.
+    useStore.setState({ paletteOpen: false });
+    render(<CommandPalette />);
+    expect(screen.queryByRole('combobox')).toBeNull();
+
+    act(() => useStore.setState({ paletteOpen: true }));
+    expect(screen.getByRole('combobox')).toHaveFocus();
+  });
+
   it('lists commands and filters them as the query changes', async () => {
     render(<CommandPalette />);
     const input = screen.getByRole('combobox');

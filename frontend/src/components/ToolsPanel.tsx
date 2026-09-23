@@ -8,8 +8,10 @@ import {
   Clock,
   Download,
   ExternalLink,
+  Archive,
   Loader2,
   MoreHorizontal,
+  Pin,
   Plug,
   Plus,
   Puzzle,
@@ -23,8 +25,9 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { formatDateTime } from '../lib/datetime';
 import { useStore } from '../lib/store';
-import type { MCPServer, MCPStatus } from '../lib/types';
+import type { MCPServer, MCPStatus, SkillLifecycleState } from '../lib/types';
 import { MCP_CATALOG, SKILL_CATALOG } from '../lib/catalog';
 import type { MCPCatalogEntry, SkillCatalogEntry } from '../lib/catalog';
 import { GitHubSearch } from './GitHubSearch';
@@ -1125,6 +1128,12 @@ export function SkillsSection() {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<SkillRow | null>(null);
+  // Usage and the pin/retire decisions come from the user database; the
+  // section keeps working without one, it just has nothing to show and
+  // nothing to archive.
+  const [lifecycle, setLifecycle] = useState<SkillLifecycleState | null>(null);
+  const [lifecycleBusy, setLifecycleBusy] = useState('');
+  const [skillToArchive, setSkillToArchive] = useState<SkillRow | null>(null);
   const installedNames = useMemo(
     () => new Set(skills.map((s) => s.name)),
     [skills],
@@ -1163,10 +1172,69 @@ export function SkillsSection() {
 
   const reloadSkills = () => {
     setError('');
+    void reloadLifecycle();
     return api
       .skills()
       .then(setSkills)
       .catch((err) => setError(String(err)));
+  };
+
+  // reloadLifecycle is best-effort: a build without a user database has
+  // no usage to report, and that must not read as a broken skills list.
+  const reloadLifecycle = () =>
+    api
+      .skillLifecycle()
+      .then(setLifecycle)
+      .catch(() => setLifecycle(null));
+
+  /** usageOf joins one registry row with what the database recorded. */
+  const usageOf = (name: string) =>
+    lifecycle?.skills.find((row) => row.name === name);
+
+  const setPinned = async (row: SkillRow, pinned: boolean) => {
+    setLifecycleBusy(row.name);
+    setError('');
+    try {
+      if (pinned) {
+        await api.unpinSkill(row.name, row.scope);
+      } else {
+        await api.pinSkill(row.name, row.scope);
+      }
+      await reloadLifecycle();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLifecycleBusy('');
+    }
+  };
+
+  // Archiving goes through the curator on the Go side: it snapshots the
+  // skill before flagging it, so nothing here deletes anything.
+  const archiveSkill = async (row: SkillRow) => {
+    setLifecycleBusy(row.name);
+    setError('');
+    try {
+      await api.retireSkill(row.name, row.scope);
+      setSkillToArchive(null);
+      await Promise.all([reloadSkills(), reloadLifecycle()]);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLifecycleBusy('');
+    }
+  };
+
+  const restoreSkill = async (id: string) => {
+    setLifecycleBusy(id);
+    setError('');
+    try {
+      await api.restoreSkill(id);
+      await Promise.all([reloadSkills(), reloadLifecycle()]);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setLifecycleBusy('');
+    }
   };
 
   const deleteSkill = async (path: string) => {
@@ -1345,6 +1413,7 @@ export function SkillsSection() {
         <ul className="flex flex-col gap-2">
           {filteredSkills.map((s) => {
             const removable = s.scope !== 'builtin' && !s.plugin_id;
+            const usage = usageOf(s.name);
             const scopeLabel =
               s.scope === 'builtin'
                 ? t('config.skillsScopeBuiltin')
@@ -1396,6 +1465,41 @@ export function SkillsSection() {
                           {s.description}
                         </span>
                       )}
+                      {lifecycle !== null && (
+                        <span className="mt-1 flex flex-wrap items-center gap-1.5 text-micro text-dim">
+                          <span>
+                            {usage === undefined || usage.uses === 0
+                              ? t('config.skillsNeverUsed')
+                              : t('config.skillsUses', { uses: usage.uses })}
+                          </span>
+                          {usage !== undefined &&
+                            usage.last_used !== undefined &&
+                            usage.last_used !== '' && (
+                              <span>
+                                {t('config.skillsLastUsed', {
+                                  when: formatDateTime(usage.last_used),
+                                })}
+                              </span>
+                            )}
+                          {usage?.pinned === true && (
+                            <Badge tone="accent">
+                              {t('config.skillsPinned')}
+                            </Badge>
+                          )}
+                          {usage?.retired === true && (
+                            <Badge tone="warn">
+                              {t('config.skillsRetired')}
+                            </Badge>
+                          )}
+                          {usage?.suggested_retire === true && (
+                            <Badge tone="warn">
+                              {t('config.skillsSuggestedArchive', {
+                                days: usage.idle_days ?? 0,
+                              })}
+                            </Badge>
+                          )}
+                        </span>
+                      )}
                     </span>
                   </button>
                   {removable && (
@@ -1426,6 +1530,40 @@ export function SkillsSection() {
                         align="end"
                         panelClassName="w-44 rounded-control border border-edge bg-panel p-1 shadow-popover"
                       >
+                        {lifecycle?.usage_available === true && (
+                          <>
+                            <button
+                              role="menuitem"
+                              disabled={lifecycleBusy === s.name}
+                              onClick={() => {
+                                setMenuFor(null);
+                                void setPinned(s, usage?.pinned === true);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel hover:text-fg disabled:opacity-40"
+                            >
+                              <Pin size={ICON.xs} className="shrink-0" />
+                              <span className="flex-1 text-left">
+                                {usage?.pinned === true
+                                  ? t('config.skillsUnpin')
+                                  : t('config.skillsPin')}
+                              </span>
+                            </button>
+                            <button
+                              role="menuitem"
+                              disabled={lifecycleBusy === s.name}
+                              onClick={() => {
+                                setMenuFor(null);
+                                setSkillToArchive(s);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel hover:text-fg disabled:opacity-40"
+                            >
+                              <Archive size={ICON.xs} className="shrink-0" />
+                              <span className="flex-1 text-left">
+                                {t('config.skillsArchive')}
+                              </span>
+                            </button>
+                          </>
+                        )}
                         <button
                           role="menuitem"
                           onClick={() => {
@@ -1448,6 +1586,49 @@ export function SkillsSection() {
           })}
         </ul>
       )}
+      {lifecycle !== null && lifecycle.usage_available !== true && (
+        <p className="mt-2 rounded-control border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+          {t('config.skillsLifecycleUnavailable')}
+        </p>
+      )}
+      {lifecycle !== null && lifecycle.archives.length > 0 && (
+        <div className="mt-3 rounded-card border border-edge bg-panel2 p-3">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-dim">
+            {t('config.skillsArchives')}
+          </h4>
+          <p className="mt-1 text-micro text-faint">
+            {t('config.skillsArchivesHint')}
+          </p>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {lifecycle.archives.map((archive) => (
+              <li key={archive.id} className="flex items-center gap-2 text-xs">
+                <Archive size={ICON.xs} className="shrink-0 text-dim" />
+                <span className="min-w-0 flex-1 truncate">{archive.name}</span>
+                {archive.created_at !== undefined &&
+                  archive.created_at !== '' && (
+                    <span className="shrink-0 text-micro text-faint">
+                      {t('config.skillsArchivedAt', {
+                        when: formatDateTime(archive.created_at),
+                      })}
+                    </span>
+                  )}
+                {archive.restored ? (
+                  <Badge tone="ok">{t('config.skillsRestored')}</Badge>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    loading={lifecycleBusy === archive.id}
+                    onClick={() => void restoreSkill(archive.id)}
+                  >
+                    {t('config.skillsRestore')}
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <ConfirmDialog
         open={skillToDelete !== null}
         tone="danger"
@@ -1460,9 +1641,22 @@ export function SkillsSection() {
           if (skillToDelete !== null) void deleteSkill(skillToDelete.path);
         }}
       />
+      <ConfirmDialog
+        open={skillToArchive !== null}
+        tone="warning"
+        title={t('config.skillsArchiveConfirm', {
+          name: skillToArchive?.name ?? '',
+        })}
+        confirmLabel={t('config.skillsArchive')}
+        onCancel={() => setSkillToArchive(null)}
+        onConfirm={() => {
+          if (skillToArchive !== null) void archiveSkill(skillToArchive);
+        }}
+      />
       {selectedSkill && (
         <SkillDetailDrawer
           skill={selectedSkill}
+          lifecycle={usageOf(selectedSkill.name)}
           onClose={() => setSelectedSkill(null)}
         />
       )}

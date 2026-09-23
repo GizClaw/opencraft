@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -14,7 +15,9 @@ import (
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
@@ -1046,4 +1049,141 @@ func unmarshalSections(t *testing.T, board *agent.Board) []Section {
 		t.Fatalf("sections = %q: %v", raw, err)
 	}
 	return sections
+}
+
+// countingLifecycle records the usage events one turn writes. The
+// embedded lifecycle supplies the read half (no decisions, no
+// archives), so these tests pin the write path only.
+type countingLifecycle struct {
+	skillusage.Lifecycle
+	mu     sync.Mutex
+	events []skillusage.Event
+}
+
+func newCountingLifecycle() *countingLifecycle {
+	return &countingLifecycle{Lifecycle: skillusage.EmptyLifecycle()}
+}
+
+func (c *countingLifecycle) Empty() bool { return false }
+
+func (c *countingLifecycle) Record(
+	_ context.Context, event skillusage.Event,
+) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, event)
+	return nil
+}
+
+func (c *countingLifecycle) snapshot() []skillusage.Event {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]skillusage.Event(nil), c.events...)
+}
+
+func eventsByName(events []skillusage.Event) map[string]int {
+	out := map[string]int{}
+	for _, event := range events {
+		out[event.Name]++
+	}
+	return out
+}
+
+// newRecordingWorldState discovers the fixture skills under an isolated
+// HOME and wires a usage recorder, so a render writes somewhere
+// observable instead of into the empty lifecycle.
+func newRecordingWorldState(t *testing.T) (*Service, *skills.Service, *countingLifecycle) {
+	t.Helper()
+	home := t.TempDir()
+	writeSkillFile(t, home, "review", "review code and docs")
+	writeSkillFile(t, home, "plan", "build execution plans")
+	svc := skills.NewService(context.Background(),
+		skills.Options{Enabled: true, TopN: 5})
+	recorder := newCountingLifecycle()
+	svc.SetLifecycle(recorder, config.SkillLifecycleConfig{
+		Enabled: true, StaleAfterDays: 45, MinUses: 3, UsageWindowDays: 90,
+	}, t.TempDir())
+	ws := New(Options{WorkBase: home})
+	ws.SetSkills(svc)
+	return ws, svc, recorder
+}
+
+// TestRenderTurnRecordsRankedSkills pins the per-turn usage write: every
+// skill the turn puts in front of the model counts once, attributed to
+// the run it happened in.
+func TestRenderTurnRecordsRankedSkills(t *testing.T) {
+	ws, _, recorder := newRecordingWorldState(t)
+	if err := ws.RenderTurn(context.Background(), agent.Identity{
+		AgentID: "assistant", RunID: "run-7", ConversationID: "s-c1",
+	}, "please review the docs", nil, agent.NewBoard()); err != nil {
+		t.Fatal(err)
+	}
+
+	events := recorder.snapshot()
+	if len(events) == 0 {
+		t.Fatal("a turn that injected skills recorded no usage")
+	}
+	for _, event := range events {
+		if event.RunID != "run-7" || event.ConversationID != "s-c1" {
+			t.Fatalf("event %+v is not attributed to the turn", event)
+		}
+		if event.Scope == "" {
+			t.Fatalf("event %+v carries no scope", event)
+		}
+		if event.UsedAt.IsZero() {
+			t.Fatalf("event %+v has no timestamp", event)
+		}
+		if event.Name == "review" && event.Scope != "user" {
+			t.Fatalf("review scope = %q, want the user root it came from",
+				event.Scope)
+		}
+	}
+	if counts := eventsByName(events); counts["review"] != 1 {
+		t.Fatalf("review counted %d times, want 1 (%+v)", counts["review"], events)
+	}
+}
+
+// TestRenderTurnCountsAMentionedSkillOnce keeps the counters honest: a
+// $mention that also ranks is one skill in front of the model, so it is
+// one event, not two.
+func TestRenderTurnCountsAMentionedSkillOnce(t *testing.T) {
+	ws, _, recorder := newRecordingWorldState(t)
+	if err := ws.RenderTurn(context.Background(), agent.Identity{
+		AgentID: "assistant", RunID: "run-8", ConversationID: "s-c2",
+	}, "use $review on the diff", nil, agent.NewBoard()); err != nil {
+		t.Fatal(err)
+	}
+	if counts := eventsByName(recorder.snapshot()); counts["review"] != 1 {
+		t.Fatalf("review counted %d times, want 1", counts["review"])
+	}
+}
+
+// TestRenderTurnRecordsModelRequestedSkill covers the second activation
+// path: the model asks for $plan in one reply, the next turn injects it,
+// and the use is recorded then — the request itself is not a use.
+func TestRenderTurnRecordsModelRequestedSkill(t *testing.T) {
+	ws, svc, recorder := newRecordingWorldState(t)
+	sess := newSessionStore(t)
+	obs := &activateObserver{svc: svc, store: sess}
+	obs.OnRunEnd(context.Background(),
+		agent.Identity{AgentID: "assistant", ConversationID: "s-c4"},
+		&agent.Result{
+			Status: agent.StatusCompleted,
+			Messages: []message.Message{
+				message.NewTextMessage(message.RoleAssistant,
+					"I'll use $plan on the next turn"),
+			},
+		})
+	ws.SetSessions(sess)
+
+	if err := ws.RenderTurn(context.Background(), agent.Identity{
+		AgentID: "assistant", RunID: "run-9", ConversationID: "s-c4",
+	}, "go ahead", nil, agent.NewBoard()); err != nil {
+		t.Fatal(err)
+	}
+	counts := eventsByName(recorder.snapshot())
+	if counts["plan"] != 1 {
+		t.Fatalf("model-requested plan counted %d times, want 1 (%v)",
+			counts["plan"], counts)
+	}
 }

@@ -17,8 +17,10 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 	"go.opentelemetry.io/otel/log"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
@@ -52,6 +54,9 @@ type Options struct {
 	MemoryMaxChars int
 	Workspace      workspace.Workspace // optional; in-root file reads go through it
 	Skills         *skills.Service     // optional; per-turn dynamic skill injection
+	// UserMemory is the user-level long-term memory binding (the store
+	// plus its inject budget). Nil injects no section.
+	UserMemory *userstore.Binding
 }
 
 // PrefixProvider supplies the current sandbox allowlist rules. The
@@ -96,6 +101,10 @@ func (s *Service) SetMemory(m memory.ContextProvider) { s.memory = m }
 // SetSkills wires the shared skills registry (resolved by deploy).
 func (s *Service) SetSkills(sk *skills.Service) { s.opts.Skills = sk }
 
+// SetUserMemory wires the user-level long-term memory binding (resolved
+// by deploy). A nil binding or a disabled feature injects no section.
+func (s *Service) SetUserMemory(m *userstore.Binding) { s.opts.UserMemory = m }
+
 // SetPrefixProvider wires the live sandbox allowlist rules source.
 func (s *Service) SetPrefixProvider(p PrefixProvider) { s.prefixes = p }
 
@@ -125,9 +134,30 @@ func (s *Service) SetSessions(st *ocsessions.Store) { s.sessionStore = st }
 // injections on their natural side: harness-owned session facts go to
 // world.sections, conversation-scoped per-turn context goes to the tail
 // block.
+//
+// RenderToBoard is the run-less form, for callers that address a turn
+// by agent and conversation only. The prepare hook calls RenderTurn
+// instead: the usage events written for the activated skills name the
+// run they belong to.
 func (s *Service) RenderToBoard(
 	ctx context.Context,
 	agentID, contextID, reqText string,
+	extras []Section,
+	board *agent.Board,
+) error {
+	return s.RenderTurn(ctx, agent.Identity{
+		AgentID:        agentID,
+		ConversationID: contextID,
+	}, reqText, extras, board)
+}
+
+// RenderTurn renders one turn's world state for a whole run identity;
+// see RenderToBoard above for what lands in world.sections versus
+// world.tail_block.
+func (s *Service) RenderTurn(
+	ctx context.Context,
+	id agent.Identity,
+	reqText string,
 	extras []Section,
 	board *agent.Board,
 ) error {
@@ -139,7 +169,7 @@ func (s *Service) RenderToBoard(
 	if err != nil {
 		return err
 	}
-	permissions, err := s.permissionsSection(ctx, contextID)
+	permissions, err := s.permissionsSection(ctx, id.ConversationID)
 	if err != nil {
 		return err
 	}
@@ -167,13 +197,13 @@ func (s *Service) RenderToBoard(
 			// Full-history replay: the graph's world node prepends the
 			// history right after the world sections, and the compact
 			// node owns folding when the model window is exceeded.
-			if history := s.replayHistory(ctx, contextID); len(history) > 0 {
+			if history := s.replayHistory(ctx, id.ConversationID); len(history) > 0 {
 				if data, err := json.Marshal(history); err == nil {
 					board.SetVar("world.history", string(data))
 				}
 			}
 		} else {
-			for _, sec := range s.memorySections(ctx, contextID) {
+			for _, sec := range s.memorySections(ctx, id.ConversationID) {
 				if sec.ID == "memory_summary" {
 					summaries = append(summaries, sec)
 				} else {
@@ -184,6 +214,14 @@ func (s *Service) RenderToBoard(
 	}
 	if agents.Content.Text() != "" {
 		sections = append(sections, agents)
+	}
+	// User-level memory sits with AGENTS.md: both are stable-first user
+	// context that only changes on an explicit user action, so neither
+	// belongs in the per-turn tail block.
+	if memory, err := s.userMemorySection(ctx); err != nil {
+		return err
+	} else if memory.Content.Text() != "" {
+		sections = append(sections, memory)
 	}
 	sections = append(sections, summaries...)
 	sections = append(sections, raw...)
@@ -196,7 +234,7 @@ func (s *Service) RenderToBoard(
 		// Inject only while there is still work: a fully completed
 		// plan is stale context, so it is dropped from the prompt.
 		if p, ok := plan.NewStore(s.sessionStore).Latest(
-			agentID, contextID,
+			id.AgentID, id.ConversationID,
 		); ok && !p.Done() {
 			tail = append(tail, newTextSection(
 				"plan", message.RoleUser, renderPlanSection(p)))
@@ -204,7 +242,7 @@ func (s *Service) RenderToBoard(
 	}
 	if s.opts.Skills != nil && s.opts.Skills.Enabled() {
 		tail = append(tail,
-			s.skillsSections(ctx, agentID, contextID, reqText)...)
+			s.skillsSections(ctx, id, reqText)...)
 	}
 	tail = append(tail, extras...)
 
@@ -226,7 +264,7 @@ func (s *Service) RenderToBoard(
 	// graph's compaction node. It rides the board rather than the sections
 	// above: it is a number the harness budgets with, not content the model
 	// reads (see anchor.go).
-	if anchor, ok := s.usageAnchorBoardValue(ctx, contextID); ok {
+	if anchor, ok := s.usageAnchorBoardValue(ctx, id.ConversationID); ok {
 		board.SetVar(config.BoardVarUsageAnchor, string(anchor))
 	}
 	board.SetVar("world.workspace_root", s.opts.WorkBase)
@@ -240,20 +278,44 @@ func (s *Service) RenderToBoard(
 // explicitly mentioned skills. Both are user-role content: skills are
 // user/project-supplied capabilities, so they never ride as system
 // instructions. Rendered every turn, never cached in
-// sessionState.static.
+// sessionState.static. This is also where usage is recorded: a skill
+// counts as used when it is actually put in front of the model, which
+// is why the write sits here and not in the mention parser alone.
 func (s *Service) skillsSections(
 	ctx context.Context,
-	agentID, contextID, reqText string,
+	id agent.Identity,
+	reqText string,
 ) []Section {
 	svc := s.opts.Skills
 	mentioned := svc.Mentioned(reqText)
-	modelRequested := s.consumeActivations(ctx, agentID, contextID)
+	modelRequested := s.consumeActivations(ctx, id.AgentID, id.ConversationID)
 	scored := svc.RankScored(reqText, svc.TopN(), svc.MinScore())
 	ranked := make([]skills.SkillMetadata, 0, len(scored))
 	for _, sc := range scored {
 		ranked = append(ranked, sc.Skill)
 	}
 	list := mergeSkillLists(mentioned, ranked)
+	// One use per skill per turn: the list below (a $mention or a ranked
+	// hit) plus the skills the model asked for in its previous reply.
+	// The registry records them best-effort and silently when this
+	// runtime records no usage at all, and a skill that is both
+	// mentioned and ranked is not counted twice.
+	used := map[string]bool{}
+	record := func(sk skills.SkillMetadata) {
+		if used[sk.Path] {
+			return
+		}
+		used[sk.Path] = true
+		svc.RecordUsage(ctx, skillusage.Event{
+			Name:           sk.Name,
+			Scope:          sk.Scope,
+			RunID:          id.RunID,
+			ConversationID: id.ConversationID,
+		})
+	}
+	for _, sk := range list {
+		record(sk)
+	}
 	var out []Section
 	if len(list) > 0 {
 		out = append(out, newTextSection(
@@ -282,18 +344,19 @@ func (s *Service) skillsSections(
 		out = append(out, newTextSection(
 			"skill", message.RoleUser,
 			renderSkillActivation(
-				sk, s.stageSkill(sk, contextID), "", content)))
+				sk, s.stageSkill(sk, id.ConversationID), "", content)))
 	}
 	for _, name := range modelRequested {
 		sk, content, err := svc.ReadFull(name)
 		if err != nil {
 			continue
 		}
+		record(sk)
 		out = append(out, newTextSection(
 			"skill", message.RoleUser,
 			renderSkillActivation(
 				sk,
-				s.stageSkill(sk, contextID),
+				s.stageSkill(sk, id.ConversationID),
 				"requested by the model in a previous reply.",
 				content)))
 		telemetry.Info(ctx, "skills: model-requested activation injected",

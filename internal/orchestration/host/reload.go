@@ -126,6 +126,12 @@ func (h *Host) onRuntimeReload(
 	h.refreshHooks(ctx)
 	h.rebindArtifactObserver()
 	h.rebindProcessFeed()
+	// The delegation watcher subscribes to the generation's event bus,
+	// so the new generation needs its own subscription (the old one
+	// dies with the bus it subscribed to).
+	if rt := h.Controller().Runtime(); rt != nil {
+		h.attachReflow(ctx, rt)
+	}
 }
 
 // rebindAgents points the new generation's agentlifecycle resource at

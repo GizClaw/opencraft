@@ -15,6 +15,43 @@ import (
 	"github.com/GizClaw/flowcraft/core/message/media"
 )
 
+// TestStoreSearchMessages pins the public search surface: a turn
+// committed through the store is searchable immediately, through the
+// conversation-scoped and workspace-scoped paths alike.
+func TestStoreSearchMessages(t *testing.T) {
+	store, err := newMigratedStore(t.TempDir(), 40)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.AppendTurn(ctx, id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "记住这次跨会话检索的方案"),
+	}); err != nil {
+		t.Fatalf("AppendTurn: %v", err)
+	}
+
+	res, err := store.SearchMessages(ctx, "跨会话", SearchOptions{})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if len(res.Hits) != 1 || res.Hits[0].ConversationID != id {
+		t.Fatalf("hits = %+v, want the committed turn in %s", res.Hits, id)
+	}
+	res, err = store.SearchMessages(ctx, "跨会话", SearchOptions{
+		ConversationID: "s-other",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages (filtered): %v", err)
+	}
+	if len(res.Hits) != 0 {
+		t.Fatalf("filtered hits = %+v, want none", res.Hits)
+	}
+}
+
 // TestSaveAttachment verifies URL-sourced attachments land in the
 // session's media/files directories with the source extension.
 func TestSaveAttachment(t *testing.T) {

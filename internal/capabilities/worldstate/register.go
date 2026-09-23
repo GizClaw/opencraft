@@ -10,6 +10,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
+	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
@@ -49,6 +50,9 @@ func (prepareFactory) Spec() resource.Spec {
 			// Optional: the shared skills registry. Deployments without
 			// it omit the per-turn skills section entirely.
 			{Name: "skills", Type: skills.ResourceKind, Required: false},
+			// Optional: the user-level long-term memory binding.
+			// Deployments without a user database inject no section.
+			{Name: "usermemory", Type: userstore.ResourceKind, Required: false},
 		},
 	}
 }
@@ -103,6 +107,11 @@ func (prepareFactory) New(ctx context.Context, in resource.Input) (any, error) {
 			service.SetSessions(st)
 		}
 	}
+	if dep, ok := in.Dep("usermemory"); ok {
+		if binding, ok := dep.(*userstore.Binding); ok {
+			service.SetUserMemory(binding)
+		}
+	}
 	return agent.PreparerFunc(func(
 		ctx context.Context, identity agent.Identity, req *agent.Request, prev *agent.Board,
 	) (*agent.Board, error) {
@@ -111,10 +120,16 @@ func (prepareFactory) New(ctx context.Context, in resource.Input) (any, error) {
 			board = agent.NewBoard()
 		}
 		seedClientMetadata(board, identity)
-		if err := service.RenderToBoard(
+		// The conversation is the request's context id (subagent turns
+		// carry their own "ctx-..." id); the run id rides along so the
+		// skill usage events of this turn can be traced back to it.
+		if err := service.RenderTurn(
 			ctx,
-			identity.AgentID,
-			req.ContextID,
+			agent.Identity{
+				AgentID:        identity.AgentID,
+				RunID:          identity.RunID,
+				ConversationID: req.ContextID,
+			},
 			req.Message.Content.Text(),
 			nil,
 			board,

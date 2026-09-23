@@ -6,6 +6,9 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/resource"
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
+
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/sessionsearch"
+	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
 // stubRunner is a minimal sandbox.Runner for wiring tests: tool
@@ -66,6 +69,46 @@ func TestWebSearchSourceFactory(t *testing.T) {
 
 	disabled, err := factory.New(context.Background(), resource.Input{
 		Settings: []byte(`{"enabled":false}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := toolNames(disabled.(toolList)); len(names) != 0 {
+		t.Fatalf("disabled names = %v", names)
+	}
+}
+
+// TestSessionSearchSourceFactory covers the tool.Source contract for
+// session_search: the factory is registered under the deploy impl the
+// tools.yaml source names, builds the tool over the session store, and
+// honors the enabled:false switch.
+func TestSessionSearchSourceFactory(t *testing.T) {
+	reg := resource.NewRegistry()
+	if err := Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	factory, ok := reg.Lookup("tool.Source", "opencraft/sessionsearch")
+	if !ok {
+		t.Fatal("sessionsearch factory is not registered")
+	}
+	store, err := sessionstore.Open(t, t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built, err := factory.New(context.Background(), resource.Input{
+		Deps: map[string]any{"sessions": store},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := toolNames(built.(toolList)); len(names) != 1 ||
+		names[0] != sessionsearch.Name {
+		t.Fatalf("names = %v", names)
+	}
+
+	disabled, err := factory.New(context.Background(), resource.Input{
+		Settings: []byte(`{"enabled":false}`),
+		Deps:     map[string]any{"sessions": store},
 	})
 	if err != nil {
 		t.Fatal(err)

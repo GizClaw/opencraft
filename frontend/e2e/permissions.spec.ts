@@ -53,3 +53,52 @@ test('renders an approval prompt and submits the choice', async ({ page }) => {
   });
   await expect(page.getByText('Allow running rm -rf?')).not.toBeVisible();
 });
+
+test('an arriving prompt takes the keyboard and Enter answers it', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    startTurn: { run_id: 'r-1', context_id: 's-1' },
+  });
+  await page.goto('/');
+  await typeComposerMessage(page, 'run a command');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(
+    page.getByTestId('chat-scroll').getByText('run a command'),
+  ).toBeVisible();
+  await page.waitForTimeout(300);
+
+  await page.evaluate(() => {
+    (window as never as { __emit: (n: string, v: unknown) => void }).__emit(
+      'opencraft:ui',
+      {
+        type: 'interact',
+        data: {
+          id: 'p-1',
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          kind: 'select',
+          severity: 'notice',
+          title: 'Allow running rm -rf?',
+          body: [{ type: 'text', text: 'Command is not allowed' }],
+          options: [
+            { label: 'Allow once', value: 'allow_once' },
+            { label: 'Deny', value: 'deny' },
+          ],
+          multi: false,
+          allow_other: false,
+          source: 'test',
+        },
+      },
+    );
+  });
+
+  // The prompt owns the keyboard when it arrives; nothing is selected
+  // for the user, so Space picks the choice and Enter sends it.
+  const allowOnce = page.getByLabel('Allow once');
+  await expect(allowOnce).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(allowOnce).toBeChecked();
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('Allow running rm -rf?')).not.toBeVisible();
+});
