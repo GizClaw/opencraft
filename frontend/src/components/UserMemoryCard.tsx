@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Bookmark,
@@ -8,8 +8,10 @@ import {
   EyeOff,
   Pencil,
   Plus,
+  Search,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
@@ -26,9 +28,9 @@ import { Button, IconButton } from './ui/Button';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { EmptyState } from './ui/EmptyState';
 import { ICON } from './ui/icon';
-import { Input } from './ui/Input';
 import { SaveBar } from './ui/SaveBar';
 import { NumberSetting, SettingRow, ToggleSetting } from './ui/SettingRow';
+import { Textarea } from './ui/Textarea';
 
 // The long-term memory card of the Memory tab: the user-level facts the
 // host injects into every turn, plus the queue of suggestions the
@@ -57,6 +59,108 @@ function MetaDot() {
     <span aria-hidden className="text-faint">
       ·
     </span>
+  );
+}
+
+// The row's meta line: whatever a row carries, in one wrapping line with
+// a mid-dot between neighbours, so no item has to know whether it is the
+// first (which is what the hand-written fragments were for).
+function MetaLine({ items }: { items: ReactNode[] }) {
+  const kept = items.filter(
+    (item) => item !== '' && item !== undefined && item !== null,
+  );
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-faint">
+      {kept.map((item, index) => (
+        <span key={index} className="flex min-w-0 items-center gap-1.5">
+          {index > 0 && <MetaDot />}
+          {item}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// The store has two axes — which project a fact belongs to, and whether
+// it still rides along — and one flat list hides both: at a hundred facts
+// the eye cannot tell this project's rows from another's, and a stopped
+// one looks like a live one until its meta line is read. The list is
+// four piles in the order a reader asks about them, and the chips count
+// them.
+type FactPile = 'project' | 'other' | 'global' | 'stale';
+
+const PILE_ORDER: FactPile[] = ['project', 'other', 'global', 'stale'];
+
+const PILE_KEY: Record<FactPile, string> = {
+  project: 'config.memoryFactsPileProject',
+  other: 'config.memoryFactsPileOther',
+  global: 'config.memoryFactsPileGlobal',
+  stale: 'config.memoryFactsPileStale',
+};
+
+// Below this the list fits on one screen and a filter row would be a
+// control with nothing to do.
+const FILTER_FROM = 6;
+
+// A pile heading: the name, a rule, and the count. The rule is what
+// makes it read as a divider between two groups rather than as one more
+// line of text.
+function PileHeading({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-label font-medium text-dim">{label}</span>
+      <span aria-hidden className="h-px flex-1 bg-edge" />
+      <span className="text-micro tabular-nums text-faint">{count}</span>
+    </div>
+  );
+}
+
+// The sub-heading of a card's second half ("each turn", "when it runs"):
+// a label and its hint, the shape a SettingRow leads with. It replaces
+// the uppercase micro-letters the two used to wear — a device that says
+// nothing in Chinese and that no other card uses.
+function SubHeading({ label, hint }: { label: string; hint?: string }) {
+  return (
+    <div className="min-w-0">
+      <h4 className="text-xs font-semibold text-fg">{label}</h4>
+      {hint !== undefined && hint !== '' && (
+        <p className="mt-0.5 text-label text-dim">{hint}</p>
+      )}
+    </div>
+  );
+}
+
+function PileChip({
+  active,
+  tip,
+  label,
+  count,
+  onClick,
+}: {
+  active: boolean;
+  tip: string;
+  label: string;
+  count: number;
+  onClick: () => void;
+}) {
+  // The count is part of the button's name: without spelling it out, the
+  // two children run together ("All8") in the accessible name too.
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      aria-label={`${label} ${count}`}
+      data-tip={tip}
+      className={`flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-micro transition-colors ${
+        active
+          ? 'border-accent/40 bg-accent/10 text-accent'
+          : 'border-edge bg-panel text-dim hover:border-accent/40 hover:text-fg'
+      }`}
+    >
+      {label}
+      <span className="tabular-nums opacity-70">{count}</span>
+    </button>
   );
 }
 
@@ -103,6 +207,10 @@ export function UserMemoryCard({
   const [editText, setEditText] = useState('');
   const [busyId, setBusyId] = useState('');
   const [deleteFact, setDeleteFact] = useState<MemoryFact | null>(null);
+  // The list's two view controls: which pile is shown, and the query that
+  // narrows the pool before the chips count it.
+  const [pile, setPile] = useState<FactPile | 'all'>('all');
+  const [query, setQuery] = useState('');
 
   const applyState = useCallback((next: UserMemoryState) => {
     setState(next);
@@ -298,6 +406,29 @@ export function UserMemoryCard({
   const range = (min: number, max: number, value: number) =>
     t('config.settingRange', { min, max, value });
 
+  // Which pile a fact belongs to. Stale wins over the scope axes: a
+  // stopped fact is news whichever project it came from, and it is the
+  // one pile a reader goes looking for. "Other projects" is the pile the
+  // old flat list could not show: those facts are in the store, they are
+  // simply not in this project's prompts.
+  const pileOf = (fact: MemoryFact): FactPile => {
+    if (fact.stale) return 'stale';
+    if (fact.scope === 'global') return 'global';
+    return otherWorkspace(fact.workspace) === '' ? 'project' : 'other';
+  };
+  const needle = query.trim().toLowerCase();
+  // The search narrows the pool first, so a chip counts the rows it
+  // would actually show rather than the whole store.
+  const pool =
+    needle === ''
+      ? facts
+      : facts.filter((fact) => fact.text.toLowerCase().includes(needle));
+  const countIn = (id: FactPile) =>
+    pool.filter((fact) => pileOf(fact) === id).length;
+  const piles = PILE_ORDER.filter((id) => pile === 'all' || id === pile)
+    .map((id) => ({ id, rows: pool.filter((fact) => pileOf(fact) === id) }))
+    .filter((group) => group.rows.length > 0);
+
   // What the two save bars say on their left. A bar belongs to the drafts
   // above it, so it claims there are unsaved changes only when those
   // drafts differ from what the runtime is using.
@@ -413,160 +544,225 @@ export function UserMemoryCard({
               hint={t('config.memoryFactsEmptyHint')}
             />
           ) : (
-            <ul className="flex flex-col gap-2">
-              {facts.map((fact) => {
-                const source = fact.source_conversation;
-                const updated =
-                  fact.updated_at === undefined
-                    ? ''
-                    : formatDateTime(fact.updated_at);
-                const elsewhere = otherWorkspace(fact.workspace);
-                return (
-                  <li
-                    key={fact.id}
-                    className="[content-visibility:auto] [contain-intrinsic-size:auto_5rem] rounded-card border border-edge bg-panel p-3 transition-colors hover:border-accent/40"
-                  >
-                    {editingId === fact.id ? (
-                      <div className="flex items-center gap-2">
-                        <Input
-                          value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') void saveEdit(fact.id);
-                          }}
-                          aria-label={t('config.memoryFactsEdit')}
-                          size="sm"
-                          autoFocus
-                          className="flex-1"
-                        />
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          loading={busyId === fact.id}
-                          onClick={() => void saveEdit(fact.id)}
-                        >
-                          <Check size={ICON.xs} />
-                          {t('config.memoryFactsSaveEdit')}
-                        </Button>
-                        <Button
-                          variant="quiet"
-                          size="sm"
-                          onClick={() => setEditingId('')}
-                        >
-                          {t('config.memoryFactsCancelEdit')}
-                        </Button>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex items-start gap-3">
-                          <span
-                            className={`min-w-0 flex-1 text-sm break-words ${
-                              fact.stale ? 'text-dim' : 'text-fg'
-                            }`}
-                          >
-                            {fact.text}
-                          </span>
-                          <div className="flex shrink-0 items-center gap-0.5">
-                            <IconButton
-                              label={t('config.memoryFactsEdit')}
-                              size="sm"
-                              onClick={() => {
-                                setEditingId(fact.id);
-                                setEditText(fact.text);
-                              }}
-                            >
-                              <Pencil size={ICON.xs} />
-                            </IconButton>
-                            <IconButton
-                              label={
-                                fact.stale
-                                  ? t('config.memoryFactsUnstale')
-                                  : t('config.memoryFactsMarkStale')
-                              }
-                              size="sm"
-                              disabled={busyId === fact.id}
-                              onClick={() => void toggleStale(fact)}
-                            >
-                              {fact.stale ? (
-                                <Eye size={ICON.xs} />
-                              ) : (
-                                <EyeOff size={ICON.xs} />
-                              )}
-                            </IconButton>
-                            <IconButton
-                              label={t('config.memoryFactsDelete')}
-                              size="sm"
-                              onClick={() => setDeleteFact(fact)}
-                            >
-                              <Trash2 size={ICON.xs} />
-                            </IconButton>
-                          </div>
-                        </div>
-                        <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-faint">
-                          <Badge tone={scopeTone(fact.scope)}>
-                            {scopeLabel(fact.scope)}
-                          </Badge>
-                          {fact.stale && (
-                            <Badge tone="warn">
-                              {t('config.memoryFactsStale')}
-                            </Badge>
-                          )}
-                          {fact.kind !== '' && (
-                            <>
-                              <MetaDot />
-                              <span>{fact.kind}</span>
-                            </>
-                          )}
-                          {updated !== '' && (
-                            <>
-                              <MetaDot />
-                              <span>
-                                {t('config.memoryFactsUpdated', {
-                                  date: updated,
-                                })}
-                              </span>
-                            </>
-                          )}
-                          {elsewhere !== '' && (
-                            <>
-                              <MetaDot />
-                              <span
-                                className="max-w-48 truncate font-mono"
-                                data-tip={elsewhere}
-                              >
-                                {elsewhere}
-                              </span>
-                            </>
-                          )}
-                          {source !== undefined && source !== '' && (
-                            <>
-                              <MetaDot />
-                              <button
-                                onClick={() =>
-                                  onOpenConversation?.(source, fact.workspace)
-                                }
-                                disabled={onOpenConversation === undefined}
-                                className="text-accent hover:underline disabled:opacity-40"
-                              >
-                                {t('config.memoryFactsOpenSource')}
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </>
+            <div className="space-y-3">
+              {facts.length > FILTER_FROM && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <PileChip
+                    active={pile === 'all'}
+                    tip={t('config.memoryFactsPileAllTip')}
+                    label={t('config.memoryFactsPileAll')}
+                    count={pool.length}
+                    onClick={() => setPile('all')}
+                  />
+                  {PILE_ORDER.filter((id) => countIn(id) > 0).map((id) => (
+                    <PileChip
+                      key={id}
+                      active={pile === id}
+                      tip={t(`${PILE_KEY[id]}Tip`)}
+                      label={t(PILE_KEY[id])}
+                      count={countIn(id)}
+                      onClick={() => setPile(id)}
+                    />
+                  ))}
+                  {/* The field takes whatever the chips leave on this
+                      line and stops at 52; when the chips wrap it, the
+                      search starts the next line instead of hanging off
+                      the right edge on its own. */}
+                  <div className="flex h-6 min-w-40 flex-1 items-center gap-1.5 rounded-control border border-edge bg-panel px-2 focus-within:border-accent sm:max-w-52">
+                    <Search size={ICON.xs} className="shrink-0 text-dim" />
+                    <input
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      aria-label={t('config.memoryFactsSearch')}
+                      placeholder={t('config.memoryFactsSearch')}
+                      className="h-6 min-w-0 flex-1 bg-transparent text-xs outline-none"
+                    />
+                    {query !== '' && (
+                      <button
+                        type="button"
+                        aria-label={t('config.memoryFactsSearchClear')}
+                        onClick={() => setQuery('')}
+                        className="shrink-0 text-dim hover:text-fg"
+                      >
+                        <X size={ICON.xs} />
+                      </button>
                     )}
-                  </li>
-                );
-              })}
-            </ul>
+                  </div>
+                </div>
+              )}
+              {piles.length === 0 ? (
+                <p className="text-xs text-dim">
+                  {t('config.memoryFactsNoMatch')}
+                </p>
+              ) : (
+                piles.map((group) => (
+                  <div key={group.id} className="space-y-2">
+                    <PileHeading
+                      label={t(PILE_KEY[group.id])}
+                      count={group.rows.length}
+                    />
+                    <ul className="flex flex-col gap-2">
+                      {group.rows.map((fact) => {
+                        const source = fact.source_conversation;
+                        const updated =
+                          fact.updated_at === undefined
+                            ? ''
+                            : formatDateTime(fact.updated_at);
+                        const elsewhere = otherWorkspace(fact.workspace);
+                        return (
+                          <li
+                            key={fact.id}
+                            className="[content-visibility:auto] [contain-intrinsic-size:auto_5rem] rounded-card border border-edge bg-panel p-3 transition-colors hover:border-accent/40"
+                          >
+                            {editingId === fact.id ? (
+                              <div className="space-y-2">
+                                {/* A fact is a sentence and the store
+                                    takes up to 4 KB of one, so the field
+                                    it is edited in has to show more than
+                                    its first line. Enter commits (the
+                                    key that adds one above), Shift+Enter
+                                    breaks the line, Escape drops the
+                                    edit. */}
+                                <Textarea
+                                  value={editText}
+                                  onChange={(e) => setEditText(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                      e.preventDefault();
+                                      void saveEdit(fact.id);
+                                    }
+                                    if (e.key === 'Escape') setEditingId('');
+                                  }}
+                                  aria-label={t('config.memoryFactsEdit')}
+                                  surface="raised"
+                                  rows={2}
+                                  autoFocus
+                                />
+                                <div className="flex items-center justify-end gap-2">
+                                  <Button
+                                    variant="quiet"
+                                    size="sm"
+                                    onClick={() => setEditingId('')}
+                                  >
+                                    {t('config.memoryFactsCancelEdit')}
+                                  </Button>
+                                  <Button
+                                    variant="primary"
+                                    size="sm"
+                                    loading={busyId === fact.id}
+                                    onClick={() => void saveEdit(fact.id)}
+                                  >
+                                    <Check size={ICON.xs} />
+                                    {t('config.memoryFactsSaveEdit')}
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-start gap-3">
+                                  <span
+                                    className={`min-w-0 flex-1 text-sm break-words ${
+                                      fact.stale ? 'text-dim' : 'text-fg'
+                                    }`}
+                                  >
+                                    {fact.text}
+                                  </span>
+                                  <div className="flex shrink-0 items-center gap-0.5">
+                                    <IconButton
+                                      label={t('config.memoryFactsEdit')}
+                                      size="sm"
+                                      onClick={() => {
+                                        setEditingId(fact.id);
+                                        setEditText(fact.text);
+                                      }}
+                                    >
+                                      <Pencil size={ICON.xs} />
+                                    </IconButton>
+                                    <IconButton
+                                      label={
+                                        fact.stale
+                                          ? t('config.memoryFactsUnstale')
+                                          : t('config.memoryFactsMarkStale')
+                                      }
+                                      size="sm"
+                                      disabled={busyId === fact.id}
+                                      onClick={() => void toggleStale(fact)}
+                                    >
+                                      {fact.stale ? (
+                                        <Eye size={ICON.xs} />
+                                      ) : (
+                                        <EyeOff size={ICON.xs} />
+                                      )}
+                                    </IconButton>
+                                    <IconButton
+                                      label={t('config.memoryFactsDelete')}
+                                      size="sm"
+                                      onClick={() => setDeleteFact(fact)}
+                                    >
+                                      <Trash2 size={ICON.xs} />
+                                    </IconButton>
+                                  </div>
+                                </div>
+                                {/* The scope is the pile's job now, so the row
+                            carries only what is its own: its kind, when
+                            it moved, and where it came from. */}
+                                <MetaLine
+                                  items={[
+                                    fact.kind,
+                                    updated === ''
+                                      ? ''
+                                      : t('config.memoryFactsUpdated', {
+                                          date: updated,
+                                        }),
+                                    elsewhere === '' ? (
+                                      ''
+                                    ) : (
+                                      <span
+                                        className="max-w-48 truncate font-mono"
+                                        data-tip={elsewhere}
+                                      >
+                                        {elsewhere}
+                                      </span>
+                                    ),
+                                    source === undefined || source === '' ? (
+                                      ''
+                                    ) : (
+                                      <button
+                                        onClick={() =>
+                                          onOpenConversation?.(
+                                            source,
+                                            fact.workspace,
+                                          )
+                                        }
+                                        disabled={
+                                          onOpenConversation === undefined
+                                        }
+                                        className="text-accent hover:underline disabled:opacity-40"
+                                      >
+                                        {t('config.memoryFactsOpenSource')}
+                                      </button>
+                                    ),
+                                  ]}
+                                />
+                              </>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ))
+              )}
+            </div>
           )}
         </div>
 
         {state && (
           <div className="space-y-3 border-t border-edge px-4 py-3.5">
-            <h4 className="text-micro font-medium tracking-wide text-faint uppercase">
-              {t('config.memoryFactsInjection')}
-            </h4>
+            <SubHeading
+              label={t('config.memoryFactsEachTurn')}
+              hint={t('config.memoryFactsEachTurnHint')}
+            />
             <ToggleSetting
               label={t('config.memoryFactsEnabled')}
               hint={t('config.memoryFactsEnabledHint')}
@@ -717,28 +913,23 @@ export function UserMemoryCard({
                               })}
                             </p>
                           )}
-                        <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-faint">
-                          <Badge tone={scopeTone(suggestion.scope)}>
-                            {scopeLabel(suggestion.scope)}
-                          </Badge>
-                          {kind !== undefined && kind !== '' && (
-                            <>
-                              <MetaDot />
-                              <span>{kind}</span>
-                            </>
-                          )}
-                          {suggestion.source_run !== undefined &&
-                            suggestion.source_run !== '' && (
-                              <>
-                                <MetaDot />
-                                <span className="font-mono">
-                                  {suggestion.source_run}
-                                </span>
-                              </>
-                            )}
-                          {source !== undefined && source !== '' && (
-                            <>
-                              <MetaDot />
+                        <MetaLine
+                          items={[
+                            <Badge tone={scopeTone(suggestion.scope)}>
+                              {scopeLabel(suggestion.scope)}
+                            </Badge>,
+                            kind ?? '',
+                            suggestion.source_run === undefined ||
+                            suggestion.source_run === '' ? (
+                              ''
+                            ) : (
+                              <span className="font-mono">
+                                {suggestion.source_run}
+                              </span>
+                            ),
+                            source === undefined || source === '' ? (
+                              ''
+                            ) : (
                               <button
                                 onClick={() =>
                                   onOpenConversation?.(
@@ -751,9 +942,9 @@ export function UserMemoryCard({
                               >
                                 {t('config.memoryFactsOpenSource')}
                               </button>
-                            </>
-                          )}
-                        </div>
+                            ),
+                          ]}
+                        />
                       </div>
                       {/* The verdict is the row's one action: accept is
                           the accent button, discard is the quiet one
@@ -787,9 +978,10 @@ export function UserMemoryCard({
 
         {review && (
           <div className="space-y-3 border-t border-edge px-4 py-3.5">
-            <h4 className="text-micro font-medium tracking-wide text-faint uppercase">
-              {t('config.reviewCadence')}
-            </h4>
+            <SubHeading
+              label={t('config.reviewWhen')}
+              hint={t('config.reviewWhenHint')}
+            />
             <ToggleSetting
               label={t('config.reviewEnabled')}
               hint={t('config.reviewEnabledHint')}
