@@ -37,8 +37,10 @@ import type {
 import { ICON } from './ui/icon';
 import { Button } from './ui/Button';
 import { ConfirmDialog } from './ui/ConfirmDialog';
+import { NumberField } from './ui/NumberField';
 import { Overlay } from './ui/Overlay';
 import { Popover } from './ui/Popover';
+import { Textarea } from './ui/Textarea';
 
 interface FormState {
   id: string;
@@ -829,12 +831,12 @@ export function AutomationsView() {
             </Field>
 
             <Field label={t('automations.prompt')}>
-              <textarea
+              <Textarea
                 value={form.prompt}
                 onChange={(e) => setForm({ ...form, prompt: e.target.value })}
                 placeholder={t('automations.promptPlaceholder')}
                 rows={4}
-                className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent resize-y"
+                surface="raised"
               />
             </Field>
 
@@ -927,16 +929,23 @@ export function AutomationsView() {
                 </Field>
               </div>
               <Field label={t('automations.timeoutField')}>
-                <input
-                  type="number"
+                <NumberField
+                  allowEmpty
                   min={1}
                   max={MAX_AUTOMATION_TIMEOUT_MINUTES}
-                  value={form.timeoutMinutes}
-                  onChange={(e) =>
-                    setForm({ ...form, timeoutMinutes: e.target.value })
+                  value={
+                    form.timeoutMinutes === ''
+                      ? ''
+                      : Number(form.timeoutMinutes)
+                  }
+                  onChange={(next) =>
+                    setForm({
+                      ...form,
+                      timeoutMinutes: next === '' ? '' : String(next),
+                    })
                   }
                   placeholder={`${DEFAULT_AUTOMATION_TIMEOUT_MINUTES}`}
-                  className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  className="w-full"
                 />
                 <span className="block text-micro text-dim">
                   {t('automations.timeoutHint')}
@@ -1036,7 +1045,7 @@ export function AutomationsView() {
                                 think: thinkLevels[v]?.value ?? 'medium',
                               });
                             }}
-                            className="w-full accent-accent"
+                            className="w-full"
                           />
                         </div>
                         <div className="flex justify-between px-2 pb-1.5 text-micro text-dim">
@@ -1076,17 +1085,14 @@ export function AutomationsView() {
                 {form.scheduleType === 'hourly' && (
                   <Field label={t('automations.intervalField')}>
                     <div className="flex items-center gap-1.5">
-                      <input
-                        type="number"
+                      <NumberField
                         min={1}
                         value={form.intervalHours}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            intervalHours: Number(e.target.value) || 1,
-                          })
-                        }
-                        className="w-full rounded-control border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
+                        onChange={(next) => {
+                          if (next === '') return;
+                          setForm({ ...form, intervalHours: next });
+                        }}
+                        className="w-full"
                       />
                       <span className="text-sm text-dim">h</span>
                     </div>
@@ -1108,17 +1114,14 @@ export function AutomationsView() {
                 )}
                 {form.scheduleType === 'weekly' && (
                   <Field label={t('automations.weeksField')}>
-                    <input
-                      type="number"
+                    <NumberField
                       min={1}
                       value={form.intervalWeeks}
-                      onChange={(e) =>
-                        setForm({
-                          ...form,
-                          intervalWeeks: Number(e.target.value) || 1,
-                        })
-                      }
-                      className="w-full rounded-control border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
+                      onChange={(next) => {
+                        if (next === '') return;
+                        setForm({ ...form, intervalWeeks: next });
+                      }}
+                      className="w-full"
                     />
                   </Field>
                 )}

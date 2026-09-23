@@ -1,4 +1,5 @@
 import { useId, type ReactNode } from 'react';
+import { NumberField } from './NumberField';
 
 // SettingRow — one labelled setting: what it does on the left, the
 // control that changes it on the right.
@@ -73,7 +74,7 @@ export function ToggleSetting({
         aria-describedby={
           hint === undefined || hint === '' ? undefined : hintId
         }
-        className="mt-0.5 shrink-0 accent-accent"
+        className="mt-0.5 shrink-0"
       />
     </label>
   );
@@ -81,14 +82,10 @@ export function ToggleSetting({
 
 // NumberSetting — a bounded number with its unit written inside the
 // field, the way a unit is written next to a measurement: "36 messages"
-// is one value, not a number and a stray word 40px to its right.
-//
-// The field is one frame: the number sits right-aligned against the
-// divider so the digits line up with the digits above and below it, the
-// unit sits in a fixed-width cell so the frames themselves come out the
-// same width, and the whole cluster is what a row right-aligns. The
-// number is the only thing that reads as input: the unit cell is a
-// label, not a place to type.
+// is one value, not a number and a stray word 40px to its right. It is
+// ui/NumberField in its measurement shape: right-aligned digits against
+// the divider, the unit in a fixed-width cell, both cells the same width
+// row to row.
 export function NumberSetting({
   label,
   value,
@@ -99,6 +96,7 @@ export function NumberSetting({
   step,
   width = 'w-20',
   unitWidth = 'w-[4.75rem]',
+  steppers = false,
 }: {
   /** Accessible name; the visible one is the row's label. */
   label: string;
@@ -110,26 +108,26 @@ export function NumberSetting({
   step?: number;
   width?: string;
   unitWidth?: string;
+  /** −/+ cells, for a value a click is a better edit than typing. */
+  steppers?: boolean;
 }) {
   return (
-    <span className="flex items-stretch overflow-hidden rounded-control border border-edge bg-panel transition-colors hover:border-accent/50 focus-within:border-accent">
-      <input
-        type="number"
-        aria-label={label}
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(e) => onChange(Number(e.target.value) || 0)}
-        className={`${width} shrink-0 bg-transparent py-1 pr-2.5 pl-2.5 text-right text-xs tabular-nums text-fg outline-none`}
-      />
-      {unit !== undefined && (
-        <span
-          className={`${unitWidth} flex shrink-0 items-center border-l border-edge px-2 text-micro text-faint`}
-        >
-          {unit}
-        </span>
-      )}
-    </span>
+    <NumberField
+      label={label}
+      size="sm"
+      align="right"
+      unit={unit}
+      unitWidth={unitWidth}
+      min={min}
+      max={max}
+      step={step}
+      steppers={steppers}
+      inputClassName={`${width} shrink-0`}
+      value={value}
+      // A row has no empty state: the field only reports numbers, so the
+      // empty draft (never committed, `allowEmpty` is off) can only be
+      // the type signature's business.
+      onChange={(next) => onChange(next === '' ? (min ?? 0) : next)}
+    />
   );
 }

@@ -87,6 +87,15 @@ const staleFact: MemoryFact = {
   stale: true,
 };
 
+const projectFact: MemoryFact = {
+  id: 'f-3',
+  kind: 'convention',
+  scope: 'workspace',
+  workspace: '/w/repo',
+  text: 'The frontend tests live beside the component',
+  stale: false,
+};
+
 const suggestion: ReviewSuggestion = {
   id: 'rs-1',
   status: 'pending',
@@ -104,7 +113,7 @@ describe('UserMemoryCard', () => {
   beforeEach(() => {
     for (const fn of Object.values(apiMock)) fn.mockReset();
     apiMock.userMemoryState.mockResolvedValue(state);
-    apiMock.memoryFacts.mockResolvedValue([liveFact, staleFact]);
+    apiMock.memoryFacts.mockResolvedValue([liveFact, projectFact, staleFact]);
     apiMock.reviewSettings.mockResolvedValue(review);
     apiMock.reviewSuggestions.mockResolvedValue([suggestion]);
     apiMock.addMemoryFact.mockResolvedValue(liveFact);
@@ -123,24 +132,58 @@ describe('UserMemoryCard', () => {
     apiMock.saveReviewSettings.mockResolvedValue(undefined);
   });
 
-  it('lists the stored facts with their count and provenance', async () => {
+  it('lists each fact under the pile it belongs to', async () => {
     render(<UserMemoryCard />);
     expect(await screen.findByText('The user runs macOS')).toBeInTheDocument();
     expect(screen.getByText('The repo uses tabs')).toBeInTheDocument();
-    // Scope badges separate a fact about the user from one about the
-    // project, and a stopped fact stays visible marked rather than
-    // disappearing.
-    // 'Global'/'Workspace' also name the scope options of the add row,
-    // so the assertion is on the badges being present at all.
-    expect(screen.getAllByText('Global').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Workspace').length).toBeGreaterThan(0);
-    expect(screen.getByText('Stale')).toBeInTheDocument();
+    // The scope is the heading now: what the user carries everywhere, what
+    // belongs to this project, and what is kept but no longer injected.
+    expect(screen.getByText('Every project')).toBeInTheDocument();
+    expect(screen.getByText('This project')).toBeInTheDocument();
+    expect(screen.getByText('Not injected')).toBeInTheDocument();
     expect(screen.getByText('1 / 200 facts')).toBeInTheDocument();
     expect(screen.getByText('1 stale')).toBeInTheDocument();
     // One per fact with a source, plus the one behind the suggestion.
     expect(
       screen.getAllByRole('button', { name: 'View conversation' }),
     ).toHaveLength(2);
+  });
+
+  it('piles the store, and the toolbar narrows the pools', async () => {
+    const user = userEvent.setup();
+    // More facts than the toolbar's threshold, half in this project.
+    const many: MemoryFact[] = Array.from({ length: 8 }, (_, i) => ({
+      id: `m-${i}`,
+      kind: 'fact',
+      scope: i % 2 === 0 ? 'workspace' : 'global',
+      workspace: i % 2 === 0 ? '/w/repo' : undefined,
+      text: `Fact number ${i}`,
+      stale: false,
+    }));
+    apiMock.memoryFacts.mockResolvedValue(many);
+    render(<UserMemoryCard />);
+    await screen.findByText('Fact number 0');
+
+    // Each chip counts the rows behind it.
+    const chip = (name: string) => screen.getByRole('button', { name });
+    expect(chip('All 8')).toBeInTheDocument();
+    await user.click(chip('Every project 4'));
+    expect(screen.queryByText('Fact number 0')).not.toBeInTheDocument();
+    expect(screen.getByText('Fact number 1')).toBeInTheDocument();
+
+    // The search narrows the pool before the chips count it, so a chip's
+    // number is what the reader would actually see.
+    const search = screen.getByLabelText('Search facts');
+    await user.type(search, 'number 7');
+    expect(screen.getByText('Fact number 7')).toBeInTheDocument();
+    expect(screen.queryByText('Fact number 1')).not.toBeInTheDocument();
+    expect(chip('Every project 1')).toBeInTheDocument();
+
+    // A miss says so rather than showing an empty list.
+    await user.type(search, 'nope');
+    expect(
+      screen.getByText('No fact matches this filter.'),
+    ).toBeInTheDocument();
   });
 
   it('jumps to the conversation a fact came from', async () => {
@@ -186,12 +229,17 @@ describe('UserMemoryCard', () => {
     render(<UserMemoryCard />);
     await screen.findByText('The user runs macOS');
 
-    await user.click(screen.getByRole('button', { name: 'Stop injecting' }));
+    // A row carries its own actions, and the list is piled, so the first
+    // row on the page is not necessarily this fact's.
+    const row = within(
+      screen.getByText('The user runs macOS').closest('li') as HTMLElement,
+    );
+    await user.click(row.getByRole('button', { name: 'Stop injecting' }));
     await waitFor(() =>
       expect(apiMock.setMemoryFactStale).toHaveBeenCalledWith('f-1', true),
     );
 
-    await user.click(screen.getAllByRole('button', { name: 'Delete fact' })[0]);
+    await user.click(row.getByRole('button', { name: 'Delete fact' }));
     const dialog = await screen.findByRole('alertdialog');
     await user.click(
       within(dialog).getByRole('button', { name: 'Delete fact' }),
@@ -205,7 +253,10 @@ describe('UserMemoryCard', () => {
     const user = userEvent.setup();
     render(<UserMemoryCard />);
     await screen.findByText('The user runs macOS');
-    await user.click(screen.getAllByRole('button', { name: 'Edit fact' })[0]);
+    const row = within(
+      screen.getByText('The user runs macOS').closest('li') as HTMLElement,
+    );
+    await user.click(row.getByRole('button', { name: 'Edit fact' }));
     const field = screen.getByRole('textbox', { name: 'Edit fact' });
     await user.clear(field);
     await user.type(field, 'The user runs macOS 15');
@@ -216,6 +267,49 @@ describe('UserMemoryCard', () => {
         'The user runs macOS 15',
       ),
     );
+  });
+
+  it('commits an edit with Enter and drops one with Escape', async () => {
+    const user = userEvent.setup();
+    render(<UserMemoryCard />);
+    await screen.findByText('The user runs macOS');
+    const row = within(
+      screen.getByText('The user runs macOS').closest('li') as HTMLElement,
+    );
+
+    await user.click(row.getByRole('button', { name: 'Edit fact' }));
+    await user.clear(screen.getByRole('textbox', { name: 'Edit fact' }));
+    await user.type(
+      screen.getByRole('textbox', { name: 'Edit fact' }),
+      'The user runs macOS 26{Enter}',
+    );
+    await waitFor(() =>
+      expect(apiMock.updateMemoryFact).toHaveBeenCalledWith(
+        'f-1',
+        'The user runs macOS 26',
+      ),
+    );
+    // The field closes on commit, so the row is readable again.
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Edit fact' })).toBeNull(),
+    );
+
+    await user.click(row.getByRole('button', { name: 'Edit fact' }));
+    await user.type(
+      screen.getByRole('textbox', { name: 'Edit fact' }),
+      'and this is the only edit{Shift>}{Enter}{/Shift}',
+    );
+    await user.type(
+      screen.getByRole('textbox', { name: 'Edit fact' }),
+      'that must not be written{Escape}',
+    );
+    // Escape is the way out of a draft, so nothing was written a second
+    // time and the row is back to its stored text.
+    expect(apiMock.updateMemoryFact).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Edit fact' })).toBeNull(),
+    );
+    expect(screen.getByText('The user runs macOS')).toBeInTheDocument();
   });
 
   it('saves the injection budget', async () => {

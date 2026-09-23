@@ -3744,7 +3744,7 @@ export function ChatView() {
                                       thinkLevels[v]?.value ?? 'medium',
                                     );
                                   }}
-                                  className="w-full accent-accent"
+                                  className="w-full"
                                 />
                               </div>
                               <div className="flex justify-between px-2 pb-1.5 text-micro text-dim">

@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import { useStore } from '../lib/store';
 import type { PathEnvironment, PathSegment } from '../lib/types';
 import { ICON } from './ui/icon';
+import { Textarea } from './ui/Textarea';
 
 // PathEnvironmentCard is the diagnostics view of the PATH the app runs
 // with. The desktop app is usually started from Finder/Dock, which
@@ -232,13 +233,15 @@ export function PathEnvironmentCard() {
         <label className="block text-xs text-dim">
           {t('config.diagPathPrependLabel')}
         </label>
-        <textarea
+        <Textarea
+          mono
+          size="sm"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           spellCheck={false}
           rows={3}
           placeholder={t('config.diagPathPrependPlaceholder')}
-          className="mt-1 w-full resize-y rounded-control border border-edge bg-panel px-2 py-1.5 font-mono text-label text-fg outline-none transition-colors focus:border-accent"
+          className="mt-1"
         />
         <div className="mt-2 flex items-center gap-2">
           <button

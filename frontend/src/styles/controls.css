@@ -1,0 +1,97 @@
+/* Native-control skin: checkbox, radio, number and range.
+ *
+ * Every control used to be spelled at its call site (accent-accent /
+ * accent-[var(--color-accent)] / nothing, plus a size override in two
+ * places), so the same checkbox rendered three ways and no single rule
+ * could restyle "a checkbox". These element selectors are the one
+ * address a skin talks to; every call site -- including prose task
+ * lists and future ones -- follows without a line of JSX.
+ *
+ * Contract:
+ * - declarations read from design tokens; the check mark's data URI is
+ *   the one paint literal (white on an accent fill -- the same
+ *   absolute the palette cannot name);
+ * - the file owns the control's own shape and size, never its layout:
+ *   width, margins and alignment stay at the call site;
+ * - sizes are rem against --oc-root-font-size, so zooming the UI stays
+ *   the scale knob's job: a skin changes colors and shapes, not
+ *   density.
+ *
+ * Cascade for a skin: @theme defaults -> .theme-light -> [data-skin] ->
+ * the user's inline variables (appearance.ts owns the last rung). A
+ * skin adds its overrides after this block, and pairs a light variant
+ * under .theme-light[data-skin='x'] the way the light theme itself
+ * does.
+ */
+
+input[type='checkbox'],
+input[type='radio'] {
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-edge);
+}
+
+input[type='checkbox'] {
+  border-radius: var(--radius-tight);
+}
+
+input[type='checkbox']:checked {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent);
+  /* The mark is a shape, not a glyph: a data URI keeps one node and
+     zero JSX. The stroke is white because an accent fill is the one
+     surface the palette cannot name a foreground for. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4.3 8.5l2.6 2.6 4.8-5.7' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0.7857rem;
+}
+
+input[type='radio'] {
+  border-radius: 50%;
+  padding: 0.2143rem;
+}
+
+input[type='radio']:checked {
+  border-color: var(--color-accent);
+  background-color: var(--color-accent);
+  /* Ring-gap-dot without an extra node: the fill clipped to the
+     content box is the dot, the transparent padding is the gap, and
+     the gap shows whatever surface the radio sits on. */
+  background-clip: content-box;
+}
+
+/* Number fields keep the field, not the engine's spinner: the digits
+   are typed, and ui/NumberField's steppers are the explicit ones. */
+input[type='number'] {
+  appearance: textfield;
+}
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+input[type='range'] {
+  appearance: none;
+  height: 1rem;
+  background: transparent;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 0.2857rem;
+  border-radius: 999px;
+  background-color: var(--color-panel3);
+}
+
+input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  margin-top: -0.3571rem;
+  border-radius: 999px;
+  background-color: var(--color-accent);
+}

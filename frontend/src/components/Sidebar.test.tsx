@@ -60,6 +60,19 @@ function switchWorkspace(path: string, sessions: SessionMeta[]) {
   useStore.setState({ workspace: path, sessions });
 }
 
+/** startRuns turns the given conversations into turns in flight, so the
+ * sidebar draws them as running rows in `ids` order. */
+function startRuns(workspacePath: string, ids: string[]) {
+  for (const id of ids) {
+    const actor = stateRoot.registry.ensure(id, {
+      workspaceGeneration: stateRoot.generation(),
+      workspace: workspacePath,
+    });
+    actor?.send({ type: 'NEW_CHAT_READY' });
+    actor?.send({ type: 'RUN_STARTED', runID: `run-${id}` });
+  }
+}
+
 /**
  * hiddenSlots returns the slot badges the reader cannot see. The reveal is
  * a class (lib/modifierHeld.ts) and jsdom is not asked to resolve the
@@ -317,6 +330,72 @@ describe('Sidebar workspace history', () => {
     for (const n of [1, 2, 3, 4, 5, 6]) {
       expect(screen.getByText(`session ${n}`)).toBeInTheDocument();
     }
+  });
+
+  it('keeps every running session when the fold would cut the list', () => {
+    // Five turns in flight: the folded list draws all of them — a running
+    // row is never hidden behind "More sessions" — and the stored rows
+    // wait, because the running ones already fill the window.
+    const rows = [1, 2, 3, 4, 5, 6, 7, 8].map((n) =>
+      meta(`s-${n}`, `session ${n}`),
+    );
+    switchWorkspace(workspaceB.path, rows);
+    startRuns(workspaceB.path, ['s-1', 's-2', 's-3', 's-4', 's-5']);
+    render(<Sidebar isMac={false} />);
+
+    for (const n of [1, 2, 3, 4, 5]) {
+      expect(screen.getByText(`session ${n}`)).toBeInTheDocument();
+    }
+    for (const n of [6, 7, 8]) {
+      expect(screen.queryByText(`session ${n}`)).not.toBeInTheDocument();
+    }
+    expect(
+      within(screen.getByTestId('more-sessions')).getByText('+3'),
+    ).toBeInTheDocument();
+  });
+
+  it('tops the folded window back up with stored sessions under four running', () => {
+    // Two turns in flight lead the list; the window still draws four rows,
+    // so the two newest stored sessions fill the rest.
+    const rows = [1, 2, 3, 4, 5, 6].map((n) => meta(`s-${n}`, `session ${n}`));
+    switchWorkspace(workspaceB.path, rows);
+    startRuns(workspaceB.path, ['s-1', 's-2']);
+    render(<Sidebar isMac={false} />);
+
+    for (const n of [1, 2, 3, 4]) {
+      expect(screen.getByText(`session ${n}`)).toBeInTheDocument();
+    }
+    for (const n of [5, 6]) {
+      expect(screen.queryByText(`session ${n}`)).not.toBeInTheDocument();
+    }
+    expect(
+      within(screen.getByTestId('more-sessions')).getByText('+2'),
+    ).toBeInTheDocument();
+  });
+
+  it('numbers the drawn running rows only as far as the digits go', () => {
+    // Five running rows, no stored ones: the numbers stay on the first
+    // four — the fifth row is drawn, it just outranks the digits' reach.
+    const rows = [1, 2, 3, 4, 5].map((n) => meta(`s-${n}`, `session ${n}`));
+    switchWorkspace(workspaceB.path, rows);
+    startRuns(workspaceB.path, ['s-1', 's-2', 's-3', 's-4', 's-5']);
+    render(<Sidebar isMac />);
+    fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
+
+    expect(
+      screen.getAllByTestId('session-slot').map((badge) => ({
+        combo: badge.textContent,
+        session: badge
+          .closest('[data-session-id]')
+          ?.getAttribute('data-session-id'),
+      })),
+    ).toEqual([
+      { combo: '⌘1', session: 's-1' },
+      { combo: '⌘2', session: 's-2' },
+      { combo: '⌘3', session: 's-3' },
+      { combo: '⌘4', session: 's-4' },
+    ]);
+    expect(screen.getByText('session 5')).toBeInTheDocument();
   });
 
   it('numbers the rows the collapsed list draws, and stops at its fold', async () => {

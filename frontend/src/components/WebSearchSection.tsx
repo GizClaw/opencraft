@@ -16,6 +16,7 @@ import type {
 } from '../lib/types';
 import { ICON } from './ui/icon';
 import { Modal } from './ui/Modal';
+import { NumberField } from './ui/NumberField';
 import { SaveBar } from './ui/SaveBar';
 
 // The web search item of the Tools tab. Like the generation tools it is
@@ -210,7 +211,6 @@ export function WebSearchSection() {
                 setEnabled(e.target.checked);
                 setSaved(false);
               }}
-              className="accent-[var(--color-accent)]"
             />
             {t('config.webSearchEnabled')}
           </label>
@@ -301,16 +301,18 @@ export function WebSearchSection() {
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex items-center gap-2 text-xs text-dim">
               {t('config.webSearchMaxResults')}
-              <input
-                type="number"
+              <NumberField
+                size="sm"
                 min={1}
                 max={10}
                 value={maxResults}
-                onChange={(e) => {
-                  setMaxResults(Number(e.target.value));
-                  setSaved(false);
+                onChange={(next) => {
+                  if (next !== '') {
+                    setMaxResults(next);
+                    setSaved(false);
+                  }
                 }}
-                className="w-16 rounded-control border border-edge bg-panel px-2 py-1 text-xs text-fg outline-none focus:border-accent"
+                className="w-16"
               />
             </label>
             <button

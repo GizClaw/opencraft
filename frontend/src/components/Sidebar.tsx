@@ -145,13 +145,16 @@ type HistoryItem =
 
 const expandedStorageKey = 'oc.sidebarExpandedWorkspaces';
 
-// sessionPreviewCount is how many of a workspace's stored sessions the
-// sidebar lists before folding the rest behind "More sessions". Running
-// sessions are not counted against it. It must stay at least SESSION_SLOTS
-// (lib/sessionSlots.ts): the Mod+digit keys number the first rows of the
-// drawn list, and a number past its end would resume a session hiding
-// behind "More sessions" while its number is nowhere on screen. The suite
-// holds the two together — see "numbers the rows the collapsed list draws".
+// sessionPreviewCount is how many rows a collapsed workspace draws before
+// folding the rest behind "More sessions". Running sessions never fold and
+// do not compete for the window: every running row is drawn, and stored
+// sessions top the window up to this many only while the running rows leave
+// room (fewer than four running, the newest stored sessions fill the rest).
+// It must stay at least SESSION_SLOTS (lib/sessionSlots.ts): the Mod+digit
+// keys number the first rows of the drawn list, and a number past its end
+// would resume a session hiding behind "More sessions" while its number is
+// nowhere on screen. The suite holds the two together — see "numbers the
+// rows the collapsed list draws".
 const sessionPreviewCount = 4;
 
 function readExpandedWorkspaces(): Set<string> {
@@ -862,9 +865,15 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       const rows = sessionRowsFor(w);
       const runningCount = runningIdsByWorkspace[w.path]?.length ?? 0;
       const storedCount = Math.max(0, rows.length - runningCount);
+      // Folded, every running session is drawn — a turn in flight is
+      // never hidden — and stored sessions only fill the window back up
+      // to sessionPreviewCount while the running rows leave room.
       const visibleStored = showAllSessions.has(w.path)
         ? storedCount
-        : Math.min(storedCount, sessionPreviewCount);
+        : Math.max(
+            0,
+            Math.min(storedCount, sessionPreviewCount - runningCount),
+          );
       const visible = rows.slice(0, runningCount + visibleStored);
       if (visible.length === 0) {
         items.push({

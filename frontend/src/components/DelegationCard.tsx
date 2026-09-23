@@ -6,6 +6,7 @@ import { useStore } from '../lib/store';
 import type { DelegationState } from '../lib/types';
 import { ICON } from './ui/icon';
 import { Modal } from './ui/Modal';
+import { NumberField } from './ui/NumberField';
 import { SaveBar } from './ui/SaveBar';
 
 // The delegation item of the Tools tab: one list item that opens a
@@ -133,8 +134,8 @@ export function DelegationCard() {
   const toast = useStore((s) => s.toast);
   const [state, setState] = useState<DelegationState | null>(null);
   const [open, setOpen] = useState(false);
-  const [concurrency, setConcurrency] = useState('4');
-  const [depth, setDepth] = useState('8');
+  const [concurrency, setConcurrency] = useState(4);
+  const [depth, setDepth] = useState(8);
   const [allowed, setAllowed] = useState<string[]>([]);
   const [blocked, setBlocked] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -143,8 +144,8 @@ export function DelegationCard() {
 
   const apply = (next: DelegationState) => {
     setState(next);
-    setConcurrency(String(next.max_concurrency));
-    setDepth(String(next.max_depth));
+    setConcurrency(next.max_concurrency);
+    setDepth(next.max_depth);
     setAllowed(next.allowed_targets ?? []);
     setBlocked(next.blocked_targets ?? []);
   };
@@ -169,8 +170,8 @@ export function DelegationCard() {
     setError('');
     try {
       await api.saveDelegationSettings({
-        max_concurrency: Number(concurrency),
-        max_depth: Number(depth),
+        max_concurrency: concurrency,
+        max_depth: depth,
         allowed_targets: allowed,
         blocked_targets: blocked,
       });
@@ -257,21 +258,27 @@ export function DelegationCard() {
           <p className="text-xs text-dim">{t('config.delegationHint')}</p>
 
           <div className="grid grid-cols-2 gap-3">
-            <label className="space-y-1">
+            {/* A div, not a label: the −/+ cells are buttons, and a
+                label element's control is its first labelable
+                descendant — the minus cell. The field carries its name
+                as an aria-label instead. */}
+            <div className="space-y-1">
               <span className="block text-xs text-dim">
                 {t('config.delegationConcurrency')}
               </span>
-              <input
-                type="number"
-                aria-label={t('config.delegationConcurrency')}
+              <NumberField
+                label={t('config.delegationConcurrency')}
+                size="sm"
+                steppers
                 min={state?.min_max_concurrency ?? 1}
                 max={state?.max_max_concurrency ?? undefined}
                 value={concurrency}
-                onChange={(e) => {
-                  setConcurrency(e.target.value);
+                onChange={(next) => {
+                  if (next === '') return;
+                  setConcurrency(next);
                   setSaved(false);
                 }}
-                className={inputClass}
+                className="w-full"
               />
               <span className="block text-micro text-faint">
                 {t('config.delegationConcurrencyHint', {
@@ -279,22 +286,24 @@ export function DelegationCard() {
                   fallback: state?.default_max_concurrency ?? 0,
                 })}
               </span>
-            </label>
-            <label className="space-y-1">
+            </div>
+            <div className="space-y-1">
               <span className="block text-xs text-dim">
                 {t('config.delegationDepth')}
               </span>
-              <input
-                type="number"
-                aria-label={t('config.delegationDepth')}
+              <NumberField
+                label={t('config.delegationDepth')}
+                size="sm"
+                steppers
                 min={state?.min_max_depth ?? 1}
                 max={state?.max_max_depth ?? undefined}
                 value={depth}
-                onChange={(e) => {
-                  setDepth(e.target.value);
+                onChange={(next) => {
+                  if (next === '') return;
+                  setDepth(next);
                   setSaved(false);
                 }}
-                className={inputClass}
+                className="w-full"
               />
               <span className="block text-micro text-faint">
                 {t('config.delegationDepthHint', {
@@ -302,7 +311,7 @@ export function DelegationCard() {
                   fallback: state?.default_max_depth ?? 0,
                 })}
               </span>
-            </label>
+            </div>
           </div>
 
           <p className="text-micro text-faint">
