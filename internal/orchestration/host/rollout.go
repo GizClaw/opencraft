@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/delegation"
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -23,18 +24,46 @@ func (h *Host) observeSink(next agent.StreamSink) agent.StreamSink {
 	if next == nil {
 		return nil
 	}
-	return agent.StreamSinkFunc(func(
-		ctx context.Context,
-		env event.Envelope,
-		delta agent.StreamDeltaPayload,
-	) error {
-		if agent.IsStreamDelta(env.Subject) {
-			runID := interact.StreamRunID(env.Subject)
-			h.onStreamRollout(ctx, runID, delta)
-			h.observeSteerQueue(ctx, RunID(runID))
-		}
-		return next.OnDelta(ctx, env, delta)
-	})
+	return &observedSink{host: h, next: next}
+}
+
+// observedSink is the wrapper observeSink installs. Beyond the
+// per-delta observation it forwards the wrapped sink's delegation
+// description (StreamTarget): core's exporter matches by capability,
+// so a decorator that swallowed the description would silently disable
+// cross-process streaming for delegated runs.
+type observedSink struct {
+	host *Host
+	next agent.StreamSink
+}
+
+var (
+	_ agent.StreamSink                = (*observedSink)(nil)
+	_ delegation.StreamTargetProvider = (*observedSink)(nil)
+)
+
+// OnDelta implements agent.StreamSink.
+func (s *observedSink) OnDelta(
+	ctx context.Context,
+	env event.Envelope,
+	delta agent.StreamDeltaPayload,
+) error {
+	if agent.IsStreamDelta(env.Subject) {
+		runID := interact.StreamRunID(env.Subject)
+		s.host.onStreamRollout(ctx, runID, delta)
+		s.host.observeSteerQueue(ctx, RunID(runID))
+	}
+	return s.next.OnDelta(ctx, env, delta)
+}
+
+// StreamTarget forwards the wrapped sink's description, or reports that
+// there is none.
+func (s *observedSink) StreamTarget() (delegation.StreamTarget, bool) {
+	provider, ok := s.next.(delegation.StreamTargetProvider)
+	if !ok {
+		return delegation.StreamTarget{}, false
+	}
+	return provider.StreamTarget()
 }
 
 func (h *Host) recordRollout(

@@ -602,6 +602,26 @@ func (s *Store) History(ctx context.Context, id string, n int) ([]message.Messag
 	return out, nil
 }
 
+// SearchOptions, SearchHit and SearchResult are the message-search
+// shapes; the SQLite layer owns them and this package re-exports them
+// so callers (the session_search tool) depend on the store, not on
+// state.
+type (
+	SearchOptions = state.SearchOptions
+	SearchHit     = state.SearchHit
+	SearchResult  = state.SearchResult
+)
+
+// SearchMessages runs a full-text search over the workspace's archived
+// messages: every conversation the workspace holds, current and older.
+// The store writes the index in the same transaction as the archive,
+// so a message is searchable as soon as its turn is committed.
+func (s *Store) SearchMessages(
+	ctx context.Context, query string, opts SearchOptions,
+) (SearchResult, error) {
+	return s.db.SearchMessages(ctx, query, opts)
+}
+
 // Turns returns every archived turn, oldest first.
 func (s *Store) Turns(ctx context.Context, id string) ([]TurnRecord, error) {
 	return s.TurnsPage(ctx, id, 0, 0)

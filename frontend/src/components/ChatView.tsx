@@ -3188,7 +3188,11 @@ export function ChatView() {
                   );
                 })}
                 {pendingInteracts.map((spec) => (
-                  <InteractionCard key={spec.id} spec={spec} />
+                  <InteractionCard
+                    key={spec.id}
+                    spec={spec}
+                    onAnswered={() => composerRef.current?.focus()}
+                  />
                 ))}
               </div>
             ) : (
@@ -3282,7 +3286,11 @@ export function ChatView() {
                   );
                 })}
                 {pendingInteracts.map((spec) => (
-                  <InteractionCard key={spec.id} spec={spec} />
+                  <InteractionCard
+                    key={spec.id}
+                    spec={spec}
+                    onAnswered={() => composerRef.current?.focus()}
+                  />
                 ))}
               </div>
             )}

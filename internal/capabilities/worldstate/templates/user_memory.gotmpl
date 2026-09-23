@@ -1,0 +1,8 @@
+## Long-term memory
+Facts that were explicitly memorized in earlier sessions (by the user or
+through the remember tool): preferences, environment and project
+conventions that outlive one conversation. They are standing context,
+not requests for this turn — when one contradicts what the user says
+now, what they say now wins.
+{{range .Facts}}- {{.}}
+{{end}}{{if .Omitted}}({{.Omitted}} older fact(s) not shown){{end}}

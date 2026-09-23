@@ -8,6 +8,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"go.opentelemetry.io/otel/log"
+
+	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
 )
 
 // ResourceKind is the deployable resource kind of the shared skills
@@ -35,6 +37,9 @@ func (Factory) Spec() resource.Spec {
 		Deps: []resource.DepSpec{
 			// Optional: enabled plugins may contribute skill roots.
 			{Name: "plugin.host", Type: "opencraft.plugins", Required: false},
+			// Optional: the user.db skill lifecycle store behind usage
+			// recording, retirement and the curator.
+			{Name: "skilllifecycle", Type: skillusage.ResourceKind, Required: false},
 		},
 	}
 }
@@ -50,6 +55,9 @@ type Settings struct {
 	// Disabled lists skill names or SKILL.md paths to exclude
 	// ([[skills.config]] enabled=false semantics).
 	Disabled []string `json:"disabled,omitempty"`
+	// ArchiveDir is where the curator writes its tar.gz snapshots.
+	// Empty disables retiring (the archive would have nowhere to go).
+	ArchiveDir string `json:"archive_dir,omitempty"`
 }
 
 // New builds the shared skills service.
@@ -77,6 +85,11 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		ExtraRoots: extraRoots,
 		Disabled:   settings.Disabled,
 	})
+	if dep, ok := in.Dep("skilllifecycle"); ok {
+		if binding, ok := dep.(*skillusage.Binding); ok && binding != nil {
+			svc.SetLifecycle(binding.Store, binding.Config, settings.ArchiveDir)
+		}
+	}
 	// Accepted shape issues (a third-party name that differs from its
 	// directory, for example) repeat on every runtime assembly, so they
 	// are logged apart from real discovery failures and at a lower

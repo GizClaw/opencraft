@@ -4,6 +4,7 @@ import * as Agent from '../../bindings/github.com/GizClaw/opencraft/internal/ada
 import * as Automation from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/automation';
 import * as Config from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/config';
 import * as Conversation from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/conversation';
+import * as Delegation from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/delegation';
 import * as Diagnostics from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/diagnostics';
 import * as File from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/file';
 import * as Git from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/git';
@@ -11,9 +12,11 @@ import * as Lifecycle from '../../bindings/github.com/GizClaw/opencraft/internal
 import * as Plugin from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/plugin';
 import * as Pet from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/pet';
 import * as PullRequests from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/pullrequests';
+import * as Review from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/review';
 import * as Secret from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/secret';
 import * as Session from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/session';
 import * as Settings from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/settings';
+import * as SkillLifecycle from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/skilllifecycle';
 import * as Workspace from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/workspace';
 import type * as gen from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/models';
 import type * as genConfig from '../../bindings/github.com/GizClaw/opencraft/internal/foundation/config/models';
@@ -28,6 +31,8 @@ import type {
   ConfigCompatRepair,
   ConfigState,
   ConfigStatus,
+  DelegationSettingsRequest,
+  DelegationState,
   DiagnosticsReport,
   FilePreview,
   FileNode,
@@ -53,6 +58,12 @@ import type {
   MCPServer,
   MCPStatus,
   MemorySettings,
+  MemoryFact,
+  MemoryFactRequest,
+  ReviewAcceptResult,
+  ReviewSettingsRequest,
+  ReviewState,
+  ReviewSuggestion,
   ModelUsageStat,
   ModelOption,
   PatchFileDTO,
@@ -79,6 +90,11 @@ import type {
   SessionImportDTO,
   SessionTurn,
   SkillDTO,
+  SkillArchiveRow,
+  SkillLifecycleSettingsRequest,
+  SkillLifecycleState,
+  UserMemorySettingsRequest,
+  UserMemoryState,
   TelemetryExportStatus,
   TurnStart,
   TurnMessage,
@@ -381,6 +397,68 @@ export const api = {
   memoryConfig: () => Config.MemoryConfig() as Promise<MemorySettings>,
   saveMemory: (s: MemorySettings) =>
     Config.SaveMemory(s as unknown as genConfig.MemorySettings),
+  // userMemory is the user-level long-term memory (facts that outlive a
+  // session), as opposed to memoryConfig above, which tunes how the
+  // conversation history of the current session is folded.
+  userMemoryState: () =>
+    Config.UserMemoryState() as unknown as Promise<UserMemoryState>,
+  memoryFacts: () => Config.MemoryFacts() as unknown as Promise<MemoryFact[]>,
+  addMemoryFact: (req: MemoryFactRequest) =>
+    Config.AddMemoryFact(
+      req as unknown as gen.MemoryFactRequest,
+    ) as unknown as Promise<MemoryFact>,
+  updateMemoryFact: (id: string, text: string) =>
+    Config.UpdateMemoryFact(id, text) as unknown as Promise<MemoryFact>,
+  removeMemoryFact: (id: string) => Config.RemoveMemoryFact(id),
+  setMemoryFactStale: (id: string, stale: boolean) =>
+    Config.SetMemoryFactStale(id, stale) as unknown as Promise<MemoryFact>,
+  saveUserMemorySettings: (req: UserMemorySettingsRequest) =>
+    Config.SaveUserMemorySettings(
+      req as unknown as gen.UserMemorySettingsRequest,
+    ),
+  // reviewSettings and the suggestion queue drive the post-turn
+  // write-back review: what it proposed, and the user's verdict on it.
+  reviewSettings: () =>
+    Review.ReviewSettings() as unknown as Promise<ReviewState>,
+  saveReviewSettings: (req: ReviewSettingsRequest) =>
+    Review.SaveReviewSettings(req as unknown as gen.ReviewSettingsRequest),
+  reviewSuggestions: () =>
+    Review.ReviewSuggestions() as unknown as Promise<ReviewSuggestion[]>,
+  acceptReviewSuggestion: (id: string) =>
+    Review.AcceptReviewSuggestion(id) as unknown as Promise<ReviewAcceptResult>,
+  discardReviewSuggestion: (id: string) =>
+    Review.DiscardReviewSuggestion(id) as unknown as Promise<ReviewSuggestion>,
+  // skillLifecycle reports how often each skill was used and the
+  // pin/retire decisions; retirement itself only ever goes through the
+  // curator, which snapshots the skill before flagging it.
+  skillLifecycle: () =>
+    SkillLifecycle.SkillUsage() as unknown as Promise<SkillLifecycleState>,
+  pinSkill: (name: string, scope: string) =>
+    SkillLifecycle.PinSkill(name, scope),
+  unpinSkill: (name: string, scope: string) =>
+    SkillLifecycle.UnpinSkill(name, scope),
+  retireSkill: (name: string, scope: string) =>
+    SkillLifecycle.RetireSkill(
+      name,
+      scope,
+    ) as unknown as Promise<SkillArchiveRow>,
+  restoreSkill: (id: string) =>
+    SkillLifecycle.RestoreSkill(id) as unknown as Promise<SkillArchiveRow>,
+  skillArchives: () =>
+    SkillLifecycle.SkillArchives() as unknown as Promise<SkillArchiveRow[]>,
+  saveSkillLifecycleSettings: (req: SkillLifecycleSettingsRequest) =>
+    SkillLifecycle.SaveSkillLifecycleSettings(
+      req as unknown as gen.SkillLifecycleSettingsRequest,
+    ),
+  // delegationSettings drives the delegation policy card: the service
+  // limits and the curated target lists. The lists are enforced on
+  // every delegate call, hidden targets included.
+  delegationState: () =>
+    Delegation.DelegationState() as unknown as Promise<DelegationState>,
+  saveDelegationSettings: (req: DelegationSettingsRequest) =>
+    Delegation.SaveDelegationSettings(
+      req as unknown as gen.DelegationSettingsRequest,
+    ),
   toolOptions: () =>
     Config.ToolOptions() as unknown as Promise<ToolOptionsState>,
   saveToolOptions: (req: ToolOptionsRequest) =>

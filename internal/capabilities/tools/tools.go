@@ -20,6 +20,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/agents"
 	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
+	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	skillsvc "github.com/GizClaw/opencraft/internal/capabilities/skills"
@@ -35,6 +36,8 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
 	plugintools "github.com/GizClaw/opencraft/internal/capabilities/tools/pluginagent"
 	plugininstalltools "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/remember"
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/sessionsearch"
 	skillstools "github.com/GizClaw/opencraft/internal/capabilities/tools/skills"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/videogen"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/viewimage"
@@ -60,6 +63,8 @@ func Register(r *resource.Registry) error {
 		r.Register(permissionsSourceFactory{}),
 		r.Register(planSourceFactory{}),
 		r.Register(skillsSourceFactory{}),
+		r.Register(sessionsearchSourceFactory{}),
+		r.Register(rememberSourceFactory{}),
 		r.Register(plugintools.SourceFactory{}),
 		r.Register(plugininstalltools.SourceFactory{}),
 		r.Register(agentlifecycleSourceFactory{}),
@@ -496,6 +501,78 @@ func (planSourceFactory) New(
 		return nil, err
 	}
 	return toolList(plan.MustNew(plan.NewStore(store)).Tools()), nil
+}
+
+// sessionsearchSourceFactory contributes the session_search tool: the
+// full-text recall over this workspace's archived conversations. The
+// store owns the index and the query; the tool owns the envelope.
+type sessionsearchSourceFactory struct{}
+
+func (sessionsearchSourceFactory) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/sessionsearch",
+		Deps: []resource.DepSpec{
+			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
+		},
+	}
+}
+
+func (sessionsearchSourceFactory) New(
+	_ context.Context,
+	in resource.Input,
+) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	store, err := resourcedep.Required[*sessions.Store](
+		in, "session_search tool", "sessions")
+	if err != nil {
+		return nil, err
+	}
+	return toolList{sessionsearch.New(store)}, nil
+}
+
+// rememberSourceFactory contributes the remember tool: the model's way
+// to store a durable fact in the user-level long-term memory. The tool
+// is contributed only when a user database is behind the binding — with
+// no store there is nowhere to remember anything.
+type rememberSourceFactory struct{}
+
+func (rememberSourceFactory) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/remember",
+		Deps: []resource.DepSpec{
+			{Name: "usermemory", Type: userstore.ResourceKind, Required: true},
+		},
+	}
+}
+
+func (rememberSourceFactory) New(
+	ctx context.Context,
+	in resource.Input,
+) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	binding, err := resourcedep.Required[*userstore.Binding](
+		in, "remember tool", "usermemory")
+	if err != nil {
+		return nil, err
+	}
+	if !binding.Enabled() {
+		return toolList{}, nil
+	}
+	settings, err := resource.DecodeTyped[remember.Settings](ctx, in.Settings)
+	if err != nil {
+		return nil, err
+	}
+	built, err := remember.New(ctx, binding.Memory, settings)
+	if err != nil {
+		return nil, err
+	}
+	return toolList{built}, nil
 }
 
 // skillsSourceFactory contributes the skill_search / skill_read tools

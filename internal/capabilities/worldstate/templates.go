@@ -14,6 +14,7 @@ var (
 	environmentTmpl = template.Must(template.ParseFS(templateFS, "templates/environment.gotmpl"))
 	planTmpl        = template.Must(template.ParseFS(templateFS, "templates/plan.gotmpl"))
 	skillActivTmpl  = template.Must(template.ParseFS(templateFS, "templates/skill_activation.gotmpl"))
+	userMemoryTmpl  = template.Must(template.ParseFS(templateFS, "templates/user_memory.gotmpl"))
 )
 
 type permissionsData struct {

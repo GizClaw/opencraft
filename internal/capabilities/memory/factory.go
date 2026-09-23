@@ -43,18 +43,23 @@ func (r *memoryResource) AppendMessagesTx(
 
 var _ resource.Factory = Factory{}
 
-// RegisterWithObserver registers the memory resources plus an optional
-// usage-observer resource supplied by the engine.
+// RegisterWithObserver registers the memory resources plus the usage
+// observer the engine supplies. The observer resource is registered
+// unconditionally (a no-op when the engine has none): the deploy
+// document declares it once, so every optional `observer` dependency
+// resolves whether or not this runtime accounts for usage.
 func RegisterWithObserver(
 	r *resource.Registry,
 	observe func(context.Context, inference.Usage),
 ) error {
-	if observe != nil {
-		if err := r.Register(usageObserverFactory{
-			fn: UsageObserverFunc(observe),
-		}); err != nil {
-			return err
-		}
+	fn := UsageObserverFunc(observe)
+	if observe == nil {
+		fn = func(context.Context, inference.Usage) {}
+	}
+	if err := r.Register(usageObserverFactory{
+		fn: fn,
+	}); err != nil {
+		return err
 	}
 	return errors.Join(
 		r.Register(Factory{}),

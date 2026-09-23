@@ -18,6 +18,7 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
+	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
 )
 
 // AssemblyImpl is the deploy impl id of opencraft's tool assembly.
@@ -59,6 +60,10 @@ func (AssemblyFactory) Spec() resource.Spec {
 			Name: "tool", Type: "tool.Source", Required: true, Many: true,
 		}, {
 			Name: "hooks", Type: hooks.ResourceKind, Required: false,
+		}, {
+			// Optional: the curated delegation target policy, enforced
+			// on delegate calls by a middleware of this chain.
+			Name: "policy", Type: subagents.PolicyResourceKind, Required: false,
 		}},
 	}
 }
@@ -98,7 +103,13 @@ func (AssemblyFactory) New(ctx context.Context, in resource.Input) (any, error) 
 			hookMgr = mgr
 		}
 	}
-	mws, err := buildMiddleware(settings.Middlewares, hookMgr)
+	var policy *subagents.Policy
+	if dep, ok := in.Dep("policy"); ok {
+		if p, ok := dep.(*subagents.Policy); ok {
+			policy = p
+		}
+	}
+	mws, err := buildMiddleware(settings.Middlewares, hookMgr, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +126,7 @@ func (AssemblyFactory) New(ctx context.Context, in resource.Input) (any, error) 
 func buildMiddleware(
 	s *middlewareSettings,
 	hookMgr *hooks.Manager,
+	policy *subagents.Policy,
 ) ([]tool.Middleware, error) {
 	var mws []tool.Middleware
 	core := toolmiddleware.Settings{}
@@ -138,6 +150,12 @@ func buildMiddleware(
 		return nil, err
 	}
 	mws = append(mws, built...)
+	// The delegation policy sits behind the core middleware: a refused
+	// delegate call still passes recover/timeout/metrics, so one
+	// refusal looks exactly like any other rejected tool call.
+	if mw := delegationMiddleware(policy); mw != nil {
+		mws = append(mws, mw)
+	}
 	if s == nil {
 		return mws, nil
 	}

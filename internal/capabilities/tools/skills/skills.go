@@ -12,11 +12,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/tool"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/confirm"
 )
 
@@ -122,7 +124,9 @@ func (t searchTool) execute(arguments string) (string, error) {
 	}
 	var hits []hit
 	if strings.TrimSpace(args.Query) == "" {
-		list := t.svc.List()
+		// The catalog listing is what the model browses, so retired
+		// skills stay out of it; the skills page keeps the full List.
+		list := t.svc.Available()
 		if len(list) > limit {
 			list = list[:limit]
 		}
@@ -171,9 +175,9 @@ func (readTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
 // Execute implements tool.Tool. The tool result is a single text part;
 // the tool has no multimodal output.
 func (t readTool) Execute(
-	_ context.Context, arguments string,
+	ctx context.Context, arguments string,
 ) (message.Content, error) {
-	out, err := t.execute(arguments)
+	out, err := t.execute(ctx, arguments)
 	if err != nil {
 		return message.Content{}, err
 	}
@@ -181,7 +185,7 @@ func (t readTool) Execute(
 }
 
 // execute renders the tool's text result.
-func (t readTool) execute(arguments string) (string, error) {
+func (t readTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Name string `json:"name"`
 	}
@@ -192,7 +196,29 @@ func (t readTool) execute(arguments string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Loading a skill is a use, next to the per-turn injection: without
+	// this, a skill the model pulls in on purpose every day would look
+	// unused to the curator. Recording is best-effort and silent in a
+	// runtime that records no usage at all.
+	id := runIdentity(ctx)
+	t.svc.RecordUsage(ctx, skillusage.Event{
+		Name:           sk.Name,
+		Scope:          sk.Scope,
+		RunID:          id.RunID,
+		ConversationID: id.ConversationID,
+	})
 	return "# Skill: " + sk.Name + " (file: " + sk.Path + ")\n\n" + body, nil
+}
+
+// runIdentity reports the identity of the run a tool call belongs to.
+// flowcraft injects a RunInfo into the tool context; a direct call
+// outside a run (tests, diagnostics) yields a zero identity, and the
+// usage event then simply carries no run / conversation ids.
+func runIdentity(ctx context.Context) agent.Identity {
+	if info, ok := agent.RunInfoFromContext(ctx); ok {
+		return info.Identity
+	}
+	return agent.Identity{}
 }
 
 type installTool struct{ svc *skills.Service }

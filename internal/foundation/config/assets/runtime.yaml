@@ -23,11 +23,12 @@ runtime:
     idle_timeout: 3m
     resume: false
   # Caller-owned host values injected by the engine at assembly (the
-  # plugin read-side host, the agent-facing plugin installer and the
-  # automation manager). They are stable app objects that must survive
-  # in-place runtime reloads, so they are declared here as external
-  # dependencies instead of being rebuilt per generation from resource
-  # factories.
+  # plugin read-side host, the agent-facing plugin installer, the
+  # automation manager, and the user.db stores behind long-term memory,
+  # the skill lifecycle and the review queue). They are stable app
+  # objects that must survive in-place runtime reloads, so they are
+  # declared here as external dependencies instead of being rebuilt per
+  # generation from resource factories.
   external_deps:
     - name: plugin.host
       contract: opencraft.plugins
@@ -35,6 +36,15 @@ runtime:
       contract: opencraft.automations
     - name: plugin.installer
       contract: opencraft.plugin_installer
+    # The three stores live in the user database and are attached by the
+    # host (Manager.OpenUserDB); the resources below pair them with
+    # their document settings.
+    - name: user.memory
+      contract: opencraft.user_memory_store
+    - name: skill.usage
+      contract: opencraft.skill_usage_store
+    - name: review.queue
+      contract: opencraft.review_queue_store
   dynamic_catalog:
     tools:
       assistant: tools

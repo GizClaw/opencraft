@@ -8,6 +8,7 @@ import (
 
 	petfeed "github.com/GizClaw/opencraft/internal/adapters/desktop/pet"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
@@ -51,6 +52,10 @@ type Core struct {
 	// path holds the last process PATH resolution for the diagnostics
 	// view (see path_report.go).
 	path pathReport
+	// streamTargets is the process-wide registry of live conversation
+	// stream sinks delegated runs deliver into (see streams.go).
+	streamTargetsOnce sync.Once
+	streamTargets     *subagents.StreamTargets
 
 	UserDir string
 	DataDir string
@@ -128,6 +133,12 @@ func NewCoreWithPaths(p Paths) *Core {
 	runtime.Manager().SetAgentPlugins(plugin.Store, plugin.Capability)
 	runtime.Manager().SetAutomationHost(NewAutomationHost(runtime))
 	runtime.Manager().SetPluginInstaller(NewPluginInstaller(c))
+	// Delegated runs stream into the same conversation events as a
+	// local turn. The registry is what lets that destination survive
+	// the queue: see streams.go in this package.
+	runtime.Manager().SetDelegationStreams(
+		c.StreamTargets().Resolver(), c.StreamTargets().Exporter(),
+	)
 	plugin.Capability.SetOpenURL(c.Shell.OpenURL)
 	defaultMode, defaultThink := c.Shell.SessionDefaults()
 	c.Conversation.SetDefaults(

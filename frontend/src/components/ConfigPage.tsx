@@ -43,6 +43,8 @@ import { PerfProbeCard } from './PerfProbeCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { TelemetryExportCard } from './TelemetryExportCard';
 import { ToolsSection } from './ToolsSection';
+import { UserMemoryCard } from './UserMemoryCard';
+import { DelegationCard } from './DelegationCard';
 import { WebSearchSection } from './WebSearchSection';
 import { useStore } from '../lib/store';
 import type {
@@ -389,6 +391,7 @@ export function ConfigPage() {
   const configOpen = useStore((s) => s.configOpen);
   const closeConfig = useStore((s) => s.closeConfig);
   const configTab = useStore((s) => s.configTab);
+  const openSessionInWorkspace = useStore((s) => s.openSessionInWorkspace);
   const yoloOnly = useStore((s) => s.yoloOnly);
   const toast = useStore((s) => s.toast);
   const newID = () =>
@@ -1347,6 +1350,11 @@ export function ConfigPage() {
                 </div>
                 <div id="settings-tools-websearch" className="scroll-mt-4">
                   <WebSearchSection />
+                </div>
+                {/* The delegation policy: limits and curated targets,
+                    enforced on every delegate call. */}
+                <div id="settings-tools-delegation" className="scroll-mt-4">
+                  <DelegationCard />
                 </div>
               </div>
               <div id="settings-tools-mcp" className="scroll-mt-4">
@@ -2714,6 +2722,24 @@ export function ConfigPage() {
                 saving={memorySaving}
                 onSave={() => void saveMemory()}
               />
+
+              {/* User-level long-term memory and the pending review queue.
+                  The id is the settings-search anchor (`memory-facts`). */}
+              <div id="settings-memory-facts" className="scroll-mt-4">
+                <UserMemoryCard
+                  onOpenConversation={(conversationID, workspacePath) => {
+                    // A fact or suggestion carries the workspace its turn
+                    // ran in: jumping there has to switch workspace first,
+                    // which is exactly what openSessionInWorkspace does.
+                    void openSessionInWorkspace(
+                      conversationID,
+                      workspacePath ?? '',
+                    )
+                      .then(() => closeConfig())
+                      .catch((err) => setError(String(err)));
+                  }}
+                />
+              </div>
             </div>
           )}
 

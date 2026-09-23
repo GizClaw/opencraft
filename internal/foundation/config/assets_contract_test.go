@@ -56,7 +56,10 @@ func TestEmbeddedAssetsResolveAppHome(t *testing.T) {
 	// file-tool staging roots moved to ${ocraft:CACHE} instead, which is
 	// state (the execd runner cache lives there too).
 	want := map[string]int{
-		"assets/opencraft.yaml": 3,
+		// The skill lifecycle archive is the fourth: retiring a skill
+		// snapshots it under the app home, so the snapshot survives a
+		// workspace being removed.
+		"assets/opencraft.yaml": 4,
 		"assets/agents.yaml":    1,
 		"assets/tools.yaml":     2,
 	}

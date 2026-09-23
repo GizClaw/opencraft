@@ -6,11 +6,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 
 	skillspkg "github.com/GizClaw/opencraft/internal/capabilities/skills"
+	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/db"
 	"github.com/GizClaw/opencraft/internal/foundation/interact"
 )
 
@@ -210,4 +215,164 @@ func TestSkillReadTool(t *testing.T) {
 	if _, err := tool.Execute(context.Background(), `{"name": "missing"}`); err == nil {
 		t.Fatal("skill_read(missing) should fail")
 	}
+}
+
+// countingLifecycle records the usage events the tools produce. The
+// embedded lifecycle supplies the read half (no decisions, no
+// archives), so the tests below pin the write path only.
+type countingLifecycle struct {
+	skillusage.Lifecycle
+	mu     sync.Mutex
+	events []skillusage.Event
+}
+
+func newCountingLifecycle() *countingLifecycle {
+	return &countingLifecycle{Lifecycle: skillusage.EmptyLifecycle()}
+}
+
+func (c *countingLifecycle) Empty() bool { return false }
+
+func (c *countingLifecycle) Record(_ context.Context, event skillusage.Event) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, event)
+	return nil
+}
+
+func (c *countingLifecycle) snapshot() []skillusage.Event {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]skillusage.Event(nil), c.events...)
+}
+
+func hasSkillNamed(list []skillspkg.SkillMetadata, name string) bool {
+	for _, sk := range list {
+		if sk.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// TestSkillReadRecordsUsage pins the second usage write point: the
+// skill_read tool is how the model pulls a skill in on purpose, so the
+// event has to carry the run it happened in.
+func TestSkillReadRecordsUsage(t *testing.T) {
+	svc := newTestService(t)
+	recorder := newCountingLifecycle()
+	svc.SetLifecycle(recorder, config.SkillLifecycleConfig{
+		Enabled: true, StaleAfterDays: 45, MinUses: 3, UsageWindowDays: 90,
+	}, t.TempDir())
+
+	// flowcraft injects the run identity into the tool context; without
+	// it the event would carry no run / conversation id.
+	ctx := agent.WithRunInfo(context.Background(), agent.RunInfo{
+		Identity: agent.Identity{AgentID: "assistant", RunID: "run-9", ConversationID: "s-3"},
+	})
+	out, err := readTool{svc}.Execute(ctx, `{"name": "plan"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Text(), "Full instructions for plan") {
+		t.Fatalf("skill_read = %q, want full body", out)
+	}
+
+	events := recorder.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("events = %+v, want exactly one", events)
+	}
+	got := events[0]
+	if got.Name != "plan" || got.Scope != "user" || got.RunID != "run-9" ||
+		got.ConversationID != "s-3" || got.UsedAt.IsZero() {
+		t.Fatalf("event = %+v", got)
+	}
+
+	// A read that failed loaded nothing, so it is not a use.
+	if _, err := (readTool{svc}).Execute(ctx, `{"name": "missing"}`); err == nil {
+		t.Fatal("skill_read(missing) should fail")
+	}
+	if events = recorder.snapshot(); len(events) != 1 {
+		t.Fatalf("failed read recorded usage: %+v", events)
+	}
+}
+
+// TestSkillSearchHidesRetiredSkills pins the tool side of the
+// retirement filter: the catalog listing and the ranked search are both
+// ways the model is pointed at a skill, so a retired skill must not come
+// back through them.
+func TestSkillSearchHidesRetiredSkills(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	handle, err := db.Open(filepath.Join(t.TempDir(), "user.db"))
+	if err != nil {
+		t.Fatalf("open user db: %v", err)
+	}
+	t.Cleanup(func() { _ = handle.Close() })
+	if err := compat.User(ctx, handle); err != nil {
+		t.Fatalf("migrate user db: %v", err)
+	}
+	store, err := skillusage.Attach(handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.SetLifecycle(store, config.SkillLifecycleConfig{
+		Enabled: true, StaleAfterDays: 45, MinUses: 3, UsageWindowDays: 90,
+	}, t.TempDir())
+	if !hasSkillNamed(svc.Available(), "plan") {
+		t.Fatal("plan not discovered")
+	}
+	// The page writes decisions straight to the store, behind the
+	// registry's back; the registry picks them up within its cache TTL,
+	// or immediately after a reload as here.
+	if _, err := store.SetRetired(ctx, "plan", "user", true); err != nil {
+		t.Fatal(err)
+	}
+	svc.Reload()
+
+	tool := searchTool{svc}
+	out, err := tool.Execute(ctx, `{"limit": 10}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := decodeHits(t, out.Text())
+	if hasHit(listed, "plan") {
+		t.Fatalf("catalog listing offers a retired skill: %s", out.Text())
+	}
+	if !hasHit(listed, "review") {
+		t.Fatalf("catalog listing lost the live skills: %s", out.Text())
+	}
+	out, err = tool.Execute(ctx, `{"query": "build execution plans"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The builtins legitimately match the query; the retired skill is
+	// the one that must not be ranked.
+	if ranked := decodeHits(t, out.Text()); hasHit(ranked, "plan") {
+		t.Fatalf("search ranked a retired skill: %s", out.Text())
+	}
+}
+
+// searchHit is the slice of the skill_search JSON these tests inspect.
+type searchHit struct {
+	Name string `json:"name"`
+}
+
+// decodeHits parses one skill_search result list. A search with no hits
+// marshals as null, which unmarshals into a nil slice.
+func decodeHits(t *testing.T, out string) []searchHit {
+	t.Helper()
+	var hits []searchHit
+	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+		t.Fatalf("search output %q: %v", out, err)
+	}
+	return hits
+}
+
+func hasHit(list []searchHit, name string) bool {
+	for _, hit := range list {
+		if hit.Name == name {
+			return true
+		}
+	}
+	return false
 }

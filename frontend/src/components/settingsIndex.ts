@@ -111,11 +111,29 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
       'mcp 服务器 工具发现 命令行',
   },
   {
+    tab: 'tools',
+    section: 'tools-delegation',
+    labelKey: 'config.delegationTitle',
+    keywords:
+      'delegation delegate subagent policy allowed blocked targets ' +
+      'concurrency depth ' +
+      '委派 子代理 策略 允许 阻止 目标 并发 深度',
+  },
+  {
     tab: 'memory',
     labelKey: 'config.tabMemory',
     keywords:
       'memory context window history replay fold compact summary budget ' +
       '记忆 上下文 窗口 历史 折叠 压缩 摘要 预算',
+  },
+  {
+    tab: 'memory',
+    section: 'memory-facts',
+    labelKey: 'config.memoryFactsTitle',
+    keywords:
+      'long-term memory facts remember delete stale inject suggestions ' +
+      'review accept discard pending queue provenance ' +
+      '长期记忆 事实 记住 删除 停用 注入 建议 复查 接受 丢弃 待批准 来源',
   },
   {
     tab: 'permissions',

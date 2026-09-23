@@ -1,4 +1,11 @@
-import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type RefObject,
+} from 'react';
 
 // Floating-surface behaviour, shared by every overlay in the app: the
 // Escape stack, the focus trap, the scroll lock and the enter/exit
@@ -31,6 +38,22 @@ interface Layer {
 
 const layers: Layer[] = [];
 let listening = false;
+const layerListeners = new Set<() => void>();
+
+function notifyLayers() {
+  for (const listener of layerListeners) listener();
+}
+
+function subscribeLayers(listener: () => void): () => void {
+  layerListeners.add(listener);
+  return () => {
+    layerListeners.delete(listener);
+  };
+}
+
+function overlayOpen(): boolean {
+  return layers.length > 0;
+}
 
 function onEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape' || event.isComposing) return;
@@ -46,6 +69,7 @@ function onEscape(event: KeyboardEvent) {
 function track(dismiss: (() => void) | undefined): () => void {
   const layer: Layer = { dismiss };
   layers.push(layer);
+  notifyLayers();
   if (!listening) {
     window.addEventListener('keydown', onEscape, true);
     listening = true;
@@ -53,6 +77,7 @@ function track(dismiss: (() => void) | undefined): () => void {
   return () => {
     const index = layers.indexOf(layer);
     if (index >= 0) layers.splice(index, 1);
+    notifyLayers();
     if (layers.length === 0 && listening) {
       window.removeEventListener('keydown', onEscape, true);
       listening = false;
@@ -102,6 +127,49 @@ function focusable(container: HTMLElement): HTMLElement[] {
 }
 
 /**
+ * focusBack returns focus to a stored anchor. The anchor can outlive the
+ * layer that stored it (a menu trigger inside a dialog that just closed);
+ * focusing an orphan would throw focus to the body.
+ */
+function focusBack(target: HTMLElement | null) {
+  if (target?.isConnected) target.focus({ preventScroll: true });
+}
+
+/**
+ * panelKeepsFocus reports whether a closing layer should hand focus back
+ * to its anchor: true while the layer, or nothing at all, owns the
+ * keyboard. A close caused by a click on another control has already
+ * moved focus there, and pulling it back would steal the caret from what
+ * the user just reached for.
+ */
+function panelKeepsFocus(panel: HTMLElement | null): boolean {
+  const current = document.activeElement;
+  if (current === null || current === document.body) return true;
+  return panel !== null && panel.contains(current);
+}
+
+/**
+ * useOverlayOpen reports whether any overlay layer currently owns the
+ * keyboard. Surfaces outside the layer registry (the transcript's
+ * interaction card) use it to stay passive while a menu, a palette or a
+ * dialog is open — and to take the keyboard as soon as the last one
+ * closes.
+ */
+export function useOverlayOpen(): boolean {
+  return useSyncExternalStore(subscribeLayers, overlayOpen, overlayOpen);
+}
+
+/**
+ * overlayLayerOpen reads the registry directly rather than subscribing:
+ * a surface that checks it inside an effect sees a layer that
+ * registered earlier in the same commit, which the render-time snapshot
+ * above cannot.
+ */
+export function overlayLayerOpen(): boolean {
+  return layers.length > 0;
+}
+
+/**
  * useOverlayLayer wires one floating surface into the shared overlay
  * behaviour while `active`. `onDismiss` runs when this layer owns
  * Escape; omit it for a surface Escape must not close (a destructive
@@ -137,22 +205,40 @@ export function useOverlayLayer({
 }) {
   const dismissRef = useRef(onDismiss);
   dismissRef.current = onDismiss;
+  // Where focus goes when the layer closes. The layout effect below
+  // reads it at open time; the effect after it re-asserts the same
+  // target once the commit is over.
+  const restoreToRef = useRef<HTMLElement | null>(null);
 
   useLayoutEffect(() => {
     if (!active) return;
     const restoreTo = document.activeElement as HTMLElement | null;
+    restoreToRef.current = restoreTo;
     const release = trackLatest(() => dismissRef.current);
     if (lock) lockScroll();
     return () => {
       release();
       if (lock) unlockScroll();
-      if (restoreFocus && restoreTo?.isConnected) {
-        // The anchor can outlive us (a menu trigger inside a dialog that
-        // just closed); focusing an orphan would throw focus to the body.
-        restoreTo.focus({ preventScroll: true });
+      if (restoreFocus && panelKeepsFocus(containerRef.current)) {
+        focusBack(restoreTo);
       }
     };
   }, [active, lock, restoreFocus]);
+
+  // React restores focus itself at the end of the commit's mutation
+  // phase: it remembers what had it when the commit started and puts it
+  // back. A panel that is still on screen for its exit animation is a
+  // live element, so the restore above gets undone and the focus dies
+  // with the panel — the composer lost the caret every time the ⌘K
+  // palette closed. Re-assert once the commit is over, and only when the
+  // panel took focus back, so a surface that opened in the same commit
+  // keeps it.
+  useEffect(() => {
+    if (active || !restoreFocus) return;
+    const panel = containerRef.current;
+    if (panel === null || !panel.contains(document.activeElement)) return;
+    focusBack(restoreToRef.current);
+  }, [active, containerRef, restoreFocus]);
 
   useLayoutEffect(() => {
     if (!active) return;
@@ -208,6 +294,13 @@ export function useOverlayLayer({
  * animation. `open` drives the children; `closing` is true from the
  * moment it flips false until the unmount, so the caller can swap in the
  * exit animation class.
+ *
+ * `mounted` catches up to `open` in a layout effect, so a caller that
+ * renders nothing while it is false spends the opening commit off-DOM —
+ * and the effects that wire the surface up (initial focus, the Tab trap,
+ * measuring) then run against a null ref and never run again. Surfaces
+ * whose wiring must see the panel in that commit render on
+ * `open || mounted` instead.
  */
 export function usePresence(open: boolean, exitMs: number = MOTION.fast) {
   const [mounted, setMounted] = useState(open);

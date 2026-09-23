@@ -6,6 +6,7 @@ package host
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/delegation"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
@@ -23,14 +25,18 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
+	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
 	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	reviewstore "github.com/GizClaw/opencraft/internal/capabilities/review/store"
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
 	metricstore "github.com/GizClaw/opencraft/internal/capabilities/telemetry/metric"
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/assembly"
 	automationtool "github.com/GizClaw/opencraft/internal/capabilities/tools/automation"
 	plugininstalltool "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
@@ -141,6 +147,16 @@ type Manager struct {
 	userUsage       *usage.Store
 	userAutomations *automations.Store
 	userMetrics     *metricstore.Store
+	userMemory      *userstore.Store
+	userSkillUsage  *skillusage.Store
+	userReview      *reviewstore.Store
+
+	// Delegation stream delivery, injected by the desktop shell: the
+	// resolver/exporter pair that keeps an async delegation's stream
+	// destination durable. Nil in headless deployments, which keep the
+	// in-process escrow path.
+	delegationStreamResolver delegation.StreamTargetResolver
+	delegationStreamExporter delegation.StreamTargetExporter
 }
 
 type hostRef struct {
@@ -256,6 +272,22 @@ func (m *Manager) SetPluginInstaller(i plugininstalltool.Installer) {
 	m.refreshEngineOptions()
 }
 
+// SetDelegationStreams wires the shell's delegation stream delivery:
+// the exporter describes a live conversation sink as a durable target
+// at async submit time, the resolver materializes that target back
+// into a sink. Passing nil for either leaves the runtime on the
+// in-process escrow path (the headless behaviour).
+func (m *Manager) SetDelegationStreams(
+	resolver delegation.StreamTargetResolver,
+	exporter delegation.StreamTargetExporter,
+) {
+	m.mu.Lock()
+	m.delegationStreamResolver = resolver
+	m.delegationStreamExporter = exporter
+	m.mu.Unlock()
+	m.refreshEngineOptions()
+}
+
 // refreshEngineOptions reinstalls the engine option builder so plugin,
 // plugin-installer and automation hosts are all injected into every
 // runtime assembly.
@@ -275,8 +307,47 @@ func (m *Manager) refreshEngineOptions() {
 		if m.pluginInstall != nil {
 			opts = append(opts, engine.WithPluginInstaller(m.pluginInstall))
 		}
+		if m.delegationStreamResolver != nil && m.delegationStreamExporter != nil {
+			opts = append(opts, engine.WithDelegationStreams(
+				m.delegationStreamResolver, m.delegationStreamExporter,
+			))
+		}
+		opts = append(opts,
+			engine.WithUserMemory(m.userMemoryValue()),
+			engine.WithSkillUsage(m.skillUsageValue()),
+			engine.WithReviewQueue(m.reviewQueueValue()),
+		)
 		return opts
 	})
+}
+
+// userMemoryValue returns the memory store as the engine's dependency
+// interface: the empty memory before user.db is open, so an assembly
+// that runs early still resolves the deploy graph and simply exposes
+// neither the injected section nor the remember tool.
+func (m *Manager) userMemoryValue() userstore.Memory {
+	if m.userMemory == nil {
+		return userstore.Empty()
+	}
+	return m.userMemory
+}
+
+// skillUsageValue returns the skill lifecycle store, or the empty
+// lifecycle before user.db is open.
+func (m *Manager) skillUsageValue() skillusage.Lifecycle {
+	if m.userSkillUsage == nil {
+		return skillusage.EmptyLifecycle()
+	}
+	return m.userSkillUsage
+}
+
+// reviewQueueValue returns the review queue, or the empty queue before
+// user.db is open.
+func (m *Manager) reviewQueueValue() reviewstore.Queue {
+	if m.userReview == nil {
+		return reviewstore.Empty()
+	}
+	return m.userReview
 }
 
 // SetUsageObserver installs a host-level usage reporter for
@@ -314,6 +385,7 @@ func (m *Manager) OpenUserDB(ctx context.Context) error {
 		return nil
 	}
 	dataDir := m.dataDir
+	userDir := m.userDir
 	m.mu.Unlock()
 	if dataDir == "" {
 		var err error
@@ -364,6 +436,30 @@ func (m *Manager) OpenUserDB(ctx context.Context) error {
 			handle.Close())
 		return fmt.Errorf("host: attach metrics: %w", err)
 	}
+	// Long-term memory, skill lifecycle and the review queue share the
+	// same handle: one user database, one migration, one write point
+	// per feature.
+	memoryStore, err := userstore.Attach(handle)
+	if err != nil {
+		telemetry.WarnErr(ctx,
+			"host: close user db after memory attach failure",
+			handle.Close())
+		return fmt.Errorf("host: attach user memory: %w", err)
+	}
+	skillUsageStore, err := skillusage.Attach(handle)
+	if err != nil {
+		telemetry.WarnErr(ctx,
+			"host: close user db after skill usage attach failure",
+			handle.Close())
+		return fmt.Errorf("host: attach skill usage: %w", err)
+	}
+	reviewStore, err := reviewstore.Attach(handle)
+	if err != nil {
+		telemetry.WarnErr(ctx,
+			"host: close user db after review queue attach failure",
+			handle.Close())
+		return fmt.Errorf("host: attach review queue: %w", err)
+	}
 	m.mu.Lock()
 	if m.userDB != nil {
 		m.mu.Unlock()
@@ -374,8 +470,102 @@ func (m *Manager) OpenUserDB(ctx context.Context) error {
 	m.userUsage = usageStore
 	m.userAutomations = automationStore
 	m.userMetrics = metricStore
+	m.userMemory = memoryStore
+	m.userSkillUsage = skillUsageStore
+	m.userReview = reviewStore
 	m.mu.Unlock()
+	// Every memory write path refuses credential-shaped text, not just
+	// the remember tool: the deploy document's secret rules are
+	// compiled here and installed on the store itself.
+	m.installMemoryTextGuard(ctx, userDir)
+	m.pruneSkillUsage(ctx, userDir, skillUsageStore)
+	// The stores reach the assemblies through the engine's external
+	// dependencies, so the option builder has to be reinstalled once
+	// they exist.
+	m.refreshEngineOptions()
 	return nil
+}
+
+// installMemoryTextGuard compiles the deploy document's secret rules
+// and installs them on the user-memory store, so the settings card and
+// an accepted review suggestion refuse the same text the remember tool
+// refuses. Best-effort by design: a runtime whose document cannot be
+// loaded keeps working (the remember tool still applies its own copy of
+// the rules), and a missing guard must never keep user.db from opening.
+func (m *Manager) installMemoryTextGuard(ctx context.Context, userDir string) {
+	mgr, err := config.Open(config.Options{UserDir: userDir})
+	if err != nil {
+		telemetry.WarnErr(ctx, "host: load config for memory guard failed", err)
+		return
+	}
+	view, err := mgr.Load(ctx)
+	if err != nil {
+		telemetry.WarnErr(ctx, "host: load document for memory guard failed", err)
+		return
+	}
+	res, ok := view.Document.Resources["tool.remember"]
+	if !ok {
+		return
+	}
+	var settings struct {
+		Redact assembly.RedactSettings `json:"redact"`
+	}
+	if err := json.Unmarshal(res.Settings, &settings); err != nil {
+		telemetry.WarnErr(ctx, "host: decode remember redact settings failed", err)
+		return
+	}
+	redact, err := assembly.CompileTextRedactor(settings.Redact)
+	if err != nil {
+		telemetry.WarnErr(ctx, "host: compile memory text guard failed", err)
+		return
+	}
+	if redact == nil {
+		return
+	}
+	userstore.SetTextRedactor(redact)
+	telemetry.Info(ctx, "host: user memory text guard installed")
+}
+
+// pruneSkillUsage bounds the skill usage table once per user-database
+// open: events older than the configured window are exactly the ones
+// the curator's verdict ignores, so dropping them is what makes
+// usage_window_days a bound rather than a comment. Best-effort by
+// design — a failure only means the rows stay until the next start.
+func (m *Manager) pruneSkillUsage(
+	ctx context.Context, userDir string, store *skillusage.Store,
+) {
+	if store == nil {
+		return
+	}
+	settings, err := config.LoadSkillLifecycle(userDir)
+	if err != nil {
+		telemetry.WarnErr(ctx,
+			"host: load skill lifecycle settings for prune failed", err)
+		return
+	}
+	effective, err := settings.Resolve()
+	if err != nil {
+		telemetry.WarnErr(ctx,
+			"host: resolve skill lifecycle settings for prune failed", err)
+		return
+	}
+	if effective.UsageWindowDays <= 0 {
+		return
+	}
+	before := time.Now().UTC().AddDate(0, 0, -effective.UsageWindowDays)
+	// The prune outlives the call that opened the database.
+	pruneCtx := context.WithoutCancel(ctx)
+	go func() {
+		rows, err := store.Prune(pruneCtx, before)
+		if err != nil {
+			telemetry.WarnErr(pruneCtx, "host: prune skill usage failed", err)
+			return
+		}
+		if rows > 0 {
+			telemetry.Info(pruneCtx, "host: skill usage pruned",
+				otellog.Int64("rows", rows))
+		}
+	}()
 }
 
 // CloseUserDB closes the user-level database handle opened by
@@ -388,6 +578,9 @@ func (m *Manager) CloseUserDB() {
 	m.userUsage = nil
 	m.userAutomations = nil
 	m.userMetrics = nil
+	m.userMemory = nil
+	m.userSkillUsage = nil
+	m.userReview = nil
 	m.mu.Unlock()
 	if handle != nil {
 		telemetry.WarnErr(context.Background(),
@@ -417,6 +610,30 @@ func (m *Manager) MetricsStore() *metricstore.Store {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.userMetrics
+}
+
+// MemoryStore returns the user-level long-term memory store attached by
+// OpenUserDB, or nil before the database is open.
+func (m *Manager) MemoryStore() *userstore.Store {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.userMemory
+}
+
+// SkillUsageStore returns the skill lifecycle store attached by
+// OpenUserDB, or nil before the database is open.
+func (m *Manager) SkillUsageStore() *skillusage.Store {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.userSkillUsage
+}
+
+// ReviewStore returns the review suggestion queue attached by
+// OpenUserDB, or nil before the database is open.
+func (m *Manager) ReviewStore() *reviewstore.Store {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.userReview
 }
 
 // RecordMetric persists one local metric sample through the attached store.
@@ -928,6 +1145,9 @@ func (m *Manager) buildHost(
 		}
 	}
 	h.attachRuntimeReloadObserver(ctx)
+	// Route finished async delegations back into the conversation
+	// that asked for them (see reflow.go).
+	h.attachReflow(ctx, rt)
 	return h, nil
 }
 
@@ -1046,14 +1266,29 @@ func (m *Manager) recordRecovery(root string, report RecoveryReport) {
 // reportUsage routes an engine usage report to the run that owns it.
 func (h *Host) reportUsage(ctx context.Context, usage inference.Usage) {
 	runID := ""
+	conversationID := ""
 	if info, ok := agent.RunInfoFromContext(ctx); ok {
 		runID = info.RunID
+		conversationID = info.ConversationID
 	}
 	delta := sessions.UsageFromReport(usage)
 	h.mu.Lock()
 	d := h.runs[RunID(runID)]
 	if d == nil {
 		h.mu.Unlock()
+		// The run is gone: a generation that outlives its turn (the
+		// post-turn review reports here, detached) still spent the
+		// model call, so the late report lands in the user-level tables
+		// and the usage observer instead of being dropped silently.
+		if delta.TotalTokens <= 0 {
+			return
+		}
+		if conversationID != "" {
+			h.forwardUsageRecorder(ctx, conversationID, delta, time.Now().UTC())
+		}
+		if fn := h.usage; fn != nil {
+			fn(ctx, usage)
+		}
 		return
 	}
 	d.usage = sessions.AddUsage(d.usage, delta)
@@ -1190,7 +1425,38 @@ func (m *Manager) acquireStore(
 	}
 	m.stores[root] = &storeRef{store: store, refs: 1}
 	m.mu.Unlock()
+	m.scheduleSearchBackfill(ctx, root, store)
 	return store, nil
+}
+
+// scheduleSearchBackfill runs the one-time message-index backfill for a
+// database written before the full-text index existed. The walk is
+// proportional to the archive (minutes on a large database), so it runs
+// detached from the open path and best-effort: the store is usable
+// immediately, and a failure only means the next open tries again (the
+// backfill records its version solely on success). It deliberately does
+// not hold a pool reference: if the last caller releases the store
+// while the walk runs, the walk aborts on the closed handle and the
+// next open resumes it.
+func (m *Manager) scheduleSearchBackfill(
+	ctx context.Context, root string, store *sessions.Store,
+) {
+	database := store.Database()
+	if database == nil {
+		return
+	}
+	// The walk outlives the call that opened the store: keep its values
+	// (identity, telemetry), drop its cancellation.
+	walkCtx := context.WithoutCancel(ctx)
+	go func() {
+		if err := compat.BackfillSearchIndex(
+			walkCtx, database, state.Importer(database),
+		); err != nil {
+			telemetry.WarnErr(walkCtx,
+				"host: message search index backfill failed; retried on the next open",
+				err, otellog.String("root", root))
+		}
+	}()
 }
 
 // releaseStore drops one runtime reference to a shared Store.
@@ -1268,6 +1534,12 @@ type Host struct {
 	// recovery is the summary of the crash-recovery pass this Host ran
 	// at assembly (see recover.go). Guarded by mu.
 	recovery RecoveryReport
+	// reflow is this Host's subscription to the delegation board
+	// (see reflow.go). It is replaced on every runtime reload, so it
+	// has its own lock instead of riding mu: the watcher loop never
+	// touches Host state under it.
+	reflowMu sync.Mutex
+	reflow   *reflowWatch
 }
 
 // RunID identifies one engine run inside a Host.
@@ -1610,6 +1882,7 @@ func (h *Host) doClose() {
 	// never races the DB close.
 	h.titleWG.Wait()
 	h.closeRollouts()
+	h.detachReflow()
 	h.broker.Close()
 	telemetry.WarnErr(context.Background(), "host: close controller failed",
 		h.ctrl.Close())

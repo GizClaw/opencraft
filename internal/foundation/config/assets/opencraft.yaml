@@ -94,6 +94,61 @@ resources:
       window: 40
 
   # ------------------------------------------------------------------
+  # User-level state (user.db): long-term memory, skill lifecycle and
+  # the post-turn review queue. Each resource pairs the host-attached
+  # store with the settings the settings page edits, so consumers read
+  # one dependency and the page has exactly one place to write.
+  # ------------------------------------------------------------------
+  usermemory:
+    kind: opencraft.user_memory
+    impl: local
+    deps:
+      store: user.memory
+    settings:
+      # Facts that outlive a conversation (preferences, environment,
+      # project conventions). Injected every turn in the cache-stable
+      # prefix, bounded by count and bytes; the remember tool and an
+      # accepted review suggestion both write through one store.
+      enabled: true
+      inject_max_items: 12
+      inject_max_chars: 2048
+  skilllifecycle:
+    kind: opencraft.skill_lifecycle
+    impl: local
+    deps:
+      store: skill.usage
+    settings:
+      # Usage events behind the per-skill counters and the curator's
+      # retirement candidates. Builtin skills never participate.
+      enabled: true
+      stale_after_days: 45
+      min_uses: 3
+      usage_window_days: 90
+  review:
+    kind: opencraft.review
+    impl: local
+    deps:
+      store: review.queue
+    settings:
+      # A post-turn review spends a model call, so it ships off: the
+      # hook observes, the queue waits for the user's verdict, and
+      # nothing is written into long-term memory silently.
+      enabled: false
+      every_turns: 5
+      min_tool_calls: 4
+      on_failure: true
+      max_suggestions: 3
+      timeout_seconds: 90
+  # Inference-usage reporter for background generations (memory
+  # condensation, the post-turn review): the engine registers the
+  # observer factory, and this resource is what an optional `observer`
+  # dependency resolves to. Runtimes without a usage observer get a
+  # no-op, so the declaration never breaks an assembly.
+  observer:
+    kind: memory.UsageObserver
+    impl: function
+
+  # ------------------------------------------------------------------
   # Delegation: deployed agents are delegate targets; the model may
   # assign work to them via the delegate / delegation_status tools.
   # ------------------------------------------------------------------
@@ -114,6 +169,14 @@ resources:
     settings:
       max_concurrency: 4
       max_depth: 8
+  # Curated delegation target policy: which targets the model may hand
+  # work to. Empty lists allow every registered target (the default: an
+  # installation that never curated a list is not silently locked
+  # down); the settings page writes the lists into the user layer, and
+  # the tools assembly enforces them on every delegate call.
+  delegate.policy:
+    kind: opencraft.delegation.policy
+    impl: local
 
   # ------------------------------------------------------------------
   # Workspace and sandbox (box.settings.remote selects local/remote exec)
@@ -148,11 +211,17 @@ resources:
     impl: local
     deps:
       plugin.host: plugin.host
+      # Optional: the user.db skill lifecycle store. Without it the
+      # registry records no usage and never filters a retired skill.
+      skilllifecycle: skilllifecycle
     settings:
       enabled: true
       user_dir: ${ocraft:APP_HOME}
       top_n: 5
       min_score: 0
+      # Where the curator writes its tar.gz snapshots: retiring a skill
+      # is always reversible, so the snapshot outlives the decision.
+      archive_dir: ${ocraft:APP_HOME}/skills-archive
   # Mode-aware workspace for the file tools: in workspace mode it
   # delegates to the shared ws resource (one underlying LocalWorkspace
   # for engine/system reads and tool writes) and derives its root from

@@ -43,11 +43,16 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	opmedia "github.com/GizClaw/opencraft/internal/capabilities/media"
 	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
+	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
+	"github.com/GizClaw/opencraft/internal/capabilities/review"
+	reviewstore "github.com/GizClaw/opencraft/internal/capabilities/review/store"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
+	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
 	opentools "github.com/GizClaw/opencraft/internal/capabilities/tools"
 	automationtool "github.com/GizClaw/opencraft/internal/capabilities/tools/automation"
 	plugininstalltool "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
@@ -83,6 +88,25 @@ type Options struct {
 	// agent plugin install tools. Nil yields an empty installer (no
 	// tools exposed).
 	PluginInstaller plugininstalltool.Installer
+	// UserMemory supplies the user-level long-term memory store
+	// (user.db). Nil yields the empty memory: no section is injected
+	// and no remember tool is contributed.
+	UserMemory userstore.Memory
+	// SkillUsage supplies the skill lifecycle store (user.db). Nil
+	// yields the empty lifecycle: nothing is recorded and no skill is
+	// ever retired.
+	SkillUsage skillusage.Lifecycle
+	// ReviewQueue supplies the post-turn review queue (user.db). Nil
+	// yields the empty queue: a review runs but cannot queue anything.
+	ReviewQueue reviewstore.Queue
+	// DelegationStreamResolver materializes a persisted delegation
+	// stream target back into a live sink on the worker side. Nil
+	// keeps escrow-only delivery for async delegations.
+	DelegationStreamResolver sdkdelegation.StreamTargetResolver
+	// DelegationStreamExporter describes the caller's live sink as a
+	// durable target at async submit time. Nil means the delegation
+	// carries no resolvable destination.
+	DelegationStreamExporter sdkdelegation.StreamTargetExporter
 	// SessionStore overrides session-store construction so every
 	// runtime in one workspace shares a single Store.
 	SessionStore func(
@@ -152,6 +176,36 @@ func WithAutomationHost(h automationtool.Host) Option {
 // agent's plugin install tools.
 func WithPluginInstaller(i plugininstalltool.Installer) Option {
 	return func(o *Options) { o.PluginInstaller = i }
+}
+
+// WithUserMemory injects the user-level long-term memory store.
+func WithUserMemory(m userstore.Memory) Option {
+	return func(o *Options) { o.UserMemory = m }
+}
+
+// WithSkillUsage injects the skill lifecycle store.
+func WithSkillUsage(s skillusage.Lifecycle) Option {
+	return func(o *Options) { o.SkillUsage = s }
+}
+
+// WithReviewQueue injects the post-turn review suggestion queue.
+func WithReviewQueue(q reviewstore.Queue) Option {
+	return func(o *Options) { o.ReviewQueue = q }
+}
+
+// WithDelegationStreams injects the app-owned halves of delegation
+// stream delivery: the exporter that describes a caller-side sink as a
+// durable target, and the resolver that materializes that target on
+// the worker side. Both belong together — an exporter without a
+// resolver persists a destination nothing can restore.
+func WithDelegationStreams(
+	resolver sdkdelegation.StreamTargetResolver,
+	exporter sdkdelegation.StreamTargetExporter,
+) Option {
+	return func(o *Options) {
+		o.DelegationStreamResolver = resolver
+		o.DelegationStreamExporter = exporter
+	}
 }
 
 // WithSessionStore overrides session store construction.
@@ -323,7 +377,23 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		sdkdelegation.RegisterDirectory,
 		sdkdelegation.RegisterSessionProvider,
 		func(r *resource.Registry) error {
-			return r.Register(sdkdelegation.NewServiceFactory())
+			// The stream resolver/exporter are app-owned behavior the
+			// document cannot express: they describe a live sink as a
+			// durable destination (exporter) and turn that
+			// destination back into a sink (resolver), so an async
+			// delegation's stream survives losing its in-process
+			// escrow. A deployment that injects neither keeps the
+			// escrow-only behavior.
+			var opts []sdkdelegation.Option
+			if o.DelegationStreamResolver != nil {
+				opts = append(opts,
+					sdkdelegation.WithStreamTargetResolver(o.DelegationStreamResolver))
+			}
+			if o.DelegationStreamExporter != nil {
+				opts = append(opts,
+					sdkdelegation.WithStreamTargetExporter(o.DelegationStreamExporter))
+			}
+			return r.Register(sdkdelegation.NewServiceFactory(opts...))
 		},
 		func(r *resource.Registry) error {
 			return r.Register(tooldelegation.NewSourceFactory())
@@ -337,6 +407,14 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	}
 	reg.MustRegister(hooks.Factory{})
 	reg.MustRegister(hooks.ObserverFactory{})
+	// User-level state bindings: each pairs the caller-owned store the
+	// host attached to user.db with that feature's document settings,
+	// so consumers read one dependency instead of two.
+	reg.MustRegister(userstore.Factory{})
+	reg.MustRegister(skillusage.Factory{})
+	reg.MustRegister(reviewstore.Factory{})
+	reg.MustRegister(review.Factory{})
+	reg.MustRegister(subagents.PolicyFactory{})
 
 	builder := runtimecore.NewBuilder(reg)
 	if err := builder.WithLoader(loader); err != nil {
@@ -364,6 +442,18 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	if pluginInstaller == nil {
 		pluginInstaller = plugininstalltool.EmptyInstaller()
 	}
+	userMemory := o.UserMemory
+	if userMemory == nil {
+		userMemory = userstore.Empty()
+	}
+	skillUsage := o.SkillUsage
+	if skillUsage == nil {
+		skillUsage = skillusage.EmptyLifecycle()
+	}
+	reviewQueue := o.ReviewQueue
+	if reviewQueue == nil {
+		reviewQueue = reviewstore.Empty()
+	}
 	for _, ext := range []runtimecore.ExternalResource{
 		{
 			ExternalDependency: runtimecore.ExternalDependency{
@@ -385,6 +475,27 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 				Contract: plugininstalltool.ResourceKind,
 			},
 			Value: pluginInstaller,
+		},
+		{
+			ExternalDependency: runtimecore.ExternalDependency{
+				Name:     "user.memory",
+				Contract: userstore.StoreContract,
+			},
+			Value: userMemory,
+		},
+		{
+			ExternalDependency: runtimecore.ExternalDependency{
+				Name:     "skill.usage",
+				Contract: skillusage.StoreContract,
+			},
+			Value: skillUsage,
+		},
+		{
+			ExternalDependency: runtimecore.ExternalDependency{
+				Name:     "review.queue",
+				Contract: reviewstore.StoreContract,
+			},
+			Value: reviewQueue,
 		},
 	} {
 		if err := builder.WithExternalResource(ext); err != nil {

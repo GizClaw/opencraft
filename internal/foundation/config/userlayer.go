@@ -99,9 +99,15 @@ func mergeUserLayer(
 				continue
 			}
 			if mergeKeys[key] {
+				oldResVal := oldRes.Content[i+1]
 				if freshRes := findMappingKey(newRes, key); freshRes != nil &&
-					freshRes.Content[0] != nil {
-					mergeMapping(oldRes.Content[i+1], freshRes.Content[0])
+					freshRes.Kind == yamlv4.MappingNode &&
+					oldResVal.Kind == yamlv4.MappingNode {
+					// The generated keys win, the layer's other keys
+					// survive: merge fresh into the existing resource
+					// and hand the merged node to the output document.
+					mergeMapping(oldResVal, freshRes)
+					setMappingValue(newRes, key, oldResVal)
 					continue
 				}
 			}
@@ -135,6 +141,21 @@ func findMappingKey(mapping *yamlv4.Node, key string) *yamlv4.Node {
 		}
 	}
 	return nil
+}
+
+// setMappingValue points an existing key of a mapping node at a
+// different value node; a key that is not there is left alone (merge
+// callers only re-target keys the fresh document has).
+func setMappingValue(mapping *yamlv4.Node, key string, value *yamlv4.Node) {
+	if mapping == nil {
+		return
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			mapping.Content[i+1] = value
+			return
+		}
+	}
 }
 
 // mergeMapping deep-merges src into dst in place: mapping pairs merge

@@ -65,4 +65,9 @@ type WorkspaceImporter interface {
 	// with its messages, and the per-session state documents, in one
 	// transaction.
 	ImportConversation(ctx context.Context, data WorkspaceImport) error
+	// BackfillSearchIndex indexes every archived message the full-text
+	// index (migration 016) does not hold yet. The store owns the rows,
+	// the indexed text projection and the transaction boundaries; the
+	// migration layer owns when this runs and that it is recorded once.
+	BackfillSearchIndex(ctx context.Context) error
 }

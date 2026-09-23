@@ -15,9 +15,16 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
+
+	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/search"
 
@@ -99,7 +106,30 @@ type Service struct {
 	ctx      context.Context
 	opts     Options
 	snapshot atomic.Pointer[snapshot]
+
+	// Lifecycle state: the user.db usage/decision store and the
+	// curator built over it. Both are optional; a runtime without a
+	// user database leaves them nil and every consumer degrades.
+	lifecycle skillusage.Lifecycle
+	curator   *Curator
+	// recording mirrors the deploy's skill lifecycle switch. The store
+	// stays wired when the switch is off (the page and the curator read
+	// it), but nothing is recorded: "enabled turns usage recording on"
+	// is what the setting documents, and a runtime that only reads is
+	// exactly what it promises.
+	recording   bool
+	retiredMu   sync.Mutex
+	retiredAt   time.Time
+	retiredSet  map[string]bool
+	retiredDone bool
 }
+
+// retiredCacheTTL bounds how long the retired-name set is reused. The
+// skills page writes decisions straight to the store (it does not go
+// through this service), so the registry re-reads them within this
+// window instead of per call: the filter sits on the per-turn ranking
+// path.
+const retiredCacheTTL = 5 * time.Second
 
 // snapshot is one immutable discovery result.
 type snapshot struct {
@@ -129,6 +159,10 @@ func (s *Service) reload() {
 		s.snapshot.Store(&snapshot{})
 		return
 	}
+	// A retire/restore goes through this service and reloads the
+	// registry right after; the retired-name cache must not keep serving
+	// the set it built before that decision for the rest of its TTL.
+	s.invalidateRetired()
 	outcome := Discover(
 		s.ctx,
 		s.opts.UserDir,
@@ -219,13 +253,104 @@ func dropShadowedBuiltins(skills []SkillMetadata) []SkillMetadata {
 // Enabled reports whether discovery is on.
 func (s *Service) Enabled() bool { return s.opts.Enabled }
 
+// SetLifecycle wires the user.db skill lifecycle store and builds the
+// curator over it. A nil store (or an empty one) leaves the service
+// stateless: nothing is recorded and no skill is ever filtered as
+// retired. The settings switch only gates recording (see RecordUsage):
+// a lifecycle that is switched off still shows what it knows.
+func (s *Service) SetLifecycle(
+	store skillusage.Lifecycle,
+	settings config.SkillLifecycleConfig,
+	archiveDir string,
+) {
+	s.lifecycle = store
+	if store == nil || store.Empty() {
+		s.lifecycle = nil
+		s.curator = nil
+		s.recording = false
+		return
+	}
+	s.recording = settings.Enabled
+	s.curator = NewCurator(s, store, settings, archiveDir)
+}
+
+// Curator returns the lifecycle curator, or nil when this runtime has
+// no user database.
+func (s *Service) Curator() *Curator { return s.curator }
+
+// Lifecycle returns the wired lifecycle store, or nil.
+func (s *Service) Lifecycle() skillusage.Lifecycle { return s.lifecycle }
+
+// RecordUsage appends one activation event. Recording is best-effort by
+// contract: a usage write must never fail a turn, so failures are
+// logged and swallowed. A runtime without a user database, or one whose
+// skill lifecycle is switched off, records nothing and stays silent.
+func (s *Service) RecordUsage(ctx context.Context, event skillusage.Event) {
+	if s.lifecycle == nil || !s.recording {
+		return
+	}
+	if event.UsedAt.IsZero() {
+		event.UsedAt = time.Now().UTC()
+	}
+	if err := s.lifecycle.Record(ctx, event); err != nil {
+		telemetry.WarnErr(ctx, "skills: record usage failed", err,
+			otellog.String("skill", event.Name))
+	}
+}
+
+// retired reports whether one skill name is retired. Errors and a
+// missing store both mean "not retired": the filter must never hide a
+// skill because a query failed.
+func (s *Service) retired(name string) bool {
+	if s.lifecycle == nil {
+		return false
+	}
+	return s.retiredSetCached()[name]
+}
+
+// retiredSetCached returns the retired-name set, re-reading it at most
+// once per retiredCacheTTL.
+func (s *Service) retiredSetCached() map[string]bool {
+	s.retiredMu.Lock()
+	defer s.retiredMu.Unlock()
+	now := time.Now()
+	if s.retiredDone && now.Sub(s.retiredAt) < retiredCacheTTL {
+		return s.retiredSet
+	}
+	set, err := s.lifecycle.Retired(s.ctx)
+	if err != nil {
+		telemetry.WarnErr(s.ctx, "skills: read retired skills failed", err)
+		// Keep serving the last known set rather than un-retiring
+		// everything on a transient read failure.
+		if s.retiredDone {
+			return s.retiredSet
+		}
+		set = map[string]bool{}
+	}
+	s.retiredSet = set
+	s.retiredAt = now
+	s.retiredDone = true
+	return set
+}
+
+// invalidateRetired drops the cached retired set so the next read sees
+// a decision this service just made.
+func (s *Service) invalidateRetired() {
+	s.retiredMu.Lock()
+	s.retiredDone = false
+	s.retiredMu.Unlock()
+}
+
 // TopN returns the configured ranked-list size.
 func (s *Service) TopN() int { return s.opts.TopN }
 
 // MinScore returns the configured BM25 threshold.
 func (s *Service) MinScore() float64 { return s.opts.MinScore }
 
-// List returns all discovered skills sorted by name, then path.
+// List returns all discovered skills sorted by name, then path. It is
+// deliberately unfiltered: the skills page and the curator need to see
+// retired skills (that is how they are restored). The activation and
+// recommendation paths filter them out instead.
 func (s *Service) List() []SkillMetadata {
 	snap := s.snapshot.Load()
 	out := append([]SkillMetadata(nil), snap.outcome.Skills...)
@@ -236,6 +361,26 @@ func (s *Service) List() []SkillMetadata {
 		return out[i].Path < out[j].Path
 	})
 	return out
+}
+
+// Available returns the skills the registry still offers: List minus
+// the retired ones. Everything that puts skills in front of the user
+// or the model (the per-turn list, $mention resolution, skill_search)
+// goes through this or through the equivalent filters in Mentioned /
+// RankScored, and the body readers (ReadFull / ReadByPath) refuse a
+// retired skill outright, so a retired skill cannot come back through a
+// side door. List itself stays unfiltered: the skills page and the
+// curator need to see retired skills, that is how they are restored.
+func (s *Service) Available() []SkillMetadata {
+	out := s.List()
+	kept := out[:0]
+	for _, sk := range out {
+		if s.retired(sk.Name) {
+			continue
+		}
+		kept = append(kept, sk)
+	}
+	return kept
 }
 
 // Errors returns the non-fatal diagnostics from the last discovery.
@@ -275,13 +420,14 @@ func (s *Service) ByName(name string) (SkillMetadata, bool) {
 var mentionRe = regexp.MustCompile(`(?:^|[^a-z0-9_])[$]([a-z0-9]+(?:-[a-z0-9]+)*)`)
 
 // Mentioned extracts explicit $name mentions from text and resolves
-// them to skills by Depth (in mention order).
+// them to skills by Depth (in mention order). Retired skills are
+// skipped: retiring one is what stops it from being injected.
 func (s *Service) Mentioned(text string) []SkillMetadata {
 	var out []SkillMetadata
 	seen := map[string]bool{}
 	for _, m := range mentionRe.FindAllStringSubmatch(text, -1) {
 		sk, ok := s.ByName(m[1])
-		if !ok || seen[sk.Path] {
+		if !ok || seen[sk.Path] || s.retired(sk.Name) {
 			continue
 		}
 		seen[sk.Path] = true
@@ -326,6 +472,13 @@ func (s *Service) RankScored(query string, topN int, minScore float64) []ScoredS
 			continue
 		}
 		if sk, ok := snap.byPath[r.ID]; ok {
+			// Retired skills are not recommended any more. Filtering
+			// after scoring keeps the BM25 threshold meaningful; the
+			// price is that a retired hit is not backfilled, so the
+			// list can come back shorter than the caller asked for.
+			if s.retired(sk.Name) {
+				continue
+			}
 			out = append(out, ScoredSkill{Skill: sk, Score: r.Score})
 		}
 	}
@@ -338,6 +491,10 @@ func (s *Service) ReadFull(name string) (SkillMetadata, string, error) {
 	sk, ok := s.ByName(name)
 	if !ok {
 		return SkillMetadata{}, "", fmt.Errorf("skills: %q not found", name)
+	}
+	if s.retired(sk.Name) {
+		return SkillMetadata{}, "", fmt.Errorf(
+			"skills: %q is retired and serves no body", name)
 	}
 	body, err := s.readBody(sk)
 	if err != nil {
@@ -355,6 +512,10 @@ func (s *Service) ReadByPath(path string) (SkillMetadata, string, error) {
 	sk, ok := snap.byPath[path]
 	if !ok {
 		return SkillMetadata{}, "", fmt.Errorf("skills: %q not found", path)
+	}
+	if s.retired(sk.Name) {
+		return SkillMetadata{}, "", fmt.Errorf(
+			"skills: %q is retired and serves no body", sk.Name)
 	}
 	body, err := s.readBody(sk)
 	if err != nil {

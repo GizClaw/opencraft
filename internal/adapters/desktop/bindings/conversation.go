@@ -104,7 +104,7 @@ func (b *Conversation) StartTurn(
 	// it is routed to that workspace's Host without becoming current.
 	background := workDir != "" && !core.SameWorkspace(workDir, active)
 	requestedAt := time.Now().UTC()
-	sink := agent.StreamSinkFunc(func(
+	rawSink := agent.StreamSinkFunc(func(
 		ctx context.Context,
 		env event.Envelope,
 		delta agent.StreamDeltaPayload,
@@ -121,6 +121,14 @@ func (b *Conversation) StartTurn(
 		})
 		return nil
 	})
+	// Make this turn's sink resolvable for delegated runs: an async
+	// delegation submitted by this turn describes its destination as
+	// this conversation, and the worker materializes it back into this
+	// sink when the in-process escrow is gone. Registration lives
+	// exactly as long as the turn does, and the registry hands back the
+	// wrapped, describable sink: the turn has to stream through that
+	// same object, or the exporter cannot describe it at all.
+	sink, releaseSink := b.core.RegisterConversationSink(contextID, rawSink)
 	opts := host.RunOptions{
 		Message:   req.Message,
 		ContextID: contextID,
@@ -172,7 +180,10 @@ func (b *Conversation) StartTurn(
 				startedAt := time.Now().UTC()
 				b.core.Conversation.TrackRun(workDir, contextID, run.RunID())
 				b.core.Shell.Emit("status", core.StatusEvent{Busy: true})
-				go b.waitTurn(ctx, run, contextID)
+				go func() {
+					defer releaseSink()
+					b.waitTurn(ctx, run, contextID)
+				}()
 				return TurnStart{
 					RunID:          run.RunID(),
 					ConversationID: contextID,
@@ -196,6 +207,9 @@ func (b *Conversation) StartTurn(
 			return TurnStart{}, err
 		}
 	}
+	// No run ever started, so the sink registration would outlive its
+	// reason to exist.
+	releaseSink()
 	return TurnStart{}, lastErr
 }
 
