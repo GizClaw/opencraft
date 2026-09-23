@@ -43,6 +43,7 @@ import { PerfProbeCard } from './PerfProbeCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { TelemetryExportCard } from './TelemetryExportCard';
 import { ToolsSection } from './ToolsSection';
+import { MemoryContextCard } from './MemoryContextCard';
 import { UserMemoryCard } from './UserMemoryCard';
 import { DelegationCard } from './DelegationCard';
 import { WebSearchSection } from './WebSearchSection';
@@ -168,6 +169,18 @@ function effortMapComplete(m: RowModel): boolean {
 
 function limitToRow(v: number | undefined): number | '' {
   return v === undefined || !Number.isFinite(v) || v <= 0 ? '' : v;
+}
+
+// sameMemorySettings compares the fold knobs the memory card's save bar
+// watches: four scalars, so equality is spelled out instead of
+// stringified.
+function sameMemorySettings(a: MemorySettings, b: MemorySettings): boolean {
+  return (
+    a.max_raw_messages === b.max_raw_messages &&
+    a.preserve_recent === b.preserve_recent &&
+    a.max_summary_bytes === b.max_summary_bytes &&
+    a.replay_full_history === b.replay_full_history
+  );
 }
 
 // modelLifecyclePayload renders one row's discovery metadata, dropping
@@ -487,6 +500,10 @@ export function ConfigPage() {
   });
   const [memorySaving, setMemorySaving] = useState(false);
   const [memorySaved, setMemorySaved] = useState(false);
+  // The values the memory card's save bar compares its drafts against:
+  // loaded with the form and updated on every successful save, so the bar
+  // cannot claim "unsaved" before the user has touched anything.
+  const [memoryBase, setMemoryBase] = useState<MemorySettings | null>(null);
   const [diag, setDiag] = useState<DiagnosticsReport | null>(null);
   const [probe, setProbe] = useState<SandboxProbeResult | null>(null);
   const [policyInput, setPolicyInput] = useState('');
@@ -603,7 +620,10 @@ export function ConfigPage() {
     if (tab !== 'memory') return;
     void api
       .memoryConfig()
-      .then(setMemory)
+      .then((next) => {
+        setMemory(next);
+        setMemoryBase(next);
+      })
       .catch((err) => setError(String(err)));
   }, [tab]);
 
@@ -679,6 +699,7 @@ export function ConfigPage() {
       await api.saveMemory(memory);
       setError('');
       setMemorySaved(true);
+      setMemoryBase(memory);
     } catch (err) {
       setMemorySaved(false);
       setError(String(err));
@@ -2642,89 +2663,27 @@ export function ConfigPage() {
 
           {tab === 'memory' && (
             <div className="space-y-4">
-              <p className="text-xs text-dim">{t('config.memoryHint')}</p>
-              <div className="grid grid-cols-3 gap-3">
-                <label className="space-y-1.5">
-                  <span className="text-xs text-dim">
-                    <span data-tip="max_raw_messages">
-                      {t('config.memoryRawWindow')}
-                    </span>
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={memory.max_raw_messages}
-                    onChange={(e) =>
-                      editMemory({
-                        max_raw_messages: Number(e.target.value) || 0,
-                      })
-                    }
-                    className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
-                  />
-                </label>
-                <label className="space-y-1.5">
-                  <span className="text-xs text-dim">
-                    <span data-tip="preserve_recent">
-                      {t('config.memoryPreserveRecent')}
-                    </span>
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    value={memory.preserve_recent}
-                    onChange={(e) =>
-                      editMemory({
-                        preserve_recent: Number(e.target.value) || 0,
-                      })
-                    }
-                    className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
-                  />
-                </label>
-                <label className="space-y-1.5">
-                  <span className="text-xs text-dim">
-                    <span data-tip="max_summary_bytes">
-                      {t('config.memorySummaryBytes')}
-                    </span>
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1024}
-                    value={memory.max_summary_bytes}
-                    onChange={(e) =>
-                      editMemory({
-                        max_summary_bytes: Number(e.target.value) || 0,
-                      })
-                    }
-                    className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
-                  />
-                </label>
-              </div>
-              <label className="flex items-center gap-2 rounded-card border border-edge bg-panel2 px-3 py-2.5">
-                <input
-                  type="checkbox"
-                  checked={memory.replay_full_history}
-                  onChange={(e) =>
-                    editMemory({ replay_full_history: e.target.checked })
+              {/* The settings-search anchor (`memory-context`): how much
+                  of the conversation reaches the model verbatim, and when
+                  the older turns fold into a summary. */}
+              <div id="settings-memory-context" className="scroll-mt-4">
+                <MemoryContextCard
+                  settings={memory}
+                  onChange={editMemory}
+                  saved={memorySaved}
+                  dirty={
+                    memoryBase !== null &&
+                    !sameMemorySettings(memory, memoryBase)
                   }
-                  className="accent-accent"
+                  saving={memorySaving}
+                  error={error}
+                  onSave={() => void saveMemory()}
                 />
-                <div className="flex-1">
-                  <span className="text-sm">{t('config.memoryReplay')}</span>
-                  <p className="text-xs text-dim">
-                    {t('config.memoryReplayHint')}
-                  </p>
-                </div>
-              </label>
-              <SaveBar
-                saved={memorySaved}
-                error={error}
-                saving={memorySaving}
-                onSave={() => void saveMemory()}
-              />
+              </div>
 
               {/* User-level long-term memory and the pending review queue.
-                  The id is the settings-search anchor (`memory-facts`). */}
+                  The first id is the settings-search anchor (`memory-facts`); the
+                  queue carries its own (`memory-suggestions`). */}
               <div id="settings-memory-facts" className="scroll-mt-4">
                 <UserMemoryCard
                   onOpenConversation={(conversationID, workspacePath) => {

@@ -3,11 +3,13 @@ import {
   BarChart3,
   Bot,
   CalendarClock,
+  Copy,
   Cpu,
   Database,
   FileText,
   FolderOpen,
   Import,
+  Keyboard,
   MessageSquare,
   Moon,
   Package,
@@ -17,6 +19,7 @@ import {
   Sparkles,
   SquarePen,
   Stethoscope,
+  TextCursorInput,
   Wrench,
 } from 'lucide-react';
 import type { SessionMeta, WorkspaceMeta } from './types';
@@ -38,6 +41,12 @@ export interface Command {
   hint?: string;
   /** Extra search terms (both languages) that are not shown. */
   keywords?: string;
+  /**
+   * Shortcut id from lib/keys.ts. The palette renders the combo beside
+   * the title and the dispatcher owns the key itself, so the badge and
+   * the binding cannot disagree.
+   */
+  shortcut?: string;
   icon: ComponentType<{ size?: string | number; className?: string }>;
   run: () => void;
 }
@@ -51,6 +60,9 @@ export interface CommandActions {
   openWorkspace: (path: string) => void;
   openSessionInWorkspace: (sessionID: string, workspacePath: string) => void;
   setTheme: (theme: 'dark' | 'light' | 'auto') => void;
+  /** Runs a command by its shortcut id — the same entry point the
+   * keyboard listener and the native menu use. */
+  runShortcut: (id: string) => void;
 }
 
 export interface CommandState {
@@ -116,6 +128,8 @@ export function buildCommands({
       title: t(`config.tab${label}`),
       hint: t('config.title'),
       keywords: `settings preferences 设置 偏好 ${tab.id}`,
+      // ⌘, opens the page on this tab.
+      shortcut: tab.id === 'general' ? 'settings.open' : undefined,
       icon: tab.icon,
       run: () => actions.openConfig(tab.id),
     });
@@ -140,6 +154,7 @@ export function buildCommands({
       title: t('palette.newChat'),
       hint: state.workspace ? workspaceName(state.workspace) : undefined,
       keywords: 'new chat session 新建 对话 会话',
+      shortcut: 'chat.new',
       icon: SquarePen,
       run: () => actions.newChat(),
     },
@@ -148,6 +163,7 @@ export function buildCommands({
       group: 'palette.groupNav',
       title: t('palette.browseFiles'),
       keywords: 'files tree explorer 文件 目录 浏览',
+      shortcut: 'panel.files',
       icon: FileText,
       run: () => actions.openFiles(),
     },
@@ -158,6 +174,38 @@ export function buildCommands({
       keywords: 'open folder workspace 打开 文件夹 工作区',
       icon: FolderOpen,
       run: () => actions.chooseWorkspace(),
+    },
+  );
+
+  // The commands whose only other home is a key: listing them in the
+  // palette is what makes them findable without the sheet.
+  commands.push(
+    {
+      id: 'nav:shortcuts',
+      group: 'palette.groupNav',
+      title: t('shortcuts.title'),
+      keywords: 'keys shortcuts keyboard bindings 快捷键 键盘 按键',
+      shortcut: 'shortcuts.open',
+      icon: Keyboard,
+      run: () => actions.runShortcut('shortcuts.open'),
+    },
+    {
+      id: 'chat:focus-composer',
+      group: 'palette.groupActions',
+      title: t('shortcuts.focusComposer'),
+      keywords: 'focus composer input caret 聚焦 输入框 光标',
+      shortcut: 'chat.focusComposer',
+      icon: TextCursorInput,
+      run: () => actions.runShortcut('chat.focusComposer'),
+    },
+    {
+      id: 'chat:copy-reply',
+      group: 'palette.groupActions',
+      title: t('shortcuts.copyLastReply'),
+      keywords: 'copy reply clipboard 复制 回复 剪贴板',
+      shortcut: 'chat.copyLastReply',
+      icon: Copy,
+      run: () => actions.runShortcut('chat.copyLastReply'),
     },
   );
 

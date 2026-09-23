@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { stateRoot } from './app';
+import type { ConversationActor } from './actorRegistry';
 import {
   projectConversation,
   projectFocus,
@@ -70,18 +71,47 @@ function conversationSignature(id: string): string {
 function runningSignature(): string {
   const parts: string[] = [];
   for (const actor of stateRoot.registry.all()) {
+    if (!liveTurn(actor)) continue;
     const snapshot = actor.getSnapshot() as unknown as {
       value: { turn: string };
       context: { id: string; workspace?: string };
     };
-    const turn = snapshot.value.turn;
-    if (turn !== 'starting' && turn !== 'running') continue;
     parts.push(
       `${snapshot.context.id}|${snapshot.context.workspace ?? ''}|${conversationSignature(snapshot.context.id)}`,
     );
   }
   parts.sort();
   return parts.join('\n');
+}
+
+// liveTurn is the one predicate for "this conversation has a turn in
+// flight". Both the sidebar's running-first list and the session-slot jump
+// (lib/sessionSlots.ts) rank rows by it, so it lives in one place.
+function liveTurn(actor: ConversationActor): boolean {
+  const snapshot = actor.getSnapshot() as unknown as {
+    value: { turn: string };
+  };
+  const turn = snapshot.value.turn;
+  return turn === 'starting' || turn === 'running';
+}
+
+/**
+ * runningConversationIDs is the running set without React, in the sidebar's
+ * order. The session-slot jump reads it at call time rather than from a
+ * render: a snapshot taken when the App last rendered could be one turn
+ * transition stale. Both reads go through liveTurn, so they cannot disagree
+ * about what "running" means.
+ */
+export function runningConversationIDs(): string[] {
+  const out: string[] = [];
+  for (const actor of stateRoot.registry.all()) {
+    if (!liveTurn(actor)) continue;
+    const snapshot = actor.getSnapshot() as unknown as {
+      context: { id: string };
+    };
+    out.push(snapshot.context.id);
+  }
+  return out;
 }
 
 export function useFocusState(): FocusState {
@@ -132,6 +162,7 @@ export function useRunningConversations(workspace?: string): Array<{
     state: ConversationViewState;
   }> = [];
   for (const actor of stateRoot.registry.all()) {
+    if (!liveTurn(actor)) continue;
     const state = projectConversation(
       actor.getSnapshot() as unknown as Parameters<
         typeof projectConversation
@@ -139,11 +170,8 @@ export function useRunningConversations(workspace?: string): Array<{
     );
     const actorWorkspace = actor.getSnapshot().context.workspace as
       string | undefined;
-    const active =
-      state.turn.name === 'starting' || state.turn.name === 'running';
-    if (active && (workspace === undefined || actorWorkspace === workspace)) {
-      out.push({ conversationID: actor.getSnapshot().context.id, state });
-    }
+    if (workspace !== undefined && actorWorkspace !== workspace) continue;
+    out.push({ conversationID: actor.getSnapshot().context.id, state });
   }
   return out;
 }

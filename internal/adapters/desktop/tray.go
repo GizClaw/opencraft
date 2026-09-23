@@ -78,7 +78,7 @@ func (d *Desktop) SetupTray(
 		quit:    quitItem,
 		desktop: d,
 	}
-	d.core.Shell.SetLanguageChangedListener(t.refresh)
+	d.core.Shell.AddLanguageChangedListener(t.refresh)
 }
 
 // refresh copies the current locale into the tray labels.

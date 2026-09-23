@@ -8,6 +8,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The keyboard is one table with one place to read it. Every key the
+  shell owns now lives in `frontend/src/lib/keys.ts` — the combos, plus
+  whether a command also fires while a text field has the caret
+  (`editable`), whether it may run underneath an overlay (`overlay:
+  'runs'`) and whether holding it repeats — and one capture-phase
+  listener (`lib/useShortcuts.ts`) dispatches it, so a key can no longer
+  be documented in one place and bound in another. ⌘/ opens the
+  reference: the table's groups (global, chat, composer, lists, palette)
+  together with the keys a surface owns rather than the shell (the
+  composer's Enter / Tab / ⌘Enter, the approval card's Space, the ruler's
+  ↑↓, the palette's own walk), rendered from the same table the
+  dispatcher reads. The command palette shows each command's combo beside
+  its title, and the palette, the keys and the macOS menu bar all run the
+  same ids through one dispatcher (`lib/shellCommands.ts`). New bindings:
+  Esc — or ⌘., where a bare Escape is an odd thing to advertise — stops
+  the running reply, with one deliberate exception: a text surface keeps
+  its own Escape (an inline rename cancels, a path field closes, the
+  composer's mention popup exits), so the shell takes the key only where
+  nobody else owns it, and the composer runs the stop from its own
+  handler. Also new: ⌘L focuses the composer, ⌘⇧C copies the last reply,
+  ⌘↑ / ⌘↓ walk the transcript question by question, ⌘1 … ⌘4 resume a
+  numbered session, ⌘[ / ⌘] move between sessions and ⌘⇧[ / ⌘⇧] between
+  workspaces, ⌘⇧G toggles the Git panel and ⌘⇧T cycles the theme. Those
+  digits are the sidebar's own numbering: the badge on a row and the key
+  that jumps to it read one function (`lib/sessionSlots.ts`), the number
+  follows the visible order (a running conversation leads its workspace's
+  list, so the digits move with it), and an empty slot — or the session
+  already open — does nothing. A number is a hint, not a label: it appears
+  while the modifier that runs it is held and is out of sight otherwise
+  (`lib/modifierHeld.ts`), the way a menu bar reveals its accelerators.
+  That state is not a down/up pair of the modifier key — the up is
+  swallowed whenever the press ends somewhere else (⌘-Tab, Spotlight,
+  Mission Control, the window losing focus) and the hints would stay on
+  for good — so it is recomputed from every keyboard event's own
+  modifier, and cleared when the window loses focus or the page goes
+  hidden. The row keeps the badge's place while the hint is away:
+  hidden, not unmounted, so holding ⌘ never re-truncates the title the
+  reader is looking at, and the hint steps aside for the row's own
+  buttons when the pointer is over it.
+  The row's hover card carries the number too — the badge is a hint, and a
+  hint has to be known before it can be looked for — so the mouse can
+  learn which key owns a row without holding anything down. No digit
+  names a row the collapsed list does not draw, either: the preview
+  window and the slot count are held together by a test. A control that
+  has a key says so in its hint (`data-tip-keys`, drawn by the one tooltip
+  layer from the same table, and a test walks every site), so the mouse
+  finds the keyboard too. Combos render per platform from one formatter
+  (⌘⇧[ on macOS, Ctrl+Shift+[ elsewhere) instead of the user-agent
+  sniffing each surface used to do, keys fire only where the table says
+  they may (an IME's composition still owns the keyboard, and Escape
+  belongs to the topmost overlay first), and nothing is remappable yet:
+  the sheet is a reference, not an editor.
+- An input method owns the keyboard in one place. `lib/ime.ts`
+  (`imeKeyOwner`) answers what a keydown belongs to — composing, a press
+  the IME already took, or the app's — and the dispatcher, the overlay
+  stack, the composer, the palette, the font picker and the approval card
+  all ask it instead of each carrying their own `isComposing` check. It
+  covers what the flag alone does not: Chromium — and therefore WebView2
+  on Windows — delivers the key that *ends* a composition again after
+  `compositionend`, with `isComposing` already false, so committing a
+  Chinese or Japanese candidate looked exactly like the user pressing
+  Enter: the palette ran its highlighted command, the composer sent, a
+  dialog closed. That press is now recognised and consumed before any
+  surface sees it, and a list that filters as you type renders the frozen
+  results while a composition is in flight instead of flashing empty.
+- macOS has a menu bar the app owns. The default one that came with the
+  window was never ours: View ▸ Reload reloaded the webview, and Help ▸
+  Learn More navigated the main window to wails.io. The bar is now built
+  from a table (`internal/adapters/desktop/menuspec.go`), every item
+  localized, with the platform's own rows (Edit, Window, zoom, full
+  screen, the Services submenu) kept as roles and the app's commands as
+  *bridged* rows: the item carries the accelerator, macOS consumes the
+  key, and a click emits the frontend's own shortcut id over the
+  `opencraft:menu` event, so one implementation backs both fronts and the
+  menu cannot drift from the sheet. File ▸ Close Window funnels into the
+  same close-to-tray-or-quit gate the traffic lights use. Keys are only
+  written where AppKit can match them — it compares the character the key
+  types ignoring every modifier but ⇧, so the ⌘-and-a-plain-key combos go
+  in whole, ⇧-punctuation works (⇧⌘[ is spelled `CmdOrCtrl+Shift+[` and
+  the bar draws it), and a ⇧-letter can never match a key Wails has
+  lowercased, which is why Redo carries no key rather than one that does
+  nothing. Windows and Linux are unchanged: an in-app top bar over a
+  frameless window, with the frontend dispatcher as the only owner of
+  keys. A test reads the TypeScript table and holds the Go one to it (ids
+  exist, accelerators equal the combos, a non-`editable` key may not be
+  advertised, no key is claimed twice), because the two languages cannot
+  import each other.
 - Past sessions are searchable by the assistant, not only by the UI: the
   `session_search` tool runs a full-text recall over this workspace's
   archived turns (SQLite FTS5, trigram tokenizer, so a substring inside
@@ -355,6 +442,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Opening an agent in the graph editor no longer takes the page down when
+  its source omits the `edges` (or `nodes`) key. A single-node subagent
+  has no transitions at all, so the key can legitimately be absent, and
+  the binding marshals the parsed nil slice as `null` — which the canvas
+  layout iterated. The api adapter normalizes both lists to arrays on the
+  way in, and a test pins the path from the raw payload to the rendered
+  canvas.
 - Saving MCP servers no longer drops the rest of a hand-written `tools`
   resource. The user-layer merge that is supposed to deep-merge the
   generated keys into the existing resource inserted them into the

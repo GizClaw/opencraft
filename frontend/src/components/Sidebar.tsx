@@ -23,16 +23,11 @@ import { formatDate, formatDateTime } from '../lib/datetime';
 import { Window } from '@wailsio/runtime';
 import { api } from '../lib/api';
 import { formatCompact } from '../lib/compactNumber';
-import {
-  firstMessageTitle,
-  pendingConversationIDs,
-  useStore,
-} from '../lib/store';
-import {
-  conversationWorkspace,
-  useFocusState,
-  useRunningConversations,
-} from '../state/react';
+import { formatCombo } from '../lib/keys';
+import { useModifierHeld } from '../lib/modifierHeld';
+import { runningIDsByWorkspace, sessionSlotIDs } from '../lib/sessionSlots';
+import { firstMessageTitle, useStore } from '../lib/store';
+import { useFocusState, useRunningConversations } from '../state/react';
 import type { ComponentType } from 'react';
 import type { SessionMeta, WorkspaceMeta } from '../lib/types';
 import { AppMark } from './AppMark';
@@ -126,6 +121,10 @@ type HistoryItem =
       kind: 'session';
       row: SessionRow;
       actionsAllowed: boolean;
+      /** The Mod+digit this row answers to, when it has one: the session
+       * slots (lib/sessionSlots.ts) number the active workspace's first
+       * four rows. Absent for every other row. */
+      slot?: number;
     }
   | {
       key: string;
@@ -148,7 +147,11 @@ const expandedStorageKey = 'oc.sidebarExpandedWorkspaces';
 
 // sessionPreviewCount is how many of a workspace's stored sessions the
 // sidebar lists before folding the rest behind "More sessions". Running
-// sessions are not counted against it.
+// sessions are not counted against it. It must stay at least SESSION_SLOTS
+// (lib/sessionSlots.ts): the Mod+digit keys number the first rows of the
+// drawn list, and a number past its end would resume a session hiding
+// behind "More sessions" while its number is nowhere on screen. The suite
+// holds the two together — see "numbers the rows the collapsed list draws".
 const sessionPreviewCount = 4;
 
 function readExpandedWorkspaces(): Set<string> {
@@ -391,20 +394,30 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   // them even when the app is focused elsewhere (a stream from a
   // previous workspace or an automation host keeps flowing).
   const runningActors = useRunningConversations();
-  const runningIdsByWorkspace = useMemo(() => {
-    const byPath: Record<string, string[]> = {};
-    for (const { conversationID } of runningActors) {
-      const path = conversationWorkspace(conversationID);
-      if (!path) continue;
-      (byPath[path] ??= []).push(conversationID);
-    }
-    for (const id of pendingConversationIDs(pendingPromptConvs)) {
-      const path = conversationWorkspace(id);
-      if (!path || byPath[path]?.includes(id)) continue;
-      (byPath[path] ??= []).push(id);
-    }
-    return byPath;
-  }, [runningActors, pendingPromptConvs]);
+  const runningIdsByWorkspace = useMemo(
+    () =>
+      runningIDsByWorkspace(
+        runningActors.map((actor) => actor.conversationID),
+        pendingPromptConvs,
+      ),
+    [runningActors, pendingPromptConvs],
+  );
+
+  // Mod+1 … Mod+4 number the active workspace's session list, in the
+  // order it is drawn below: the running rows first, then the stored
+  // ones. The digits run no deeper than the list does — a slot past its
+  // end has no number to show (lib/sessionSlots.ts owns this order,
+  // lib/shellCommands.ts jumps by it).
+  const slotIDs = useMemo(
+    () => sessionSlotIDs(sessions, runningIdsByWorkspace[workspace] ?? []),
+    [sessions, runningIdsByWorkspace, workspace],
+  );
+  // The numbers are hints, so they wait to be asked for: they appear while
+  // the modifier that runs them is held and are out of sight otherwise
+  // (lib/modifierHeld.ts). A row keeps the badge's place either way —
+  // hidden, not unmounted — so revealing the numbers never moves the
+  // truncation point of the title under the reader's eye.
+  const modifierHeld = useModifierHeld(isMac);
 
   const ensureWorkspaceSessions = async (w: WorkspaceMeta) => {
     if (
@@ -577,7 +590,11 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       setHoverCard({ row, left, top });
     };
 
-  const renderSessionRow = (row: SessionRow, actionsAllowed: boolean) => {
+  const renderSessionRow = (
+    row: SessionRow,
+    actionsAllowed: boolean,
+    slot?: number,
+  ) => {
     const isActive = row.id === currentSession;
     return (
       <div key={row.id}>
@@ -616,6 +633,28 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                 aria-label={row.title}
               >
                 <SessionTitle title={row.title} />
+                {slot !== undefined && (
+                  <kbd
+                    aria-hidden="true"
+                    data-testid="session-slot"
+                    className={`ml-2 shrink-0 rounded-tight border border-edge bg-panel2 px-1 text-micro text-faint transition-[opacity,visibility] ${
+                      modifierHeld &&
+                      !(actionsAllowed && menuOpen?.id === row.id)
+                        ? 'opacity-100'
+                        : 'invisible opacity-0'
+                    } ${
+                      // The row's own buttons live on the same edge: while
+                      // they are up — the pointer is over the row, focus is
+                      // inside it, or its menu is open — the number steps
+                      // aside rather than peeking out from under them.
+                      actionsAllowed
+                        ? 'group-hover:invisible group-hover:opacity-0 group-focus-within:invisible group-focus-within:opacity-0'
+                        : ''
+                    }`}
+                  >
+                    {formatCombo(`Mod+${slot}`, isMac)}
+                  </kbd>
+                )}
                 {row.running && (
                   <span
                     aria-hidden="true"
@@ -836,11 +875,13 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         continue;
       }
       for (const row of visible) {
+        const slot = isCurrent ? slotIDs.indexOf(row.id) : -1;
         items.push({
           key: `${w.path}:${row.id}`,
           kind: 'session',
           row,
           actionsAllowed: isCurrent,
+          slot: slot >= 0 ? slot + 1 : undefined,
         });
       }
       const hidden = storedCount - visibleStored;
@@ -863,6 +904,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     runningIdsByWorkspace,
     sessions,
     showAllSessions,
+    slotIDs,
     t,
     workspace,
     wsLists,
@@ -884,7 +926,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       case 'session':
         return (
           <div className="ml-3 pt-1">
-            {renderSessionRow(item.row, item.actionsAllowed)}
+            {renderSessionRow(item.row, item.actionsAllowed, item.slot)}
           </div>
         );
       case 'loading':
@@ -955,19 +997,38 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     const meta = card.row.meta;
     const updated = meta ? fmtCardTime(meta.updated_at) : '';
     const created = meta ? fmtCardTime(meta.created_at) : '';
-    const rows = [
-      card.row.tokens
-        ? { label: t('sidebar.hoverTokens'), value: card.row.tokens }
-        : null,
-      card.row.turns && card.row.turns > 0
-        ? { label: t('sidebar.hoverTurns'), value: String(card.row.turns) }
-        : null,
-      updated ? { label: t('sidebar.hoverUpdated'), value: updated } : null,
-      created ? { label: t('sidebar.hoverCreated'), value: created } : null,
-    ].filter((r): r is { label: string; value: string } => r !== null);
+    // The number the row answers to, for the reader who never holds the
+    // modifier: the badge on the row is a hint, and a hint has to be known
+    // before it can be looked for. Only the rows the digits actually name
+    // carry one (lib/sessionSlots.ts).
+    const slot = slotIDs.indexOf(card.row.id) + 1;
+    const rows: Array<{ label: string; value: string; chip?: boolean }> = [];
+    if (slot > 0) {
+      rows.push({
+        label: t('sidebar.hoverShortcut'),
+        value: formatCombo(`Mod+${slot}`, isMac),
+        chip: true,
+      });
+    }
+    if (card.row.tokens) {
+      rows.push({ label: t('sidebar.hoverTokens'), value: card.row.tokens });
+    }
+    if (card.row.turns && card.row.turns > 0) {
+      rows.push({
+        label: t('sidebar.hoverTurns'),
+        value: String(card.row.turns),
+      });
+    }
+    if (updated) {
+      rows.push({ label: t('sidebar.hoverUpdated'), value: updated });
+    }
+    if (created) {
+      rows.push({ label: t('sidebar.hoverCreated'), value: created });
+    }
     if (rows.length === 0) return null;
     return (
       <div
+        data-testid="session-hover-card"
         className="pointer-events-none fixed z-[var(--oc-z-tooltip)] rounded-card border border-edge bg-panel2/95 p-3 shadow-popover backdrop-blur"
         style={{ left: card.left, top: card.top, width: 288 }}
       >
@@ -981,7 +1042,17 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
               className="flex items-baseline justify-between gap-4 text-xs leading-4"
             >
               <dt className="shrink-0 text-dim">{r.label}</dt>
-              <dd className="min-w-0 text-right text-fg">{r.value}</dd>
+              <dd className="min-w-0 text-right text-fg">
+                {/* The same chip the row wears while the modifier is
+                    held, so the card and the row read as one thing. */}
+                {r.chip ? (
+                  <kbd className="rounded-tight border border-edge bg-panel px-1 text-micro text-faint">
+                    {r.value}
+                  </kbd>
+                ) : (
+                  r.value
+                )}
+              </dd>
             </div>
           ))}
         </dl>
@@ -1022,6 +1093,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       <div className="px-3 pt-1">
         <button
           onClick={openDraftChat}
+          data-tip={t('sidebar.newChat')}
+          data-tip-keys="chat.new"
           className="w-full flex items-center gap-2 rounded-card border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
         >
           <Plus size={ICON.md} className="text-accent" />
@@ -1145,6 +1218,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       <div className="border-t border-edge p-3 space-y-2">
         <button
           onClick={() => openConfig()}
+          data-tip={t('sidebar.settings')}
+          data-tip-keys="settings.open"
           className="flex items-center gap-1.5 text-xs text-dim hover:text-fg"
         >
           <Settings size={ICON.sm} />

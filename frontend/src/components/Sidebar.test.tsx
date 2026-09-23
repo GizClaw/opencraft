@@ -60,6 +60,18 @@ function switchWorkspace(path: string, sessions: SessionMeta[]) {
   useStore.setState({ workspace: path, sessions });
 }
 
+/**
+ * hiddenSlots returns the slot badges the reader cannot see. The reveal is
+ * a class (lib/modifierHeld.ts) and jsdom is not asked to resolve the
+ * stylesheet, so the class is the readable answer here; the browser's own
+ * verdict is asserted in e2e/shortcuts.spec.ts.
+ */
+function hiddenSlots() {
+  return screen
+    .getAllByTestId('session-slot')
+    .filter((badge) => badge.classList.contains('invisible'));
+}
+
 describe('Sidebar workspace history', () => {
   beforeEach(() => {
     stateRoot.resetWorkspace();
@@ -161,6 +173,127 @@ describe('Sidebar workspace history', () => {
     expect(rowButton.querySelectorAll('svg')).toHaveLength(1);
   });
 
+  it('numbers the visible rows the session slots name', () => {
+    // The digits come from the key table's own formatter, so the badge
+    // reads the same on every platform as the shortcut sheet does.
+    switchWorkspace(
+      workspaceB.path,
+      [1, 2, 3].map((n) => meta(`s-${n}`, `session ${n}`)),
+    );
+    render(<Sidebar isMac />);
+
+    const badges = screen.getAllByTestId('session-slot');
+    // The numbers are hints, so they wait to be asked for
+    // (lib/modifierHeld.ts) — and they keep their place in the row while
+    // they wait: hidden, not unmounted, so the title never re-truncates.
+    expect(hiddenSlots()).toHaveLength(3);
+
+    fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
+    expect(badges.map((badge) => badge.textContent)).toEqual([
+      '⌘1',
+      '⌘2',
+      '⌘3',
+    ]);
+    expect(hiddenSlots()).toHaveLength(0);
+
+    fireEvent.keyUp(window, { key: 'Meta' });
+    expect(hiddenSlots()).toHaveLength(3);
+  });
+
+  it('reveals the numbers only for the modifier its platform binds', () => {
+    switchWorkspace(workspaceB.path, [meta('s-1', 'session 1')]);
+    render(<Sidebar isMac={false} />);
+    const badge = screen.getByTestId('session-slot');
+
+    // Elsewhere the slots are Control+1 …: holding ⌘ is somebody else's
+    // gesture and reveals nothing.
+    fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
+    expect(hiddenSlots()).toHaveLength(1);
+    fireEvent.keyDown(window, { key: 'Control', ctrlKey: true });
+    expect(hiddenSlots()).toHaveLength(0);
+
+    // And the hints do not outlive the press: ⌘-Tab takes the keyup with
+    // it, so losing the window is what ends the reveal.
+    fireEvent.blur(window);
+    expect(hiddenSlots()).toHaveLength(1);
+    expect(badge).toHaveClass('invisible');
+  });
+
+  it('moves the numbers onto a running row and pushes the rest down', () => {
+    // The running conversation leads the list, so the digits follow it:
+    // the number is where the key goes (lib/sessionSlots.ts).
+    switchWorkspace(workspaceB.path, [meta('s-1', 'session 1')]);
+    const actor = stateRoot.registry.ensure('s-run', {
+      workspaceGeneration: stateRoot.generation(),
+      workspace: workspaceB.path,
+    });
+    actor?.send({ type: 'NEW_CHAT_READY' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-run' });
+    render(<Sidebar isMac />);
+
+    const rows = screen.getAllByTestId('session-slot').map((badge) => ({
+      combo: badge.textContent,
+      session: badge
+        .closest('[data-session-id]')
+        ?.getAttribute('data-session-id'),
+    }));
+    expect(rows).toEqual([
+      { combo: '⌘1', session: 's-run' },
+      { combo: '⌘2', session: 's-1' },
+    ]);
+  });
+
+  it('numbers only the active workspace, not an expanded neighbour', async () => {
+    switchWorkspace(workspaceB.path, [meta('s-b1', 'session in B')]);
+    apiMock.listSessionsInWorkspace.mockResolvedValue([
+      meta('s-a1', 'session in A'),
+    ]);
+    render(<Sidebar isMac />);
+
+    const badges = await waitFor(() => {
+      expect(screen.getByText('session in A')).toBeInTheDocument();
+      return screen.getAllByTestId('session-slot');
+    });
+    expect(badges).toHaveLength(1);
+    expect(
+      badges[0].closest('[data-session-id]')?.getAttribute('data-session-id'),
+    ).toBe('s-b1');
+  });
+
+  it('names the row its slot in the hover card, for readers who never hold the key', async () => {
+    // The number on the row is a hint, and a hint has to be known before
+    // it can be looked for; the card carries it for whoever only uses the
+    // mouse.
+    apiMock.listSessionsInWorkspace.mockResolvedValue([
+      meta('s-a1', 'session in A'),
+    ]);
+    switchWorkspace(
+      workspaceB.path,
+      [1, 2].map((n) => meta(`s-${n}`, `session ${n}`)),
+    );
+    render(<Sidebar isMac />);
+
+    const row = screen
+      .getByRole('button', { name: 'session 2' })
+      .closest('[data-session-id]');
+    fireEvent.mouseEnter(row!);
+    const card = await screen.findByTestId('session-hover-card');
+    const label = within(card).getByText('Shortcut');
+    expect(within(label.closest('div')!).getByText('⌘2')).toBeInTheDocument();
+
+    // A row the digits do not name — here another workspace's — says
+    // nothing about keys.
+    const neighbour = await screen.findByRole('button', {
+      name: 'session in A',
+    });
+    fireEvent.mouseEnter(neighbour.closest('[data-session-id]')!);
+    await waitFor(() =>
+      expect(screen.getByTestId('session-hover-card')).not.toHaveTextContent(
+        'Shortcut',
+      ),
+    );
+  });
+
   it('folds a workspace past the 4-row preview behind "More sessions"', async () => {
     const rows = [1, 2, 3, 4, 5, 6].map((n) => meta(`s-${n}`, `session ${n}`));
     apiMock.listSessionsInWorkspace.mockResolvedValue(rows);
@@ -184,6 +317,33 @@ describe('Sidebar workspace history', () => {
     for (const n of [1, 2, 3, 4, 5, 6]) {
       expect(screen.getByText(`session ${n}`)).toBeInTheDocument();
     }
+  });
+
+  it('numbers the rows the collapsed list draws, and stops at its fold', async () => {
+    // sessionPreviewCount and SESSION_SLOTS have to keep agreeing: a digit
+    // past the last drawn row would resume a session hiding behind "More
+    // sessions", with no number on screen to say so.
+    const rows = [1, 2, 3, 4, 5, 6].map((n) => meta(`s-${n}`, `session ${n}`));
+    apiMock.listSessionsInWorkspace.mockResolvedValue([]);
+    switchWorkspace(workspaceB.path, rows);
+    render(<Sidebar isMac />);
+    fireEvent.keyDown(window, { key: 'Meta', metaKey: true });
+
+    expect(
+      screen.getAllByTestId('session-slot').map((badge) => ({
+        combo: badge.textContent,
+        session: badge
+          .closest('[data-session-id]')
+          ?.getAttribute('data-session-id'),
+      })),
+    ).toEqual([
+      { combo: '⌘1', session: 's-1' },
+      { combo: '⌘2', session: 's-2' },
+      { combo: '⌘3', session: 's-3' },
+      { combo: '⌘4', session: 's-4' },
+    ]);
+    // The fifth row is behind the fold, and so is its number.
+    expect(screen.queryByText('session 5')).not.toBeInTheDocument();
   });
 
   it('leads with the active workspace even when the backend ranks it lower', async () => {

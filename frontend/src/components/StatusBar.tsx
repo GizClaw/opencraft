@@ -1,17 +1,18 @@
 import { Loader2, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { formatCombos, shortcutByID } from '../lib/keys';
 import { useStore } from '../lib/store';
 import { useConversationState, useFocusState } from '../state/react';
 import { ICON } from './ui/icon';
 
 // The status bar is the one strip that is always on screen, so the ⌘K
 // affordance lives here: the palette itself is only discoverable if
-// something says it exists. Rendered as ⌘ on macOS, Ctrl elsewhere.
-const MOD_KEY = /Macintosh|Mac OS X/i.test(navigator.userAgent)
-  ? '⌘K'
-  : 'Ctrl K';
+// something says it exists. The badge is the key table's own spelling of
+// the combo (⌘K on macOS, Ctrl+K elsewhere), so it cannot drift from the
+// key that opens the palette.
+const PALETTE = shortcutByID('palette.open');
 
-export function StatusBar() {
+export function StatusBar({ isMac }: { isMac: boolean }) {
   const focus = useFocusState();
   const conversation = useConversationState(
     focus.name === 'active' ? focus.sessionID : undefined,
@@ -64,9 +65,11 @@ export function StatusBar() {
       >
         <Search size={ICON.xs} />
         {t('palette.title')}
-        <kbd className="rounded-tight bg-panel2 px-1 text-micro text-faint">
-          {MOD_KEY}
-        </kbd>
+        {PALETTE !== undefined && (
+          <kbd className="rounded-tight bg-panel2 px-1 text-micro text-faint">
+            {formatCombos(PALETTE.combos, isMac)}
+          </kbd>
+        )}
       </button>
     </footer>
   );

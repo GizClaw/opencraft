@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { formatCombos, shortcutByID } from '../../lib/keys';
 
 // Tooltip — the app's hover/focus hint, drawn by one shared layer.
 //
@@ -11,6 +12,11 @@ import { createPortal } from 'react-dom';
 // or theme itself, and is invisible on touch.
 //
 //   <button data-tip={t('chat.stop')} aria-label={t('chat.stop')}>…
+//
+// A hinted control that has a key says so with a shortcut id
+// (`data-tip-keys="turn.stop"`), and the combo is read from the table the
+// dispatcher uses — so the hint and the key that fires cannot disagree,
+// and the hint spells the key the way the rest of the app does.
 //
 // Hints appear after a short hover intent, immediately on keyboard focus,
 // and never while a pointer is dragging. The layer is pointer-events-none
@@ -26,7 +32,7 @@ interface Hint {
   anchor: HTMLElement;
 }
 
-export function TooltipLayer() {
+export function TooltipLayer({ isMac }: { isMac: boolean }) {
   const [hint, setHint] = useState<Hint | null>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
@@ -157,6 +163,9 @@ export function TooltipLayer() {
 
   if (hint === null) return null;
 
+  // The key a hinted control names, as the hint should spell it.
+  const shortcut = shortcutByID(hint.anchor.dataset.tipKeys ?? '');
+
   return createPortal(
     <div
       ref={cardRef}
@@ -167,7 +176,14 @@ export function TooltipLayer() {
         pos === null ? 'invisible' : 'animate-popover-in'
       }`}
     >
-      {hint.text}
+      <span className="flex items-baseline gap-2">
+        <span className="min-w-0">{hint.text}</span>
+        {shortcut !== undefined && (
+          <kbd className="shrink-0 whitespace-nowrap rounded-tight border border-edge bg-panel2 px-1 text-micro text-faint">
+            {formatCombos(shortcut.combos, isMac)}
+          </kbd>
+        )}
+      </span>
     </div>,
     document.body,
   );

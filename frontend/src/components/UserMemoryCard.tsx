@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
+  Bookmark,
+  Check,
   Database,
   Eye,
   EyeOff,
-  Check,
   Pencil,
   Plus,
-  RotateCcw,
+  Sparkles,
   Trash2,
-  X,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
@@ -20,29 +20,44 @@ import type {
   ReviewSuggestion,
   UserMemoryState,
 } from '../lib/types';
+import { MenuSelect } from './MenuSelect';
 import { Badge } from './ui/Badge';
-import { Button } from './ui/Button';
+import { Button, IconButton } from './ui/Button';
 import { ConfirmDialog } from './ui/ConfirmDialog';
+import { EmptyState } from './ui/EmptyState';
 import { ICON } from './ui/icon';
+import { Input } from './ui/Input';
 import { SaveBar } from './ui/SaveBar';
+import { NumberSetting, SettingRow, ToggleSetting } from './ui/SettingRow';
 
 // The long-term memory card of the Memory tab: the user-level facts the
 // host injects into every turn, plus the queue of suggestions the
 // post-turn review proposed and is waiting for a verdict on.
 //
-// Both halves are one card on purpose: accepting a suggestion is the
-// same write as typing a fact by hand, and seeing the two lists next to
-// each other is what makes that obvious. Facts are always written
-// through the host's store — this card never composes its own SQL — so
-// the limits, the dedupe and the provenance are the same everywhere.
-
-const inputClass =
-  'w-full rounded-control border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg ' +
-  'outline-none transition-colors hover:border-accent/50 focus:border-accent ' +
-  'disabled:opacity-40';
+// The two lists share one component on purpose: accepting a suggestion is
+// the same write as typing a fact by hand, and seeing them next to each
+// other is what makes that obvious. Facts are always written through the
+// host's store — this card never composes its own SQL — so the limits,
+// the dedupe and the provenance are the same everywhere.
+//
+// Each list is a card: header, rows, the knobs that decide how the list
+// is used, then the save bar. A row leads with the text it carries and
+// keeps the chips and the actions on the line below, so a long fact
+// cannot push its own scope badge out of the column the eye is
+// following.
 
 function scopeTone(scope: string | undefined): 'accent' | 'neutral' {
   return scope === 'global' ? 'accent' : 'neutral';
+}
+
+// The mid-dot between two plain metadata items in a row's meta line:
+// without it "preference updated 09/12/2026" reads as one phrase.
+function MetaDot() {
+  return (
+    <span aria-hidden className="text-faint">
+      ·
+    </span>
+  );
 }
 
 export function UserMemoryCard({
@@ -270,16 +285,47 @@ export function UserMemoryCard({
       ? t('config.memoryFactsScopeGlobal')
       : t('config.memoryFactsScopeWorkspace');
 
+  // A fact that came from another project is the one case where its
+  // workspace is news; the current one is the same path on every row, so
+  // it would be a column of identical strings.
+  const otherWorkspace = (workspace: string | undefined) =>
+    workspace !== undefined &&
+    workspace !== '' &&
+    workspace !== state?.workspace
+      ? workspace
+      : '';
+
+  const range = (min: number, max: number, value: number) =>
+    t('config.settingRange', { min, max, value });
+
+  // What the two save bars say on their left. A bar belongs to the drafts
+  // above it, so it claims there are unsaved changes only when those
+  // drafts differ from what the runtime is using.
+  const settingsDirty =
+    state !== null &&
+    (enabled !== state.enabled ||
+      maxItems !== state.inject_max_items ||
+      maxChars !== state.inject_max_chars);
+  const cadenceDirty =
+    review !== null &&
+    (reviewEnabled !== review.enabled ||
+      everyTurns !== review.every_turns ||
+      minToolCalls !== review.min_tool_calls);
+
   return (
     <div className="space-y-4">
-      <div className="rounded-card border border-edge bg-panel2 p-3">
-        <div className="flex items-start justify-between gap-3">
+      {/* What the agent remembers, and the knobs that decide how much of
+          it enters a turn. The list comes first because it is the reason
+          the card exists; the count in the header is the answer to "how
+          full is it", which the rows themselves cannot give. */}
+      <section className="rounded-card border border-edge bg-panel2">
+        <div className="flex items-start justify-between gap-4 px-4 py-3.5">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Database size={ICON.sm} className="shrink-0 text-accent" />
+            <h3 className="flex items-center gap-2 text-title font-semibold">
+              <Database size={ICON.md} className="shrink-0 text-accent" />
               {t('config.memoryFactsTitle')}
-            </div>
-            <p className="mt-1 text-xs text-faint">
+            </h3>
+            <p className="mt-1 max-w-2xl text-xs text-dim">
               {t('config.memoryFactsHint')}
             </p>
           </div>
@@ -301,94 +347,27 @@ export function UserMemoryCard({
         </div>
 
         {loadError !== '' && (
-          <p className="mt-2 rounded-control border border-err/40 bg-err/10 px-3 py-2 text-xs text-err break-words">
+          <p className="mx-4 mb-3 rounded-control border border-err/40 bg-err/10 px-3 py-2 text-xs text-err break-words">
             {loadError}
           </p>
         )}
 
         {state && !state.available && (
-          <p className="mt-2.5 rounded-control border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+          <p className="mx-4 mb-3 rounded-control border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
             {t('config.memoryFactsUnavailable')}
           </p>
         )}
 
-        {state && (
-          <>
-            <div className="mt-2.5 grid grid-cols-3 gap-3">
-              <label className="flex items-center gap-2 rounded-control border border-edge bg-panel px-2.5 py-2">
-                <input
-                  type="checkbox"
-                  checked={enabled}
-                  onChange={(e) => {
-                    setEnabled(e.target.checked);
-                    setSaved(false);
-                  }}
-                  className="accent-accent"
-                />
-                <span className="min-w-0 text-xs">
-                  {t('config.memoryFactsEnabled')}
-                </span>
-              </label>
-              <label className="space-y-1.5">
-                <span className="text-xs text-dim">
-                  {t('config.memoryFactsItems')}
-                </span>
-                <input
-                  type="number"
-                  min={state.min_inject_max_items}
-                  max={state.max_inject_max_items}
-                  value={maxItems}
-                  onChange={(e) => {
-                    setMaxItems(Number(e.target.value) || 0);
-                    setSaved(false);
-                  }}
-                  className={inputClass}
-                />
-                <span className="block text-micro text-faint">
-                  {t('config.memoryFactsRange', {
-                    min: state.min_inject_max_items,
-                    max: state.max_inject_max_items,
-                    value: state.default_inject_max_items,
-                  })}
-                </span>
-              </label>
-              <label className="space-y-1.5">
-                <span className="text-xs text-dim">
-                  {t('config.memoryFactsChars')}
-                </span>
-                <input
-                  type="number"
-                  min={state.min_inject_max_chars}
-                  max={state.max_inject_max_chars}
-                  step={256}
-                  value={maxChars}
-                  onChange={(e) => {
-                    setMaxChars(Number(e.target.value) || 0);
-                    setSaved(false);
-                  }}
-                  className={inputClass}
-                />
-                <span className="block text-micro text-faint">
-                  {t('config.memoryFactsRange', {
-                    min: state.min_inject_max_chars,
-                    max: state.max_inject_max_chars,
-                    value: state.default_inject_max_chars,
-                  })}
-                </span>
-              </label>
-            </div>
-            <SaveBar
-              saved={saved}
-              error={saveError}
-              saving={saving}
-              onSave={() => void saveSettings()}
-              className="mt-2 rounded-control"
-            />
-          </>
-        )}
-
-        <div className="mt-3 border-t border-edge pt-3">
-          <div className="flex items-center gap-2">
+        <div className="space-y-2 border-t border-edge px-4 py-3.5">
+          {/* One frame rather than three: the sentence, the scope picker
+              and the button sit on one line inside a single border, so
+              the row reads as "write a fact" instead of as three
+              unrelated controls that happen to be adjacent. The scope
+              cell is the app's own dropdown (borderless, sized to its
+              label) rather than a native select, which would drop the
+              platform's arrow and its own popup list into the middle of
+              the frame. */}
+          <div className="flex items-center gap-1.5 rounded-control border border-edge bg-panel pr-1 pl-2.5 transition-colors focus-within:border-accent">
             <input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -397,22 +376,23 @@ export function UserMemoryCard({
               }}
               placeholder={t('config.memoryFactsAddPlaceholder')}
               aria-label={t('config.memoryFactsAddPlaceholder')}
-              className={`${inputClass} flex-1`}
+              className="min-w-0 flex-1 bg-transparent py-1.5 text-xs text-fg outline-none placeholder:text-faint"
             />
-            <select
+            <span aria-hidden className="h-4 w-px shrink-0 bg-edge" />
+            <MenuSelect
+              variant="inline"
+              label={t('config.memoryFactsScopeLabel')}
               value={draftScope}
-              onChange={(e) => setDraftScope(e.target.value)}
-              aria-label={t('config.memoryFactsScopeLabel')}
-              className="rounded-control border border-edge bg-panel px-2 py-1.5 text-xs text-fg outline-none focus:border-accent"
-            >
-              <option value="">{t('config.memoryFactsScopeAuto')}</option>
-              <option value="workspace">
-                {t('config.memoryFactsScopeWorkspace')}
-              </option>
-              <option value="global">
-                {t('config.memoryFactsScopeGlobal')}
-              </option>
-            </select>
+              options={[
+                { value: '', label: t('config.memoryFactsScopeAuto') },
+                {
+                  value: 'workspace',
+                  label: t('config.memoryFactsScopeWorkspace'),
+                },
+                { value: 'global', label: t('config.memoryFactsScopeGlobal') },
+              ]}
+              onChange={setDraftScope}
+            />
             <Button
               variant="secondary"
               size="sm"
@@ -426,129 +406,377 @@ export function UserMemoryCard({
           </div>
 
           {facts.length === 0 ? (
-            <p className="mt-2.5 text-xs text-dim">
-              {t('config.memoryFactsEmpty')}
-            </p>
+            <EmptyState
+              size="sm"
+              icon={Bookmark}
+              title={t('config.memoryFactsEmpty')}
+              hint={t('config.memoryFactsEmptyHint')}
+            />
           ) : (
-            <ul className="mt-2.5 flex flex-col gap-2">
+            <ul className="flex flex-col gap-2">
               {facts.map((fact) => {
                 const source = fact.source_conversation;
+                const updated =
+                  fact.updated_at === undefined
+                    ? ''
+                    : formatDateTime(fact.updated_at);
+                const elsewhere = otherWorkspace(fact.workspace);
                 return (
                   <li
                     key={fact.id}
-                    className="rounded-card border border-edge bg-panel p-2.5"
+                    className="[content-visibility:auto] [contain-intrinsic-size:auto_5rem] rounded-card border border-edge bg-panel p-3 transition-colors hover:border-accent/40"
                   >
-                    <div className="flex items-start gap-2">
-                      <Badge tone={scopeTone(fact.scope)}>
-                        {scopeLabel(fact.scope)}
-                      </Badge>
-                      {fact.stale && (
-                        <Badge tone="warn">
-                          {t('config.memoryFactsStale')}
-                        </Badge>
-                      )}
-                      {editingId === fact.id ? (
-                        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                          <input
-                            value={editText}
-                            onChange={(e) => setEditText(e.target.value)}
-                            aria-label={t('config.memoryFactsEdit')}
-                            className={`${inputClass} flex-1`}
-                          />
-                          <button
-                            onClick={() => void saveEdit(fact.id)}
-                            disabled={busyId === fact.id}
-                            aria-label={t('config.memoryFactsSaveEdit')}
-                            className="rounded-control border border-ok/40 p-1 text-ok hover:bg-ok/10 disabled:opacity-40"
-                          >
-                            <Check size={ICON.xs} />
-                          </button>
-                          <button
-                            onClick={() => setEditingId('')}
-                            aria-label={t('config.memoryFactsCancelEdit')}
-                            className="rounded-control border border-edge p-1 text-dim hover:bg-panel hover:text-fg"
-                          >
-                            <X size={ICON.xs} />
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="min-w-0 flex-1 text-sm text-fg break-words">
-                          {fact.text}
-                        </span>
-                      )}
-                      {editingId !== fact.id && (
-                        <div className="flex shrink-0 items-center gap-1">
-                          <button
-                            onClick={() => {
-                              setEditingId(fact.id);
-                              setEditText(fact.text);
-                            }}
-                            aria-label={t('config.memoryFactsEdit')}
-                            data-tip={t('config.memoryFactsEdit')}
-                            className="rounded-control border border-edge p-1 text-dim hover:bg-panel hover:text-fg"
-                          >
-                            <Pencil size={ICON.xs} />
-                          </button>
-                          <button
-                            onClick={() => void toggleStale(fact)}
-                            disabled={busyId === fact.id}
-                            aria-label={
-                              fact.stale
-                                ? t('config.memoryFactsUnstale')
-                                : t('config.memoryFactsMarkStale')
-                            }
-                            data-tip={
-                              fact.stale
-                                ? t('config.memoryFactsUnstale')
-                                : t('config.memoryFactsMarkStale')
-                            }
-                            className="rounded-control border border-edge p-1 text-dim hover:bg-panel hover:text-fg disabled:opacity-40"
-                          >
-                            {fact.stale ? (
-                              <Eye size={ICON.xs} />
-                            ) : (
-                              <EyeOff size={ICON.xs} />
-                            )}
-                          </button>
-                          <button
-                            onClick={() => setDeleteFact(fact)}
-                            aria-label={t('config.memoryFactsDelete')}
-                            data-tip={t('config.memoryFactsDelete')}
-                            className="rounded-control border border-edge p-1 text-dim hover:bg-err/10 hover:text-err"
-                          >
-                            <Trash2 size={ICON.xs} />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-micro text-dim">
-                      {fact.kind !== '' && (
-                        <span className="font-mono">{fact.kind}</span>
-                      )}
-                      {fact.updated_at !== undefined && (
-                        <span>{formatDateTime(fact.updated_at)}</span>
-                      )}
-                      {fact.workspace !== undefined &&
-                        fact.workspace !== '' &&
-                        fact.scope !== 'global' && (
-                          <span
-                            className="truncate font-mono"
-                            data-tip={fact.workspace}
-                          >
-                            {fact.workspace}
-                          </span>
-                        )}
-                      {source !== undefined && source !== '' && (
-                        <button
-                          onClick={() =>
-                            onOpenConversation?.(source, fact.workspace)
-                          }
-                          disabled={onOpenConversation === undefined}
-                          className="text-accent hover:underline disabled:opacity-40"
+                    {editingId === fact.id ? (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void saveEdit(fact.id);
+                          }}
+                          aria-label={t('config.memoryFactsEdit')}
+                          size="sm"
+                          autoFocus
+                          className="flex-1"
+                        />
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          loading={busyId === fact.id}
+                          onClick={() => void saveEdit(fact.id)}
                         >
-                          {t('config.memoryFactsOpenSource')}
-                        </button>
-                      )}
+                          <Check size={ICON.xs} />
+                          {t('config.memoryFactsSaveEdit')}
+                        </Button>
+                        <Button
+                          variant="quiet"
+                          size="sm"
+                          onClick={() => setEditingId('')}
+                        >
+                          {t('config.memoryFactsCancelEdit')}
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-start gap-3">
+                          <span
+                            className={`min-w-0 flex-1 text-sm break-words ${
+                              fact.stale ? 'text-dim' : 'text-fg'
+                            }`}
+                          >
+                            {fact.text}
+                          </span>
+                          <div className="flex shrink-0 items-center gap-0.5">
+                            <IconButton
+                              label={t('config.memoryFactsEdit')}
+                              size="sm"
+                              onClick={() => {
+                                setEditingId(fact.id);
+                                setEditText(fact.text);
+                              }}
+                            >
+                              <Pencil size={ICON.xs} />
+                            </IconButton>
+                            <IconButton
+                              label={
+                                fact.stale
+                                  ? t('config.memoryFactsUnstale')
+                                  : t('config.memoryFactsMarkStale')
+                              }
+                              size="sm"
+                              disabled={busyId === fact.id}
+                              onClick={() => void toggleStale(fact)}
+                            >
+                              {fact.stale ? (
+                                <Eye size={ICON.xs} />
+                              ) : (
+                                <EyeOff size={ICON.xs} />
+                              )}
+                            </IconButton>
+                            <IconButton
+                              label={t('config.memoryFactsDelete')}
+                              size="sm"
+                              onClick={() => setDeleteFact(fact)}
+                            >
+                              <Trash2 size={ICON.xs} />
+                            </IconButton>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-faint">
+                          <Badge tone={scopeTone(fact.scope)}>
+                            {scopeLabel(fact.scope)}
+                          </Badge>
+                          {fact.stale && (
+                            <Badge tone="warn">
+                              {t('config.memoryFactsStale')}
+                            </Badge>
+                          )}
+                          {fact.kind !== '' && (
+                            <>
+                              <MetaDot />
+                              <span>{fact.kind}</span>
+                            </>
+                          )}
+                          {updated !== '' && (
+                            <>
+                              <MetaDot />
+                              <span>
+                                {t('config.memoryFactsUpdated', {
+                                  date: updated,
+                                })}
+                              </span>
+                            </>
+                          )}
+                          {elsewhere !== '' && (
+                            <>
+                              <MetaDot />
+                              <span
+                                className="max-w-48 truncate font-mono"
+                                data-tip={elsewhere}
+                              >
+                                {elsewhere}
+                              </span>
+                            </>
+                          )}
+                          {source !== undefined && source !== '' && (
+                            <>
+                              <MetaDot />
+                              <button
+                                onClick={() =>
+                                  onOpenConversation?.(source, fact.workspace)
+                                }
+                                disabled={onOpenConversation === undefined}
+                                className="text-accent hover:underline disabled:opacity-40"
+                              >
+                                {t('config.memoryFactsOpenSource')}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {state && (
+          <div className="space-y-3 border-t border-edge px-4 py-3.5">
+            <h4 className="text-micro font-medium tracking-wide text-faint uppercase">
+              {t('config.memoryFactsInjection')}
+            </h4>
+            <ToggleSetting
+              label={t('config.memoryFactsEnabled')}
+              hint={t('config.memoryFactsEnabledHint')}
+              checked={enabled}
+              onChange={(checked) => {
+                setEnabled(checked);
+                setSaved(false);
+              }}
+            />
+            <SettingRow
+              label={t('config.memoryFactsItems')}
+              hint={range(
+                state.min_inject_max_items,
+                state.max_inject_max_items,
+                state.default_inject_max_items,
+              )}
+            >
+              <NumberSetting
+                label={t('config.memoryFactsItems')}
+                unit={t('config.unitFacts')}
+                min={state.min_inject_max_items}
+                max={state.max_inject_max_items}
+                value={maxItems}
+                onChange={(value) => {
+                  setMaxItems(value);
+                  setSaved(false);
+                }}
+              />
+            </SettingRow>
+            <SettingRow
+              label={t('config.memoryFactsChars')}
+              hint={range(
+                state.min_inject_max_chars,
+                state.max_inject_max_chars,
+                state.default_inject_max_chars,
+              )}
+            >
+              <NumberSetting
+                label={t('config.memoryFactsChars')}
+                unit={t('config.unitBytes')}
+                min={state.min_inject_max_chars}
+                max={state.max_inject_max_chars}
+                step={256}
+                width="w-24"
+                value={maxChars}
+                onChange={(value) => {
+                  setMaxChars(value);
+                  setSaved(false);
+                }}
+              />
+            </SettingRow>
+          </div>
+        )}
+
+        {state && (
+          <SaveBar
+            saved={saved}
+            error={saveError}
+            saving={saving}
+            onSave={() => void saveSettings()}
+          >
+            {settingsDirty && (
+              <span className="text-dim">{t('config.unsaved')}</span>
+            )}
+          </SaveBar>
+        )}
+      </section>
+
+      {/* The queue the post-turn review fills. Same shape as the facts
+          above on purpose: accepting a suggestion is the same write as
+          typing a fact by hand, and the row says where the candidate came
+          from before it says how to answer it. */}
+      <section
+        id="settings-memory-suggestions"
+        className="scroll-mt-4 rounded-card border border-edge bg-panel2"
+      >
+        <div className="flex items-start justify-between gap-4 px-4 py-3.5">
+          <div className="min-w-0">
+            <h3 className="flex items-center gap-2 text-title font-semibold">
+              <Sparkles size={ICON.md} className="shrink-0 text-accent" />
+              {t('config.reviewTitle')}
+            </h3>
+            <p className="mt-1 max-w-2xl text-xs text-dim">
+              {t('config.reviewHint')}
+            </p>
+          </div>
+          {review && (
+            <div className="flex shrink-0 items-center gap-2">
+              {/* What is waiting is the number that decides whether the
+                  card needs attention, so it is the one that gets the
+                  chip; the history behind it is a caption. The full
+                  breakdown stays on the tooltip. */}
+              <span
+                data-tip={t('config.reviewCounts', {
+                  pending: review.pending,
+                  accepted: review.accepted,
+                  discarded: review.discarded,
+                })}
+              >
+                <Badge tone={review.pending > 0 ? 'accent' : 'neutral'}>
+                  {t('config.reviewPending', { pending: review.pending })}
+                </Badge>
+              </span>
+              <span className="text-micro text-faint">
+                {t('config.reviewHistory', {
+                  accepted: review.accepted,
+                  discarded: review.discarded,
+                })}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {review && !review.available && (
+          <p className="mx-4 mb-3 rounded-control border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+            {t('config.reviewUnavailable')}
+          </p>
+        )}
+
+        <div className="border-t border-edge px-4 py-3.5">
+          {suggestions.length === 0 ? (
+            <EmptyState
+              size="sm"
+              icon={Sparkles}
+              title={t('config.reviewEmpty')}
+              hint={t('config.reviewEmptyHint')}
+            />
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {suggestions.map((suggestion) => {
+                const source = suggestion.source_conversation;
+                const kind = suggestion.candidate_kind ?? suggestion.kind;
+                return (
+                  <li
+                    key={suggestion.id}
+                    className="[content-visibility:auto] [contain-intrinsic-size:auto_6rem] rounded-card border border-edge bg-panel p-3 transition-colors hover:border-accent/40"
+                  >
+                    <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-fg break-words">
+                          {suggestion.text || suggestion.payload || ''}
+                        </div>
+                        {suggestion.reason !== undefined &&
+                          suggestion.reason !== '' && (
+                            <p className="mt-1 text-micro text-dim">
+                              {t('config.reviewReason', {
+                                reason: suggestion.reason,
+                              })}
+                            </p>
+                          )}
+                        <div className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-faint">
+                          <Badge tone={scopeTone(suggestion.scope)}>
+                            {scopeLabel(suggestion.scope)}
+                          </Badge>
+                          {kind !== undefined && kind !== '' && (
+                            <>
+                              <MetaDot />
+                              <span>{kind}</span>
+                            </>
+                          )}
+                          {suggestion.source_run !== undefined &&
+                            suggestion.source_run !== '' && (
+                              <>
+                                <MetaDot />
+                                <span className="font-mono">
+                                  {suggestion.source_run}
+                                </span>
+                              </>
+                            )}
+                          {source !== undefined && source !== '' && (
+                            <>
+                              <MetaDot />
+                              <button
+                                onClick={() =>
+                                  onOpenConversation?.(
+                                    source,
+                                    suggestion.source_workspace,
+                                  )
+                                }
+                                disabled={onOpenConversation === undefined}
+                                className="text-accent hover:underline disabled:opacity-40"
+                              >
+                                {t('config.memoryFactsOpenSource')}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {/* The verdict is the row's one action: accept is
+                          the accent button, discard is the quiet one
+                          beside it, and both sit on the text's first
+                          line rather than floating in the row's middle. */}
+                      <div className="flex shrink-0 items-start gap-1.5">
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          loading={busyId === suggestion.id}
+                          onClick={() => void accept(suggestion)}
+                        >
+                          {t('config.reviewAccept')}
+                        </Button>
+                        <Button
+                          variant="quiet"
+                          size="sm"
+                          disabled={busyId === suggestion.id}
+                          onClick={() => void discard(suggestion)}
+                        >
+                          {t('config.reviewDiscard')}
+                        </Button>
+                      </div>
                     </div>
                   </li>
                 );
@@ -556,85 +784,62 @@ export function UserMemoryCard({
             </ul>
           )}
         </div>
-      </div>
-
-      <div className="rounded-card border border-edge bg-panel2 p-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <RotateCcw size={ICON.sm} className="shrink-0 text-accent" />
-              {t('config.reviewTitle')}
-            </div>
-            <p className="mt-1 text-xs text-faint">{t('config.reviewHint')}</p>
-          </div>
-          {review && (
-            <Badge>
-              {t('config.reviewCounts', {
-                pending: review.pending,
-                accepted: review.accepted,
-                discarded: review.discarded,
-              })}
-            </Badge>
-          )}
-        </div>
-
-        {review && !review.available && (
-          <p className="mt-2.5 rounded-control border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
-            {t('config.reviewUnavailable')}
-          </p>
-        )}
 
         {review && (
-          <>
-            <div className="mt-2.5 grid grid-cols-3 gap-3">
-              <label className="flex items-center gap-2 rounded-control border border-edge bg-panel px-2.5 py-2">
-                <input
-                  type="checkbox"
-                  checked={reviewEnabled}
-                  onChange={(e) => {
-                    setReviewEnabled(e.target.checked);
-                    setReviewSaved(false);
-                  }}
-                  className="accent-accent"
-                />
-                <span className="min-w-0 text-xs">
-                  {t('config.reviewEnabled')}
-                </span>
-              </label>
-              <label className="space-y-1.5">
-                <span className="text-xs text-dim">
-                  {t('config.reviewEveryTurns')}
-                </span>
-                <input
-                  type="number"
-                  min={review.min_every_turns}
-                  max={review.max_every_turns}
-                  value={everyTurns}
-                  onChange={(e) => {
-                    setEveryTurns(Number(e.target.value) || 0);
-                    setReviewSaved(false);
-                  }}
-                  className={inputClass}
-                />
-              </label>
-              <label className="space-y-1.5">
-                <span className="text-xs text-dim">
-                  {t('config.reviewMinToolCalls')}
-                </span>
-                <input
-                  type="number"
-                  min={review.min_min_tool_calls}
-                  max={review.max_min_tool_calls}
-                  value={minToolCalls}
-                  onChange={(e) => {
-                    setMinToolCalls(Number(e.target.value) || 0);
-                    setReviewSaved(false);
-                  }}
-                  className={inputClass}
-                />
-              </label>
-            </div>
-            <p className="mt-2 text-micro text-faint">
+          <div className="space-y-3 border-t border-edge px-4 py-3.5">
+            <h4 className="text-micro font-medium tracking-wide text-faint uppercase">
+              {t('config.reviewCadence')}
+            </h4>
+            <ToggleSetting
+              label={t('config.reviewEnabled')}
+              hint={t('config.reviewEnabledHint')}
+              checked={reviewEnabled}
+              onChange={(checked) => {
+                setReviewEnabled(checked);
+                setReviewSaved(false);
+              }}
+            />
+            <SettingRow
+              label={t('config.reviewEveryTurns')}
+              hint={range(
+                review.min_every_turns,
+                review.max_every_turns,
+                review.default_every_turns,
+              )}
+            >
+              <NumberSetting
+                label={t('config.reviewEveryTurns')}
+                unit={t('config.unitTurns')}
+                min={review.min_every_turns}
+                max={review.max_every_turns}
+                value={everyTurns}
+                onChange={(value) => {
+                  setEveryTurns(value);
+                  setReviewSaved(false);
+                }}
+              />
+            </SettingRow>
+            <SettingRow
+              label={t('config.reviewMinToolCalls')}
+              hint={range(
+                review.min_min_tool_calls,
+                review.max_min_tool_calls,
+                review.default_min_tool_calls,
+              )}
+            >
+              <NumberSetting
+                label={t('config.reviewMinToolCalls')}
+                unit={t('config.unitCalls')}
+                min={review.min_min_tool_calls}
+                max={review.max_min_tool_calls}
+                value={minToolCalls}
+                onChange={(value) => {
+                  setMinToolCalls(value);
+                  setReviewSaved(false);
+                }}
+              />
+            </SettingRow>
+            <p className="text-micro text-faint">
               {t('config.reviewLimits', {
                 max: review.max_suggestions,
                 seconds: review.timeout_seconds,
@@ -643,90 +848,22 @@ export function UserMemoryCard({
                   : t('config.reviewOnFailureNo'),
               })}
             </p>
-            <SaveBar
-              saved={reviewSaved}
-              error={reviewError}
-              saving={reviewSaving}
-              onSave={() => void saveReview()}
-              className="mt-2 rounded-control"
-            />
-          </>
+          </div>
         )}
 
-        <div className="mt-3 border-t border-edge pt-3">
-          {suggestions.length === 0 ? (
-            <p className="text-xs text-dim">{t('config.reviewEmpty')}</p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {suggestions.map((suggestion) => {
-                const source = suggestion.source_conversation;
-                return (
-                  <li
-                    key={suggestion.id}
-                    className="rounded-card border border-edge bg-panel p-2.5"
-                  >
-                    <div className="flex items-start gap-2">
-                      <Badge tone={scopeTone(suggestion.scope)}>
-                        {scopeLabel(suggestion.scope)}
-                      </Badge>
-                      <span className="min-w-0 flex-1 text-sm text-fg break-words">
-                        {suggestion.text || suggestion.payload || ''}
-                      </span>
-                    </div>
-                    {suggestion.reason !== undefined &&
-                      suggestion.reason !== '' && (
-                        <p className="mt-1 text-micro text-dim">
-                          {t('config.reviewReason', {
-                            reason: suggestion.reason,
-                          })}
-                        </p>
-                      )}
-                    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-micro text-dim">
-                      {suggestion.source_run !== undefined &&
-                        suggestion.source_run !== '' && (
-                          <span className="font-mono">
-                            {suggestion.source_run}
-                          </span>
-                        )}
-                      {source !== undefined && source !== '' && (
-                        <button
-                          onClick={() =>
-                            onOpenConversation?.(
-                              source,
-                              suggestion.source_workspace,
-                            )
-                          }
-                          disabled={onOpenConversation === undefined}
-                          className="text-accent hover:underline disabled:opacity-40"
-                        >
-                          {t('config.memoryFactsOpenSource')}
-                        </button>
-                      )}
-                      <span className="flex-1" />
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        loading={busyId === suggestion.id}
-                        onClick={() => void accept(suggestion)}
-                      >
-                        {t('config.reviewAccept')}
-                      </Button>
-                      <Button
-                        variant="quiet"
-                        size="sm"
-                        disabled={busyId === suggestion.id}
-                        onClick={() => void discard(suggestion)}
-                      >
-                        {t('config.reviewDiscard')}
-                      </Button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      </div>
+        {review && (
+          <SaveBar
+            saved={reviewSaved}
+            error={reviewError}
+            saving={reviewSaving}
+            onSave={() => void saveReview()}
+          >
+            {cadenceDirty && (
+              <span className="text-dim">{t('config.unsaved')}</span>
+            )}
+          </SaveBar>
+        )}
+      </section>
 
       <ConfirmDialog
         open={deleteFact !== null}

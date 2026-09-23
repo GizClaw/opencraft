@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, HelpCircle, ShieldAlert, X } from 'lucide-react';
 import { Markdown } from './Markdown';
+import { imeKeyOwner } from '../lib/ime';
 import { useStore } from '../lib/store';
 import { overlayLayerOpen, useOverlayOpen } from '../lib/overlay';
 import type { InteractDTO, InteractSeverity } from '../lib/types';
@@ -124,9 +125,12 @@ export function InteractionCard({
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Enter') return;
     // An Enter that is still confirming an IME candidate belongs to the
-    // field, not to us. 229 is the keyCode WebKit reports while a
-    // composition is in flight.
-    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+    // field, not to us (lib/ime.ts) — and neither does the stray keydown
+    // Chromium delivers right after the candidate lands, which would
+    // otherwise submit the answer the composition just wrote.
+    const ime = imeKeyOwner(event.nativeEvent);
+    if (ime !== null) {
+      if (ime === 'committed') event.preventDefault();
       return;
     }
     // Shift+Enter is the answer field's newline, and the modifier

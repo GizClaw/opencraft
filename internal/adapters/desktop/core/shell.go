@@ -29,7 +29,7 @@ type Shell struct {
 	quitting       bool
 	quitConfirmed  bool
 	scheduledTasks func(context.Context) bool
-	onLanguage     func()
+	onLanguage     []func()
 	onPetsChanged  func()
 	pet            PetWindowControls
 	petRuntime     petfeed.RuntimeStatus
@@ -86,11 +86,13 @@ func (s *Shell) SetScheduledTasksChecker(
 	s.mu.Unlock()
 }
 
-// SetLanguageChangedListener wires a refresh hook for native surfaces that
-// mirror the persisted language (system tray labels, ...).
-func (s *Shell) SetLanguageChangedListener(fn func()) {
+// AddLanguageChangedListener wires a refresh hook for a native surface that
+// mirrors the persisted language (tray labels, the macOS menu bar). There is
+// more than one such surface, so the hooks accumulate instead of replacing
+// each other.
+func (s *Shell) AddLanguageChangedListener(fn func()) {
 	s.mu.Lock()
-	s.onLanguage = fn
+	s.onLanguage = append(s.onLanguage, fn)
 	s.mu.Unlock()
 }
 
@@ -426,6 +428,28 @@ func (s *Shell) deliver(typ string, data any) {
 	}
 }
 
+// MenuCommandEvent carries a native menu item's command id to the frontend.
+// It is a channel of its own, not an opencraft:ui event: a menu click is a
+// gesture from the UI, not something the runtime did, so it neither flushes
+// the stream buffer nor feeds the Go-side observers.
+const MenuCommandEvent = "opencraft:menu"
+
+// EmitMenuCommand hands one native menu item's command id to the webview.
+//
+// The ids are the frontend keyboard table's (frontend/src/lib/keys.ts), and
+// the frontend runs them through the same dispatcher the keys use, so a menu
+// click and its key equivalent cannot drift apart.
+func (s *Shell) EmitMenuCommand(id string) {
+	if id == "" {
+		return
+	}
+	app, _ := s.attached()
+	if app == nil {
+		return
+	}
+	app.Event.Emit(MenuCommandEvent, map[string]any{"command": id})
+}
+
 // ShouldQuit is the synchronous gate for every real quit path (tray, Cmd+Q,
 // application menu). It returns true only when quitting may proceed. When the
 // scheduled-task check requires confirmation it opens the native v3 dialog
@@ -641,9 +665,9 @@ func (s *Shell) SetLanguage(language string) error {
 		return err
 	}
 	s.mu.Lock()
-	fn := s.onLanguage
+	fns := append([]func(){}, s.onLanguage...)
 	s.mu.Unlock()
-	if fn != nil {
+	for _, fn := range fns {
 		fn()
 	}
 	return nil

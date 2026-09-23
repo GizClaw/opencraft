@@ -128,12 +128,30 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   },
   {
     tab: 'memory',
+    section: 'memory-context',
+    labelKey: 'config.memoryContextTitle',
+    keywords:
+      'conversation context window raw preserve recent fold compact summary ' +
+      'budget messages bytes replay verbatim ' +
+      '上下文 原始窗口 保留最近 折叠 压缩 摘要 预算 条数 字节 重放',
+  },
+  {
+    tab: 'memory',
     section: 'memory-facts',
     labelKey: 'config.memoryFactsTitle',
     keywords:
       'long-term memory facts remember delete stale inject suggestions ' +
       'review accept discard pending queue provenance ' +
       '长期记忆 事实 记住 删除 停用 注入 建议 复查 接受 丢弃 待批准 来源',
+  },
+  {
+    tab: 'memory',
+    section: 'memory-suggestions',
+    labelKey: 'config.reviewTitle',
+    keywords:
+      'suggestions review cadence propose every turns tool calls accept ' +
+      'discard pending queue ' +
+      '建议 复查节奏 提出记忆 每 n 轮 工具调用 接受 丢弃 待处理',
   },
   {
     tab: 'permissions',

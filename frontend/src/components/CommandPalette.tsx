@@ -3,6 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { Search, SearchX } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { buildCommands, filterCommands, type Command } from '../lib/commands';
+import { imeKeyOwner, useComposition } from '../lib/ime';
+import { formatCombo, primaryCombo } from '../lib/keys';
+import type { RunShortcut } from '../lib/shellCommands';
 import { EmptyState } from './ui/EmptyState';
 import { Overlay } from './ui/Overlay';
 import { ICON } from './ui/icon';
@@ -15,7 +18,13 @@ import { ICON } from './ui/icon';
 // tools panel instead of fighting them for the Escape key. Focus stays in
 // the input and the list is navigated with aria-activedescendant, which
 // keeps typing and moving through results in the same keystroke stream.
-export function CommandPalette() {
+export function CommandPalette({
+  isMac,
+  runShortcut,
+}: {
+  isMac: boolean;
+  runShortcut: RunShortcut;
+}) {
   const open = useStore((s) => s.paletteOpen);
   const closePalette = useStore((s) => s.closePalette);
   const { t } = useTranslation();
@@ -34,6 +43,13 @@ export function CommandPalette() {
   const setTheme = useStore((s) => s.setTheme);
 
   const [query, setQuery] = useState('');
+  // listed is the text the results are filtered by, and it lags the input
+  // by exactly one composition: filtering the pinyin of a word that is
+  // still being composed would empty the list under the candidate window
+  // and re-fill it when the characters land. The input keeps the letters
+  // (query); the list waits for the word (listed).
+  const [listed, setListed] = useState('');
+  const { composing, bind, reset } = useComposition(setListed);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLUListElement | null>(null);
 
@@ -51,6 +67,7 @@ export function CommandPalette() {
           openSessionInWorkspace: (id, path) =>
             void openSessionInWorkspace(id, path),
           setTheme,
+          runShortcut,
         },
         state: { theme, workspace, workspaces, sessions },
       }),
@@ -68,12 +85,13 @@ export function CommandPalette() {
       openWorkspace,
       openSessionInWorkspace,
       setTheme,
+      runShortcut,
     ],
   );
 
   const results = useMemo(
-    () => filterCommands(commands, query),
-    [commands, query],
+    () => filterCommands(commands, listed),
+    [commands, listed],
   );
 
   // Every open starts clean: a stale query would answer a question the user
@@ -81,9 +99,12 @@ export function CommandPalette() {
   useEffect(() => {
     if (open) {
       setQuery('');
+      setListed('');
+      // A composition cannot outlive the panel it was typed in.
+      reset();
       setActive(0);
     }
-  }, [open]);
+  }, [open, reset]);
 
   useEffect(() => {
     setActive((current) =>
@@ -108,6 +129,10 @@ export function CommandPalette() {
   );
 
   const onKeyDown = (event: React.KeyboardEvent) => {
+    // The IME owns its keys (lib/ime.ts): Enter confirms a candidate, ↑/↓
+    // walk the candidate window, and the stray keydown Chromium delivers
+    // after the commit must not run the highlighted command.
+    if (imeKeyOwner(event.nativeEvent) !== null) return;
     if (results.length === 0) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -150,7 +175,12 @@ export function CommandPalette() {
         <input
           data-palette-input
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            if (!composing) setListed(event.target.value);
+          }}
+          onCompositionStart={bind.onCompositionStart}
+          onCompositionEnd={bind.onCompositionEnd}
           onKeyDown={onKeyDown}
           role="combobox"
           aria-expanded
@@ -214,6 +244,12 @@ export function CommandPalette() {
                   <span className="min-w-0 flex-1 truncate text-sm text-fg">
                     {command.title}
                   </span>
+                  {command.shortcut !== undefined &&
+                    primaryCombo(command.shortcut) !== '' && (
+                      <kbd className="shrink-0 rounded-tight bg-panel2 px-1.5 py-0.5 text-micro text-faint">
+                        {formatCombo(primaryCombo(command.shortcut), isMac)}
+                      </kbd>
+                    )}
                   {command.hint !== undefined && command.hint !== '' && (
                     <span className="max-w-[45%] shrink-0 truncate text-micro text-faint">
                       {command.hint}
@@ -228,6 +264,15 @@ export function CommandPalette() {
 
       <div className="flex shrink-0 items-center gap-3 border-t border-edge px-3 py-1.5 text-micro text-faint">
         <span>{t('palette.footer')}</span>
+        <span className="flex-1" />
+        {/* The sheet is where every key is listed; say so where the
+            reader is already looking at keys. */}
+        <span className="flex shrink-0 items-center gap-1.5">
+          {t('shortcuts.title')}
+          <kbd className="rounded-tight bg-panel2 px-1.5 py-0.5">
+            {formatCombo('Mod+/', isMac)}
+          </kbd>
+        </span>
       </div>
     </Overlay>
   );

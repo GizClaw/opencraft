@@ -6,10 +6,20 @@ import { ICON } from './ui/icon';
 // MenuSelect is the dropdown the settings page uses everywhere else: a
 // panel-styled trigger with a chevron that opens a floating menu of
 // options, instead of the platform's native select control (whose
-// arrow, height and hit area differ per browser). The floating menu is
-// the shared <Popover>: portaled past the settings scroller, animated,
-// closed by outside click / Escape / scroll / resize, and reachable with
-// the arrow keys.
+// arrow, height, hit area and option list differ per browser and per OS
+// theme). The floating menu is the shared <Popover>: portaled past the
+// settings scroller, animated, closed by outside click / Escape / scroll
+// / resize, and reachable with the arrow keys.
+//
+// Two shapes, one behaviour:
+//
+//   field   the bordered panel-height select that stands alone in a
+//           settings column, taking the width it is given.
+//   inline  the borderless variant for a row that already draws the
+//           frame — the fact composer's scope cell, where a second
+//           border around the value would read as a control nested in a
+//           control. It sizes to its label and highlights on hover the
+//           way the split controls do.
 export interface MenuOption {
   value: string;
   label: string;
@@ -24,6 +34,7 @@ export function MenuSelect({
   disabled,
   mono,
   testId,
+  variant = 'field',
 }: {
   /** Accessible name of the control, also used by tests. */
   label: string;
@@ -36,6 +47,8 @@ export function MenuSelect({
   /** Render the value and options in the mono face (wire tokens). */
   mono?: boolean;
   testId?: string;
+  /** Field = standalone bordered select; inline = fit into a row's frame. */
+  variant?: 'field' | 'inline';
 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
@@ -48,6 +61,7 @@ export function MenuSelect({
   };
 
   const current = options.find((option) => option.value === value);
+  const inline = variant === 'inline';
   return (
     <>
       <button
@@ -59,14 +73,26 @@ export function MenuSelect({
         data-testid={testId}
         disabled={disabled}
         onClick={toggle}
-        className={`inline-flex h-[1.875rem] w-full items-center gap-1.5 rounded-control border bg-panel px-2 text-xs transition-colors outline-none hover:border-accent/60 focus:border-accent disabled:opacity-40 ${
-          open ? 'border-accent' : 'border-edge'
-        }`}
+        className={
+          inline
+            ? `flex h-7 shrink-0 items-center gap-1 rounded-control px-1.5 text-micro whitespace-nowrap transition-colors outline-none hover:bg-panel2 hover:text-fg disabled:opacity-40 ${
+                open ? 'bg-panel2 text-fg' : 'text-dim'
+              }`
+            : `inline-flex h-[1.875rem] w-full items-center gap-1.5 rounded-control border bg-panel px-2 text-xs transition-colors outline-none hover:border-accent/60 focus:border-accent disabled:opacity-40 ${
+                open ? 'border-accent' : 'border-edge'
+              }`
+        }
       >
         <span
-          className={`min-w-0 flex-1 truncate text-left ${
-            mono === true ? 'font-mono' : ''
-          } ${current === undefined ? 'text-faint' : 'text-fg'}`}
+          className={
+            inline
+              ? mono === true
+                ? 'font-mono'
+                : ''
+              : `min-w-0 flex-1 truncate text-left ${
+                  mono === true ? 'font-mono' : ''
+                } ${current === undefined ? 'text-faint' : 'text-fg'}`
+          }
         >
           {current?.label ?? placeholder ?? ''}
         </span>
@@ -82,10 +108,15 @@ export function MenuSelect({
         onClose={() => setOpen(false)}
         anchor={anchor}
         ariaLabel={label}
-        matchWidth
+        align={inline ? 'end' : 'start'}
+        matchWidth={!inline}
         keyboard
         maxHeight={288}
-        panelClassName="rounded-card border border-edge bg-panel py-1 shadow-popover"
+        panelClassName={
+          inline
+            ? 'min-w-[9.5rem] rounded-control border border-edge bg-panel py-1 shadow-popover'
+            : 'rounded-card border border-edge bg-panel py-1 shadow-popover'
+        }
       >
         {options.map((option) => {
           const selected = option.value === value;

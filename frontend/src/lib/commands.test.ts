@@ -21,6 +21,7 @@ function actions() {
     openWorkspace: vi.fn(),
     openSessionInWorkspace: vi.fn(),
     setTheme: vi.fn(),
+    runShortcut: vi.fn(),
   };
 }
 

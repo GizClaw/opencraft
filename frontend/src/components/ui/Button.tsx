@@ -87,6 +87,7 @@ const ICON_TONES: Record<IconButtonTone, string> = {
 
 export function IconButton({
   label,
+  shortcut,
   size = 'md',
   tone = 'quiet',
   className = '',
@@ -96,6 +97,9 @@ export function IconButton({
   ...rest
 }: Omit<ComponentProps<'button'>, 'children' | 'title' | 'aria-label'> & {
   label: string;
+  /** Shortcut id (lib/keys.ts) for the key that runs this control; the
+   * hint shows its combo (see components/ui/Tooltip.tsx). */
+  shortcut?: string;
   size?: 'sm' | 'md' | 'lg';
   tone?: IconButtonTone;
   children: ReactNode;
@@ -105,6 +109,7 @@ export function IconButton({
     <button
       type={type}
       data-tip={label}
+      data-tip-keys={shortcut}
       aria-label={label}
       disabled={disabled}
       className={`grid ${box} shrink-0 place-items-center rounded-control transition-colors disabled:opacity-40 ${ICON_TONES[tone]} ${className}`}
@@ -117,7 +122,11 @@ export function IconButton({
   // a wrapper; without it the "why can't I click this" hint would never
   // appear exactly when it is needed.
   return disabled === true ? (
-    <span data-tip={label} className="inline-flex shrink-0">
+    <span
+      data-tip={label}
+      data-tip-keys={shortcut}
+      className="inline-flex shrink-0"
+    >
       {button}
     </span>
   ) : (

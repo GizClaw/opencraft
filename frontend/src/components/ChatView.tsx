@@ -55,6 +55,7 @@ import { useTranslation } from 'react-i18next';
 import { Events } from '@wailsio/runtime';
 import { api } from '../lib/api';
 import { reportFrontendError } from '../lib/frontendErrors';
+import { setChatTargets } from '../lib/chatTargets';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
 import { formatCompact } from '../lib/compactNumber';
 import { formatClockTime } from '../lib/datetime';
@@ -112,6 +113,47 @@ const isCommandTool = (name: string) =>
 // the new-chat workspace bookmark.
 function pathBase(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+// assistantText is the plain text of an assistant message: the ordered
+// items carry the answer, and only the text blocks belong on the
+// clipboard. Shared by the reply's copy button and the shell's
+// "copy the last reply" command, so the two can never disagree about
+// what the reply is.
+function assistantText(msg: MessageView): string {
+  return msg.items
+    .filter(
+      (it): it is Extract<AssistantItem, { kind: 'text' }> =>
+        it.kind === 'text',
+    )
+    .map((it) => itemText(it))
+    .join('\n')
+    .trim();
+}
+
+// topVisibleMessageIndex is the message row at the top of the viewport:
+// the anchor a previous/next-message walk starts from. Mounted rows are
+// chronological, so a binary search finds the first row that intersects
+// (or sits below) the viewport top without reading every row above it.
+function topVisibleMessageIndex(scroller: HTMLElement): number {
+  const rows = scroller.querySelectorAll<HTMLElement>('[data-msg-index]');
+  if (rows.length === 0) return -1;
+  const view = scroller.getBoundingClientRect();
+  let lo = 0;
+  let hi = rows.length - 1;
+  let first = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (rows[mid].getBoundingClientRect().bottom <= view.top + 1) {
+      lo = mid + 1;
+    } else {
+      first = mid;
+      hi = mid - 1;
+    }
+  }
+  const row = first < 0 ? rows[rows.length - 1] : rows[first];
+  const index = Number(row.dataset.msgIndex);
+  return Number.isInteger(index) ? index : -1;
 }
 
 // RENDER_WINDOW bounds the number of transcript messages mounted in the
@@ -831,14 +873,7 @@ const MessageRow = memo(function MessageRow({
       </div>
     );
   }
-  const finalText = msg.items
-    .filter(
-      (it): it is Extract<AssistantItem, { kind: 'text' }> =>
-        it.kind === 'text',
-    )
-    .map((it) => itemText(it))
-    .join('\n')
-    .trim();
+  const finalText = assistantText(msg);
   const copyable = isTurnLast && !streaming && finalText.length > 0;
   const showActions = copyable || Boolean(forkable && onFork);
   const copyFinal = async () => {
@@ -2369,11 +2404,12 @@ export function ChatView() {
       setLoadingEarlier(false);
     }
   };
-  const jumpToTurn = useCallback(
-    (index: number) => {
-      const turn = turnArtifactsRef.current[index];
-      if (!turn) return;
-      const target = turn.start;
+  // jumpToMessage scrolls one message to the top of the transcript,
+  // widening the render window first when the target sits above it. Both
+  // the ruler (per turn) and the ⌘↑/⌘↓ walk (per user message) land
+  // here, so a jump behaves the same however it was asked for.
+  const jumpToMessage = useCallback(
+    (target: number) => {
       const expanding = target < startRef.current;
       if (expanding) {
         setVisibleCount((prev) =>
@@ -2389,12 +2425,9 @@ export function ChatView() {
       const runScroll = () => {
         const scroller = scrollRef.current;
         if (!scroller) return;
-        const exact = scroller.querySelector<HTMLElement>(
+        const row = scroller.querySelector<HTMLElement>(
           `[data-msg-index="${target}"]`,
         );
-        const row =
-          exact ??
-          scroller.querySelector<HTMLElement>(`[data-turn-index="${index}"]`);
         if (!row) return;
         const containerRect = scroller.getBoundingClientRect();
         const top =
@@ -2408,6 +2441,13 @@ export function ChatView() {
     },
     [schedulePeekRefresh],
   );
+  const jumpToTurn = useCallback(
+    (index: number) => {
+      const turn = turnArtifactsRef.current[index];
+      if (turn) jumpToMessage(turn.start);
+    },
+    [jumpToMessage],
+  );
   const jumpToLatest = useCallback(() => {
     const scroller = scrollRef.current;
     // An explicit jump resumes the stream follow: the next delta pins
@@ -2419,6 +2459,67 @@ export function ChatView() {
     schedulePeekRefresh();
   }, [schedulePeekRefresh]);
   const { t } = useTranslation();
+  // The three chat actions the shell cannot reach on its own (see
+  // lib/chatTargets.ts): focus the composer, walk the transcript user
+  // message by user message, copy the newest reply. They read through
+  // the refs above, so a stream flush does not re-publish them.
+  const focusComposer = useCallback(() => {
+    composerRef.current?.focus();
+  }, []);
+  const walkUserMessage = useCallback(
+    (direction: 1 | -1) => {
+      const scroller = scrollRef.current;
+      if (!scroller) return;
+      const anchor = topVisibleMessageIndex(scroller);
+      if (anchor < 0) return;
+      const messages = messagesRef.current;
+      let target = -1;
+      if (direction < 0) {
+        for (let i = anchor - 1; i >= 0; i--) {
+          if (messages[i]?.role === 'user') {
+            target = i;
+            break;
+          }
+        }
+      } else {
+        for (let i = anchor + 1; i < messages.length; i++) {
+          if (messages[i]?.role === 'user') {
+            target = i;
+            break;
+          }
+        }
+        // Past the last request the newest output is the destination,
+        // exactly like the jump-to-latest pill.
+        if (target < 0) {
+          jumpToLatest();
+          return;
+        }
+      }
+      if (target >= 0) jumpToMessage(target);
+    },
+    [jumpToLatest, jumpToMessage],
+  );
+  const copyLastReply = useCallback(() => {
+    const messages = messagesRef.current;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg?.role !== 'assistant') continue;
+      const text = assistantText(msg);
+      // A message holding nothing but tool calls has no reply to copy;
+      // keep looking back for the last one that does.
+      if (text === '') continue;
+      void navigator.clipboard.writeText(text).then(
+        () => toast(t('chat.copiedReply')),
+        () => toast(t('chat.copyFailed'), 'warning'),
+      );
+      return;
+    }
+    toast(t('chat.nothingToCopy'));
+  }, [t, toast]);
+  useEffect(() => {
+    setChatTargets({ focusComposer, walkUserMessage, copyLastReply });
+    return () => setChatTargets(null);
+  }, [focusComposer, walkUserMessage, copyLastReply]);
   const thinkLevels = [
     { value: 'minimal', label: t('chat.thinkMinimal') },
     { value: 'low', label: t('chat.thinkLow') },
@@ -3042,6 +3143,7 @@ export function ChatView() {
         </div>
         <IconButton
           label={t('files.togglePanel')}
+          shortcut="panel.files"
           onClick={() => (filesOpen ? closeFiles() : openFiles())}
           aria-pressed={filesOpen}
           className={filesOpen ? 'bg-panel3 text-fg' : ''}
@@ -3423,6 +3525,7 @@ export function ChatView() {
                         onClick={() => void cancelRun()}
                         aria-label={t('chat.stop')}
                         data-tip={t('chat.stop')}
+                        data-tip-keys="turn.stop"
                         className="grid h-6 w-6 place-items-center rounded-control text-err hover:bg-panel2"
                       >
                         <Square size={ICON.xs} fill="currentColor" />
@@ -3449,6 +3552,18 @@ export function ChatView() {
                   onSubmit={() => void submitDraft()}
                   onQueue={queueDraft}
                   onInterrupt={interruptDraft}
+                  // Escape in the composer stops the reply, like the
+                  // Stop button. The composer owns this key (the shell
+                  // leaves Escape to text surfaces), so the handler is
+                  // only wired while there is something to stop.
+                  onStop={
+                    busy
+                      ? () => {
+                          void cancelRun();
+                          return true;
+                        }
+                      : undefined
+                  }
                   onPasteImages={(files) => void handlePastedImages(files)}
                 />
               </div>
@@ -3656,6 +3771,7 @@ export function ChatView() {
                   ) : busy && composerEmpty && !bargeWaiting ? (
                     <IconButton
                       label={t('chat.stop')}
+                      shortcut="turn.stop"
                       tone="danger"
                       size="lg"
                       onClick={() => void cancelRun()}
@@ -3672,6 +3788,7 @@ export function ChatView() {
                         // in the staged banner.
                         <IconButton
                           label={t('chat.stop')}
+                          shortcut="turn.stop"
                           tone="danger"
                           size="md"
                           onClick={() => void cancelRun()}

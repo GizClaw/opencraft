@@ -98,6 +98,35 @@ describe('MarkdownComposer', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
+  it('stops the reply on Escape, but never takes the key from a popup', async () => {
+    const onStop = vi.fn(() => true);
+    const user = userEvent.setup();
+    render(
+      <MarkdownComposer
+        placeholder="Write…"
+        onSubmit={vi.fn()}
+        onStop={onStop}
+      />,
+    );
+    const box = screen.getByRole('textbox');
+
+    // The composer owns Escape (the shell leaves it to text surfaces),
+    // and a stop the handler performed is the composer's key to consume.
+    const plain = fireEvent.keyDown(box, { key: 'Escape' });
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(plain).toBe(false); // false = preventDefault was called
+
+    // A mention popup is the exception: its keymap exits on Escape, so
+    // the reply keeps running and the popup is the thing that closes.
+    await user.type(box, 'see @');
+    await screen.findByText('src/main.ts');
+    await user.keyboard('{Escape}');
+    expect(onStop).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.queryByText('src/main.ts')).toBeNull();
+    });
+  });
+
   it('still sends on Enter inside a markdown wrapper', async () => {
     const onSubmit = vi.fn();
     const user = userEvent.setup();

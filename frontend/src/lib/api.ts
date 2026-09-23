@@ -208,6 +208,22 @@ function threadSideOf(side: string | undefined): GitHubReviewThread['side'] {
   return side === 'LEFT' || side === 'RIGHT' ? side : undefined;
 }
 
+// toAgentDetail normalizes the agent graph for the editor. A graph
+// source may legitimately omit the nodes/edges keys (a single-node
+// subagent has no transitions at all), and encoding/json marshals the
+// resulting nil slices as null — the editor's GraphDTO contract wants
+// arrays, not null.
+function toAgentDetail(dto: gen.AgentDetail): AgentDetail {
+  return {
+    ...dto,
+    graph: {
+      ...dto.graph,
+      nodes: dto.graph.nodes ?? [],
+      edges: dto.graph.edges ?? [],
+    },
+  };
+}
+
 export const api = {
   version: () => Config.Version(),
   profile: () => Config.Profile(),
@@ -358,8 +374,8 @@ export const api = {
   mcpConfig: () => Config.MCPConfig() as Promise<MCPServer[]>,
   saveMCP: (servers: MCPServer[]) =>
     Config.SaveMCP(servers as unknown as genConfig.MCPServer[]),
-  agentDetail: (name: string) =>
-    Agent.Detail(name) as unknown as Promise<AgentDetail>,
+  agentDetail: async (name: string): Promise<AgentDetail> =>
+    toAgentDetail(await Agent.Detail(name)),
   updateAgent: (name: string, description: string, graph: string) =>
     Agent.Update(name, description, graph),
   mcpStatus: () => Config.MCPStatus() as unknown as Promise<MCPStatus[]>,

@@ -165,15 +165,27 @@ func TestShellQuitState(t *testing.T) {
 
 func TestShellLanguageChangedListener(t *testing.T) {
 	s := NewShell(t.TempDir())
+	// Two native surfaces mirror the language (the tray and the menu bar),
+	// so the hooks accumulate: the second registration must not replace the
+	// first, or one of them would freeze in the startup language.
 	var notified []string
-	s.SetLanguageChangedListener(func() {
-		notified = append(notified, s.Language())
+	s.AddLanguageChangedListener(func() {
+		notified = append(notified, "tray:"+s.Language())
+	})
+	s.AddLanguageChangedListener(func() {
+		notified = append(notified, "menu:"+s.Language())
 	})
 	if err := s.SetLanguage("zh-CN"); err != nil {
 		t.Fatal(err)
 	}
-	if len(notified) != 1 || notified[0] != "zh" {
-		t.Fatalf("language listener notified with %v, want [zh]", notified)
+	want := []string{"tray:zh", "menu:zh"}
+	if len(notified) != len(want) {
+		t.Fatalf("language listeners notified with %v, want %v", notified, want)
+	}
+	for i, entry := range want {
+		if notified[i] != entry {
+			t.Fatalf("language listeners notified with %v, want %v", notified, want)
+		}
 	}
 }
 
