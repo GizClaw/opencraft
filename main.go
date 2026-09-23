@@ -148,6 +148,10 @@ func main() {
 	desktop.SetMainWindow(shell, mainW)
 	app.RegisterService(application.NewService(shell))
 	d.RegisterServices(app)
+	// The native menu bar (macOS) mirrors the app's own commands: an item
+	// bridges its shortcut id back to the frontend, so the menu and the key
+	// run one implementation. No-op elsewhere (see desktop.SetupMenu).
+	d.SetupMenu(app)
 
 	// Close-to-background: every native close funnels through the same gate as
 	// an in-app close. With "close to tray" enabled the close is cancelled

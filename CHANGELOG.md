@@ -73,6 +73,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dialog closed. That press is now recognised and consumed before any
   surface sees it, and a list that filters as you type renders the frozen
   results while a composition is in flight instead of flashing empty.
+- macOS has a menu bar the app owns. The default one that came with the
+  window was never ours: View ▸ Reload reloaded the webview, and Help ▸
+  Learn More navigated the main window to wails.io. The bar is now built
+  from a table (`internal/adapters/desktop/menuspec.go`), every item
+  localized, with the platform's own rows (Edit, Window, zoom, full
+  screen, the Services submenu) kept as roles and the app's commands as
+  *bridged* rows: the item carries the accelerator, macOS consumes the
+  key, and a click emits the frontend's own shortcut id over the
+  `opencraft:menu` event, so one implementation backs both fronts and the
+  menu cannot drift from the sheet. File ▸ Close Window funnels into the
+  same close-to-tray-or-quit gate the traffic lights use. Keys are only
+  written where AppKit can match them — it compares the character the key
+  types ignoring every modifier but ⇧, so the ⌘-and-a-plain-key combos go
+  in whole, ⇧-punctuation works (⇧⌘[ is spelled `CmdOrCtrl+Shift+[` and
+  the bar draws it), and a ⇧-letter can never match a key Wails has
+  lowercased, which is why Redo carries no key rather than one that does
+  nothing. Windows and Linux are unchanged: an in-app top bar over a
+  frameless window, with the frontend dispatcher as the only owner of
+  keys. A test reads the TypeScript table and holds the Go one to it (ids
+  exist, accelerators equal the combos, a non-`editable` key may not be
+  advertised, no key is claimed twice), because the two languages cannot
+  import each other.
 - Past sessions are searchable by the assistant, not only by the UI: the
   `session_search` tool runs a full-text recall over this workspace's
   archived turns (SQLite FTS5, trigram tokenizer, so a substring inside
