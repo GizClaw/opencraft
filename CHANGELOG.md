@@ -462,8 +462,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The retry that carries a call across a Host retirement is one function
   (`core.Runtime.Do`) instead of a copy per call site. Starting a turn
   and deleting a conversation each spelled out the same wait-for-a-
-  replacement window, attempt budget and re-ensure sequence by hand, and
-  each re-derived "the request is stale now" from a different expression.
+  replacement window, attempt budget and re-ensure sequence by hand —
+  and each re-derived "the request is stale now" from its own
+  expression.
   The window (bounded by the time left, never by the caller's whole RPC,
   so a drain can stretch neither past ten seconds), the attempt budget
   and the classification (`host.IsRetryableStartError`, which stays in
@@ -714,17 +715,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A turn could be started on the wrong workspace's Host, or refuse to
-  start where a usable Host existed. Recovering from a retired Host
-  meant retrying against "the current Host" — a process-wide pointer
-  that a workspace switch had already moved — so a start that raced a
-  switch was resolved against whatever workspace the window showed
-  instead of the one that owns the conversation, and a start for a
-  workspace whose replacement was being assembled failed with the
-  transient guard while the pool was about to hand out a perfectly good
-  Host. Every host lifecycle call is now resolved by workspace through
-  the pool, and the workspace's identity is the only thing a retry
-  carries.
 - Opening an agent in the graph editor no longer takes the page down when
   its source omits the `edges` (or `nodes`) key. A single-node subagent
   has no transitions at all, so the key can legitimately be absent, and
@@ -986,6 +976,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run's registration happen under one per-conversation start gate, so
   two starts cannot both read "no live run" and have the later one
   preempt the earlier.
+- A turn could be started on the wrong workspace's Host, or refuse to
+  start where a usable Host existed. Recovering from a retired Host
+  meant retrying against "the current Host" — a process-wide pointer a
+  workspace switch had already moved — so a start that raced a switch
+  was resolved against whatever workspace the window happened to show
+  instead of the one that owns the conversation, and a start for a
+  workspace whose replacement was mid-assembly failed with the transient
+  guard while the pool was about to hand out a perfectly good Host.
+  Every host lifecycle call is now resolved by workspace through the
+  pool, and the workspace's identity is the only thing a retry carries.
 
 ## [0.5.3] - 2026-09-17
 
