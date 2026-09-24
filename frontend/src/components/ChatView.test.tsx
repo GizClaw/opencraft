@@ -1685,6 +1685,12 @@ describe('ChatView jump-to-latest pill', () => {
     ).not.toBeInTheDocument();
   });
 
+  // The heaviest test of the suite: it mounts two 250-message transcripts
+  // (~2x the 200-row window) through the markdown renderer, which is ~2s
+  // on a laptop and has crossed the default 5s budget on a loaded CI
+  // runner. It asserts the same thing either way, so it gets the room the
+  // rendering cost needs instead of a thinner fixture that would stop
+  // proving the window sits at the newest row.
   it('re-pins the follow when another conversation is opened', () => {
     setConversation(manyMessages(250));
     render(<ChatView />);
@@ -1748,7 +1754,7 @@ describe('ChatView jump-to-latest pill', () => {
     expect(
       screen.queryByRole('button', { name: 'Jump to latest' }),
     ).not.toBeInTheDocument();
-  });
+  }, 15000);
 });
 
 describe('ChatView projections', () => {
