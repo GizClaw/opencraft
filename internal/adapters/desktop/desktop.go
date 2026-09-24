@@ -148,9 +148,12 @@ func New(opts Options) (*Desktop, error) {
 	c.Runtime.Manager().SetUsageObserver(func(_ context.Context, usage inference.Usage) {
 		c.Shell.Emit(core.EventUsage, core.NewUsageEvent(usage))
 	})
-	c.Runtime.SetHostConfigurator(func(h *host.Host) {
+	// The pool applies this once per Host it assembles; the observers
+	// below stay quiet for a Host that no longer serves the window's
+	// workspace.
+	c.Runtime.Manager().SetHostConfigurator(func(h *host.Host) {
 		h.SetArtifactObserver(func(ctx context.Context, path string, data []byte) {
-			if h != c.Runtime.Current() {
+			if h != c.ActiveHost() {
 				return
 			}
 			info, ok := agent.RunInfoFromContext(ctx)
@@ -165,7 +168,7 @@ func New(opts Options) (*Desktop, error) {
 			})
 		})
 		h.SetSessionUpdated(func(_ context.Context, contextID string) {
-			if h == c.Runtime.Current() {
+			if h == c.ActiveHost() {
 				c.Shell.Emit(core.EventSessionUpdated, map[string]string{"id": contextID})
 			}
 		})
@@ -479,9 +482,9 @@ func (d *Desktop) runAutomation(
 	}
 	current := d.core.ActiveWorkDir() != "" &&
 		filepath.Clean(d.core.ActiveWorkDir()) == filepath.Clean(task.Workspace)
-	h, err := d.core.Runtime.AcquireBackground(
+	h, err := d.core.Runtime.EnsureHost(
 		host.WithAssemblyReason(ctx, host.ReasonAutomation),
-		task.Workspace, interact.Auto{})
+		task.Workspace)
 	if err != nil {
 		return automations.RunResult{Status: automations.RunFailed}, err
 	}

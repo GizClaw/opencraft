@@ -10,7 +10,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
@@ -116,8 +115,8 @@ func TestPluginInstallerInstallsAndReloads(t *testing.T) {
 	c, workDir, dataDir := newInstallerTestCore(t)
 	ctx := context.Background()
 	// Warm the runtime so the install has a pooled Host to replace.
-	if _, err := c.Runtime.Acquire(ctx, workDir, interact.Auto{}); err != nil {
-		t.Fatalf("acquire host: %v", err)
+	if _, err := c.Runtime.EnsureHost(ctx, workDir); err != nil {
+		t.Fatalf("ensure host: %v", err)
 	}
 
 	src := filepath.Join(workDir, ".opencraft-plugins", "hello")
@@ -142,7 +141,7 @@ func TestPluginInstallerInstallsAndReloads(t *testing.T) {
 
 	// The reload replaced the pooled Host, so the new plugin's skill is
 	// part of the freshly assembled registry.
-	h := c.Runtime.Current()
+	h := c.ActiveHost()
 	if h == nil {
 		t.Fatal("no current host after install")
 	}

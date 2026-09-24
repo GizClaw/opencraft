@@ -100,7 +100,7 @@ func (c *Core) applyPluginInferenceWrite(changed bool) error {
 // rebuilt once per row while the workspace drained, and each rebuild
 // armed another replacement for the same document.
 func (c *Core) runtimeServesActiveWorkspace() bool {
-	h := c.Runtime.Current()
+	h := c.ActiveHost()
 	if h == nil || h.IsClosing() {
 		return false
 	}
@@ -112,7 +112,7 @@ func (c *Core) runtimeServesActiveWorkspace() bool {
 		return false
 	}
 	if h.IsStale() {
-		return c.rebuildPendingFor(active)
+		return c.Runtime.ReplacementArmed(active)
 	}
 	return true
 }

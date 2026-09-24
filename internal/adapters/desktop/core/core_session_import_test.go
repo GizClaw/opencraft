@@ -13,7 +13,6 @@ import (
 	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
@@ -52,9 +51,9 @@ func TestPluginSessionImportWiresHostWritePath(t *testing.T) {
 	c := NewCore(configDir, dataDir, "")
 	c.SetWorkDir(workDir)
 	ctx := context.Background()
-	h, err := c.Runtime.Acquire(ctx, workDir, interact.Auto{})
+	h, err := c.Runtime.EnsureHost(ctx, workDir)
 	if err != nil {
-		t.Fatalf("acquire host: %v", err)
+		t.Fatalf("ensure host: %v", err)
 	}
 	defer func() { _ = h.Close() }()
 
@@ -134,9 +133,9 @@ func TestPluginSessionImportedSourcesReportsExisting(t *testing.T) {
 	c := NewCore(configDir, dataDir, "")
 	c.SetWorkDir(workDir)
 	ctx := context.Background()
-	h, err := c.Runtime.Acquire(ctx, workDir, interact.Auto{})
+	h, err := c.Runtime.EnsureHost(ctx, workDir)
 	if err != nil {
-		t.Fatalf("acquire host: %v", err)
+		t.Fatalf("ensure host: %v", err)
 	}
 	defer func() { _ = h.Close() }()
 

@@ -611,7 +611,7 @@ type RecoveryDTO struct {
 // bill of health.
 func (b *Diagnostics) Recovery() RecoveryDTO {
 	dto := RecoveryDTO{}
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil {
 		return dto
 	}
@@ -686,7 +686,7 @@ func (b *Diagnostics) Diagnostics() Report {
 			rep.GitBranch = strings.TrimSpace(branch)
 		}
 	}
-	if h := b.core.Runtime.Current(); h != nil {
+	if h := b.core.ActiveHost(); h != nil {
 		rep.ActiveRuns = len(h.ActiveRuns())
 		if h.Sessions() != nil {
 			if metas, err := h.Sessions().List(); err == nil {
@@ -760,7 +760,7 @@ func (b *Diagnostics) EvaluateCommandPolicy(
 	if len(fields) == 0 {
 		return PolicyDecision{}, os.ErrInvalid
 	}
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Controller() == nil || h.Controller().Runtime() == nil {
 		return PolicyDecision{}, errNotReady("diagnostics")
 	}

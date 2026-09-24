@@ -174,7 +174,7 @@ func delegationNoteDTO(
 
 // List returns conversation metadata, newest first.
 func (b *Session) List() ([]SessionMeta, error) {
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return []SessionMeta{}, nil
 	}
@@ -278,7 +278,7 @@ func (b *Session) History(
 	id string, n int,
 ) ([]message.Message, error) {
 	ctx := b.core.Shell.Context()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return []message.Message{}, nil
 	}
@@ -287,7 +287,7 @@ func (b *Session) History(
 
 // Exists reports whether a conversation exists.
 func (b *Session) Exists(id string) bool {
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	return h != nil && h.Sessions() != nil && h.Sessions().Exists(id)
 }
 
@@ -300,7 +300,7 @@ func (b *Session) Rename(id, title string) error {
 	if !ids.IsSession(id) {
 		return fmt.Errorf("invalid session id %q", id)
 	}
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return errNotReady("session")
 	}
@@ -316,55 +316,46 @@ func (b *Session) Rename(id, title string) error {
 func (b *Session) Delete(id string) (SessionDeleteResult, error) {
 	ctx := b.core.Shell.Context()
 	workDir := b.core.ActiveWorkDir()
+	if strings.TrimSpace(workDir) == "" {
+		return SessionDeleteResult{}, errNotReady("session")
+	}
 	// DeleteConversation is idempotent, and its lifecycle guards run
 	// before any row/file removal, so a Host retirement between the UI
 	// action and the delete is safe to absorb here by waiting for the
-	// replacement Host and retrying inside this one RPC.
-	notReady := errNotReady("session")
-	deadline := time.Now().Add(startRetryWindow)
-	var lastErr error
-	for attempt := 0; attempt < maxStartAttempts; attempt++ {
-		h := b.core.Runtime.Current()
-		if h == nil || h.Sessions() == nil {
-			lastErr = notReady
-			if strings.TrimSpace(workDir) == "" {
-				return SessionDeleteResult{}, lastErr
+	// replacement Host and retrying inside this one RPC. The delete is
+	// the window's own, so a switch during that wait ends the retry.
+	var result SessionDeleteResult
+	err := b.core.Runtime.Do(
+		ctx, workDir,
+		func() bool { return !core.SameWorkspace(b.core.ActiveWorkDir(), workDir) },
+		func(h *host.Host) error {
+			if h.Sessions() == nil {
+				return host.ErrSessionStoreNotReady
 			}
-		} else {
-			err := h.DeleteConversation(ctx, id)
-			if err == nil {
-				b.core.Conversation.ForgetConversation(id)
-				// A selection made while the delete waited (it can
-				// take up to 30s to stop a live turn) wins and gets no
-				// replacement.
-				fresh := b.core.Conversation.ReplaceIfCurrent(workDir, id)
-				if fresh == "" {
-					return SessionDeleteResult{}, nil
-				}
-				return SessionDeleteResult{
-					SessionID: fresh,
-					Mode:      string(b.core.Conversation.Mode(workDir)),
-					Think:     b.core.Conversation.Think(workDir),
-					Model:     b.core.Conversation.Model(workDir),
-				}, nil
+			if err := h.DeleteConversation(ctx, id); err != nil {
+				return err
 			}
-			lastErr = err
-			if !host.IsRetryableStartError(lastErr) {
-				return SessionDeleteResult{}, lastErr
+			b.core.Conversation.ForgetConversation(id)
+			// A selection made while the delete waited (it can take up
+			// to 30s to stop a live turn) wins and gets no replacement.
+			fresh := b.core.Conversation.ReplaceIfCurrent(workDir, id)
+			if fresh == "" {
+				result = SessionDeleteResult{}
+				return nil
 			}
-		}
-		if time.Now().After(deadline) ||
-			ctx.Err() != nil ||
-			b.core.ActiveWorkDir() != workDir {
-			return SessionDeleteResult{}, lastErr
-		}
-		if err := b.core.Runtime.EnsureUsableHostWithin(
-			ctx, deadline, workDir, lastErr,
-		); err != nil {
-			return SessionDeleteResult{}, err
-		}
+			result = SessionDeleteResult{
+				SessionID: fresh,
+				Mode:      string(b.core.Conversation.Mode(workDir)),
+				Think:     b.core.Conversation.Think(workDir),
+				Model:     b.core.Conversation.Model(workDir),
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		return SessionDeleteResult{}, err
 	}
-	return SessionDeleteResult{}, lastErr
+	return result, nil
 }
 
 // Turns returns every archived turn of one conversation.
@@ -374,7 +365,7 @@ func (b *Session) Turns(
 	beforeSeq int64,
 ) ([]SessionTurnDTO, error) {
 	ctx := b.core.Shell.Context()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return nil, errNotReady("session")
 	}
@@ -400,7 +391,7 @@ func (b *Session) TurnsSince(
 	limit int,
 ) ([]SessionTurnDTO, error) {
 	ctx := b.core.Shell.Context()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return nil, errNotReady("session")
 	}
@@ -426,7 +417,7 @@ func (b *Session) TurnByRunID(
 			fmt.Errorf("session: run id is required")
 	}
 	ctx := b.core.Shell.Context()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return SessionTurnDTO{}, errNotReady("session")
 	}
@@ -472,7 +463,7 @@ func (b *Session) ExportMarkdown(
 	id string,
 ) (string, error) {
 	ctx := b.core.Shell.Context()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return "", errNotReady("session")
 	}
@@ -532,7 +523,7 @@ func (b *Session) ExportBundle(
 	id string,
 ) (string, error) {
 	ctx := b.core.Shell.Context()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return "", errNotReady("session")
 	}
@@ -578,7 +569,7 @@ func (b *Session) ImportBundle(
 	path string,
 ) (SessionImportDTO, error) {
 	ctx := b.core.Shell.Context()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return SessionImportDTO{}, errNotReady("session")
 	}
@@ -610,7 +601,7 @@ func (b *Session) ImportBundle(
 
 // ActiveRun returns the run id currently active in one conversation.
 func (b *Session) ActiveRun(conversationID string) string {
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil {
 		return ""
 	}
@@ -654,7 +645,7 @@ type ProcessView struct {
 // run in the sandbox, not in the app; the list is the read-only view
 // the activity card polls.
 func (b *Session) Processes(conversationID string) []ProcessView {
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil {
 		return []ProcessView{}
 	}

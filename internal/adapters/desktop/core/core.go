@@ -11,6 +11,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // Core is the composition root of the desktop services. It only wires
@@ -42,13 +43,15 @@ type Core struct {
 	// plugin inference writes, so a plugin that re-submits an unchanged
 	// row set does not rebuild the runtime per row (see inference.go).
 	pluginWrites pluginInferenceWrite
-	// rebuildMu guards rebuildPending, the set of workspaces whose
-	// deferred rebuild is already armed (see runtime_reload.go). Several
-	// reloads can invalidate one workspace while it drains; one armed
-	// replacement is enough, and arming one goroutine per invalidation
-	// made them all assemble at once when the drain finished.
-	rebuildMu      sync.Mutex
-	rebuildPending map[string]struct{}
+	// readyWorkDir is the workspace the last ready event named. The
+	// frontend switches its workspace on that event alone, so this —
+	// not WorkDir — is what the window is rendering: a switch updates
+	// WorkDir before its runtime exists, and only the ready that
+	// follows tells the UI to move. A rebuild that lands on a
+	// different workspace while the old one drains has to announce the
+	// switch immediately, because the replacement may only arrive
+	// after a whole turn.
+	readyWorkDir string
 	// path holds the last process PATH resolution for the diagnostics
 	// view (see path_report.go).
 	path pathReport
@@ -139,6 +142,17 @@ func NewCoreWithPaths(p Paths) *Core {
 	runtime.Manager().SetDelegationStreams(
 		c.StreamTargets().Resolver(), c.StreamTargets().Exporter(),
 	)
+	// The pool owns when a retired assembly is replaced (see
+	// host.Manager.ScheduleReplacement); this is the adapter's half of
+	// that policy: a workspace the window has left is not rebuilt
+	// behind the user's back, and a replacement that lands refreshes
+	// everything the UI renders out of the document.
+	runtime.Manager().SetReplacementHooks(host.ReplacementHooks{
+		Wanted: func(workDir string) bool {
+			return SameWorkspace(c.ActiveWorkDir(), workDir)
+		},
+		Installed: func(string) { c.EmitReady() },
+	})
 	plugin.Capability.SetOpenURL(c.Shell.OpenURL)
 	defaultMode, defaultThink := c.Shell.SessionDefaults()
 	c.Conversation.SetDefaults(

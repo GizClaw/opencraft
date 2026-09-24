@@ -62,7 +62,7 @@ func TestStartTurnRoutesToOwningWorkspace(t *testing.T) {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("rebuild runtime for the second workspace: %v", err)
 	}
-	active := c.Runtime.Current()
+	active := c.ActiveHost()
 	if active == nil || !core.SameWorkspace(active.WorkDir(), other) {
 		t.Fatalf("current host = %v, want the second workspace", active)
 	}
@@ -84,7 +84,7 @@ func TestStartTurnRoutesToOwningWorkspace(t *testing.T) {
 	}
 	// The drain is background work: it must not take over the Host the
 	// UI talks to.
-	if got := c.Runtime.Current(); got != active {
+	if got := c.ActiveHost(); got != active {
 		t.Fatalf("background drain replaced the current host: %v", got)
 	}
 	waitForTurns(t, homeStore, convID, 2)

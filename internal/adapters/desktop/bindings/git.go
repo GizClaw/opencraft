@@ -427,7 +427,7 @@ func (b *Git) runWrite(op crepo.Op) (string, error) {
 	if workDir == "" {
 		return "", errors.New("git: no workspace selected")
 	}
-	if h := b.core.Runtime.Current(); h != nil && len(h.ActiveRuns()) > 0 {
+	if h := b.core.ActiveHost(); h != nil && len(h.ActiveRuns()) > 0 {
 		return "", errors.New(
 			"git: the agent is still running in this workspace; " +
 				"wait for the turn to finish before changing the repository")

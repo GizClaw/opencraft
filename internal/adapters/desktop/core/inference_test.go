@@ -2,10 +2,13 @@ package core
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/orchestration/host"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
+	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
+	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
 // errRebuild stands in for a runtime rebuild that failed.
@@ -18,36 +21,63 @@ var errRebuild = errors.New("rebuild failed")
 // changed write, or a no-op after a failed rebuild, still rebuilds so
 // the plugin gets the error back.
 func TestPluginInferenceWriteSkipsNoOpRebuild(t *testing.T) {
-	dir := t.TempDir()
-	c := NewCore(dir, dir, "")
-	// A zero Host is enough: the skip path only reads WorkDir and the
-	// stale/closing flags, and RebuildRuntime clears the current Host.
-	c.Runtime.current = &host.Host{}
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	workDir := t.TempDir()
+	configDir := t.TempDir()
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeProviderConfig(t, configDir, provider.URL())
+
+	c := NewCore(configDir, t.TempDir(), "")
+	c.SetWorkDir(workDir)
+	if err := c.RebuildRuntime(c.Shell.Context()); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	first := c.ActiveHost()
+	if first == nil {
+		t.Fatal("no host after the first rebuild")
+	}
 	c.pluginWrites.markApplied(nil)
 
+	recorder := logcapture.Install(t)
 	if err := c.applyPluginInferenceWrite(false); err != nil {
 		t.Fatalf("no-op write: %v", err)
 	}
-	if c.Runtime.Current() == nil {
-		t.Fatal("no-op write rebuilt the runtime")
+	if got := countInvalidations(recorder); got != 0 {
+		t.Fatalf("no-op write invalidated the runtime %d times, want 0", got)
+	}
+	if got := c.ActiveHost(); got != first {
+		t.Fatalf("no-op write replaced the host: %p, want %p", got, first)
 	}
 
 	if err := c.applyPluginInferenceWrite(true); err != nil {
 		t.Fatalf("changed write: %v", err)
 	}
-	if c.Runtime.Current() != nil {
-		t.Fatal("changed write must rebuild the runtime")
+	if got := countInvalidations(recorder); got != 1 {
+		t.Fatalf("changed write invalidated the runtime %d times, want 1", got)
+	}
+	if got := c.ActiveHost(); got == nil || got == first {
+		t.Fatalf("changed write must reassemble the runtime, host = %p (was %p)",
+			got, first)
 	}
 
 	// A failed rebuild must not be assumed good: the next no-op write
-	// rebuilds and reports the error again.
-	c.Runtime.current = &host.Host{}
+	// rebuilds and reports the error again. Break the document so that
+	// rebuild has nothing to assemble.
+	if err := configseed.Write(configDir, config.InferenceConfig{}); err != nil {
+		t.Fatal(err)
+	}
 	c.pluginWrites.markApplied(errRebuild)
+	before := countInvalidations(recorder)
 	if err := c.applyPluginInferenceWrite(false); err != nil {
 		t.Fatalf("no-op write after failure: %v", err)
 	}
-	if c.Runtime.Current() != nil {
+	if got := countInvalidations(recorder); got <= before {
 		t.Fatal("a no-op write after a failed rebuild must retry it")
+	}
+	if got := c.ActiveHost(); got != nil {
+		t.Fatalf("an unconfigured rebuild left host %p in the pool", got)
 	}
 }
 

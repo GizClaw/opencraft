@@ -52,7 +52,7 @@ type Graph struct {
 
 // List returns every persisted subagent.
 func (b *Agent) List() ([]AgentSummary, error) {
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Agents() == nil {
 		return []AgentSummary{}, nil
 	}
@@ -87,7 +87,7 @@ func parseAgentGraph(raw string) (Graph, error) {
 // Detail returns one agent declaration.
 func (b *Agent) Detail(name string) (AgentDetail, error) {
 	ctx := b.core.Shell.Context()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Agents() == nil {
 		return AgentDetail{}, errNotReady("agent")
 	}
@@ -116,7 +116,7 @@ func (b *Agent) Update(
 	name, description, graph string,
 ) error {
 	ctx := b.core.Shell.Context()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Agents() == nil {
 		return errNotReady("agent")
 	}
@@ -127,7 +127,7 @@ func (b *Agent) Update(
 // Unregister removes one persistent subagent.
 func (b *Agent) Unregister(name string) error {
 	ctx := b.core.Shell.Context()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Agents() == nil {
 		return errNotReady("agent")
 	}

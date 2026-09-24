@@ -107,6 +107,17 @@ type Manager struct {
 	// concurrent Acquire calls share one build instead of racing
 	// (see assemblyCall). Entries live only while assembleHost runs.
 	assembling map[string]*assemblyCall
+	// hostConfigurator is applied once per pooled Host, before the pool
+	// hands it out (see SetHostConfigurator). The apply-once marker
+	// rides the pool entry, so nothing here keeps a retired Host
+	// reachable.
+	hostConfigurator func(*Host)
+	// replacementHooks carry the adapter's half of the deferred
+	// rebuild (see SetReplacementHooks).
+	replacementHooks ReplacementHooks
+	// armed holds the workspaces whose deferred replacement is already
+	// scheduled (see ScheduleReplacement).
+	armed map[string]struct{}
 	// closeHost is the teardown entry point. It is a field so tests
 	// can substitute a fake close without spinning up a runtime.
 	closeHost func(*Host)
@@ -163,6 +174,12 @@ type hostRef struct {
 	host  *Host
 	refs  int
 	stale bool
+	// configured records that the host configurator already ran for
+	// this Host. The marker rides the pool entry on purpose: it goes
+	// away together with the entry, so a retired Host — and the
+	// runtime it owns, from the skills search index to the MCP
+	// clients — stays collectable (see TestRebuiltHostIsCollectable).
+	configured bool
 }
 
 // assemblyCall is one in-flight assembly shared by every Acquire caller
@@ -747,8 +764,25 @@ func (m *Manager) InvalidateAll(ctx context.Context) {
 // Acquire returns (creating if needed) the shared Host for workDir.
 // fallback is used for runs without a resolver hit. Concurrent callers
 // for one workspace share a single assembly: whoever gets there first
-// builds, the rest wait and reuse the result.
+// builds, the rest wait and reuse the result. Every Host the pool hands
+// out has the host configurator applied first.
 func (m *Manager) Acquire(
+	ctx context.Context,
+	workDir string,
+	fallback interact.Backend,
+	resolver func(runID string) interact.Backend,
+) (*Host, error) {
+	h, err := m.acquire(ctx, workDir, fallback, resolver)
+	if err != nil {
+		return nil, err
+	}
+	m.configureHost(h)
+	return h, nil
+}
+
+// acquire is Acquire's pool half: it resolves or assembles the Host and
+// leaves the configurator to the caller.
+func (m *Manager) acquire(
 	ctx context.Context,
 	workDir string,
 	fallback interact.Backend,
@@ -801,6 +835,93 @@ func (m *Manager) Acquire(
 			}
 		}
 	}
+}
+
+// Current returns the Host that serves workDir right now: the pooled
+// Host when one is installed — stale ones included, because a stale
+// Host keeps serving its live runs on the old assembly — or the Host
+// that is retiring out of the pool while those runs finish. Nil when
+// the workspace has no Host at all: never assembled, or fully torn
+// down.
+//
+// This is the pool's answer to "which generation serves this
+// workspace", and it is deliberately per workspace: no process-wide
+// current Host means a background acquire cannot make a read for the
+// window's workspace land on another workspace's store.
+func (m *Manager) Current(workDir string) *Host {
+	if strings.TrimSpace(workDir) == "" {
+		return nil
+	}
+	workDir = filepath.Clean(workDir)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ref := m.hosts[workDir]; ref != nil {
+		return ref.host
+	}
+	return m.retiring[workDir]
+}
+
+// Ensure returns a Host for workDir that can serve new work: the pooled
+// Host when it is live (a stale one still serving its last runs
+// counts), and otherwise a fresh assembly, once any retiring Host for
+// the workspace has finished teardown. It never assembles a second Host
+// while one is still draining, and never hands out another workspace's.
+// A Host it returns is wired with the host configurator, whether it
+// came out of the pool or from an assembly this call started.
+//
+// Programmatic callers make up this pool's supply side, so the assembly
+// runs on the backend they all use (interact.Auto); a caller that needs
+// its own fallback backend for the runs on that Host goes through
+// Acquire instead.
+func (m *Manager) Ensure(ctx context.Context, workDir string) (*Host, error) {
+	if strings.TrimSpace(workDir) == "" {
+		return nil, ErrNoWorkspace
+	}
+	if h := m.Current(workDir); h != nil && !h.IsClosing() {
+		// The pooled branch hands out a Host the assembler may not
+		// have reached yet (it configures after publishing), so the
+		// configurator is applied here too: no hand-out path leaves a
+		// Host that can serve runs unwired.
+		m.configureHost(h)
+		return h, nil
+	}
+	return m.Acquire(ctx, workDir, interact.Auto{}, nil)
+}
+
+// SetHostConfigurator installs a callback applied once to every Host
+// the pool hands out, before Acquire returns it. Adapters use it to
+// wire UI observers (artifacts, session updates) without
+// re-registering on shared hosts.
+func (m *Manager) SetHostConfigurator(fn func(*Host)) {
+	m.mu.Lock()
+	m.hostConfigurator = fn
+	m.mu.Unlock()
+}
+
+// configureHost applies the host configurator once per pooled Host, on
+// every path that hands one out for work (Acquire, and Ensure's pooled
+// branch). The callback runs without the pool lock held: adapter
+// callbacks ask the pool questions of their own.
+//
+// A Host the pool has already forgotten is skipped instead of wired
+// late: the apply-once marker rides the pool entry, and a missing (or
+// replaced) entry means that Host retired. It is closing, and the paths
+// that hand out work do not return one of those — Ensure refuses it,
+// Acquire waits out its teardown.
+func (m *Manager) configureHost(h *Host) {
+	if h == nil {
+		return
+	}
+	m.mu.Lock()
+	fn := m.hostConfigurator
+	ref := m.hosts[h.workDir]
+	if fn == nil || ref == nil || ref.host != h || ref.configured {
+		m.mu.Unlock()
+		return
+	}
+	ref.configured = true
+	m.mu.Unlock()
+	fn(h)
 }
 
 // assembleShared runs the one assembly for a workspace and publishes
@@ -1693,8 +1814,10 @@ func (h *Host) IsStale() bool {
 
 // IsClosing reports whether the Host stopped accepting new turns: it
 // is either draining its live runs or already torn down. A closing
-// Host is never returned by Manager.Acquire, so adapters can treat
-// IsClosing on Runtime.current as "wait for the replacement Host".
+// Host is not handed out by Manager.Ensure, and Manager.Current keeps
+// reporting it while it drains, so an adapter reads IsClosing on what
+// it holds as "this generation is on its way out" — the cue to ask the
+// pool for the workspace's Host again.
 func (h *Host) IsClosing() bool {
 	if h == nil {
 		return true

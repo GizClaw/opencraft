@@ -24,6 +24,12 @@ var (
 	// way. Scheduled callers record the run as skipped and let the
 	// next occurrence try again.
 	ErrConversationBusy = errors.New("host: conversation has a live run")
+	// ErrNoWorkspace reports an acquire or ensure call that named no
+	// workspace. It is not a retryable lifecycle error either: waiting
+	// for a replacement Host cannot turn an empty path into a
+	// workspace. Callers reach it only by asking for a Host before a
+	// workspace is selected.
+	ErrNoWorkspace = errors.New("host: no workspace to serve")
 )
 
 // IsRetryableStartError reports whether err is one of the host

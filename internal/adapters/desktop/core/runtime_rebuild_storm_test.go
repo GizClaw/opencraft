@@ -39,7 +39,7 @@ func TestRebuildRuntimeArmsOneReplacementForDrainingWorkspace(t *testing.T) {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
-	first := c.Runtime.Current()
+	first := c.ActiveHost()
 	if first == nil {
 		t.Fatal("no current host after rebuild")
 	}
@@ -77,7 +77,7 @@ func TestRebuildRuntimeArmsOneReplacementForDrainingWorkspace(t *testing.T) {
 
 	deadline := time.Now().Add(45 * time.Second)
 	for {
-		h := c.Runtime.Current()
+		h := c.ActiveHost()
 		if h != nil && h != first && !h.IsStale() {
 			break
 		}
@@ -126,7 +126,7 @@ func TestUnchangedPluginWriteSkipsRebuildWhileReplacementArmed(t *testing.T) {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
-	first := c.Runtime.Current()
+	first := c.ActiveHost()
 	if first == nil {
 		t.Fatal("no current host after rebuild")
 	}
@@ -171,7 +171,7 @@ func TestUnchangedPluginWriteSkipsRebuildWhileReplacementArmed(t *testing.T) {
 	}
 	deadline := time.Now().Add(45 * time.Second)
 	for {
-		h := c.Runtime.Current()
+		h := c.ActiveHost()
 		if h != nil && h != first && !h.IsStale() {
 			break
 		}
