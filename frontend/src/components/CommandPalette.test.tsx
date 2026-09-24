@@ -6,12 +6,17 @@ import {
   waitFor,
 } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetIMEState } from '../lib/ime';
 import { useStore } from '../lib/store';
 import { CommandPalette } from './CommandPalette';
 
 // The palette reads the store directly, so the test drives it through the
 // same surface the app does: open it, type, move, run.
 beforeEach(() => {
+  // The IME module listens on the document, so its memory of a press
+  // outlives one case's markup; this file hand-builds composition
+  // sequences, and each of them starts from a clean slate.
+  resetIMEState();
   useStore.setState({
     paletteOpen: true,
     theme: 'dark',
