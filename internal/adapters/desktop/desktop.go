@@ -500,10 +500,8 @@ func (d *Desktop) runAutomation(
 	runID := run.RunID()
 	contextID := run.ContextID()
 	if current {
-		d.core.Shell.Emit(core.EventAutomationRunStarted, map[string]any{
-			"run_id":          runID,
-			"conversation_id": contextID,
-		})
+		d.core.Shell.Emit(core.EventAutomationRunStarted,
+			automationRunStartedPayload(runID, contextID, task.Prompt))
 	}
 	// The manager's run context carries the task timeout; WaitBounded
 	// turns that deadline into a cancel and waits for the settle, so
@@ -565,6 +563,24 @@ func (d *Desktop) runAutomation(
 // panel localizes it, the way it already does for
 // interrupted_by_app_restart.
 const conversationBusyReason = "conversation_busy"
+
+// automationRunStartedPayload is the run-start event's payload: the run,
+// the conversation it streams into, and the message the run was started
+// with (task.Prompt through message.NewTextMessage). The frontend draws
+// that message as the turn's user row — the same text the host archives
+// as this turn's user message — so a run the UI did not start gets the
+// turn it belongs to: its live answer, its terminal state and the files
+// it writes all land on that turn's strip instead of on whichever turn
+// happens to be last.
+func automationRunStartedPayload(
+	runID, conversationID, prompt string,
+) map[string]any {
+	return map[string]any{
+		"run_id":          runID,
+		"conversation_id": conversationID,
+		"message":         prompt,
+	}
+}
 
 // automationStartFailure maps a refused start to the run record. A
 // conversation busy with a live turn is a skip, not a failure: the

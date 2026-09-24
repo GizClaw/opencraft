@@ -480,6 +480,12 @@ func (s *Store) BufferArtifact(id, runID, path string, bytes int) error {
 // the conversation still has buffered are left for their own turns: an
 // archive with no run id is not evidence that any other run's files
 // are finished, so it takes nothing.
+//
+// A run that ends without archiving (the commit hook returning early, a
+// process killed mid-turn) leaves its entry behind until the
+// conversation is removed (Store.Remove clears the buffer and the turn
+// timing together). The bytes are a few paths, so nothing sweeps them: a
+// settle-time cleanup would be the place to start if that ever changes.
 func (s *Store) takeArtifacts(id, runID string) []Artifact {
 	if runID == "" {
 		return nil

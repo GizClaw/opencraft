@@ -3,11 +3,31 @@ package desktop
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
+
+// TestAutomationRunStartedPayload pins the run-start event's fields. The
+// message is the one the frontend draws as the turn's user row, so a
+// run the UI did not start gets the same turn the archive will draw:
+// dropping it (or renaming it) would leave the run's live answer and its
+// produced files unattached to any turn, and only the silent side
+// (the transcript) would show it.
+func TestAutomationRunStartedPayload(t *testing.T) {
+	got := automationRunStartedPayload(
+		"run-1", "s-1", "summarize the day")
+	want := map[string]any{
+		"run_id":          "run-1",
+		"conversation_id": "s-1",
+		"message":         "summarize the day",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("payload = %#v, want %#v", got, want)
+	}
+}
 
 // TestAutomationStartFailure pins the mapping a refused automation
 // start goes through: a busy conversation becomes a skipped record

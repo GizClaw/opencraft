@@ -905,6 +905,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transcript yet (its start-turn response is still in flight) lands on
   the trailing live entry; one with no run behind it at all is dropped
   rather than merged into whatever turn is last.
+- A scheduled run draws its own turn in the conversation it fires on,
+  the way the archive draws it. Nothing in the UI started the run, so
+  no turn was opened for it: its live answer merged into the turn above
+  it (the stream appends to the trailing assistant row), and the strip
+  that carries its status, duration and produced files did not exist —
+  a run on the conversation on screen showed its work on somebody
+  else's turn, or not at all until a reload. The run-start event now
+  carries the message the run was started with, and the conversation
+  opens the same shape a sent turn gets: that message as the user row
+  (the text the host archives as this turn's user message), the answer
+  streaming under it, and the strip whose run id the artifact and
+  `turn_end` paths look the turn up by. The archive's copy of the turn
+  replaces the live one when the run ends.
 - The pet window's mount report reaches Settings ▸ Diagnostics the
   moment it arrives. The panel listened on `pet:runtime_status` as if it
   were a channel of its own, while the report is an event *type* on the

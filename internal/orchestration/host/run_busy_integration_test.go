@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -100,5 +101,104 @@ func TestAutomationStartStepsAsideForLiveRun(t *testing.T) {
 	}
 	if got := provider.Calls(); got != 2 {
 		t.Fatalf("provider calls after automation run = %d, want 2", got)
+	}
+}
+
+// TestConcurrentAutomationStartsKeepOneRun pins the start gate itself,
+// not the policy the test above covers: the conflict decision and the
+// registration of the new run have to be one step, or N starts can all
+// read "no live run" and every one after the first preempts the one
+// before it. The starts are fired together, so the interleaving is the
+// scheduler's; exactly one may win, and only it may reach the provider.
+func TestConcurrentAutomationStartsKeepOneRun(t *testing.T) {
+	provider := fakeprovider.New(t,
+		fakeprovider.Reply{Text: "seed answer"},
+		fakeprovider.Reply{Text: "scheduled answer"},
+	)
+	workDir := t.TempDir()
+	dataDir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dataDir, "home"))
+	configDir := filepath.Join(dataDir, "config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeConfig(t, configDir, provider.URL())
+
+	mgr := host.NewManagerAt(dataDir, configDir)
+	ctx := context.Background()
+	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire host: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+
+	// One conversation to contend over: with no explicit context id every
+	// start would mint a session of its own and never collide.
+	seed, err := h.StartRun(ctx, host.RunOptions{
+		Message:       message.NewTextMessage(message.RoleUser, "seed the conversation"),
+		Origin:        host.OriginInteractive,
+		SkipAutoTitle: true,
+	})
+	if err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+	contextID := seed.ContextID()
+	if _, err := seed.Wait(ctx); err != nil {
+		t.Fatalf("wait seed run: %v", err)
+	}
+
+	const starts = 8
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		won   []*host.Run
+		busy  int
+		other []error
+	)
+	line := make(chan struct{})
+	for i := 0; i < starts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-line
+			run, err := h.StartRun(ctx, host.RunOptions{
+				Message:       message.NewTextMessage(message.RoleUser, "scheduled work"),
+				ContextID:     contextID,
+				Origin:        host.OriginAutomation,
+				SkipAutoTitle: true,
+			})
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
+				won = append(won, run)
+			case errors.Is(err, host.ErrConversationBusy):
+				busy++
+			default:
+				other = append(other, err)
+			}
+		}()
+	}
+	close(line)
+	wg.Wait()
+
+	if len(other) != 0 {
+		t.Fatalf("unexpected start errors: %v", other)
+	}
+	if len(won) != 1 || busy != starts-1 {
+		t.Fatalf("winners = %d, busy = %d, want 1 winner and %d busy",
+			len(won), busy, starts-1)
+	}
+	res, err := won[0].Wait(ctx)
+	if err != nil {
+		t.Fatalf("wait winning run: %v", err)
+	}
+	if res == nil || res.Status != agent.StatusCompleted {
+		t.Fatalf("winning result = %+v, want completed", res)
+	}
+	// A start that lost the gate never began a turn: the seed and the one
+	// winner are the only provider turns.
+	if got := provider.Calls(); got != 2 {
+		t.Fatalf("provider calls = %d, want 2", got)
 	}
 }

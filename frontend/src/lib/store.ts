@@ -2049,24 +2049,74 @@ export const useStore = create<StoreState>((set, get) => {
           const data = ev.data as {
             run_id?: string;
             conversation_id?: string;
+            message?: string;
           };
-          const conv = get().conversations[conversationID];
-          if (!conv) {
-            set((state) => ({
+          const runID = data.run_id;
+          const at = new Date().toISOString();
+          set((state) => {
+            const existing = state.conversations[conversationID];
+            const conv = existing ?? emptyConv();
+            const runConvs = runID
+              ? { ...state.runConvs, [runID]: conversationID }
+              : state.runConvs;
+            // An event for a run the transcript already holds adds the
+            // mapping and nothing else.
+            const known =
+              runID !== undefined &&
+              conv.turnArtifacts.some((t) => t.runID === runID);
+            if (!runID || known) {
+              if (existing) return { runConvs };
+              return {
+                runConvs,
+                conversations: {
+                  ...state.conversations,
+                  [conversationID]: conv,
+                },
+              };
+            }
+            // A run the UI did not start opens its own turn the same way
+            // beginTurn opens a turn the user sent: the run's user row
+            // (the task's message, which is exactly what the host
+            // archives as this turn's user message) plus the strip that
+            // owns it. Both halves matter — the row is what keeps the
+            // run's live deltas (lastAssistant appends to the trailing
+            // assistant row, so without it they land on the previous
+            // turn) and its files (the strip's footer only draws for a
+            // turn that owns rows) with the turn the archive will draw,
+            // and the strip's run id is what the artifact and turn_end
+            // paths look the turn up by.
+            const messages = [
+              ...conv.messages,
+              {
+                id: newID('msg'),
+                role: 'user' as const,
+                text: data.message ?? '',
+                items: [],
+                attachments: [],
+              },
+            ];
+            return {
+              runConvs,
               conversations: {
                 ...state.conversations,
-                [conversationID]: emptyConv(),
+                [conversationID]: {
+                  ...conv,
+                  messages,
+                  turnArtifacts: [
+                    ...conv.turnArtifacts,
+                    {
+                      id: newTurnID(),
+                      start: messages.length - 1,
+                      docs: [],
+                      runID,
+                      requestedAt: at,
+                      startedAt: at,
+                    },
+                  ],
+                },
               },
-            }));
-          }
-          if (data.run_id) {
-            set((state) => ({
-              runConvs: {
-                ...state.runConvs,
-                [data.run_id!]: conversationID,
-              },
-            }));
-          }
+            };
+          });
           break;
         }
       }
