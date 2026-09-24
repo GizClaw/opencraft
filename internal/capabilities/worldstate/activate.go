@@ -2,8 +2,6 @@ package worldstate
 
 import (
 	"context"
-	"errors"
-	"os"
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -16,10 +14,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
-
-// activationsStateKey is the session-store key for model-requested
-// skill activations, keyed by agent id (mirrors plans.json).
-const activationsStateKey = "skill_activations"
 
 // maxModelActivations caps how many model-requested skills a single
 // turn may inject, preventing a mention-heavy reply from blowing up
@@ -107,20 +101,22 @@ func (o *activateObserver) OnRunEnd(ctx context.Context, id agent.Identity, res 
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	byAgent := map[string][]string{}
-	if err := o.store.ReadState(id.ConversationID, activationsStateKey, &byAgent); err != nil {
+	// The activations document is read strictly: an unreadable one is
+	// reported by the store before the per-agent state falls back to
+	// empty, which would otherwise look like the model never asked for
+	// a skill.
+	if err := o.store.ReadStateStrict(
+		id.ConversationID, sessions.DocumentSkillActivations, &byAgent,
+	); err != nil {
 		if invalidConversation(err) {
 			return
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			telemetry.WarnErr(ctx,
-				"worldstate: load skill activations failed", err,
-				otellog.String("conversation.id", id.ConversationID),
-				otellog.String("agent.id", id.AgentID))
 		}
 		byAgent = map[string][]string{}
 	}
 	byAgent[id.AgentID] = append(byAgent[id.AgentID], names...)
-	if err := o.store.WriteState(id.ConversationID, activationsStateKey, byAgent); err != nil {
+	if err := o.store.WriteState(
+		id.ConversationID, sessions.DocumentSkillActivations, byAgent,
+	); err != nil {
 		telemetry.Warn(ctx, "worldstate: persist skill activations failed",
 			otellog.String("conversation", id.ConversationID),
 			otellog.String("agent", id.AgentID),
@@ -137,14 +133,11 @@ func (s *Service) consumeActivations(
 		return nil
 	}
 	var byAgent map[string][]string
-	if err := s.sessionStore.ReadState(contextID, activationsStateKey, &byAgent); err != nil {
+	if err := s.sessionStore.ReadStateStrict(
+		contextID, sessions.DocumentSkillActivations, &byAgent,
+	); err != nil {
 		if invalidConversation(err) {
 			return nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			telemetry.WarnErr(ctx, "worldstate: read skill activations failed", err,
-				otellog.String("conversation.id", contextID),
-				otellog.String("agent.id", agentID))
 		}
 		return nil
 	}
@@ -154,7 +147,8 @@ func (s *Service) consumeActivations(
 	}
 	byAgent[agentID] = nil // consume-on-read
 	telemetry.WarnErr(ctx, "worldstate: clear consumed skill activations failed",
-		s.sessionStore.WriteState(contextID, activationsStateKey, byAgent),
+		s.sessionStore.WriteState(
+			contextID, sessions.DocumentSkillActivations, byAgent),
 		otellog.String("conversation.id", contextID),
 		otellog.String("agent.id", agentID))
 	if len(names) > maxModelActivations {

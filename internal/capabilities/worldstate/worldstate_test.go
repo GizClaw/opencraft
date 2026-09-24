@@ -125,9 +125,9 @@ func TestRenderToBoardPlacesAgentsAfterPermissions(t *testing.T) {
 	}
 	if len(sections) != len(baseFragmentOrder)+3 {
 		t.Fatalf("sections = %d (%v), want base(%d) + environment + permissions + agents_md",
-			len(sections), ids(sections), len(baseFragmentOrder))
+			len(sections), sectionIDs(sections), len(baseFragmentOrder))
 	}
-	got := ids(sections)
+	got := sectionIDs(sections)
 	if got[len(baseFragmentOrder)] != "environment" ||
 		got[len(baseFragmentOrder)+1] != "permissions" ||
 		got[len(baseFragmentOrder)+2] != "agents_md" {
@@ -190,7 +190,7 @@ func TestRenderToBoardGroupsAllSystemBeforeUserContent(t *testing.T) {
 	if summaryAt < 0 || agentsAt < 0 || rawAt < 0 ||
 		agentsAt >= summaryAt || summaryAt >= rawAt {
 		t.Fatalf("order = %v, want agents_md < memory_summary < memory_raw",
-			ids(sections))
+			sectionIDs(sections))
 	}
 }
 
@@ -253,7 +253,7 @@ func TestRenderToBoardFullSectionOrder(t *testing.T) {
 			}
 		}
 		if next < 0 {
-			t.Fatalf("section %q missing or out of order in %v", id, ids(sections))
+			t.Fatalf("section %q missing or out of order in %v", id, sectionIDs(sections))
 		}
 		pos = next
 	}
@@ -264,7 +264,7 @@ func TestRenderToBoardFullSectionOrder(t *testing.T) {
 		for _, sec := range sections {
 			if sec.ID == id {
 				t.Fatalf("per-turn section %q must not be in world.sections (%v)",
-					id, ids(sections))
+					id, sectionIDs(sections))
 			}
 		}
 	}

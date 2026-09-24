@@ -9,6 +9,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
@@ -98,7 +99,7 @@ func TestStartTurnRoutesToOwningWorkspace(t *testing.T) {
 	// A start for a conversation no workspace owns is refused: it must
 	// not mint a session in the workspace on screen.
 	if _, err := b.StartTurn(StartTurnRequest{
-		ContextID: sessions.NewID(),
+		ContextID: ids.NewSession(),
 		Workspace: other,
 		Message:   message.NewTextMessage(message.RoleUser, "stray"),
 	}); err == nil {

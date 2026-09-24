@@ -8,10 +8,11 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 // BufferObservedArtifact persists one workspace write into the owning
-// conversation's artifact buffer.
+// conversation's artifact buffer, attributed to the run that wrote it.
 //
 // Delegated subagent runs mint an ephemeral "ctx-" conversation id that the
 // session store rejects. Their fold and their writes are not persisted, so
@@ -24,25 +25,29 @@ func BufferObservedArtifact(
 	path string,
 	data []byte,
 ) {
-	id := artifactConversation(ctx)
-	if id == "" || store == nil {
+	conversationID, runID := artifactOwner(ctx)
+	if conversationID == "" || runID == "" || store == nil {
 		return
 	}
 	telemetry.WarnErr(ctx, "host: buffer observed artifact failed",
-		store.BufferArtifact(id, path, len(data)),
-		otellog.String("conversation.id", id),
+		store.BufferArtifact(conversationID, runID, path, len(data)),
+		otellog.String("conversation.id", conversationID),
+		otellog.String("run.id", runID),
 		otellog.String("path", path))
 }
 
-// artifactConversation returns the conversation that buffers artifacts for
-// the run in ctx, or "" when the run has none: no engine run info, an empty
-// id, or an ephemeral id the session store cannot own.
-func artifactConversation(ctx context.Context) string {
+// artifactOwner returns the conversation and the run that buffer
+// artifacts for the run in ctx, or two empty strings when the write has
+// no turn of its own: no engine run info, an ephemeral id the session
+// store cannot own, or a run the engine never identified. The run id is
+// part of the answer because the buffer is keyed by it — the turn that
+// archives first must not absorb what another run wrote.
+func artifactOwner(ctx context.Context) (conversationID, runID string) {
 	info, ok := agent.RunInfoFromContext(ctx)
-	if !ok || !ocsessions.ValidID(info.ConversationID) {
-		return ""
+	if !ok || !ids.IsSession(info.ConversationID) || info.RunID == "" {
+		return "", ""
 	}
-	return info.ConversationID
+	return info.ConversationID, info.RunID
 }
 
 // onArtifactWrite notifies the external observer and buffers the write

@@ -77,7 +77,7 @@ func (h *Host) autoTitle(ctx context.Context, contextID string) {
 		return
 	}
 	var custom string
-	if err := store.ReadState(contextID, "title", &custom); err == nil {
+	if err := store.ReadState(contextID, sessions.DocumentTitle, &custom); err == nil {
 		if strings.TrimSpace(custom) != "" {
 			return
 		}
@@ -158,7 +158,7 @@ func (h *Host) autoTitle(ctx context.Context, contextID string) {
 	if len(runes) > maxTitle {
 		title = string(runes[:maxTitle]) + "…"
 	}
-	if err := store.WriteState(contextID, "title", title); err != nil {
+	if err := store.WriteState(contextID, sessions.DocumentTitle, title); err != nil {
 		telemetry.WarnErr(ctx, "host: persist auto title failed", err,
 			otellog.String("session", contextID))
 		return

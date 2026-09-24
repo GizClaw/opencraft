@@ -218,7 +218,7 @@ func (s *Shell) deliverStream(ev StreamEvent, kind message.PartKind, text string
 		delta.Part = message.ReasoningPart{Text: text}
 	}
 	s.stream.eventsOut++
-	s.deliver("stream", map[string]any{
+	s.deliver(EventStream, map[string]any{
 		"run_id":          ev.RunID,
 		"conversation_id": ev.ConversationID,
 		"agent_id":        ev.AgentID,

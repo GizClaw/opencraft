@@ -615,7 +615,7 @@ func (b *Config) saveInference(req InferenceRequest) error {
 	}
 	if len(restored) > 0 {
 		b.core.Shell.Emit(
-			"managed_restored", map[string]any{"ids": restored},
+			core.EventManagedRestored, map[string]any{"ids": restored},
 		)
 	}
 	return nil

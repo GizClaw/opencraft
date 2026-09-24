@@ -57,7 +57,7 @@ func (b *Plugin) SetEnabled(id string, enabled bool) error {
 		if err != nil {
 			removeErr = err
 		} else if removed {
-			b.core.Shell.Emit("inference_changed", map[string]any{})
+			b.core.Shell.Emit(core.EventInferenceChanged, map[string]any{})
 		}
 	}
 	if err := b.refresh(); err != nil {
@@ -359,7 +359,7 @@ func (b *Plugin) Uninstall(id string) error {
 		b.core.Plugin.Capability.Stop(id)
 	}
 	if removed {
-		b.core.Shell.Emit("inference_changed", map[string]any{})
+		b.core.Shell.Emit(core.EventInferenceChanged, map[string]any{})
 	}
 	return b.refresh()
 }

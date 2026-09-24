@@ -19,6 +19,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
@@ -28,6 +29,46 @@ import (
 // session close. A timeout rolls the delete back without removing
 // rows, so the caller can retry once the turn stops.
 const conversationDeleteTimeout = 30 * time.Second
+
+// RunOrigin names who asked for a run. The engine preempts whatever
+// runs on a session when a new turn starts, so a start that collides
+// with a live run on the same conversation has to be resolved before
+// it reaches the engine — this is that decision.
+type RunOrigin string
+
+const (
+	// OriginInteractive is a person sending a message: the new turn
+	// preempts a live one (the engine interrupts it with a user-input
+	// cause), which is what steering and barge-in rely on.
+	OriginInteractive RunOrigin = "interactive"
+	// OriginAutomation is the automation scheduler. A start that
+	// collides with a live run is refused with ErrConversationBusy
+	// instead: a scheduled task must not cut short the turn the user
+	// is watching. The caller records the run as skipped.
+	OriginAutomation RunOrigin = "automation"
+	// OriginSystem is host-internal work. It collides like automation:
+	// refused, never preempting.
+	OriginSystem RunOrigin = "system"
+)
+
+// preemptsLiveRun reports whether a start with this origin may
+// interrupt a live run on the same conversation. The empty origin means
+// interactive: that has always been the behavior of every caller that
+// predates this field.
+func (o RunOrigin) preemptsLiveRun() bool {
+	return o == "" || o == OriginInteractive
+}
+
+// valid reports whether o is a known origin. Unknown values are
+// rejected rather than defaulted: a typo must not silently buy the
+// preemption policy.
+func (o RunOrigin) valid() bool {
+	switch o {
+	case "", OriginInteractive, OriginAutomation, OriginSystem:
+		return true
+	}
+	return false
+}
 
 // RunOptions configures one assistant run on a Host.
 type RunOptions struct {
@@ -40,6 +81,11 @@ type RunOptions struct {
 	Mode      ocsessions.Mode
 	Think     string
 	Model     string
+	// Origin names who asked for this run; empty means interactive (see
+	// RunOrigin). It decides what happens when ContextID already has a
+	// live run: interactive preempts it, everything else is refused
+	// with ErrConversationBusy.
+	Origin RunOrigin
 	// Sink receives stream deltas; nil disables streaming.
 	Sink agent.StreamSink
 	// QueueSize bounds the stream sink queue when Sink is set.
@@ -109,8 +155,11 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	if err := validateUserMessage(opts.Message); err != nil {
 		return nil, err
 	}
-	if opts.ContextID != "" && !ocsessions.ValidID(opts.ContextID) {
+	if opts.ContextID != "" && !ids.IsSession(opts.ContextID) {
 		return nil, fmt.Errorf("host: invalid session id %q", opts.ContextID)
+	}
+	if !opts.Origin.valid() {
+		return nil, fmt.Errorf("host: unknown run origin %q", opts.Origin)
 	}
 	ctrl := h.Controller()
 	if ctrl == nil || ctrl.Runtime() == nil {
@@ -131,6 +180,21 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 			return nil, fmt.Errorf(
 				"host: session %q is deleted or being deleted",
 				opts.ContextID)
+		}
+	}
+	if opts.ContextID != "" {
+		// Deciding and registering under this conversation's start lock
+		// keeps the conflict decision atomic with the new run becoming
+		// visible: without it two starts can both read "no live run",
+		// and the later one then preempts the earlier one (the engine
+		// interrupts whatever the session is running).
+		release := h.lockStart(ConversationID(opts.ContextID))
+		defer release()
+		if !opts.Origin.preemptsLiveRun() {
+			if runID, busy := h.liveRunFor(ConversationID(opts.ContextID)); busy {
+				return nil, fmt.Errorf("%w: session %q is running %s",
+					ErrConversationBusy, opts.ContextID, runID)
+			}
 		}
 	}
 	store := h.Sessions()
@@ -183,7 +247,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	think = reasoningCapableThink(h.userDir, model, think)
 	if fresh {
 		if mint {
-			contextID = ocsessions.NewID()
+			contextID = ids.NewSession()
 		}
 		if err := store.SetMode(ctx, contextID, mode); err != nil {
 			return nil, fmt.Errorf("host: persist mode: %w", err)
@@ -663,7 +727,7 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 	if h == nil {
 		return nil
 	}
-	if !ocsessions.ValidID(id) {
+	if !ids.IsSession(id) {
 		return fmt.Errorf("host: invalid session id %q", id)
 	}
 	ctrl := h.Controller()

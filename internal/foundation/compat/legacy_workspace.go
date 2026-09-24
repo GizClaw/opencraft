@@ -13,6 +13,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
+
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 const (
@@ -83,7 +85,7 @@ func WorkspaceData(
 		return fmt.Errorf("compat: read legacy sessions %s: %w", root, err)
 	}
 	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "s-") {
+		if !entry.IsDir() || !ids.IsSession(entry.Name()) {
 			continue
 		}
 		id := entry.Name()

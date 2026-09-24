@@ -55,7 +55,7 @@ func TestRenderSkillActivation(t *testing.T) {
 	}
 }
 
-func ids(sections []Section) []string {
+func sectionIDs(sections []Section) []string {
 	out := make([]string, 0, len(sections))
 	for _, sec := range sections {
 		out = append(out, sec.ID)

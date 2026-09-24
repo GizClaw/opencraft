@@ -15,14 +15,23 @@ var (
 	// ErrSessionStoreNotReady reports a Host whose shared session
 	// store is not usable yet.
 	ErrSessionStoreNotReady = errors.New("host: session store is not ready")
+	// ErrConversationBusy reports a start refused because the same
+	// conversation already has a live run and the start's origin does
+	// not preempt it (an automation or system run stepping aside for a
+	// turn the user is watching; see RunOrigin). It is deliberately not
+	// a retryable lifecycle error: the live run is progressing
+	// normally, and repeating the start while it lives fails the same
+	// way. Scheduled callers record the run as skipped and let the
+	// next occurrence try again.
+	ErrConversationBusy = errors.New("host: conversation has a live run")
 )
 
 // IsRetryableStartError reports whether err is one of the host
 // lifecycle guards that a caller can retry after the Host pool
 // assembles a replacement: runtime not ready, runtime closing, or
 // session store not ready. Operational errors (invalid ids, deleted or
-// deleting sessions, message validation, turn execution) are not
-// retryable and must surface to the user as-is.
+// deleting sessions, a busy conversation, message validation, turn
+// execution) are not retryable and must surface to the user as-is.
 func IsRetryableStartError(err error) bool {
 	return errors.Is(err, ErrRuntimeNotReady) ||
 		errors.Is(err, ErrRuntimeClosing) ||

@@ -1,3 +1,4 @@
+import { UIEventType } from '../lib/events';
 import type { StateRoot } from './root';
 import type { ConversationActor } from './actorRegistry';
 import type { ConversationEvent } from './machines/conversation';
@@ -67,12 +68,12 @@ export function toConversationEvent(
   ev: UIEvent,
 ): ConversationEvent | undefined {
   switch (ev.type) {
-    case 'automation_run_started': {
+    case UIEventType.automationRunStarted: {
       const data = ev.data as { run_id?: string };
       if (!data.run_id) return undefined;
       return { type: 'RUN_STARTED', runID: data.run_id };
     }
-    case 'stream': {
+    case UIEventType.stream: {
       const data = ev.data as StreamPayload;
       if (!data.run_id) return undefined;
       return {
@@ -81,7 +82,7 @@ export function toConversationEvent(
         stage: streamStage(data.delta),
       };
     }
-    case 'turn_end': {
+    case UIEventType.turnEnd: {
       const data = ev.data as TurnEndPayload;
       if (!data.run_id) return undefined;
       const status: 'completed' | FailedStatus =
@@ -118,19 +119,19 @@ export function canApplyEvent(
 ): boolean {
   if (projection.lifecycle.name === 'deleted') return false;
   switch (ev.type) {
-    case 'stream':
+    case UIEventType.stream:
       return (
         projection.turn.name === 'idle' ||
         projection.turn.name === 'starting' ||
         projection.turn.name === 'running'
       );
-    case 'automation_run_started':
+    case UIEventType.automationRunStarted:
       return (
         projection.turn.name === 'idle' ||
         projection.turn.name === 'starting' ||
         projection.turn.name === 'running'
       );
-    case 'turn_end':
+    case UIEventType.turnEnd:
       return (
         projection.turn.name === 'starting' ||
         projection.turn.name === 'running'
@@ -184,20 +185,20 @@ function routeToConversation(
  */
 export function routeBackendEvent(ev: UIEvent, deps: EventRouterDeps) {
   switch (ev.type) {
-    case 'ready':
-    case 'fatal':
-    case 'status':
-    case 'usage':
-    case 'managed_restored':
+    case UIEventType.ready:
+    case UIEventType.fatal:
+    case UIEventType.status:
+    case UIEventType.usage:
+    case UIEventType.managedRestored:
       deps.data.writeGlobalData(ev);
       return;
 
-    case 'stream':
-    case 'artifact':
-    case 'interact':
-    case 'steer_pending':
-    case 'turn_end':
-    case 'automation_run_started': {
+    case UIEventType.stream:
+    case UIEventType.artifact:
+    case UIEventType.interact:
+    case UIEventType.steerPending:
+    case UIEventType.turnEnd:
+    case UIEventType.automationRunStarted: {
       const data = ev.data as {
         conversation_id?: string;
         run_id?: string;
@@ -211,7 +212,7 @@ export function routeBackendEvent(ev: UIEvent, deps: EventRouterDeps) {
       return;
     }
 
-    case 'resolved': {
+    case UIEventType.resolved: {
       const data = ev.data as { id?: string; conversation_id?: string };
       const conversationID =
         data.conversation_id ??
@@ -222,18 +223,18 @@ export function routeBackendEvent(ev: UIEvent, deps: EventRouterDeps) {
       return;
     }
 
-    case 'session_updated': {
+    case UIEventType.sessionUpdated: {
       deps.data.refreshSessionList();
       const data = ev.data as { id?: string };
       if (data.id) deps.data.sessionUpdated?.(data.id);
       return;
     }
 
-    case 'automation_changed':
+    case UIEventType.automationChanged:
       deps.data.refreshAutomations();
       return;
 
-    case 'automation_run':
+    case UIEventType.automationRun:
       deps.data.refreshAutomations();
       deps.data.refreshAutomationRuns(ev);
       return;

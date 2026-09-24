@@ -3,7 +3,6 @@ package host
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -12,8 +11,8 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 
 	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
-	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 // hostProcessStart is the moment this process began, used to tell a
@@ -94,14 +93,14 @@ func (h *Host) recoverInterruptedRuns(ctx context.Context) {
 	defer func() { h.setRecoveryReport(report) }()
 
 	stateStore := h.store.State()
-	ids, err := stateStore.List(ctx)
+	checkpointIDs, err := stateStore.List(ctx)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: list run checkpoints failed", err)
 		return
 	}
-	runs := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if strings.HasPrefix(id, state.RunCheckpointPrefix) {
+	runs := make([]string, 0, len(checkpointIDs))
+	for _, id := range checkpointIDs {
+		if ids.IsRun(id) {
 			runs = append(runs, id)
 		}
 	}
@@ -160,7 +159,7 @@ func (h *Host) recoverRun(
 	}
 
 	conversationID := checkpointConversationID(cp)
-	if !ocsessions.ValidID(conversationID) {
+	if !ids.IsSession(conversationID) {
 		// Delegated "ctx-" runs are ephemeral by design (their
 		// contexts are never archived), and a board without the
 		// conversation marker has nothing to recover into.

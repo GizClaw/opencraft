@@ -1,3 +1,4 @@
+import { UIEventChannel, UIEventType } from '../lib/events';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight } from 'lucide-react';
@@ -117,9 +118,9 @@ export function SubagentDock() {
   // The delegation edge is not in the activity feed: it rides on the
   // streamed deltas, which name both the run and its parent.
   useEffect(() => {
-    const off = Events.On('opencraft:ui', (event) => {
+    const off = Events.On(UIEventChannel, (event) => {
       const ui = (event as { data?: UIEvent }).data;
-      if (!ui || ui.type !== 'stream') return;
+      if (!ui || ui.type !== UIEventType.stream) return;
       const payload = ui.data as StreamPayload | undefined;
       const runId = payload?.run_id;
       const parentRunId = payload?.parent_run_id;

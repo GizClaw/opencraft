@@ -10,6 +10,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
@@ -64,12 +65,13 @@ func (commitHookFactory) New(ctx context.Context, in resource.Input) (any, error
 		if len(res.Messages) == 0 {
 			return nil
 		}
-		// Delegated subagent runs are ephemeral: flowcraft mints a fresh
-		// "ctx-" ContextID per delegation and never persists them, while
-		// the project session store only archives "s-" conversations.
-		// Skipping here keeps a completed subagent run from failing at
-		// commit time with "sessions: invalid session id".
-		if !sessions.ValidID(req.ContextID) {
+		// Delegated subagent runs are ephemeral: flowcraft mints a
+		// fresh "ctx-" ContextID per delegation (ids.ContextPrefix) and
+		// never persists them, while the project session store only
+		// archives "s-" conversations (ids.SessionPrefix). Skipping
+		// here keeps a completed subagent run from failing at commit
+		// time with "sessions: invalid session id".
+		if !ids.IsSession(req.ContextID) {
 			return nil
 		}
 		// The conversation is everything the turn actually exchanged:

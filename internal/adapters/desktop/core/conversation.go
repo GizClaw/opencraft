@@ -6,6 +6,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 // Conversation owns each workspace's currently selected conversation
@@ -67,7 +68,7 @@ func (c *Conversation) stateLocked(workDir string) *workspaceConv {
 // workspace's UI defaults. Conversations and runs already minted for
 // other workspaces stay untouched.
 func (c *Conversation) New(workDir string) string {
-	id := sessions.NewID()
+	id := ids.NewSession()
 	c.mu.Lock()
 	st := c.stateLocked(workDir)
 	st.currentID = id
@@ -87,7 +88,7 @@ func (c *Conversation) ReplaceIfCurrent(workDir, oldID string) string {
 	if oldID == "" {
 		return ""
 	}
-	id := sessions.NewID()
+	id := ids.NewSession()
 	c.mu.Lock()
 	st := c.stateLocked(workDir)
 	if st.currentID != oldID {

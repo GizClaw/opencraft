@@ -1430,6 +1430,7 @@
     "noRuns": "No runs yet",
     "duration": "Duration",
     "interruptedRestart": "App was closed or restarted; the run was interrupted",
+    "skippedBusy": "Skipped: the conversation already had a running turn",
     "openSession": "Open session"
   },
   "graph": {

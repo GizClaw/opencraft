@@ -210,15 +210,18 @@ func (s *Store) updateSessionSettings(
 
 // decodeSessionSettings decodes one stored document. A document written
 // by a newer build may carry keys this one does not know; they are
-// ignored, exactly as an unknown key of any other state document is.
+// ignored, exactly as an unknown key of any other state document is. A
+// document that does not decode at all comes back as the same
+// *CorruptDocumentError every other document read produces, so a reader
+// that reports it names the row ("settings" of which conversation)
+// rather than a bare JSON position.
 func decodeSessionSettings(contextID, raw string) (sessionSettings, error) {
 	var doc sessionSettings
 	if strings.TrimSpace(raw) == "" {
 		return doc, nil
 	}
-	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
-		return doc, fmt.Errorf(
-			"state: decode session settings %s: %w", contextID, err)
+	if err := DecodeDocument(contextID, SessionSettingsName, raw, &doc); err != nil {
+		return doc, err
 	}
 	return doc, nil
 }

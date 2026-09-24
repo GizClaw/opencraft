@@ -78,7 +78,9 @@ func TestCheckpointStatsSplitRunsFromSessionState(t *testing.T) {
 	}
 	// One assistant run (the crash-recovery log) and one core
 	// session-state row: both live in the table, only the first is a run
-	// checkpoint.
+	// checkpoint. The literals are the wire prefixes (ids.RunPrefix is
+	// "run-", and core mints the run ids), so this is also where a
+	// unilateral rename of the constant shows up.
 	write("run-a")
 	write("session-s-1")
 

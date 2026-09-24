@@ -1,3 +1,4 @@
+import { UIEventChannel, UIEventType } from '../lib/events';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import {
@@ -598,9 +599,9 @@ export function ConfigPage() {
   // Refresh the inference config when a plugin upserts/removes a
   // gateway profile (e.g. after SSO login/logout).
   useEffect(() => {
-    const off = Events.On('opencraft:ui', (e) => {
+    const off = Events.On(UIEventChannel, (e) => {
       const ev = e.data as UIEvent;
-      if (ev.type === 'inference_changed') void loadInference();
+      if (ev.type === UIEventType.inferenceChanged) void loadInference();
     });
     return off;
   }, [loadInference]);

@@ -448,7 +448,7 @@ func (b *Git) runWrite(op crepo.Op) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	b.core.Shell.Emit("git_changed", map[string]string{"repo_root": root})
+	b.core.Shell.Emit(core.EventGitChanged, map[string]string{"repo_root": root})
 	return res.Output, nil
 }
 

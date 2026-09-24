@@ -3,7 +3,6 @@ package host
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/delegation/kanban"
@@ -16,6 +15,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 // reflowWatch is this Host's subscription to delegation board events.
@@ -139,7 +139,7 @@ func (h *Host) reflowDelegation(ctx context.Context, result subagents.Result) {
 		return
 	}
 	conversationID := result.ConversationID
-	if strings.HasPrefix(conversationID, subagentConversationPrefix) {
+	if ids.IsContext(conversationID) {
 		return
 	}
 	if !store.Exists(conversationID) {
@@ -201,8 +201,3 @@ func (h *Host) reflowDelegation(ctx context.Context, result subagents.Result) {
 	// reloads its turns and a closed one updates its sidebar entry.
 	h.notifySessionUpdated(ctx, conversationID)
 }
-
-// subagentConversationPrefix marks the ephemeral conversation ids
-// delegated runs execute under. Their contexts are never archived, so
-// they never receive notes either.
-const subagentConversationPrefix = "ctx-"

@@ -89,7 +89,7 @@ func (c *Core) handlePluginSessionImport(
 		return pluginruntime.SessionImportResult{}, err
 	}
 	if h == c.Runtime.Current() {
-		c.Shell.Emit("session_updated", map[string]string{"id": id})
+		c.Shell.Emit(EventSessionUpdated, map[string]string{"id": id})
 	}
 	return pluginruntime.SessionImportResult{
 		SessionID: id,

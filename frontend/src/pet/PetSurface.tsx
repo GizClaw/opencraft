@@ -1,3 +1,4 @@
+import { PetStateChannel, UIEventChannel, UIEventType } from '../lib/events';
 import { useEffect, useRef, useState } from 'react';
 import type * as React from 'react';
 import { Events } from '@wailsio/runtime';
@@ -134,7 +135,7 @@ export default function PetSurface() {
   };
 
   useEffect(() => {
-    return Events.On('pet:state', (event) => {
+    return Events.On(PetStateChannel, (event) => {
       const next = toPetView(event.data as PetStatePayload | null);
       const previous = petRef.current;
       petRef.current = next;
@@ -196,11 +197,11 @@ export default function PetSurface() {
   // Reload the pack when plugins register/unregister packs or the user
   // changes the assistant character in settings.
   useEffect(() => {
-    return Events.On('opencraft:ui', (event) => {
+    return Events.On(UIEventChannel, (event) => {
       const ev = event.data as { type?: string } | null;
       if (
-        ev?.type === 'pet:packs_changed' ||
-        ev?.type === 'pet:settings_changed'
+        ev?.type === UIEventType.petPacksChanged ||
+        ev?.type === UIEventType.petSettingsChanged
       ) {
         setReloadToken((n) => n + 1);
       }

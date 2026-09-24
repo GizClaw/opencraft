@@ -650,6 +650,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   budget stays lifted (`build.max_iterations: 0`), which leaves the
   run timeout the one bound a turn can hit. A long-horizon turn was
   reaching the old hour with its work still in flight.
+- Every UI event name has one home per side, and the two sides are held
+  to each other. The Go half is
+  `internal/adapters/desktop/core/event_names.go` (the channel, every
+  type name, the pet feed, and the pet window's own `pet:state`
+  channel); the TypeScript half is `frontend/src/lib/events.ts`
+  (`UIEventChannel`, the menu's `MenuCommandChannel`, `PetStateChannel`,
+  `UIEventType`), and a Go test parses the TypeScript map so a rename on
+  one side fails instead of going quiet. Every `Emit` call site uses the
+  constant now, and two listeners that turned out to be spelled as
+  channels were dealt with: the diagnostics panel's mount report (fixed
+  below) and `ChatView`'s `files_dropped`, which goes away with the
+  drag-and-drop attachment path it belonged to — `EnableFileDrop` and
+  `Desktop.EmitUI` with it.
+- The session store's naming is one word per thing. Document names live
+  in one table (`sessions/documents.go`: a constant per document, plus a
+  registry recording its owner and shape generation), a document that
+  exists but cannot be decoded comes back as a `*state.CorruptDocumentError`
+  naming the row, and the read says which kind it is: `ReadState` where
+  the fallback is cosmetic (a custom title, which the
+  `conversations.title` column covers), `ReadStateStrict` where it would
+  silently disable a feature (plans, skill activations, the usage
+  anchor, the compaction artifact) — that one warns with the
+  conversation and the document name before returning. The id vocabulary
+  (`s-` conversations, `ctx-` ephemeral contexts, `run-` engine runs)
+  moved to `internal/foundation/ids`, so `ValidID`, `NewID` and the
+  three copies of the prefixes are gone. The timestamps an archived turn
+  displays are resolved in one place too (`state.ResolveTurnTiming`,
+  reached through `TurnRecord.Timing`), and the desktop DTO no longer
+  keeps a fallback of its own.
 
 ### Fixed
 
@@ -862,6 +891,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reply in context. The header chip reads the same split, and the
   native turn-finished banner stops calling a deadline "Task
   cancelled".
+- A produced file is filed under the turn of the run that wrote it. The
+  turn strip such a write landed on was the newest one in the
+  transcript, and a turn the app appends on its own can sit above a run
+  that is still working — a delegated subagent's note, a barge-in
+  replacement — so the running turn's files showed up under the note
+  while it happened and moved to their own turn after a reload: the
+  archive had always attributed a write to its run, and only the live
+  view was guessing. The run id now travels the whole way: the
+  conversation's artifact buffer and the turn timing are keyed by
+  `(conversation, run)`, the `artifact` event carries `run_id`, and the
+  transcript looks the strip up by it. A write whose run is not in the
+  transcript yet (its start-turn response is still in flight) lands on
+  the trailing live entry; one with no run behind it at all is dropped
+  rather than merged into whatever turn is last.
+- The pet window's mount report reaches Settings ▸ Diagnostics the
+  moment it arrives. The panel listened on `pet:runtime_status` as if it
+  were a channel of its own, while the report is an event *type* on the
+  shared UI channel, so the row stayed empty until the next two-second
+  poll — and a report pushed while the assertion was in flight could be
+  clobbered by that poll. It listens to the one channel and matches the
+  type; a Playwright spec freezes the poll after its first answer to pin
+  that the push is what fills the row.
+- A scheduled run no longer cuts short a turn the user is watching. The
+  engine preempts whatever is running on a session when a turn starts,
+  and the automation scheduler made the same start a person's message
+  does, so an occurrence that fired mid-turn interrupted it — and its
+  record read as a failure rather than as an occurrence that stepped
+  aside. A start now carries its origin (interactive, automation, or
+  system; the empty value reads as interactive, as every caller before
+  it was, and an unknown one is rejected rather than defaulting), and
+  only a person's message may preempt. A scheduled start that collides
+  with a live run is refused before it reaches the engine, recorded as
+  `skipped` with a reason the panel localizes ("Skipped: the
+  conversation already had a running turn"), and announces nothing: the
+  run record is where that is read, and a banner would interrupt the
+  very turn that caused the skip. The conflict decision and the new
+  run's registration happen under one per-conversation start gate, so
+  two starts cannot both read "no live run" and have the later one
+  preempt the earlier.
 
 ## [0.5.3] - 2026-09-17
 

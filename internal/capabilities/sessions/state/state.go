@@ -18,6 +18,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/foundation/db"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 // Store is a SQLite-backed opencraft state store. Open creates or
@@ -66,22 +67,21 @@ var ErrNotFound = errors.New("state: not found")
 // owner) instead of a second sqlite backend sharing the same file.
 // ---------------------------------------------------------------------------
 
-// RunCheckpointPrefix is the engine's run id prefix. Checkpoint rows
-// under it belong to assistant runs — they are the crash-recovery log
-// the host replays at assembly to reconstruct a turn the process never
-// archived. Core's own session-state rows use a different prefix and
-// share the table.
-const RunCheckpointPrefix = "run-"
-
 // CheckpointStats summarizes the agent_checkpoints table. A checkpoint
 // is rewritten once per completed wave, so Rows/Runs/Bytes are also the
-// write-amplification figure for recovery: a turn normally drops its
-// row when it ends, and anything left is either a live run or a turn the
-// next assembly has to reconstruct.
+// write-amplification figure for recovery: a turn normally drops its row
+// when it ends, and anything left is either a live run or a turn the next
+// assembly has to reconstruct.
+//
+// Two kinds of row share the table, and the prefix tells them apart:
+// rows under ids.RunPrefix are the engine's per-run checkpoints — the
+// crash-recovery log the host replays at assembly to reconstruct a turn
+// the process never archived — while core's own session-state rows carry
+// a different prefix. Only the first kind is what recovery examines.
 type CheckpointStats struct {
 	// Rows counts every checkpoint in the table.
 	Rows int `json:"rows"`
-	// Runs counts the rows under [RunCheckpointPrefix].
+	// Runs counts the rows under [ids.RunPrefix].
 	Runs int `json:"runs"`
 	// Bytes is the encoded size of every row.
 	Bytes int64 `json:"bytes"`
@@ -106,7 +106,7 @@ func (s *Store) CheckpointStats(ctx context.Context) (CheckpointStats, error) {
 		}
 		stats.Rows++
 		stats.Bytes += size.Int64
-		if strings.HasPrefix(id, RunCheckpointPrefix) {
+		if ids.IsRun(id) {
 			stats.Runs++
 		}
 	}

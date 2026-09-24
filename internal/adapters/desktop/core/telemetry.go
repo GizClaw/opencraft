@@ -167,7 +167,7 @@ func (c *Core) handlePluginTelemetryConfigure(
 		HeaderNames: normalized.HeaderNames(),
 		Owner:       pluginID,
 	})
-	c.Shell.Emit("telemetry_changed", c.PluginTelemetryStatus())
+	c.Shell.Emit(EventTelemetryChanged, c.PluginTelemetryStatus())
 	return nil
 }
 
@@ -213,7 +213,7 @@ func (c *Core) SetPluginTelemetryExport(enabled bool) error {
 	}
 	owner := c.PluginTelemetryState().Owner
 	if owner == "" {
-		c.Shell.Emit("telemetry_changed", c.PluginTelemetryStatus())
+		c.Shell.Emit(EventTelemetryChanged, c.PluginTelemetryStatus())
 		return nil
 	}
 	return c.dropPluginTelemetry(owner,
@@ -226,7 +226,7 @@ func (c *Core) SetPluginTelemetryExport(enabled bool) error {
 func (c *Core) restorePluginTelemetry() error {
 	pluginID, sink, ok := c.rememberedPluginTelemetry()
 	if !ok || c.Telemetry == nil {
-		c.Shell.Emit("telemetry_changed", c.PluginTelemetryStatus())
+		c.Shell.Emit(EventTelemetryChanged, c.PluginTelemetryStatus())
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(
@@ -247,7 +247,7 @@ func (c *Core) restorePluginTelemetry() error {
 		Owner:       pluginID,
 		Reason:      "restored after the plugin export switch was re-enabled",
 	})
-	c.Shell.Emit("telemetry_changed", c.PluginTelemetryStatus())
+	c.Shell.Emit(EventTelemetryChanged, c.PluginTelemetryStatus())
 	return nil
 }
 
@@ -280,7 +280,7 @@ func (c *Core) dropPluginTelemetry(pluginID, reason string) error {
 		Owner:       owner,
 		Reason:      reason,
 	})
-	c.Shell.Emit("telemetry_changed", c.PluginTelemetryStatus())
+	c.Shell.Emit(EventTelemetryChanged, c.PluginTelemetryStatus())
 	return nil
 }
 

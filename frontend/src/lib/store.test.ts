@@ -2143,24 +2143,86 @@ describe('store: interactions and artifacts', () => {
     expect(useStore.getState().pendingPromptConvs['p-1']).toBeUndefined();
   });
 
-  it('artifact events merge docs into the latest turn strip', () => {
+  it('artifact events land on the strip of the run that wrote the file', () => {
     useStore.setState({
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
           turnArtifacts: [
-            { id: 'turn-1', start: 0, docs: [{ path: 'a.md', bytes: 1 }] },
+            {
+              id: 'turn-1',
+              start: 0,
+              runID: 'r-1',
+              docs: [{ path: 'a.md', bytes: 1 }],
+            },
+            // A delegation note the app appended while r-1 is still
+            // running: it is the last strip, and the file is not its.
+            { id: 'turn-2', start: 1, runID: 'subagent:card-1', docs: [] },
           ],
         },
       },
     });
     useStore.getState().handleEvent({
       type: 'artifact',
-      data: { conversation_id: 's-1', path: 'a.md', bytes: 42 },
+      data: {
+        conversation_id: 's-1',
+        run_id: 'r-1',
+        path: 'a.md',
+        bytes: 42,
+      },
     });
-    expect(
-      useStore.getState().conversations['s-1'].turnArtifacts[0].docs,
-    ).toEqual([{ path: 'a.md', bytes: 42 }]);
+    const strips = useStore.getState().conversations['s-1'].turnArtifacts;
+    expect(strips[0].docs).toEqual([{ path: 'a.md', bytes: 42 }]);
+    expect(strips[1].docs).toEqual([]);
+  });
+
+  it('artifact events wait for the live strip while the run id is in flight', () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          turnArtifacts: [
+            { id: 'turn-1', start: 0, seq: 7, docs: [] },
+            { id: 'turn-2', start: 1, docs: [] },
+          ],
+        },
+      },
+    });
+    const handle = useStore.getState().handleEvent;
+    // The start-turn response has not landed yet, so the run the event
+    // names is unknown: the trailing live strip owns it.
+    handle({
+      type: 'artifact',
+      data: { conversation_id: 's-1', run_id: 'r-new', path: 'a.md', bytes: 5 },
+    });
+    let strips = useStore.getState().conversations['s-1'].turnArtifacts;
+    expect(strips[1].docs).toEqual([{ path: 'a.md', bytes: 5 }]);
+
+    // Once the trailing strip is an archived or owned one, an unknown
+    // run has no strip to merge into and the event is dropped.
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          turnArtifacts: [
+            { id: 'turn-1', start: 0, seq: 7, docs: [] },
+            { id: 'turn-2', start: 1, runID: 'r-1', docs: [] },
+          ],
+        },
+      },
+    });
+    handle({
+      type: 'artifact',
+      data: {
+        conversation_id: 's-1',
+        run_id: 'r-gone',
+        path: 'b.md',
+        bytes: 9,
+      },
+    });
+    strips = useStore.getState().conversations['s-1'].turnArtifacts;
+    expect(strips[0].docs).toEqual([]);
+    expect(strips[1].docs).toEqual([]);
   });
 });
 

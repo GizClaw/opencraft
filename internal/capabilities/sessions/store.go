@@ -7,7 +7,6 @@ package sessions
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -28,6 +27,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 )
 
@@ -100,8 +100,11 @@ type TurnRecord struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
 }
 
-// TurnTiming carries the timestamps one turn should display.
-type TurnTiming struct {
+// turnTiming carries the timestamps one turn should display, recorded
+// while the run is live and read when the turn is archived. The times a
+// *reader* displays for an archived turn are resolved by
+// state.ResolveTurnTiming instead (see TurnRecord.Timing).
+type turnTiming struct {
 	RequestedAt time.Time
 	StartedAt   time.Time
 	FinishedAt  time.Time
@@ -131,9 +134,15 @@ type Store struct {
 	// instead of reporting a driver error that says nothing actionable.
 	closed atomic.Bool
 
-	mu          sync.Mutex
-	artifactBuf map[string][]Artifact
-	turnTiming  map[string]map[string]TurnTiming
+	mu sync.Mutex
+	// artifactBuf holds the files each *run* has produced so far, keyed
+	// by conversation and then by run id. Attribution is per run because
+	// one conversation can have more than one live run (a barge-in, a
+	// delegated note reflowed mid-turn), and the turn that archives first
+	// must not absorb what another run wrote. turnTiming is keyed the
+	// same way for the same reason.
+	artifactBuf map[string]map[string][]Artifact
+	turnTiming  map[string]map[string]turnTiming
 }
 
 // New creates a Store rooted at root. The window is a convenience
@@ -160,8 +169,8 @@ func New(root string, window int) (*Store, error) {
 		root:        root,
 		window:      window,
 		db:          db,
-		artifactBuf: make(map[string][]Artifact),
-		turnTiming:  make(map[string]map[string]TurnTiming),
+		artifactBuf: make(map[string]map[string][]Artifact),
+		turnTiming:  make(map[string]map[string]turnTiming),
 	}
 	return s, nil
 }
@@ -209,24 +218,9 @@ func (s *Store) Delete(ctx context.Context, execID string) error {
 var _ agent.CheckpointStore = (*Store)(nil)
 var _ agent.CheckpointDeleter = (*Store)(nil)
 
-// NewID returns a fresh random session id.
-func NewID() string {
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return "s-" + hex.EncodeToString(b[:])
-}
-
-// ValidID reports whether id is a safe conversation id.
-func ValidID(id string) bool {
-	if id == "" || !strings.HasPrefix(id, "s-") {
-		return false
-	}
-	return !strings.ContainsAny(id, `/\`)
-}
-
 // DefaultSessionID is the stable session key used by tools that run
 // outside any conversation.
-const DefaultSessionID = "s-default"
+const DefaultSessionID = ids.SessionPrefix + "default"
 
 // Exists reports whether the conversation has a state row or an
 // on-disk session directory.
@@ -243,7 +237,7 @@ func (s *Store) Exists(id string) bool {
 
 // Create makes a fresh conversation and returns its id.
 func (s *Store) Create() (string, error) {
-	id := NewID()
+	id := ids.NewSession()
 	if err := s.db.EnsureConversation(context.Background(), state.Conversation{
 		ID: id,
 	}); err != nil {
@@ -338,7 +332,7 @@ func (s *Store) archiveTurn(
 	id, runID string, origin TurnOrigin, now time.Time,
 	archived []message.Message,
 ) (state.ArchiveTurn, []state.ArchiveMessage) {
-	timing := TurnTiming{RequestedAt: now, StartedAt: now}
+	timing := turnTiming{RequestedAt: now, StartedAt: now}
 	if runID != "" {
 		if recorded, ok := s.takeTurnTiming(id, runID); ok {
 			timing = recorded
@@ -362,7 +356,7 @@ func (s *Store) archiveTurn(
 	if turn.FinishedAt.IsZero() {
 		turn.FinishedAt = now
 	}
-	artifacts := s.takeArtifacts(id)
+	artifacts := s.takeArtifacts(id, runID)
 	if len(artifacts) > 0 {
 		if raw, err := json.Marshal(artifacts); err == nil {
 			turn.ArtifactsJSON = raw
@@ -392,9 +386,9 @@ func (s *Store) RecordTurnTiming(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.turnTiming[id] == nil {
-		s.turnTiming[id] = make(map[string]TurnTiming)
+		s.turnTiming[id] = make(map[string]turnTiming)
 	}
-	s.turnTiming[id][runID] = TurnTiming{
+	s.turnTiming[id][runID] = turnTiming{
 		RequestedAt: requestedAt.UTC(),
 		StartedAt:   startedAt.UTC(),
 	}
@@ -435,7 +429,7 @@ func (s *Store) recordTurnEnd(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.turnTiming[id] == nil {
-		s.turnTiming[id] = make(map[string]TurnTiming)
+		s.turnTiming[id] = make(map[string]turnTiming)
 	}
 	timing := s.turnTiming[id][runID]
 	timing.FinishedAt = finishedAt
@@ -443,7 +437,7 @@ func (s *Store) recordTurnEnd(
 	return nil
 }
 
-func (s *Store) takeTurnTiming(id, runID string) (TurnTiming, bool) {
+func (s *Store) takeTurnTiming(id, runID string) (turnTiming, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	timing, ok := s.turnTiming[id][runID]
@@ -453,29 +447,54 @@ func (s *Store) takeTurnTiming(id, runID string) (TurnTiming, bool) {
 	return timing, ok
 }
 
-// BufferArtifact buffers one observed artifact until the next turn.
-func (s *Store) BufferArtifact(id, path string, bytes int) error {
+// BufferArtifact buffers one observed artifact until the turn of the
+// run that wrote it is archived. The run id is required: a file with
+// no run behind it has no turn to belong to, and guessing one would
+// put it under whatever turn happened to archive next.
+func (s *Store) BufferArtifact(id, runID, path string, bytes int) error {
 	if err := requireID(id); err != nil {
 		return err
 	}
+	if runID == "" {
+		return errdefs.Validationf("sessions: artifact run id is required")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	list := s.artifactBuf[id]
+	runs := s.artifactBuf[id]
+	if runs == nil {
+		runs = make(map[string][]Artifact)
+		s.artifactBuf[id] = runs
+	}
+	list := runs[runID]
 	for i := range list {
 		if list[i].Path == path {
 			list[i].Bytes = bytes
 			return nil
 		}
 	}
-	s.artifactBuf[id] = append(list, Artifact{Path: path, Bytes: bytes})
+	runs[runID] = append(list, Artifact{Path: path, Bytes: bytes})
 	return nil
 }
 
-func (s *Store) takeArtifacts(id string) []Artifact {
+// takeArtifacts removes and returns the files one run buffered. Runs
+// the conversation still has buffered are left for their own turns: an
+// archive with no run id is not evidence that any other run's files
+// are finished, so it takes nothing.
+func (s *Store) takeArtifacts(id, runID string) []Artifact {
+	if runID == "" {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	list := s.artifactBuf[id]
-	delete(s.artifactBuf, id)
+	runs := s.artifactBuf[id]
+	list := runs[runID]
+	if list == nil {
+		return nil
+	}
+	delete(runs, runID)
+	if len(runs) == 0 {
+		delete(s.artifactBuf, id)
+	}
 	return list
 }
 
@@ -1095,7 +1114,7 @@ func filterArchive(msgs []message.Message) []message.Message {
 }
 
 func requireID(id string) error {
-	if !ValidID(id) {
+	if !ids.IsSession(id) {
 		return errdefs.Validationf("sessions: invalid session id %q", id)
 	}
 	return nil

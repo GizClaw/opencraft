@@ -1083,6 +1083,7 @@ func (m *Manager) buildHost(
 		usage:         usageObserver,
 		usageRecorder: usageRecorder,
 		runs:          make(map[RunID]*runDetail),
+		startGates:    make(map[ConversationID]*sync.Mutex),
 		rollouts:      make(map[ConversationID]*rollout.Recorder),
 		titling:       make(map[ConversationID]bool),
 		deleting:      make(map[ConversationID]bool),
@@ -1534,9 +1535,14 @@ type Host struct {
 	mu       sync.Mutex
 	runs     map[RunID]*runDetail
 	runsCond *sync.Cond
-	rollouts map[ConversationID]*rollout.Recorder
-	titling  map[ConversationID]bool
-	titleWG  sync.WaitGroup
+	// startGates serializes run starts per conversation (see
+	// lockStart). Entries live for the Host's lifetime; a Host is
+	// retired with its runtime generation, so the map cannot grow past
+	// the conversations started on one generation.
+	startGates map[ConversationID]*sync.Mutex
+	rollouts   map[ConversationID]*rollout.Recorder
+	titling    map[ConversationID]bool
+	titleWG    sync.WaitGroup
 	// rebindMu serializes onRuntimeReload. ReloadDocument rebinds
 	// synchronously before returning while the runtime event router
 	// may dispatch the same rebuild event concurrently, and both must
@@ -1632,6 +1638,42 @@ func (h *Host) hasActiveRuns() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.runs) > 0
+}
+
+// liveRunFor reports the id of a run this Host still owns for one
+// conversation, if any. A run stays owned until its Wait has run the
+// settle bookkeeping, so a conversation whose turn just settled but was
+// never waited on still reads as busy — the next automation occurrence
+// retries, which is the conservative direction.
+func (h *Host) liveRunFor(id ConversationID) (RunID, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for runID, detail := range h.runs {
+		if detail != nil && ConversationID(detail.contextID) == id {
+			return runID, true
+		}
+	}
+	return "", false
+}
+
+// lockStart serializes run starts that share one conversation: the
+// conflict decision (liveRunFor) and the registration of the new run
+// must be one step, or two starts can both decide "no live run" and the
+// later one preempts the earlier. Starts of different conversations do
+// not contend; the returned function releases the lock.
+func (h *Host) lockStart(id ConversationID) func() {
+	h.mu.Lock()
+	if h.startGates == nil {
+		h.startGates = make(map[ConversationID]*sync.Mutex)
+	}
+	gate := h.startGates[id]
+	if gate == nil {
+		gate = &sync.Mutex{}
+		h.startGates[id] = gate
+	}
+	h.mu.Unlock()
+	gate.Lock()
+	return gate.Unlock
 }
 
 // markStale records that the Manager retired this Host: it keeps

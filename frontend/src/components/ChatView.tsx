@@ -52,7 +52,6 @@ import {
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Events } from '@wailsio/runtime';
 import { api } from '../lib/api';
 import { reportFrontendError } from '../lib/frontendErrors';
 import { setChatTargets } from '../lib/chatTargets';
@@ -2860,17 +2859,6 @@ export function ChatView() {
   const runElapsed = useToolElapsedLabel(busy ? liveStep(messages) : null);
 
   useEffect(() => {
-    const off = Events.On('opencraft:ui', (e) => {
-      const ev = e.data as { type?: string; data?: unknown };
-      if (ev?.type !== 'files_dropped' || !Array.isArray(ev.data)) return;
-      const paths = ev.data as string[];
-      if (paths.length === 0) return;
-      void addAttachmentPaths(paths);
-    });
-    return off;
-  }, []);
-
-  useEffect(() => {
     if (!stickRef.current || document.hidden) return;
     const frame = requestAnimationFrame(() => {
       const el = scrollRef.current;
@@ -3360,7 +3348,7 @@ export function ChatView() {
         )}
       </header>
 
-      <div className="flex min-h-0 min-w-0 flex-1" data-file-drop-target>
+      <div className="flex min-h-0 min-w-0 flex-1">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <div
             ref={scrollRef}

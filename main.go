@@ -141,7 +141,6 @@ func main() {
 			WebviewGpuPolicy: application.WebviewGpuPolicyAlways,
 		},
 		BackgroundColour: application.NewRGB(15, 18, 24),
-		EnableFileDrop:   true,
 	})
 
 	shell = desktop.NewShell(app, d)
@@ -169,16 +168,6 @@ func main() {
 			return
 		}
 		d.RequestQuit()
-	})
-
-	// v3 routes drops to the Go window event; forward paths into the shared
-	// UI bus so the chat attachment flow keeps its existing shape.
-	mainW.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
-		files := e.Context().DroppedFiles()
-		if len(files) == 0 {
-			return
-		}
-		d.EmitUI("files_dropped", files)
 	})
 
 	// Dock reopen uses first-class mac events.

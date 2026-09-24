@@ -9,7 +9,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
@@ -122,7 +122,7 @@ func TestHostDeleteConversationRemovesIdleConversation(t *testing.T) {
 	}
 	defer func() { _ = h.Close() }()
 
-	id := sessions.NewID()
+	id := ids.NewSession()
 	if err := h.Sessions().SetModel(ctx, id, "fake-model"); err != nil {
 		t.Fatalf("seed session settings: %v", err)
 	}

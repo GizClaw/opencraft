@@ -1,3 +1,4 @@
+import { UIEventChannel, UIEventType } from '../lib/events';
 import { Events } from '@wailsio/runtime';
 import { Radio } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -39,9 +40,9 @@ export function TelemetryExportCard({
   // The host emits telemetry_changed whenever a plugin installs, drops or
   // is refused an export sink, including when the switch itself changes.
   useEffect(() => {
-    const off = Events.On('opencraft:ui', (e) => {
+    const off = Events.On(UIEventChannel, (e) => {
       const ev = e.data as UIEvent;
-      if (ev.type === 'telemetry_changed') void load();
+      if (ev.type === UIEventType.telemetryChanged) void load();
     });
     return off;
   }, []);

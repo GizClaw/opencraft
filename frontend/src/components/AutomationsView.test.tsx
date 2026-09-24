@@ -135,4 +135,31 @@ describe('AutomationsView', () => {
       expect(apiMock.cancelAutomationRun).toHaveBeenCalledWith('run-1'),
     );
   });
+
+  it('names a run skipped for a busy conversation in words', async () => {
+    apiMock.automationRuns.mockResolvedValue([
+      {
+        id: 'run-2',
+        task_id: 't-1',
+        at: '2026-09-21T09:05:00Z',
+        status: 'skipped',
+        error: 'conversation_busy',
+        conversation_id: 's-1',
+        run_id: '',
+        duration_ms: 0,
+        summary: '',
+      },
+    ]);
+    render(<AutomationsView />);
+    fireEvent.click(screen.getByText('Daily brief'));
+
+    // The run did not execute because the conversation had a live turn:
+    // the badge says skipped and the row explains it in words instead of
+    // leaking the stored marker.
+    await screen.findByText('skipped');
+    expect(
+      screen.getByText('Skipped: the conversation already had a running turn'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('conversation_busy')).toBeNull();
+  });
 });

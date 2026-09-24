@@ -10,6 +10,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/message"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
@@ -230,7 +231,7 @@ func TestCondenseFoldsAMechanicalDigestWhenNoModelSummaryArrives(t *testing.T) {
 	}
 
 	var art artifact
-	if err := store.ReadState("s-1", compactStateName, &art); err != nil {
+	if err := store.ReadState("s-1", sessions.DocumentCompact, &art); err != nil {
 		t.Fatalf("read state: %v", err)
 	}
 	if len(art.Covered) != 2 {

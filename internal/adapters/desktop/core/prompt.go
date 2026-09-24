@@ -89,7 +89,7 @@ func (p *Prompt) Ask(ctx context.Context, spec interact.Spec) (interact.Reply, e
 		if conversationID != "" {
 			payload["conversation_id"] = conversationID
 		}
-		notify("interact", payload)
+		notify(EventInteract, payload)
 	}
 	defer func() {
 		p.mu.Lock()
@@ -155,7 +155,7 @@ func (p *Prompt) Resolve(
 		if ok && prompt.conversationID != "" {
 			payload["conversation_id"] = prompt.conversationID
 		}
-		notify("resolved", payload)
+		notify(EventResolved, payload)
 	}
 	return nil
 }

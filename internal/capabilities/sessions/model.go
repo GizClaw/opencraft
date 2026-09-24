@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
+
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 // Model returns the persisted per-session model hint for the
@@ -26,7 +28,7 @@ func (s *Store) Model(ctx context.Context, id string) (string, error) {
 // SetModel persists the per-session model hint for the conversation.
 // An empty value resets the session to the default routing policy.
 func (s *Store) SetModel(ctx context.Context, id, model string) error {
-	if !strings.HasPrefix(id, "s-") {
+	if !ids.IsSession(id) {
 		return errdefs.Validationf("sessions: invalid session id %q", id)
 	}
 	model = strings.TrimSpace(model)

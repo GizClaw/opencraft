@@ -2,6 +2,7 @@
 // Files | Git segmented modes: the Git segment only appears when the
 // active workspace is inside a git repository, otherwise the panel
 // stays a plain file browser.
+import { UIEventChannel, UIEventType } from '../lib/events';
 import {
   useCallback,
   useEffect,
@@ -53,9 +54,12 @@ export function WorkspacePanel({ sessionID }: { sessionID: string }) {
   }, [busy, probeRepo]);
 
   useEffect(() => {
-    const off = Events.On('opencraft:ui', (e) => {
+    const off = Events.On(UIEventChannel, (e) => {
       const ev = e.data as { type?: string } | undefined;
-      if (ev?.type === 'git_changed' || ev?.type === 'turn_end') {
+      if (
+        ev?.type === UIEventType.gitChanged ||
+        ev?.type === UIEventType.turnEnd
+      ) {
         void probeRepo();
       }
     });

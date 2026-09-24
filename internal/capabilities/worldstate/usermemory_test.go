@@ -261,9 +261,9 @@ func TestRenderToBoardPlacesUserMemory(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
 		t.Fatalf("sections = %q: %v", raw, err)
 	}
-	ids := ids(sections)
+	sectionNames := sectionIDs(sections)
 	agentsAt, memoryAt := -1, -1
-	for i, id := range ids {
+	for i, id := range sectionNames {
 		switch id {
 		case "agents_md":
 			agentsAt = i
@@ -272,11 +272,11 @@ func TestRenderToBoardPlacesUserMemory(t *testing.T) {
 		}
 	}
 	if memoryAt < 0 || agentsAt < 0 {
-		t.Fatalf("sections = %v, want agents_md and user_memory", ids)
+		t.Fatalf("sections = %v, want agents_md and user_memory", sectionNames)
 	}
 	if memoryAt != agentsAt+1 {
 		t.Fatalf("user_memory at %d, want right after agents_md at %d: %v",
-			memoryAt, agentsAt, ids)
+			memoryAt, agentsAt, sectionNames)
 	}
 	if tail := board.GetVarString("world.tail_block"); strings.Contains(
 		tail, "a durable fact",

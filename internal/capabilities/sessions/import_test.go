@@ -10,6 +10,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 func importFixture() ImportRequest {
@@ -46,7 +47,7 @@ func TestImportPersistsReadyAndDedupes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import: %v", err)
 	}
-	if !ValidID(id) {
+	if !ids.IsSession(id) {
 		t.Fatalf("imported id %q is not an s- id", id)
 	}
 	// The transcript is the import: the call writes it whole, so the

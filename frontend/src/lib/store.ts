@@ -1,3 +1,4 @@
+import { UIEventType } from './events';
 import { create } from 'zustand';
 import i18n from '../i18n';
 import { api } from './api';
@@ -1129,6 +1130,31 @@ function mergeTurnDoc(docs: TurnDoc[], path: string, bytes: number): TurnDoc[] {
   return [...docs.slice(0, idx), entry, ...docs.slice(idx + 1)];
 }
 
+// artifactTurnIndex finds the turn a produced file belongs to. The
+// backend attributes the write to the run that made it, so the strip is
+// found by run id: while another turn sits above the running one (a
+// delegation note the app appended mid-turn, a barge-in replacement),
+// the last strip is not the writer.
+//
+// A run id the store has not recorded yet means the start-turn response
+// for that run is still in flight, so the file belongs to the trailing
+// live entry — the one with neither a run id nor an archived seq. With
+// no writer to point at, the event is dropped rather than merged into
+// whatever turn happens to be last.
+function artifactTurnIndex(
+  list: TurnArtifacts[],
+  runID: string | undefined,
+): number {
+  if (runID) {
+    const idx = list.findIndex((t) => t.runID === runID);
+    if (idx >= 0) return idx;
+  }
+  const live = list.length - 1;
+  const last = list[live];
+  if (!last || last.runID || last.seq !== undefined) return -1;
+  return live;
+}
+
 // applyStream folds one stream delta into a message list and returns
 // the new list (immutable).
 function applyStream(
@@ -1763,7 +1789,7 @@ export const useStore = create<StoreState>((set, get) => {
   const eventDataSink: EventDataSink = {
     writeConversationData: (conversationID, ev) => {
       switch (ev.type) {
-        case 'stream': {
+        case UIEventType.stream: {
           const data = ev.data as {
             run_id?: string;
             conversation_id?: string;
@@ -1812,7 +1838,7 @@ export const useStore = create<StoreState>((set, get) => {
           });
           break;
         }
-        case 'interact': {
+        case UIEventType.interact: {
           const spec = ev.data as InteractDTO;
           const conv = ensureConversation(conversationID);
           if (!conv) break;
@@ -1824,7 +1850,7 @@ export const useStore = create<StoreState>((set, get) => {
           syncPendingIndex(conversationID);
           break;
         }
-        case 'resolved': {
+        case UIEventType.resolved: {
           const data = ev.data as { id: string };
           const conv = get().conversations[conversationID];
           if (conv?.pendingInteracts.some((p) => p.id === data.id)) {
@@ -1837,8 +1863,9 @@ export const useStore = create<StoreState>((set, get) => {
           }
           break;
         }
-        case 'artifact': {
+        case UIEventType.artifact: {
           const data = ev.data as {
+            run_id?: string;
             path?: string;
             bytes?: number;
           };
@@ -1846,8 +1873,8 @@ export const useStore = create<StoreState>((set, get) => {
           const conv = ensureConversation(conversationID);
           if (!conv) break;
           const list = conv.turnArtifacts;
-          if (list.length === 0) break;
-          const idx = list.length - 1;
+          const idx = artifactTurnIndex(list, data.run_id);
+          if (idx < 0) break;
           const docs = mergeTurnDoc(list[idx].docs, data.path, data.bytes ?? 0);
           updateConv(conversationID, {
             turnArtifacts: [
@@ -1858,7 +1885,7 @@ export const useStore = create<StoreState>((set, get) => {
           });
           break;
         }
-        case 'steer_pending': {
+        case UIEventType.steerPending: {
           // A round boundary drained the run's steer queue: the rows it
           // carried are delivered now, while the turn keeps running.
           const data = ev.data as {
@@ -1876,7 +1903,7 @@ export const useStore = create<StoreState>((set, get) => {
           if (patch) updateConv(conversationID, patch);
           break;
         }
-        case 'turn_end': {
+        case UIEventType.turnEnd: {
           const data = ev.data as {
             run_id?: string;
             status: string;
@@ -2018,7 +2045,7 @@ export const useStore = create<StoreState>((set, get) => {
           }
           break;
         }
-        case 'automation_run_started': {
+        case UIEventType.automationRunStarted: {
           const data = ev.data as {
             run_id?: string;
             conversation_id?: string;
@@ -2047,7 +2074,7 @@ export const useStore = create<StoreState>((set, get) => {
 
     writeGlobalData: (ev) => {
       switch (ev.type) {
-        case 'ready': {
+        case UIEventType.ready: {
           const data = ev.data as ConfigStatus;
           const workChanged = data.work_dir !== get().workspace;
           if (workChanged) {
@@ -2098,16 +2125,16 @@ export const useStore = create<StoreState>((set, get) => {
           void get().loadWorkspaces();
           break;
         }
-        case 'fatal':
+        case UIEventType.fatal:
           set({ fatal: (ev.data as { error: string }).error ?? '' });
           break;
-        case 'status':
+        case UIEventType.status:
           set({ statusText: (ev.data as { text: string }).text });
           break;
-        case 'usage':
+        case UIEventType.usage:
           set({ lastUsage: ev.data as UsageDTO });
           break;
-        case 'managed_restored': {
+        case UIEventType.managedRestored: {
           const ids = ((ev.data as { ids?: string[] }).ids ?? []).filter(
             (id) => id,
           );
@@ -2646,7 +2673,7 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     handleEvent: (ev) => {
-      if (ev.type === 'stream') {
+      if (ev.type === UIEventType.stream) {
         pendingStreamEvents.push(ev);
         scheduleStreamFlush();
         return;
@@ -2655,7 +2682,7 @@ export const useStore = create<StoreState>((set, get) => {
       // must land before the terminal/global event that follows them.
       flushPendingStreams();
       const turnEndData =
-        ev.type === 'turn_end'
+        ev.type === UIEventType.turnEnd
           ? (ev.data as { run_id?: string; conversation_id?: string })
           : undefined;
       const turnEndConversationID =
