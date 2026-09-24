@@ -113,9 +113,43 @@ function setConversation(
   });
 }
 
+// addPendingPrompt lands one interaction on the open conversation: what the
+// host does when a run blocks on an answer.
+function addPendingPrompt(id = 'p-1', title = 'Allow running rm -rf?') {
+  useStore.setState((s) => {
+    const conv = s.conversations['s-1'];
+    if (!conv) return {};
+    return {
+      conversations: {
+        ...s.conversations,
+        's-1': {
+          ...conv,
+          pendingInteracts: [
+            ...conv.pendingInteracts,
+            {
+              id,
+              run_id: 'r-1',
+              conversation_id: 's-1',
+              kind: 'select',
+              severity: 'notice',
+              title,
+              body: [],
+              options: [{ label: 'Deny', value: 'deny' }],
+              multi: false,
+              allow_other: false,
+              source: 'test',
+            },
+          ],
+        },
+      },
+    };
+  });
+}
+
 beforeEach(() => {
   stateRoot.resetWorkspace();
   vi.clearAllMocks();
+  restoreTranscriptGeometry = stubTranscriptGeometry();
   apiMock.workspace.mockResolvedValue('/tmp/w');
   apiMock.steerTurn.mockResolvedValue(undefined);
   // clearAllMocks keeps implementations, so the feed's default answer is
@@ -160,6 +194,9 @@ function stubTranscriptGeometry(): () => void {
   Object.defineProperties(HTMLElement.prototype, {
     getBoundingClientRect: {
       configurable: true,
+      // Writable so a test can narrow one element's box (an override is an
+      // own property; the prototype's must not be frozen shut).
+      writable: true,
       value: () => ({
         top: 0,
         left: 0,
@@ -183,10 +220,22 @@ function stubTranscriptGeometry(): () => void {
     scrollTop: {
       configurable: true,
       get(this: HTMLElement) {
-        return offsets.get(this) ?? this.scrollHeight;
+        // A scroller that has not been written to opens at the end of its
+        // content, which is where a session opens: the offset the list
+        // reads is the one the browser would report.
+        return (
+          offsets.get(this) ??
+          Math.max(0, this.scrollHeight - this.clientHeight)
+        );
       },
       set(this: HTMLElement, value: number) {
-        offsets.set(this, value);
+        // The real thing clamps: an offset past the end would put the
+        // list's window outside its own content, which is a geometry the
+        // component never has to handle in a browser.
+        offsets.set(
+          this,
+          Math.max(0, Math.min(value, this.scrollHeight - this.clientHeight)),
+        );
       },
     },
   });
@@ -204,8 +253,10 @@ function stubTranscriptGeometry(): () => void {
   };
 }
 
-// Every test that stubs the geometry gets it taken back afterwards, so a
-// failing assertion cannot leave the next test laying out in 600px.
+// The transcript is windowed, so *every* test of it reads the geometry
+// stub — there is no unwindowed path a test could run on. It is installed
+// for the file and taken back afterwards, so a failing assertion cannot
+// leave the next test laying out in 600px.
 let restoreTranscriptGeometry: (() => void) | null = null;
 afterEach(() => {
   restoreTranscriptGeometry?.();
@@ -214,7 +265,6 @@ afterEach(() => {
 
 describe('ChatView transcript windowing', () => {
   it('mounts a screenful and loads earlier at the top', async () => {
-    restoreTranscriptGeometry = stubTranscriptGeometry();
     setConversation(manyMessages(250));
     render(<ChatView />);
 
@@ -247,16 +297,44 @@ describe('ChatView transcript windowing', () => {
     expect(mounted().length).toBeLessThan(20);
   });
 
-  it('keeps the full transcript when it fits in the window', () => {
-    setConversation(manyMessages(10));
+  it('keeps the whole transcript mounted when it fits the window', () => {
+    // Four rows against a 600px viewport: the transcript is shorter than
+    // the scroll box, so there is nothing for a window to hold back.
+    setConversation(manyMessages(4));
     render(<ChatView />);
 
     const scroller = screen.getByTestId('chat-scroll');
-    expect(within(scroller).getByText('message-0')).toBeInTheDocument();
-    expect(within(scroller).getByText('message-9')).toBeInTheDocument();
+    // Every row is in the DOM, not the screenful a taller transcript
+    // would settle for.
+    const mounted = scroller.querySelectorAll('[data-msg-index]');
     expect(
-      screen.queryByRole('button', { name: /earlier messages/i }),
-    ).not.toBeInTheDocument();
+      Array.from(mounted).map((el) => el.getAttribute('data-msg-index')),
+    ).toEqual(['0', '1', '2', '3']);
+    expect(scroller.scrollHeight).toBeLessThanOrEqual(scroller.clientHeight);
+  });
+
+  it('brings the window back for a prompt that lands mid-history', async () => {
+    setConversation(manyMessages(60));
+    render(<ChatView />);
+
+    const scroller = screen.getByTestId('chat-scroll');
+    // Read up into the history: the tail is out of the window, so a card
+    // appended there would mount nowhere the reader can see it.
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+    expect(await within(scroller).findByText('message-0')).toBeInTheDocument();
+    expect(within(scroller).queryByText('message-59')).not.toBeInTheDocument();
+
+    // The prompt lands, and it takes the keyboard as it arrives: the view
+    // comes back to the newest row rather than leaving a caret in a card
+    // under the fold.
+    act(() => addPendingPrompt());
+    await waitFor(() => {
+      expect(
+        within(scroller).getByText('Allow running rm -rf?'),
+      ).toBeInTheDocument();
+      expect(within(scroller).getByText('message-59')).toBeInTheDocument();
+    });
   });
 
   it('renders markdown inside user bubbles', () => {
@@ -1215,6 +1293,7 @@ describe('ChatView transcript windowing', () => {
         role: 'assistant',
         text: '',
         items: [
+          { kind: 'text', id: `t-${i}`, text: `step ${i}` },
           {
             kind: 'tool_call',
             id: `part-${i}`,
@@ -1241,51 +1320,42 @@ describe('ChatView transcript windowing', () => {
     ]);
     render(<ChatView />);
 
-    // The virtualizer reads the scroller's geometry; jsdom has none.
     const scroller = screen.getByTestId('chat-scroll');
-    Object.defineProperty(scroller, 'clientHeight', {
-      configurable: true,
-      value: 600,
-    });
-    Object.defineProperty(scroller, 'scrollHeight', {
-      configurable: true,
-      value: 600,
-    });
-    Object.defineProperty(scroller, 'scrollTop', {
-      configurable: true,
-      value: 0,
-      writable: true,
-    });
-    scroller.getBoundingClientRect = () =>
-      ({
-        top: 0,
-        left: 0,
-        right: 800,
-        bottom: 600,
-        width: 800,
-        height: 600,
-        x: 0,
-        y: 0,
-        toJSON: () => ({}),
-      }) as DOMRect;
+    const mounted = () =>
+      Array.from(scroller.querySelectorAll('[data-msg-index]')).map((el) =>
+        Number(el.getAttribute('data-msg-index')),
+      );
+    const list = () =>
+      scroller.querySelector<HTMLElement>('[data-transcript-list]');
+    // Folded, the twelve dozen steps are not rows at all: the turn is the
+    // ask and the reply, with the header between them.
+    expect(mounted()).toEqual([0, 121]);
 
     await userEvent
       .setup()
       .click(screen.getByRole('button', { name: 'Worked for 2m 3s' }));
 
-    // jsdom has no layout, so the virtualizer cannot compute *which*
-    // rows are visible; what it can prove is that the list went virtual:
-    // the container reserves the estimated height of all 120 rows, and
-    // the rows themselves are not mounted eagerly. The real-browser
-    // behaviour is covered by the perf e2e spec.
-    const container = scroller.querySelector<HTMLElement>(
-      'div[style*="position: relative"]',
+    // The steps are the transcript's own rows now, and the transcript is
+    // windowed row by row: the reader is at the top, so the steps there
+    // are in the DOM and the far end of the turn is not. Reading down
+    // mounts the rest as it arrives — the DOM stays a screenful, not a
+    // hundred and twenty rows.
+    expect(within(scroller).getByText('step 0')).toBeInTheDocument();
+    expect(within(scroller).queryByText('step 119')).not.toBeInTheDocument();
+    expect(mounted().length).toBeLessThan(30);
+    // The list reserves the height of the rows it has never measured, so
+    // the scrollbar still describes the whole turn.
+    expect(Number.parseInt(list()?.style.height ?? '0', 10)).toBeGreaterThan(
+      120 * 100,
     );
-    expect(container).not.toBeNull();
-    const height = Number.parseInt(container?.style.height ?? '0', 10);
-    expect(height).toBeGreaterThan(120 * 60);
-    expect(scroller.querySelectorAll('[data-index]').length).toBeLessThan(120);
-    expect(screen.getByText('final answer')).toBeInTheDocument();
+
+    scroller.scrollTop = scroller.scrollHeight;
+    fireEvent.scroll(scroller);
+    expect(
+      await within(scroller).findByText('final answer'),
+    ).toBeInTheDocument();
+    expect(within(scroller).queryByText('step 0')).not.toBeInTheDocument();
+    expect(mounted().length).toBeLessThan(30);
   });
 
   it('keeps the worked header for legacy turns without duration', async () => {
@@ -1595,7 +1665,6 @@ describe('ChatView interrupted turn recovery', () => {
   });
 
   it('offers Continue from a windowed transcript', async () => {
-    restoreTranscriptGeometry = stubTranscriptGeometry();
     const messages: MessageView[] = [
       {
         id: 'm-0',
@@ -1782,7 +1851,6 @@ describe('ChatView jump-to-latest pill', () => {
   // rendering cost needs instead of a thinner fixture that would stop
   // proving the window sits at the newest row.
   it('re-pins the follow when another conversation is opened', () => {
-    restoreTranscriptGeometry = stubTranscriptGeometry();
     setConversation(manyMessages(250));
     render(<ChatView />);
 

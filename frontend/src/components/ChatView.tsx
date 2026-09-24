@@ -160,37 +160,39 @@ function topVisibleMessageIndex(scroller: HTMLElement): number {
   return Number.isInteger(index) ? index : -1;
 }
 
-// RENDER_WINDOW bounds the number of transcript messages mounted in the
-// DOM. Older messages remain in the store/archive; "load earlier"
-// grows the window in steps instead of rendering a long session at
-// once.
+// RENDER_WINDOW bounds the messages the transcript list is *built* from.
+// Older messages remain in the store/archive; "load earlier" grows the
+// window in steps instead of laying a long session out at once. It is not
+// what bounds the DOM — the list windows that, one item per row — it is
+// what bounds the work a single render does before the window takes over.
 const RENDER_WINDOW = 200;
 const RENDER_STEP = 100;
 
-// PROCESS_VIRTUAL_THRESHOLD is the row count past which an expanded
-// process list is windowed instead of mounted whole. Below it the rows
-// render directly (small turns keep exactly the old DOM, which keeps the
-// tests and the common case simple); above it only the rows around the
-// viewport exist, so expanding a 400-row turn costs a screenful instead
-// of the whole list.
-const PROCESS_VIRTUAL_THRESHOLD = 40;
-
-// TRANSCRIPT_VIRTUAL_THRESHOLD is the block count past which the
-// transcript is windowed instead of mounted whole: the list renders the
-// blocks around the viewport and reserves the estimated height of the
-// rest, so how much of a session is in the DOM stops depending on how far
-// back it has been read. Below it the blocks render directly — a short
-// transcript keeps exactly the DOM it always had, which is what keeps the
-// tests and the common case simple (the rule the process list follows
-// too).
-const TRANSCRIPT_VIRTUAL_THRESHOLD = 24;
-
-// TRANSCRIPT_BLOCK_ESTIMATE is what a block is assumed to be worth before
-// anything has measured it: a folded turn (an ask row, the worked header
-// and a reply) and comfortably more than a flat message row. Only the
-// part of the list that has never been on screen is estimated; every
-// block the reader has scrolled through keeps the height it measured.
-const TRANSCRIPT_BLOCK_ESTIMATE = 120;
+// transcriptItemEstimate is what an item is assumed to be worth before
+// anything has measured it. The list sizes the part of the transcript it
+// has never shown from these, so they are per kind — a fold control is not
+// a reply, and a hairline is not a row — and a row is estimated from the
+// shape it renders as. Only the part of the list that has never been on
+// screen is estimated; every item the reader has scrolled through keeps
+// the height it measured.
+function transcriptItemEstimate(item: TranscriptItem): number {
+  switch (item.kind) {
+    case 'row':
+      if (item.msg.role === 'assistant') return 96;
+      if (item.msg.steer) return 56;
+      if (item.msg.kind) return 130;
+      if (item.msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) return 88;
+      return 72;
+    case 'work':
+      return 26;
+    case 'rule':
+      return 9;
+    case 'footer':
+      return 48;
+    case 'interact':
+      return 200;
+  }
+}
 
 // assistantPreviewText builds the hover preview without ever copying
 // the full assistant answer: it stops as soon as the preview budget is
@@ -794,6 +796,7 @@ const MessageRow = memo(function MessageRow({
   turnIndex,
   turnStart,
   forkable,
+  forkTurn,
   onFork,
   requestedAt,
   startedAt,
@@ -806,7 +809,12 @@ const MessageRow = memo(function MessageRow({
   turnIndex: number;
   turnStart: boolean;
   forkable?: boolean;
-  onFork?: () => void;
+  // forkTurn is the turn the fork button forks. It is passed instead of a
+  // callback because the transcript re-renders on every stream flush: a
+  // closure per row would defeat the memo and re-render every mounted row
+  // (with its cards) on every delta.
+  forkTurn?: TurnArtifacts;
+  onFork?: (turn: TurnArtifacts) => void;
   requestedAt?: string;
   startedAt?: string;
 }) {
@@ -939,7 +947,7 @@ const MessageRow = memo(function MessageRow({
   }
   const finalText = assistantText(msg);
   const copyable = isTurnLast && !streaming && finalText.length > 0;
-  const showActions = copyable || Boolean(forkable && onFork);
+  const showActions = copyable || Boolean(forkable && forkTurn && onFork);
   const copyFinal = async () => {
     if (!finalText) return;
     try {
@@ -991,9 +999,9 @@ const MessageRow = memo(function MessageRow({
       })}
       {showActions && (
         <div className="pointer-events-none invisible flex items-center justify-start gap-1.5 pl-1 group-hover:pointer-events-auto group-hover:visible">
-          {forkable && onFork && (
+          {forkable && forkTurn && onFork && (
             <button
-              onClick={onFork}
+              onClick={() => onFork(forkTurn)}
               className="flex items-center rounded-tight border border-edge p-1 text-dim hover:text-accent"
               aria-label={t('chat.forkTurn')}
               data-tip={t('chat.forkTurn')}
@@ -1455,30 +1463,83 @@ const ArtifactStrip = memo(function ArtifactStrip({
   );
 });
 
-// TurnRenderRow is one transcript message plus its global index, so a
-// turn block can render rows with the same data attributes the
-// scroll/peek logic relies on.
-interface TurnRenderRow {
+// TranscriptItem is one unit of the transcript list, and the list is flat:
+// a message row is an item, and so is each piece of a turn's own chrome —
+// the worked header that folds the turn's steps, the hairline under them,
+// and the turn's tail (artifact strip, compaction note, end notice). A
+// pending prompt is the last item.
+//
+// Nothing is grouped: the turn a row belongs to is a field, not a
+// wrapper, so windowing works at the granularity of what actually costs
+// the DOM something. A turn is not one item — a live turn of four hundred
+// steps, or an expanded one, contributes its rows as separate items and
+// mounts the ones around the viewport like any other stretch of
+// transcript, and the fold is a *filter*: a turn folded shut contributes
+// its header, its reply and its tail, and nothing else.
+//
+// key outlives a render (measurements are kept by key), so history
+// prepended under the reader does not remeasure what is already on
+// screen. pad is the room under the item: 8px inside a turn, 16px at the
+// end of one, which is the rhythm the transcript has always had.
+type TranscriptItem = {
+  key: string;
+  // turnIdx is the index of the turn the item belongs to, or -1 for a row
+  // no turn covers and for a prompt.
+  turnIdx: number;
+  // pad is the room under this item, in the list's own coordinates.
+  pad: number;
+} & (
+  | {
+      kind: 'row';
+      msg: MessageView;
+      i: number;
+      // turn is the turn the row belongs to, if the archive knows one.
+      turn?: TurnArtifacts;
+      turnStart: boolean;
+    }
+  | {
+      kind: 'work';
+      turn: TurnArtifacts;
+      // processCount is how many steps the header folds away; zero renders
+      // the label without a chevron.
+      processCount: number;
+    }
+  | { kind: 'rule'; turn: TurnArtifacts }
+  | {
+      kind: 'footer';
+      turn: TurnArtifacts;
+      // statusLine renders the worked-for label as a plain line, for a turn
+      // whose header is not an item (the reader is inside a turn the window
+      // starts in): the duration stays visible without a fold control that
+      // would hide rows the list does not hold.
+      statusLine: boolean;
+      endStatus?: TurnEndKind;
+      endError?: string;
+      liveEnd: boolean;
+      resumable: boolean;
+    }
+  | { kind: 'interact'; spec: InteractDTO }
+);
+
+// TRANSCRIPT_ROW_PAD / TRANSCRIPT_TURN_PAD are the two spacings the
+// transcript has always had: 8px between the rows of one turn, 16px where
+// a turn ends (the list's own gap, moved into the item because absolutely
+// positioned items have no flow to hang a margin from — and because the
+// gap between two items now depends on whether they belong to the same
+// turn).
+const TRANSCRIPT_ROW_PAD = 8;
+const TRANSCRIPT_TURN_PAD = 16;
+
+// EMPTY_TURNS is the no-fold state, shared so the conversation-switch
+// reset allocates nothing and a fold that is already empty does not
+// re-render the list.
+const EMPTY_TURNS: ReadonlySet<string> = new Set();
+
+// TurnRow is one message of a turn, with its index in the transcript.
+interface TurnRow {
   msg: MessageView;
   i: number;
 }
-
-// TranscriptBlock is one unit of the windowed transcript: a complete turn
-// in the folded shape, a single message row in the flat shape the
-// transcript falls back on when the render window starts mid-turn, or an
-// interaction card. The key outlives a render (measurements are kept by
-// key), so prepending history does not remeasure what is already on
-// screen.
-type TranscriptBlock =
-  | {
-      kind: 'turn';
-      key: string;
-      turn: TurnArtifacts;
-      turnIdx: number;
-      rows: TurnRenderRow[];
-    }
-  | { kind: 'row'; key: string; msg: MessageView; i: number }
-  | { kind: 'interact'; key: string; spec: InteractDTO };
 
 // TurnSummaryHeader doubles as the ended turn's fold control: when
 // intermediate rows exist the Worked for label becomes a button with
@@ -1523,318 +1584,6 @@ function TurnSummaryHeader({
     </button>
   );
 }
-
-// sameTurnBlock reports whether a re-render would change anything this
-// block draws. ChatView rebuilds its element tree on every stream flush,
-// so without this a block whose rows did not change still re-rendered —
-// and with its process rows expanded that meant re-walking thousands of
-// mounted rows per flush.
-function sameTurnBlock(prev: TurnBlockProps, next: TurnBlockProps): boolean {
-  return (
-    prev.turn === next.turn &&
-    prev.turnIdx === next.turnIdx &&
-    prev.running === next.running &&
-    prev.busy === next.busy &&
-    prev.endStatus === next.endStatus &&
-    prev.endError === next.endError &&
-    prev.requestID === next.requestID &&
-    prev.responseID === next.responseID &&
-    prev.liveEnd === next.liveEnd &&
-    prev.forking === next.forking &&
-    prev.latest === next.latest &&
-    prev.blockOffset === next.blockOffset &&
-    prev.onFork === next.onFork &&
-    prev.onDismissFailure === next.onDismissFailure &&
-    prev.onContinue === next.onContinue &&
-    prev.onEditResend === next.onEditResend &&
-    sameTurnRows(prev.rows, next.rows)
-  );
-}
-
-function sameTurnRows(a: TurnRenderRow[], b: TurnRenderRow[]): boolean {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i].msg !== b[i].msg || a[i].i !== b[i].i) return false;
-  }
-  return true;
-}
-
-interface TurnBlockProps {
-  turn: TurnArtifacts;
-  turnIdx: number;
-  rows: TurnRenderRow[];
-  // scrollContainer resolves the transcript scroller the process-row
-  // virtualizer measures against.
-  scrollContainer: () => HTMLElement | null;
-  // blockOffset is where this turn sits in the transcript's own list
-  // (the scroller's coordinates), when that list is windowed. It is what
-  // tells the process list to re-measure its own offset: it moves whenever
-  // a block above this one is measured or history is prepended under the
-  // reader.
-  blockOffset?: number;
-  running: boolean;
-  busy: boolean;
-  endStatus?: TurnEndKind;
-  endError?: string;
-  requestID?: string;
-  responseID?: string;
-  liveEnd: boolean;
-  forking: boolean;
-  // latest marks the conversation's newest turn. Only that turn's
-  // interrupted notice is actionable; older turns stay static.
-  latest: boolean;
-  onFork: (turn: TurnArtifacts) => void;
-  onDismissFailure: () => void;
-  // onContinue / onEditResend act on the newest turn's original user
-  // message; they are stable per conversation, so the memo holds.
-  onContinue?: () => void;
-  onEditResend?: () => void;
-}
-
-// TurnBlock renders one complete turn. Live turns stay fully expanded
-// with a Working… status line at the top; ended turns fold everything
-// except the final assistant message behind the process toggle.
-const TurnBlock = memo(function TurnBlock({
-  turn,
-  turnIdx,
-  rows,
-  scrollContainer,
-  blockOffset,
-  running,
-  busy,
-  endStatus,
-  endError,
-  requestID,
-  responseID,
-  liveEnd,
-  forking,
-  latest,
-  onFork,
-  onDismissFailure,
-  onContinue,
-  onEditResend,
-}: TurnBlockProps) {
-  const [processOpen, setProcessOpen] = useState(false);
-  // Interjections are user rows too, but they do not open the turn: they
-  // are the user speaking inside it. Splitting them out is what lets the
-  // block keep them in place (below the folded work, above the reply
-  // that continues after them) instead of stacking them as if each one
-  // had started a turn.
-  const askRows = rows.filter(
-    (row) => row.msg.role === 'user' && !row.msg.steer,
-  );
-  const steerRows = rows.filter((row) => Boolean(row.msg.steer));
-  const assistantRows = rows.filter((row) => row.msg.role === 'assistant');
-  const finalRow = assistantRows[assistantRows.length - 1];
-  // An undelivered interjection is appended after the reply it missed,
-  // so it renders below it; everything else was answered by the rounds
-  // that follow it in the transcript.
-  const answeredSteers = finalRow
-    ? steerRows.filter((row) => row.i < finalRow.i)
-    : steerRows;
-  const trailingSteers = finalRow
-    ? steerRows.filter((row) => row.i > finalRow.i)
-    : [];
-  const processRows = finalRow
-    ? assistantRows.filter(
-        (row) => row.i < finalRow.i && groupToolCalls(row.msg.items).length > 0,
-      )
-    : [];
-  // Windowed only past the threshold; short lists render directly so the
-  // DOM (and the tests) stay exactly as they were.
-  const windowedProcessRows = processRows.length > PROCESS_VIRTUAL_THRESHOLD;
-  const processListRef = useRef<HTMLDivElement | null>(null);
-  // The process rows scroll with the transcript, so their list has to be
-  // told where it sits in that scroller's coordinates (scrollMargin) —
-  // otherwise it measures the viewport against its own top and mounts the
-  // rows of a turn that is nowhere near the one on screen. Measured rather
-  // than derived: the block's own position moves whenever the transcript
-  // above it grows or history is prepended, and `blockOffset` (the item's
-  // offset, when the transcript is windowed) is what changes then.
-  const [processListOffset, setProcessListOffset] = useState(0);
-  useLayoutEffect(() => {
-    if (!processOpen || !windowedProcessRows) return;
-    const scroller = scrollContainer();
-    const list = processListRef.current;
-    if (!scroller || !list) return;
-    const next =
-      list.getBoundingClientRect().top -
-      scroller.getBoundingClientRect().top +
-      scroller.scrollTop;
-    setProcessListOffset((prev) => (prev === next ? prev : next));
-  }, [processOpen, windowedProcessRows, rows.length, blockOffset]);
-  const processVirtualizer = useVirtualizer({
-    count: processRows.length,
-    getScrollElement: () => scrollContainer(),
-    estimateSize: () => 72,
-    overscan: 6,
-    scrollMargin: processListOffset,
-    enabled: processOpen && windowedProcessRows,
-  });
-  const worked = workedForLabel(turn.durationMs);
-  const showTurnHeader = worked !== '' || processRows.length > 0;
-  const lastAssistantStreaming = running && Boolean(finalRow);
-
-  const renderRow = (
-    row: TurnRenderRow,
-    isTurnLast: boolean,
-    streaming: boolean,
-  ) => {
-    const canFork =
-      row.msg.role === 'assistant' &&
-      isTurnLast &&
-      !streaming &&
-      !forking &&
-      !endStatus &&
-      Boolean(turn.runID);
-    return (
-      <MessageRow
-        key={row.msg.id}
-        msg={row.msg}
-        busy={running ? false : busy}
-        streaming={streaming}
-        isTurnLast={isTurnLast}
-        msgIndex={row.i}
-        turnIndex={turnIdx}
-        turnStart={row.i === turn.start}
-        forkable={canFork}
-        onFork={canFork && turn ? () => onFork(turn) : undefined}
-        requestedAt={turn.requestedAt}
-        startedAt={turn.startedAt}
-      />
-    );
-  };
-
-  const footer =
-    turn.docs.length > 0 ? <ArtifactStrip docs={turn.docs} /> : null;
-  const endNotice =
-    endStatus && turn ? (
-      <TurnEndNotice
-        status={endStatus}
-        error={endError}
-        interruptCause={turn.interruptCause}
-        errorKind={turn.errorKind}
-        requestID={requestID}
-        responseID={responseID}
-        live={liveEnd}
-        onDismiss={liveEnd ? onDismissFailure : undefined}
-        onContinue={
-          latest &&
-          !busy &&
-          (endStatus === 'interrupted' ||
-            endedOnDeadline(endStatus, turn.errorKind))
-            ? onContinue
-            : undefined
-        }
-        onEditResend={
-          latest &&
-          !busy &&
-          (endStatus === 'interrupted' ||
-            endedOnDeadline(endStatus, turn.errorKind))
-            ? onEditResend
-            : undefined
-        }
-      />
-    ) : null;
-  // The compaction note stays live-only (like the correlation ids above):
-  // it explains a cost the user sees now, and a resumed session's archive
-  // does not carry it.
-  const compactionNotice =
-    turn?.compaction &&
-    (turn.compaction.folds > 0 ||
-      (turn.compaction.failures ?? 0) > 0 ||
-      turn.compaction.notified) ? (
-      <CompactionNotice
-        folds={turn.compaction.folds}
-        failures={turn.compaction.failures}
-        notified={turn.compaction.notified}
-      />
-    ) : null;
-
-  return (
-    <div data-turn-index={turnIdx} className="space-y-2">
-      {askRows.map((row) => renderRow(row, false, false))}
-      {running ? (
-        <>
-          <TurnStatusLine running />
-          {/* Everything is expanded while the turn runs, so the rows
-              render in transcript order: an interjection sits exactly
-              where it was typed, with the reply continuing under it. */}
-          {rows
-            .filter((row) => row.msg.role === 'assistant' || row.msg.steer)
-            .map((row) =>
-              renderRow(
-                row,
-                row === finalRow,
-                row === finalRow && lastAssistantStreaming,
-              ),
-            )}
-        </>
-      ) : (
-        <>
-          <TurnSummaryHeader
-            running={false}
-            durationMs={turn.durationMs}
-            processCount={processRows.length}
-            open={processOpen}
-            onToggle={() => setProcessOpen((open) => !open)}
-          />
-          {processOpen && windowedProcessRows ? (
-            <div
-              ref={processListRef}
-              style={{
-                height: `${processVirtualizer.getTotalSize()}px`,
-                position: 'relative',
-              }}
-            >
-              {processVirtualizer.getVirtualItems().map((item) => (
-                <div
-                  key={processRows[item.index].msg.id}
-                  data-index={item.index}
-                  ref={processVirtualizer.measureElement}
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    // The offsets are measured in the scroller's
-                    // coordinates (scrollMargin above puts the list at
-                    // its own position in that space), so what places a
-                    // row inside this container is the difference.
-                    transform: `translateY(${item.start - processListOffset}px)`,
-                  }}
-                >
-                  {renderRow(processRows[item.index], false, false)}
-                </div>
-              ))}
-            </div>
-          ) : (
-            processOpen &&
-            processRows.map((row) => renderRow(row, false, false))
-          )}
-          {/* Interjections stay visible when the work folds away: they
-              are the user's own words, never a step to collapse. Ones
-              the turn answered land between the folded work and the
-              reply; one typed after the reply was finished stays below
-              it, which is where the user saw it land. The rule under
-              the folded work stays above them for the same reason: it
-              closes the collapsed steps, and an interjection is not
-              one of those. */}
-          {finalRow && showTurnHeader && (
-            <div aria-hidden="true" className="h-px bg-edge" />
-          )}
-          {answeredSteers.map((row) => renderRow(row, false, false))}
-          {finalRow && renderRow(finalRow, true, false)}
-          {trailingSteers.map((row) => renderRow(row, false, false))}
-        </>
-      )}
-      {footer}
-      {compactionNotice}
-      {endNotice}
-    </div>
-  );
-}, sameTurnBlock);
 
 // AttachmentImage renders one image attachment. Live sends carry the
 // data URL already; resumed history has only the stored path, so the
@@ -2136,49 +1885,30 @@ export function ChatView() {
     messages: MessageView[];
     plan: ReturnType<typeof latestPlan>;
   } | null>(null);
+  // openTurns is the reader's folds, by turn id. The folds are filter
+  // state for the item list — a folded turn contributes its header, its
+  // reply and its tail, an open one contributes its steps — so they live
+  // here rather than inside a wrapper. Scrolling a turn out of the window
+  // does not fold it back up: the steps keep the height they measured.
+  const [openTurns, setOpenTurns] = useState<ReadonlySet<string>>(EMPTY_TURNS);
+  const toggleTurn = useCallback((id: string) => {
+    setOpenTurns((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }, []);
   // A conversation switch resets the window to the tail; a resumed
   // session starts with the newest messages visible.
   useEffect(() => {
     setVisibleCount(RENDER_WINDOW);
     setLoadingEarlier(false);
     setPeekRange(null);
+    setOpenTurns(EMPTY_TURNS);
     planCacheRef.current = null;
   }, [current]);
   const truncated = messages.length > visibleCount;
   const start = truncated ? messages.length - visibleCount : 0;
-  const visibleMessages = truncated ? messages.slice(start) : messages;
-  const renderEnd = start + visibleMessages.length;
-  const completeTurnBlocks: {
-    turn: TurnArtifacts;
-    turnIdx: number;
-    rows: TurnRenderRow[];
-  }[] = [];
-  let partialTurnVisible = false;
-  if (turnArtifacts.length > 0) {
-    for (let ti = 0; ti < turnArtifacts.length; ti++) {
-      const turn = turnArtifacts[ti];
-      const turnEnd =
-        ti + 1 < turnArtifacts.length
-          ? turnArtifacts[ti + 1].start
-          : messages.length;
-      const lo = Math.max(start, turn.start);
-      const hi = Math.min(turnEnd, renderEnd);
-      if (lo >= hi) continue;
-      if (lo !== turn.start || hi !== turnEnd) {
-        partialTurnVisible = true;
-        continue;
-      }
-      const rows: TurnRenderRow[] = [];
-      for (let i = lo; i < hi; i++) {
-        rows.push({ msg: messages[i], i });
-      }
-      completeTurnBlocks.push({ turn, turnIdx: ti, rows });
-    }
-  }
-  const turnIndexById = useMemo(
-    () => new Map(turnArtifacts.map((turn, ti) => [turn, ti] as const)),
-    [turnArtifacts],
-  );
   const planState = useMemo(() => {
     const cached = planCacheRef.current;
     if (cached && !planNeedsRefresh(cached.messages, messages)) {
@@ -2280,7 +2010,6 @@ export function ChatView() {
     failedTurn && endedOnDeadline(failedTurn.status, failedTurn.errorKind),
   );
   const lastTurn = turnArtifacts[turnArtifacts.length - 1];
-  const usesTurnBlocks = completeTurnBlocks.length > 0 && !partialTurnVisible;
   // MessagePeek only needs the turn boundaries while rendering ticks.
   // Preview text is fetched lazily on hover from refs, so token
   // streaming does not force us to re-extract every turn's answer on
@@ -2380,8 +2109,8 @@ export function ChatView() {
   // composer. Compaction summaries are prepended context and an
   // interjection was said inside the turn rather than opening it, so
   // both are skipped. It reads the live refs instead of taking the
-  // message as an argument, which keeps the callbacks stable: TurnBlock
-  // is memoized on them.
+  // message as an argument, which keeps the callbacks stable: the rows
+  // are memoized on them, and the end notice renders from the newest one.
   const resumeTarget = useCallback((): MessageView | undefined => {
     const turns = turnArtifactsRef.current;
     const msgs = messagesRef.current;
@@ -2497,67 +2226,251 @@ export function ChatView() {
   // keep arriving.
   const userScrolledAwayRef = useRef(false);
   const lastScrollTopRef = useRef(0);
-  // transcriptBlocks is the transcript as the list sees it: one block per
-  // turn, per loose message row, or per interaction card, in transcript
-  // order. The list windows them; the direct path renders the same array.
-  const transcriptBlocks: TranscriptBlock[] = [];
-  if (usesTurnBlocks) {
-    for (const block of completeTurnBlocks) {
-      transcriptBlocks.push({
-        kind: 'turn',
-        key: block.turn.id,
-        turn: block.turn,
-        turnIdx: block.turnIdx,
-        rows: block.rows,
-      });
-    }
-  } else {
-    for (let localI = 0; localI < visibleMessages.length; localI++) {
-      const msg = visibleMessages[localI];
-      transcriptBlocks.push({
+  // transcriptItems is the transcript as the list sees it, laid out once
+  // per render (see TranscriptItem). Rows are emitted in transcript order;
+  // a turn that is fully inside the render window contributes its chrome
+  // around them, a turn the window starts inside contributes rows only.
+  const transcriptItems: TranscriptItem[] = [];
+  {
+    // endTurn gives the last item of a turn the wider gap: the list has no
+    // flow to hang a margin from, so the room between two items is the
+    // room each item carries under itself.
+    const endTurn = () => {
+      const last = transcriptItems[transcriptItems.length - 1];
+      if (last) last.pad = TRANSCRIPT_TURN_PAD;
+    };
+    const pushRow = (
+      i: number,
+      turn: TurnArtifacts | undefined,
+      turnIdx: number,
+    ) => {
+      const msg = messages[i];
+      if (!msg) return;
+      transcriptItems.push({
         kind: 'row',
         key: msg.id,
         msg,
-        i: start + localI,
+        i,
+        turn,
+        turnIdx,
+        turnStart: turn !== undefined && turn.start === i,
+        // A row no turn covers is an item of its own and keeps the wider
+        // gap; rows inside a turn keep the turn's rhythm.
+        pad: turn ? TRANSCRIPT_ROW_PAD : TRANSCRIPT_TURN_PAD,
       });
+    };
+    // pushTail closes a turn: the artifact strip fills in live and stays
+    // after the turn ends, the worked label appears here too when the turn
+    // has no header to carry it (the reader is inside a turn the window
+    // starts in), and the end notice is the turn's own words about how it
+    // stopped. A turn with nothing to say adds nothing — its last row
+    // carries the turn's gap instead.
+    const pushTail = (turn: TurnArtifacts, ti: number, showWork: boolean) => {
+      const worked = workedForLabel(turn.durationMs);
+      const archivedEnd = archivedTurnEndKind(turn.status);
+      const liveEnd = !busy && failedTurn !== undefined && turn === lastTurn;
+      const endStatus =
+        archivedEnd ?? (liveEnd ? failedTurn?.status : undefined);
+      const compaction = Boolean(
+        turn.compaction &&
+        (turn.compaction.folds > 0 ||
+          (turn.compaction.failures ?? 0) > 0 ||
+          turn.compaction.notified),
+      );
+      const statusLine = !showWork && worked !== '';
+      if (turn.docs.length === 0 && !statusLine && !compaction && !endStatus) {
+        return;
+      }
+      transcriptItems.push({
+        kind: 'footer',
+        key: `${turn.id}:tail`,
+        turn,
+        turnIdx: ti,
+        statusLine,
+        endStatus,
+        endError: turn.error ?? (liveEnd ? failedTurn?.error : undefined),
+        liveEnd,
+        // Only the newest turn's interruption can be continued: an older
+        // one has been answered over since, so its "continue" would just
+        // repeat history.
+        resumable:
+          !busy &&
+          turn === lastTurn &&
+          (endStatus === 'interrupted' ||
+            endedOnDeadline(endStatus, turn.errorKind)),
+        pad: TRANSCRIPT_TURN_PAD,
+      });
+    };
+    let cursor = start;
+    for (
+      let ti = 0;
+      ti < turnArtifacts.length && cursor < messages.length;
+      ti += 1
+    ) {
+      const turn = turnArtifacts[ti];
+      // Rows before this turn belong to no turn the archive knows — the
+      // same shape a session with no archive at all renders as.
+      while (cursor < turn.start && cursor < messages.length) {
+        pushRow(cursor, undefined, -1);
+        cursor += 1;
+      }
+      const turnEnd =
+        ti + 1 < turnArtifacts.length
+          ? turnArtifacts[ti + 1].start
+          : messages.length;
+      const hi = Math.min(turnEnd, messages.length);
+      if (cursor >= hi) continue;
+      if (cursor !== turn.start) {
+        // The window starts inside this turn. Its beginning is not loaded,
+        // so there is nothing to fold and nothing to summarize: the rows
+        // render loose, and the tail is drawn the way a window that starts
+        // mid-turn has always drawn it.
+        while (cursor < hi) {
+          pushRow(cursor, turn, ti);
+          cursor += 1;
+        }
+        pushTail(turn, ti, false);
+        endTurn();
+        continue;
+      }
+      // A turn that is fully in the window, in the shape the transcript
+      // has always had: the ask, the fold header (or Working… while the
+      // turn runs), the steps it folds away, the rule that closes them,
+      // the interjections the turn answered, the reply, and the ones that
+      // came after it.
+      const askRows: TurnRow[] = [];
+      const steerRows: TurnRow[] = [];
+      const assistantRows: TurnRow[] = [];
+      for (let i = cursor; i < hi; i += 1) {
+        const msg = messages[i];
+        if (!msg) continue;
+        if (msg.role === 'assistant') assistantRows.push({ msg, i });
+        else if (msg.steer) steerRows.push({ msg, i });
+        else askRows.push({ msg, i });
+      }
+      const finalRow = assistantRows[assistantRows.length - 1];
+      const running = busy && turn === lastTurn;
+      // The steps this turn folds away: the rows that did work before its
+      // reply. Everything is expanded while the turn runs, so those rows
+      // render in transcript order and an interjection sits exactly where
+      // it was typed, with the reply continuing under it.
+      const processRows = finalRow
+        ? assistantRows.filter(
+            (row) =>
+              row.i < finalRow.i && groupToolCalls(row.msg.items).length > 0,
+          )
+        : [];
+      const liveRows = running
+        ? [...assistantRows, ...steerRows].sort((a, b) => a.i - b.i)
+        : [];
+      // An undelivered interjection is appended after the reply it missed,
+      // so it renders below it; everything else was answered by the rounds
+      // that follow it in the transcript.
+      const answeredSteers = finalRow
+        ? steerRows.filter((row) => row.i < finalRow.i)
+        : steerRows;
+      const trailingSteers = finalRow
+        ? steerRows.filter((row) => row.i > finalRow.i)
+        : [];
+      const showWork =
+        running ||
+        workedForLabel(turn.durationMs) !== '' ||
+        processRows.length > 0;
+      for (const row of askRows) pushRow(row.i, turn, ti);
+      if (showWork) {
+        transcriptItems.push({
+          kind: 'work',
+          key: `${turn.id}:work`,
+          turn,
+          turnIdx: ti,
+          processCount: processRows.length,
+          pad: TRANSCRIPT_ROW_PAD,
+        });
+      }
+      if (running) {
+        for (const row of liveRows) pushRow(row.i, turn, ti);
+      } else {
+        if (openTurns.has(turn.id)) {
+          for (const row of processRows) pushRow(row.i, turn, ti);
+        }
+        // The rule closes the collapsed steps; an interjection is not one
+        // of those, so it stays above them.
+        if (finalRow && showWork) {
+          transcriptItems.push({
+            kind: 'rule',
+            key: `${turn.id}:rule`,
+            turn,
+            turnIdx: ti,
+            pad: TRANSCRIPT_ROW_PAD,
+          });
+        }
+        for (const row of answeredSteers) pushRow(row.i, turn, ti);
+        if (finalRow) pushRow(finalRow.i, turn, ti);
+        for (const row of trailingSteers) pushRow(row.i, turn, ti);
+      }
+      pushTail(turn, ti, showWork);
+      endTurn();
+      cursor = hi;
+    }
+    // Rows no turn covers at all (a session whose turns are not archived,
+    // or the head of one whose first turn starts later).
+    while (cursor < messages.length) {
+      pushRow(cursor, turnForIndex(turnArtifacts, cursor), -1);
+      cursor += 1;
     }
   }
   for (const spec of pendingInteracts) {
-    transcriptBlocks.push({ kind: 'interact', key: spec.id, spec });
+    transcriptItems.push({
+      kind: 'interact',
+      key: spec.id,
+      spec,
+      turnIdx: -1,
+      pad: TRANSCRIPT_TURN_PAD,
+    });
   }
-  const transcriptBlocksRef = useRef(transcriptBlocks);
-  transcriptBlocksRef.current = transcriptBlocks;
+  const transcriptItemsRef = useRef(transcriptItems);
+  transcriptItemsRef.current = transcriptItems;
   // The key comes from the ref, not from the array, so the callback (and
   // therefore the measurement options the list compares) survives a
   // render. Measurements are kept by key, and history is prepended under
-  // the reader: with keys that follow the array index every block above
-  // the viewport would be a new block and lose the height it measured.
-  const transcriptBlockKey = useCallback(
-    (index: number) => transcriptBlocksRef.current[index]?.key ?? index,
+  // the reader: with keys that follow the array index every item above
+  // the viewport would be a new item and lose the height it measured.
+  const transcriptItemKey = useCallback(
+    (index: number) => transcriptItemsRef.current[index]?.key ?? index,
     [],
   );
-  const windowedTranscript =
-    transcriptBlocks.length > TRANSCRIPT_VIRTUAL_THRESHOLD;
-  const transcriptListRef = useRef<HTMLDivElement | null>(null);
+  // The list element is state, not a ref: a session that opens (or a
+  // blocked history) renders a shell without a transcript first, and the
+  // observer below has to attach when the list it belongs to appears.
+  const [transcriptList, setTranscriptList] = useState<HTMLDivElement | null>(
+    null,
+  );
   const transcriptVirtualizer = useVirtualizer({
-    count: transcriptBlocks.length,
+    count: transcriptItems.length,
     getScrollElement: () => scrollRef.current,
-    getItemKey: transcriptBlockKey,
-    estimateSize: () => TRANSCRIPT_BLOCK_ESTIMATE,
-    // A screenful of blocks above and below: enough that a scroll does not
-    // outrun the DOM, few enough that a huge turn stays cheap.
-    overscan: 6,
-    // The spacing the transcript has always had between two rows is the
-    // list's own now (absolutely positioned items have no flow to hang a
-    // margin from), and the paddings the scroller used to carry (py-4)
-    // moved in with it so the list starts at the scroller's origin.
-    gap: 16,
+    getItemKey: transcriptItemKey,
+    // What an item is worth before it has been measured, from the shape it
+    // renders as: a fold control and a reply are not the same 120px, and
+    // the reader scrolling into rows that have never been on screen is
+    // what the estimate is for.
+    estimateSize: (index) => {
+      const item = transcriptItemsRef.current[index];
+      return item
+        ? transcriptItemEstimate(item) + item.pad
+        : TRANSCRIPT_ROW_PAD + 72;
+    },
+    // A screenful of rows above and below: the items are rows now, so the
+    // band is counted in rows where it used to be counted in turns.
+    overscan: 8,
+    // The room between two items is the item's own pad (8px inside a turn,
+    // 16px where one ends); the paddings the scroller used to carry (py-4)
+    // moved in with the list so it starts at the scroller's origin.
+    gap: 0,
     paddingStart: 16,
-    paddingEnd: 16,
-    // The process list inside a turn measures itself with data-index; the
-    // transcript's own rows must not answer to that selector.
+    // The last item carries the gap that ends its turn, so the list does
+    // not add one of its own under it.
+    paddingEnd: 0,
     indexAttribute: 'data-transcript-index',
-    enabled: windowedTranscript,
   });
   // offsetTick exists to re-render after the list is told where the
   // scroller is: the dependency is the write, not the value.
@@ -2573,7 +2486,7 @@ export function ChatView() {
   // and leaves the range alone.
   const syncTranscriptOffset = useCallback(() => {
     const el = scrollRef.current;
-    if (!el || !transcriptVirtualizer.options.enabled) return;
+    if (!el) return;
     if (transcriptVirtualizer.scrollOffset === el.scrollTop) return;
     transcriptVirtualizer.scrollOffset = el.scrollTop;
     setOffsetTick((tick) => tick + 1);
@@ -2749,9 +2662,9 @@ export function ChatView() {
   // here, so a jump behaves the same however it was asked for.
   //
   // The row may be far outside what the list has mounted, so the jump is
-  // two steps: bring the block that holds it into the viewport, then park
-  // the row itself once the block (and with it the row) has mounted. Both
-  // run frame by frame until the row is there, with a bound: a target the
+  // two steps: aim the list at the item that holds it, then park the row
+  // itself once that item (and with it the row) has mounted. Both run
+  // frame by frame until the row is there, with a bound: a target the
   // transcript no longer holds (a message above the loaded history) must
   // not leave a frame loop behind.
   const jumpToMessage = useCallback(
@@ -2776,21 +2689,18 @@ export function ChatView() {
           `[data-msg-index="${target}"]`,
         );
         if (!row) {
-          // Not mounted: the block that owns the message is somewhere the
-          // viewport is not (a widened window, a list that only holds the
-          // rows around the scroll position). Aim the list at it and read
-          // the row again on the frame that mounts it.
-          const blockIndex = transcriptBlocksRef.current.findIndex((block) =>
-            block.kind === 'turn'
-              ? block.rows.length > 0 &&
-                target >= block.rows[0].i &&
-                target <= block.rows[block.rows.length - 1].i
-              : block.kind === 'row'
-                ? block.i === target
-                : false,
+          // Not mounted: the row is somewhere the viewport is not (a row
+          // of a widened window, or one the list is holding outside the
+          // band around the scroll position). Aim the list at it — rows
+          // are items, so the item index is the row's own — and read the
+          // row again on the frame that mounts it. A row the fold hides
+          // is not an item at all: the list has nothing to scroll to, and
+          // the walk that asked for it (user rows only) never picks one.
+          const itemIndex = transcriptItemsRef.current.findIndex(
+            (item) => item.kind === 'row' && item.i === target,
           );
-          if (blockIndex >= 0) {
-            transcriptVirtualizer.scrollToIndex(blockIndex, {
+          if (itemIndex >= 0) {
+            transcriptVirtualizer.scrollToIndex(itemIndex, {
               align: 'start',
             });
           }
@@ -2828,6 +2738,21 @@ export function ChatView() {
     if (scroller) scroller.scrollTop = scroller.scrollHeight;
     schedulePeekRefresh();
   }, [schedulePeekRefresh]);
+  // A prompt is the one row of the transcript that must not be missed:
+  // the host is blocked on it, its card sits at the tail of the list, and
+  // it takes the keyboard as it arrives (InteractionCard). A caret in a
+  // card the reader cannot see would eat their next keystrokes, so a
+  // prompt that lands while this conversation is the one on screen puts
+  // the view back on the newest row — the same snap the jump-to-latest
+  // pill performs, and the same rule the card follows when a settings
+  // dialog is open (it waits rather than taking the keyboard, but it
+  // still has to be *there* when that closes).
+  const promptIDsRef = useRef<ReadonlySet<string>>(EMPTY_TURNS);
+  useEffect(() => {
+    const seen = promptIDsRef.current;
+    promptIDsRef.current = new Set(pendingInteracts.map((p) => p.id));
+    if (pendingInteracts.some((p) => !seen.has(p.id))) jumpToLatest();
+  }, [pendingInteracts, jumpToLatest]);
   const { t } = useTranslation();
   // The three chat actions the shell cannot reach on its own (see
   // lib/chatTargets.ts): focus the composer, walk the transcript user
@@ -3074,12 +2999,11 @@ export function ChatView() {
 
   // The follow effect above runs on a commit. Content that grows without
   // one — a reply's markdown landing, an image decoding, the list
-  // measuring a block it had only estimated — makes the transcript taller
+  // measuring an item it had only estimated — makes the transcript taller
   // on its own, which would leave a pinned reader a little short of the
   // bottom until the next flush. The list's own observer covers that gap.
   useEffect(() => {
-    const list = transcriptListRef.current;
-    if (!list || !windowedTranscript || typeof ResizeObserver === 'undefined') {
+    if (!transcriptList || typeof ResizeObserver === 'undefined') {
       return;
     }
     const observer = new ResizeObserver(() => {
@@ -3087,9 +3011,9 @@ export function ChatView() {
       if (!el || !stickRef.current || document.hidden) return;
       el.scrollTop = el.scrollHeight;
     });
-    observer.observe(list);
+    observer.observe(transcriptList);
     return () => observer.disconnect();
-  }, [windowedTranscript]);
+  }, [transcriptList]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(refreshPeekCurrent);
@@ -3413,83 +3337,83 @@ export function ChatView() {
     );
   }
 
-  // renderTranscriptBlock draws one block of the transcript list. The two
-  // shapes are the ones the transcript has always had — a folded turn, or
-  // the loose rows the window falls back on when it starts mid-turn — and
-  // a block carries the row markup either way; only the list around them
-  // (windowed or mounted whole) differs.
-  const renderTranscriptBlock = (block: TranscriptBlock, blockOffset = 0) => {
-    if (block.kind === 'interact') {
+  // renderTranscriptItem draws one item of the transcript list. Rows are
+  // the transcript's own markup; the rest is a turn's chrome — the header
+  // that folds its steps, the rule under them, its tail (strip, worked
+  // label, end notice) — or a prompt. Each row carries what it needs to
+  // know about its turn: the list is flat, so nothing is inherited from a
+  // wrapper, and a row is the same row whether its turn's header is on
+  // screen or a screen above.
+  const renderTranscriptItem = (item: TranscriptItem) => {
+    if (item.kind === 'interact') {
       return (
         <InteractionCard
-          spec={block.spec}
+          spec={item.spec}
           onAnswered={() => composerRef.current?.focus()}
         />
       );
     }
-    if (block.kind === 'turn') {
-      const turn = block.turn;
-      const running = busy && turn === lastTurn;
-      const archivedEnd = archivedTurnEndKind(turn.status);
-      const liveEnd = !busy && failedTurn && turn === lastTurn;
-      const endStatus =
-        archivedEnd ?? (liveEnd ? failedTurn.status : undefined);
-      const endError =
-        turn.error ?? (liveEnd && failedTurn ? failedTurn.error : undefined);
+    if (item.kind === 'work') {
       return (
-        <TurnBlock
-          turn={turn}
-          turnIdx={block.turnIdx}
-          rows={block.rows}
-          running={running}
-          busy={busy}
-          endStatus={endStatus}
-          endError={endError}
-          requestID={turn.requestID}
-          responseID={turn.responseID}
-          liveEnd={Boolean(liveEnd)}
-          forking={forking}
-          latest={turn === lastTurn}
-          scrollContainer={() => scrollRef.current}
-          blockOffset={blockOffset}
-          onFork={setForkTarget}
-          onDismissFailure={clearLastFailed}
-          onContinue={continueTurn}
-          onEditResend={editTurnMessage}
+        <TurnSummaryHeader
+          running={busy && item.turn === lastTurn}
+          durationMs={item.turn.durationMs}
+          processCount={item.processCount}
+          open={openTurns.has(item.turn.id)}
+          onToggle={() => toggleTurn(item.turn.id)}
         />
       );
     }
-    const msg = block.msg;
-    const i = block.i;
-    const turn = turnForIndex(turnArtifacts, i);
-    const turnIdx = turn ? (turnIndexById.get(turn) ?? -1) : -1;
-    const turnStart = turnIdx >= 0 && turnArtifacts[turnIdx].start === i;
-    const isTurnEnd =
-      turnIdx >= 0 &&
-      i ===
-        (turnIdx + 1 < turnArtifacts.length
-          ? turnArtifacts[turnIdx + 1].start - 1
-          : messages.length - 1);
-    const showArtifacts = isTurnEnd && (turn?.docs.length ?? 0) > 0;
-    const showWorked = isTurnEnd && msg.role === 'assistant' && !!turn;
-    const archivedEnd = isTurnEnd
-      ? archivedTurnEndKind(turn?.status)
-      : undefined;
-    const liveEnd = isTurnEnd && failedTurn && turn === lastTurn;
-    const endStatus = archivedEnd ?? (liveEnd ? failedTurn.status : undefined);
-    // Only the newest turn's interruption can be continued: an older one
-    // has been answered over since, so its "continue" would just repeat
-    // history.
-    const resumable =
-      (endStatus === 'interrupted' ||
-        endedOnDeadline(endStatus, turn?.errorKind)) &&
-      turn === lastTurn &&
-      !busy;
+    if (item.kind === 'rule') {
+      return <div aria-hidden="true" className="h-px bg-edge" />;
+    }
+    if (item.kind === 'footer') {
+      const turn = item.turn;
+      return (
+        <div className="space-y-2">
+          {turn.docs.length > 0 && <ArtifactStrip docs={turn.docs} />}
+          {item.statusLine && <TurnStatusLine durationMs={turn.durationMs} />}
+          {turn.compaction &&
+            (turn.compaction.folds > 0 ||
+              (turn.compaction.failures ?? 0) > 0 ||
+              turn.compaction.notified) && (
+              <CompactionNotice
+                folds={turn.compaction.folds}
+                failures={turn.compaction.failures}
+                notified={turn.compaction.notified}
+              />
+            )}
+          {item.endStatus && (
+            <TurnEndNotice
+              status={item.endStatus}
+              error={item.endError}
+              interruptCause={turn.interruptCause}
+              errorKind={turn.errorKind}
+              requestID={turn.requestID}
+              responseID={turn.responseID}
+              live={item.liveEnd}
+              onDismiss={item.liveEnd ? clearLastFailed : undefined}
+              onContinue={item.resumable ? continueTurn : undefined}
+              onEditResend={item.resumable ? editTurnMessage : undefined}
+            />
+          )}
+        </div>
+      );
+    }
+    const msg = item.msg;
+    const i = item.i;
+    const turn = item.turn;
+    // The actions (copy, fork) belong to the turn's reply: the assistant
+    // row a user row follows — the next turn's question, or what the user
+    // typed after the reply landed — or the transcript's last row.
     const isAssistantTurnLast =
       msg.role === 'assistant' &&
       (i === messages.length - 1 || messages[i + 1]?.role === 'user');
     const assistantStreaming =
       busy && msg.role === 'assistant' && i === messages.length - 1;
+    const archivedEnd = archivedTurnEndKind(turn?.status);
+    const liveEnd = !busy && failedTurn !== undefined && turn === lastTurn;
+    const endStatus = archivedEnd ?? (liveEnd ? failedTurn?.status : undefined);
     const canFork =
       isAssistantTurnLast &&
       !assistantStreaming &&
@@ -3497,42 +3421,20 @@ export function ChatView() {
       !endStatus &&
       Boolean(turn?.runID);
     return (
-      <>
-        <MessageRow
-          msg={msg}
-          busy={busy}
-          isTurnLast={isAssistantTurnLast}
-          msgIndex={i}
-          turnIndex={turnIdx}
-          turnStart={turnStart}
-          forkable={canFork}
-          onFork={canFork && turn ? () => setForkTarget(turn) : undefined}
-          requestedAt={turn?.requestedAt}
-          startedAt={turn?.startedAt}
-          streaming={assistantStreaming}
-        />
-        {showArtifacts && turn && (
-          <>
-            <ArtifactStrip docs={turn.docs} />
-            <TurnStatusLine durationMs={turn.durationMs} />
-          </>
-        )}
-        {showWorked && !showArtifacts && (
-          <TurnStatusLine durationMs={turn?.durationMs} />
-        )}
-        {endStatus && turn && (
-          <TurnEndNotice
-            status={endStatus}
-            error={liveEnd ? (turn.error ?? failedTurn?.error) : turn.error}
-            interruptCause={turn.interruptCause}
-            errorKind={turn.errorKind}
-            live={Boolean(liveEnd)}
-            onDismiss={liveEnd ? clearLastFailed : undefined}
-            onContinue={resumable ? continueTurn : undefined}
-            onEditResend={resumable ? editTurnMessage : undefined}
-          />
-        )}
-      </>
+      <MessageRow
+        msg={msg}
+        busy={busy}
+        isTurnLast={isAssistantTurnLast}
+        msgIndex={i}
+        turnIndex={item.turnIdx}
+        turnStart={item.turnStart}
+        forkable={canFork}
+        forkTurn={turn}
+        onFork={setForkTarget}
+        requestedAt={turn?.requestedAt}
+        startedAt={turn?.startedAt}
+        streaming={assistantStreaming}
+      />
     );
   };
 
@@ -3697,7 +3599,7 @@ export function ChatView() {
               it, so it still explains the missing rows when the reader
               has gone as far back as the transcript reaches. It also
               keeps the list's coordinate space clean — the list begins
-              at the scroller's origin, and a block that scrolled with the
+              at the scroller's origin, and a warning that scrolled with the
               content would offset every row under it. */}
           {historyWarning && (
             <div className="mx-6 mt-4 flex items-center gap-2 rounded-card border border-edge bg-panel2 px-3 py-2 text-xs text-dim">
@@ -3776,13 +3678,17 @@ export function ChatView() {
                   </div>
                 )}
               </div>
-            ) : windowedTranscript ? (
-              // The list owns the scroller's coordinate space: the blocks
-              // are absolutely positioned at the offsets it computed, and
-              // the container reserves the full height so the scrollbar
-              // still describes the whole transcript.
+            ) : (
+              // The list owns the scroller's coordinate space: the items are
+              // absolutely positioned at the offsets it computed, and the
+              // container reserves the full height so the scrollbar still
+              // describes the whole transcript. There is no unwindowed path
+              // — a short transcript simply has all its items near the
+              // viewport — and the room between two items is the item's own
+              // pad (8px inside a turn, 16px where one ends), with the
+              // scroller's own py-4 carried by the list's padding.
               <div
-                ref={transcriptListRef}
+                ref={setTranscriptList}
                 data-transcript-list
                 className="max-w-4xl mx-auto"
                 style={{
@@ -3790,33 +3696,27 @@ export function ChatView() {
                   position: 'relative',
                 }}
               >
-                {transcriptVirtualizer.getVirtualItems().map((item) => (
-                  <div
-                    key={item.key}
-                    data-transcript-index={item.index}
-                    ref={transcriptVirtualizer.measureElement}
-                    className="absolute inset-x-0 space-y-4"
-                    style={{ transform: `translateY(${item.start}px)` }}
-                  >
-                    {renderTranscriptBlock(
-                      transcriptBlocks[item.index],
-                      item.start,
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              // Below the threshold the blocks mount whole, and the scroller
-              // pads them the way it always has. The windowed branch above
-              // gets the same 16px from the list itself (paddingStart/End and
-              // its gap), which is where that padding had to go once the
-              // items stopped being laid out in flow.
-              <div className="max-w-4xl mx-auto space-y-4 py-4">
-                {transcriptBlocks.map((block) => (
-                  <Fragment key={block.key}>
-                    {renderTranscriptBlock(block)}
-                  </Fragment>
-                ))}
+                {transcriptVirtualizer.getVirtualItems().map((virtualItem) => {
+                  const item = transcriptItems[virtualItem.index];
+                  if (!item) return null;
+                  return (
+                    <div
+                      key={virtualItem.key}
+                      data-transcript-index={virtualItem.index}
+                      data-turn-index={
+                        item.turnIdx >= 0 ? item.turnIdx : undefined
+                      }
+                      ref={transcriptVirtualizer.measureElement}
+                      className="absolute inset-x-0"
+                      style={{
+                        transform: `translateY(${virtualItem.start}px)`,
+                        paddingBottom: item.pad,
+                      }}
+                    >
+                      {renderTranscriptItem(item)}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
