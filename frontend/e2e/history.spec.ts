@@ -35,15 +35,25 @@ test('resumes a long session with windowed transcript', async ({ page }) => {
   // The sidebar lists the resumed session; click it to load history.
   await page.getByRole('button', { name: 'Long session' }).click();
   await expect(page.getByText('message-249')).toBeVisible();
-  await expect(page.getByText('message-0')).not.toBeVisible();
+  // Hydration stops at the newest page: the head of the session is not
+  // loaded at all.
+  await expect(page.getByText('message-0')).not.toBeAttached();
 
-  // Hydration stops at the newest page: reaching the top asks the
-  // archive for one more page of older turns instead of the whole
-  // session arriving up front.
+  // Reaching the top asks the archive for one more page of older turns
+  // instead of the whole session arriving up front.
   const scroller = page.getByTestId('chat-scroll');
+  const height = () => scroller.evaluate((el) => el.scrollHeight);
+  const before = await height();
   await scroller.evaluate((el) => el.scrollTo(0, 0));
-  await expect(page.getByText('message-234')).toBeVisible();
-  await expect(page.getByText('message-0')).not.toBeVisible();
+  // The page lands above the reader, who is anchored to the rows that were
+  // on screen: the transcript grew, and the scroller is no longer at its
+  // top. The windowed list mounts a screenful around the reader, so the
+  // proof that a page arrived is the growth and the anchor, not a row.
+  await expect.poll(height).toBeGreaterThan(before);
+  await expect
+    .poll(() => scroller.evaluate((el) => el.scrollTop))
+    .toBeGreaterThan(0);
+  await expect(page.getByText('message-0')).not.toBeAttached();
 
   // Keep reading upwards and the first turn eventually lands.
   await loadAllHistory(page);
@@ -81,6 +91,12 @@ test('opening a session from a transcript parked at the top lands on the newest 
   await page.getByRole('button', { name: 'Session A' }).click();
   await expect(page.getByText('a-249', { exact: true })).toBeVisible();
   const scroller = page.getByTestId('chat-scroll');
+  // A scroll only unpins if it moves something: wait for the transcript to
+  // have a range (its rows and the composer's inset both laid out) before
+  // asking for its top.
+  await expect
+    .poll(() => scroller.evaluate((el) => el.scrollHeight - el.clientHeight))
+    .toBeGreaterThan(0);
   await scroller.evaluate((el) => el.scrollTo(0, 0));
   await expect(
     page.getByRole('button', { name: 'Jump to latest' }),

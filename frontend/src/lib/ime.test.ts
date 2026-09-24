@@ -101,6 +101,19 @@ describe('imeKeyOwner', () => {
     expect(second.defaultPrevented).toBe(false);
   });
 
+  it('ignores a keydown the app owned when judging the same press', () => {
+    // An ordinary keydown says nothing about the composition, so it must
+    // not answer the question compositionend asks. Taking the last
+    // keydown of any kind as "this press was already reported" disarms
+    // the guard — and the stray Enter runs the highlighted command.
+    const input = field();
+    keydown(input, { key: 'Enter' }); // the app's own press, moments before
+    fireEvent.compositionEnd(input);
+    const stray = keydown(input, { key: 'Enter' });
+    expect(imeKeyOwner(stray)).toBe('committed');
+    expect(stray.defaultPrevented).toBe(true);
+  });
+
   it('expires: a commit with no key at all does not eat the next Enter', () => {
     vi.useFakeTimers();
     try {

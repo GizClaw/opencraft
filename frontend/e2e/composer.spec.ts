@@ -95,11 +95,13 @@ test('floats over the transcript and keeps the newest reply clear', async ({
   // row — and the card — where they were: the card floats, it is not a
   // row that the scroll position can move.
   // Hydration starts from the newest turns only, so page the rest in
-  // first; the assertion below reads a row from the middle of the
-  // session.
+  // first, then read the session from its oldest end: what the card has
+  // to survive is the transcript moving under it, and the rows that are
+  // in the DOM are the ones the reader is looking at (the transcript is
+  // windowed, so a row far below the viewport is not mounted at all).
   await loadAllHistory(page);
   await scroll.evaluate((el) => el.scrollTo(0, 0));
-  await expect(page.getByText('ask-20')).toBeVisible();
+  await expect(page.getByText('ask-0', { exact: true })).toBeVisible();
   const parked = await card.boundingBox();
   expect(parked?.y).toBeCloseTo(cardBox.y, 0);
 });

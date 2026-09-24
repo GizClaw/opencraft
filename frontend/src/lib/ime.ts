@@ -71,19 +71,24 @@ const GUARDED_KEYS: readonly string[] = ['Enter', 'Escape'];
 // must not be eaten.
 const STRAY_WINDOW_MS = 150;
 
-// A keydown this close to compositionend is the press that ended the
-// composition, reported in the order WebKit and Gecko use. Nothing more is
-// coming for that press, so nothing is armed. Without this gate the second
-// Enter of the commit-then-send double press — the normal way to send a
-// just-committed Chinese sentence on macOS — would be swallowed.
+// A composition keydown this close to compositionend is the press that
+// ended the composition, reported in the order WebKit and Gecko use.
+// Nothing more is coming for that press, so nothing is armed. Without this
+// gate the second Enter of the commit-then-send double press — the normal
+// way to send a just-committed Chinese sentence on macOS — would be
+// swallowed.
 const SAME_PRESS_MS = 30;
 
 // Armed by a compositionend whose press the page has not seen yet; the
 // stamp of that event, or -1 when disarmed.
 let strayArmedAt = -1;
-// The stamp of the last keydown, whatever it was, so compositionend can
-// tell whether the press ending the composition was already reported.
-let lastKeydownAt = -Infinity;
+// The stamp of the last keydown the composition owned, so compositionend
+// can tell whether the press ending the composition was already reported.
+// Only a composition keydown can be that press: an ordinary keydown is no
+// evidence about the composition, and reading one as "already reported"
+// would disarm the guard on the strength of an unrelated press — the stray
+// Enter would run the highlighted command after all.
+let lastComposingKeydownAt = -Infinity;
 
 // What has already been decided about an event object. A single keydown
 // passes the shell's window listener, this module's document listener and
@@ -144,14 +149,16 @@ function listen(): void {
     'compositionend',
     (event) => {
       const end = stampOf(event);
-      strayArmedAt = end - lastKeydownAt >= SAME_PRESS_MS ? end : -1;
+      strayArmedAt = end - lastComposingKeydownAt >= SAME_PRESS_MS ? end : -1;
     },
     true,
   );
   document.addEventListener(
     'keydown',
     (event) => {
-      lastKeydownAt = stampOf(event);
+      if (event.isComposing || event.keyCode === 229) {
+        lastComposingKeydownAt = stampOf(event);
+      }
       if (classify(event) !== 'committed') return;
       // The IME already took this press. Cancel it here so nothing
       // downstream acts on it: not the focused surface, not a default
@@ -170,7 +177,7 @@ listen();
  * no reason to (every sequence it sees is ended by the engine). */
 export function resetIMEState(): void {
   strayArmedAt = -1;
-  lastKeydownAt = -Infinity;
+  lastComposingKeydownAt = -Infinity;
 }
 
 export interface CompositionBinding {
