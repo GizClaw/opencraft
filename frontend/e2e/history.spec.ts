@@ -81,6 +81,12 @@ test('opening a session from a transcript parked at the top lands on the newest 
   await page.getByRole('button', { name: 'Session A' }).click();
   await expect(page.getByText('a-249', { exact: true })).toBeVisible();
   const scroller = page.getByTestId('chat-scroll');
+  // A scroll only unpins if it moves something: wait for the transcript to
+  // have a range (its rows and the composer's inset both laid out) before
+  // asking for its top.
+  await expect
+    .poll(() => scroller.evaluate((el) => el.scrollHeight - el.clientHeight))
+    .toBeGreaterThan(0);
   await scroller.evaluate((el) => el.scrollTo(0, 0));
   await expect(
     page.getByRole('button', { name: 'Jump to latest' }),

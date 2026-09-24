@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Locator } from '@playwright/test';
 import { mockBackend } from './mock/backend';
 
 function turns(n: number) {
@@ -14,6 +14,76 @@ function turns(n: number) {
     artifacts: [],
   }));
 }
+
+// turnsOf builds `count` turns of `each` messages: the shape a working
+// session has, where one turn is a whole tool-using exchange rather than a
+// single line. Hydration keeps the newest six turns, so this is also what
+// decides how many messages are loaded when the session opens.
+function turnsOf(count: number, each: number, prefix = 'msg') {
+  return Array.from({ length: count }, (_, t) => ({
+    seq: t + 1,
+    at: '2026-01-01T00:00:00Z',
+    messages: Array.from({ length: each }, (_, m) => ({
+      role: m === 0 ? 'user' : 'assistant',
+      content: { parts: [{ type: 'text', text: `${prefix}-${t}-${m}` }] },
+    })),
+    artifacts: [],
+  }));
+}
+
+test('mounts a screenful of a long session, not the whole render window', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.addInitScript(mockBackend as never, {
+    workspace: '/Users/me/projects/opencraft',
+    listSessions: [
+      {
+        id: 's-long',
+        title: 'Long session',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-02T00:00:00Z',
+        messages: 315,
+        total_tokens: 0,
+      },
+    ],
+    // Six turns of 45 messages arrive with hydration: 270 messages, more
+    // than the 200-message render window, with the window's first turn
+    // starting mid-turn (the flat shape the transcript falls back on).
+    sessionTurns: turnsOf(7, 45),
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Long session' }).click();
+
+  const scroller = page.getByTestId('chat-scroll');
+  const rows = scroller.locator('[data-msg-index]');
+  await expect(page.getByText('msg-6-44', { exact: true })).toBeVisible();
+  // The DOM is what the reader can reach, not what is loaded: a screenful
+  // of rows around the newest one, out of the 270 in the window.
+  expect(await rows.count()).toBeLessThan(40);
+  const oldestRendered = () =>
+    rows.evaluateAll((els) =>
+      Math.min(...els.map((el) => Number(el.dataset.msgIndex))),
+    );
+  const oldest = await oldestRendered();
+  expect(oldest).toBeGreaterThan(200);
+
+  // Reading upwards mounts the rows above as they come into view, and
+  // nothing else: the count stays a screenful however far the reader goes.
+  await scroller.evaluate((el) => {
+    el.scrollTop -= 2500;
+  });
+  await expect.poll(oldestRendered).toBeLessThan(oldest);
+  expect(await rows.count()).toBeLessThan(40);
+
+  // The scrollbar still describes the whole transcript: the list reserves
+  // the height of the blocks it has not measured.
+  const sizes = await scroller.evaluate((el) => ({
+    height: el.scrollHeight,
+    viewport: el.clientHeight,
+  }));
+  expect(sizes.height).toBeGreaterThan(sizes.viewport * 5);
+});
 
 test('renders a 5000-message session inside the render window', async ({
   page,
@@ -213,17 +283,90 @@ test('windows a long process list instead of mounting every row', async ({
         total_tokens: 0,
       },
     ],
-    sessionTurns: processTurn(120),
+    // A tall turn before the one that is expanded: without it the process
+    // list starts at the scroller's origin, and a list that measured the
+    // viewport against its own top instead of its position in the
+    // transcript would look right by accident.
+    sessionTurns: [...fillerTurn(60), ...processTurn(120)],
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'Many steps' }).click();
   await expect(page.getByText('all steps done')).toBeVisible();
 
+  const scroller = page.getByTestId('chat-scroll');
+  const rows = scroller.locator('[data-index]');
   await page.getByRole('button', { name: /Worked for/ }).click();
-  const rows = page.getByTestId('chat-scroll').locator('[data-index]');
   await expect.poll(() => rows.count()).toBeGreaterThan(0);
   // A screenful (plus overscan) of the 120 rows is mounted, not all of
   // them; the transcript still ends with the final answer.
   expect(await rows.count()).toBeLessThan(60);
   await expect(page.getByText('all steps done')).toBeVisible();
+
+  // Read the expanded list from its end...
+  await scroller.evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  // The rows the list mounted are the rows on screen. The list is measured
+  // in the scroller's coordinates: one that measured the viewport against
+  // its own top instead would mount a slice somewhere else entirely and
+  // leave the stretch the reader is looking at empty.
+  await expect.poll(() => rowsOnScreen(scroller)).toBe(true);
+  // Reading into the middle of the list keeps the two together — where the
+  // list no longer sits at the end of the transcript, a list that got this
+  // wrong would mount its rows two screens below the viewport.
+  await scroller.evaluate((el) => {
+    const list = el.querySelector('[data-index]')?.parentElement;
+    if (!list) return;
+    const top =
+      list.getBoundingClientRect().top -
+      el.getBoundingClientRect().top +
+      el.scrollTop;
+    el.scrollTop = top + 3000;
+  });
+  await expect.poll(() => rowsOnScreen(scroller)).toBe(true);
+  expect(await rows.count()).toBeLessThan(60);
 });
+
+// rowsOnScreen answers whether any mounted process row is inside the
+// scroller's box: the list is windowed, so the rows on screen are the ones
+// it decided to mount.
+function rowsOnScreen(scroller: Locator): Promise<boolean> {
+  return scroller.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    return Array.from(el.querySelectorAll('[data-index]')).some((row) => {
+      const r = row.getBoundingClientRect();
+      return r.bottom > box.top && r.top < box.bottom;
+    });
+  });
+}
+
+// fillerTurn is a turn that is tall without being a process list: a reply
+// of `paragraphs` blocks, enough to push whatever follows it down the
+// scroller.
+function fillerTurn(paragraphs: number): unknown[] {
+  return [
+    {
+      seq: 1,
+      at: '2026-01-01T00:00:00Z',
+      artifacts: [],
+      messages: [
+        {
+          role: 'user',
+          content: { parts: [{ type: 'text', text: 'read this first' }] },
+        },
+        {
+          role: 'assistant',
+          content: {
+            parts: [
+              {
+                type: 'text',
+                text: Array.from(
+                  { length: paragraphs },
+                  (_, i) => `filler paragraph ${i}`,
+                ).join('\n\n'),
+              },
+            ],
+          },
+        },
+      ],
+    },
+  ];
+}

@@ -7,7 +7,7 @@ import {
   within,
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
 import { stateRoot } from '../state/app';
 import type { MessageView, TurnArtifacts } from '../lib/store';
@@ -123,39 +123,128 @@ beforeEach(() => {
   apiMock.processes.mockResolvedValue([]);
 });
 
+// stubTranscriptGeometry answers the layout questions a windowed transcript
+// asks and jsdom cannot: how tall the viewport is (600px), how tall a block
+// is once mounted (120px), and where the scroller is (a scroll position the
+// test can move; the bottom until it does, which is where a session opens).
+// The stubs sit on the prototypes because the list reads them while the
+// transcript is being committed — before a test can hold the element. Fair
+// warning: every element answers with the same 800x600 box, so this is for
+// tests that read the transcript, not for tests that measure anything.
+function stubTranscriptGeometry(): () => void {
+  const keys = [
+    'getBoundingClientRect',
+    'clientHeight',
+    'scrollHeight',
+    'scrollTop',
+    'offsetHeight',
+  ] as const;
+  const saved = new Map<
+    (typeof keys)[number],
+    PropertyDescriptor | undefined
+  >();
+  for (const key of keys) {
+    saved.set(key, Object.getOwnPropertyDescriptor(HTMLElement.prototype, key));
+  }
+  const offsets = new WeakMap<HTMLElement, number>();
+  // listHeight is what the transcript's own container reserves: the
+  // scroller's scrollHeight follows it, so a pin to the bottom lands where
+  // the app means it to.
+  const listHeight = function (this: HTMLElement) {
+    const list = this.querySelector?.('[data-transcript-list]');
+    const height = Number.parseFloat(
+      (list as HTMLElement | null)?.style.height ?? '',
+    );
+    return Number.isFinite(height) ? height : 0;
+  };
+  Object.defineProperties(HTMLElement.prototype, {
+    getBoundingClientRect: {
+      configurable: true,
+      value: () => ({
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        width: 800,
+        height: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+    },
+    clientHeight: { configurable: true, get: () => 600 },
+    offsetHeight: { configurable: true, get: () => 120 },
+    scrollHeight: {
+      configurable: true,
+      get(this: HTMLElement) {
+        return Math.max(this.clientHeight, listHeight.call(this));
+      },
+    },
+    scrollTop: {
+      configurable: true,
+      get(this: HTMLElement) {
+        return offsets.get(this) ?? this.scrollHeight;
+      },
+      set(this: HTMLElement, value: number) {
+        offsets.set(this, value);
+      },
+    },
+  });
+  return () => {
+    for (const key of keys) {
+      const descriptor = saved.get(key);
+      if (descriptor) {
+        Object.defineProperty(HTMLElement.prototype, key, descriptor);
+      } else {
+        delete (HTMLElement.prototype as unknown as Record<string, unknown>)[
+          key
+        ];
+      }
+    }
+  };
+}
+
+// Every test that stubs the geometry gets it taken back afterwards, so a
+// failing assertion cannot leave the next test laying out in 600px.
+let restoreTranscriptGeometry: (() => void) | null = null;
+afterEach(() => {
+  restoreTranscriptGeometry?.();
+  restoreTranscriptGeometry = null;
+});
+
 describe('ChatView transcript windowing', () => {
-  it('renders only the newest 200 messages and loads earlier at the top', () => {
+  it('mounts a screenful and loads earlier at the top', async () => {
+    restoreTranscriptGeometry = stubTranscriptGeometry();
     setConversation(manyMessages(250));
     render(<ChatView />);
 
     const scroller = screen.getByTestId('chat-scroll');
-    // Oldest messages are not mounted; the tail is.
-    expect(within(scroller).queryByText('message-0')).not.toBeInTheDocument();
-    expect(within(scroller).getByText('message-50')).toBeInTheDocument();
+    const mounted = () =>
+      Array.from(scroller.querySelectorAll('[data-msg-index]')).map((el) =>
+        Number(el.getAttribute('data-msg-index')),
+      );
+    // A session opens at its newest row: that row is mounted, the ones just
+    // above it are, and the rest of the 200 the render window holds are not.
     expect(within(scroller).getByText('message-249')).toBeInTheDocument();
+    expect(mounted().length).toBeLessThan(20);
+    expect(Math.min(...mounted())).toBeGreaterThan(200);
+    expect(within(scroller).queryByText('message-0')).not.toBeInTheDocument();
 
-    Object.defineProperty(scroller, 'scrollHeight', {
-      configurable: true,
-      value: 10_000,
-    });
-    Object.defineProperty(scroller, 'clientHeight', {
-      configurable: true,
-      value: 500,
-    });
-    Object.defineProperty(scroller, 'scrollTop', {
-      configurable: true,
-      value: 0,
-      writable: true,
-    });
-    // Pin at the bottom first (the mount snap is async, so record a
-    // real scroll position), then jump to the top to read history.
-    scroller.scrollTop = 9500;
-    fireEvent.scroll(scroller);
+    // Reading to the top asks for the window above the one that is loaded.
+    // The rows land *above* the reader — the viewport is anchored to the
+    // content that was on screen — so the newest row, thousands of pixels
+    // down by now, leaves the DOM.
     scroller.scrollTop = 0;
     fireEvent.scroll(scroller);
+    await waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+    expect(within(scroller).queryByText('message-249')).not.toBeInTheDocument();
 
-    expect(within(scroller).getByText('message-0')).toBeInTheDocument();
-    expect(within(scroller).queryByText('message-249')).toBeInTheDocument();
+    // The whole session is loaded now. Asking for the top again mounts its
+    // first row — and the DOM is still a screenful, not 250 rows.
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+    expect(await within(scroller).findByText('message-0')).toBeInTheDocument();
+    expect(mounted().length).toBeLessThan(20);
   });
 
   it('keeps the full transcript when it fits in the window', () => {
@@ -1506,6 +1595,7 @@ describe('ChatView interrupted turn recovery', () => {
   });
 
   it('offers Continue from a windowed transcript', async () => {
+    restoreTranscriptGeometry = stubTranscriptGeometry();
     const messages: MessageView[] = [
       {
         id: 'm-0',
@@ -1692,6 +1782,7 @@ describe('ChatView jump-to-latest pill', () => {
   // rendering cost needs instead of a thinner fixture that would stop
   // proving the window sits at the newest row.
   it('re-pins the follow when another conversation is opened', () => {
+    restoreTranscriptGeometry = stubTranscriptGeometry();
     setConversation(manyMessages(250));
     render(<ChatView />);
 

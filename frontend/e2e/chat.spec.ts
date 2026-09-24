@@ -2,6 +2,69 @@ import { expect, test } from '@playwright/test';
 import { mockBackend } from './mock/backend';
 import { typeComposerMessage } from './helpers';
 
+// The transcript follows the newest output while a reply streams, and the
+// list only mounts the blocks around the viewport — so a reply that grows
+// past the viewport has to keep the viewport on the line being written, the
+// one row that is growing rather than the block it started in.
+test('follows a streamed reply past the bottom of the viewport', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    startTurn: { run_id: 'r-1', context_id: 's-1' },
+  });
+  await page.goto('/');
+  await typeComposerMessage(page, 'write the changelog');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(
+    page.getByTestId('chat-scroll').getByText('write the changelog'),
+  ).toBeVisible();
+
+  const emitText = (text: string) =>
+    page.evaluate(
+      (d) =>
+        (window as never as { __emit: (n: string, v: unknown) => void }).__emit(
+          'opencraft:ui',
+          d,
+        ),
+      {
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: { type: 'part', part: { type: 'text', text } },
+        },
+      },
+    );
+  const lines = (from: number, to: number) =>
+    Array.from({ length: to - from }, (_, i) => `line ${from + i}`).join(
+      '\n\n',
+    );
+  const scroller = page.getByTestId('chat-scroll');
+  for (let i = 0; i < 8; i += 1) {
+    await emitText(`${lines(i * 12, i * 12 + 12)}\n\n`);
+  }
+
+  // The reply is much taller than the viewport and the reader never
+  // scrolled: the newest line is on screen and the scroll sits at the end.
+  await expect(page.getByText('line 95')).toBeInViewport();
+  await expect
+    .poll(() =>
+      scroller.evaluate(
+        (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+      ),
+    )
+    .toBeLessThan(2);
+
+  // Reading up during the stream unpins it: the next delta lands below the
+  // fold instead of dragging the reader back down.
+  await scroller.evaluate((el) => el.scrollTo(0, 0));
+  await emitText(`${lines(96, 108)}\n\n`);
+  await expect(page.getByText('line 107')).toBeAttached();
+  await expect
+    .poll(() => scroller.evaluate((el) => el.scrollTop))
+    .toBeLessThan(50);
+});
+
 test('sends a message and renders the streamed tool call', async ({ page }) => {
   await page.addInitScript(mockBackend as never, {
     startTurn: { run_id: 'r-1', context_id: 's-1' },
