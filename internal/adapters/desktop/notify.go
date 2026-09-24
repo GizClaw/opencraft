@@ -119,7 +119,7 @@ func (d *Desktop) sendNotification(id, title, body string) {
 // sessionTitle resolves the persisted conversation title for the current
 // workspace Host. It falls back to "" so callers can use the app name.
 func (d *Desktop) sessionTitle(contextID string) string {
-	h := d.core.Runtime.Current()
+	h := d.core.ActiveHost()
 	if h == nil {
 		return ""
 	}

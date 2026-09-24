@@ -197,7 +197,7 @@ func (b *File) readRoots() []readRoot {
 	// Skill packages live outside both roots (user/builtin scopes), so
 	// document-relative references inside a SKILL.md resolve against
 	// the service's registered scan roots.
-	if h := b.core.Runtime.Current(); h != nil &&
+	if h := b.core.ActiveHost(); h != nil &&
 		h.Controller() != nil && h.Controller().Runtime() != nil {
 		if value, ok := h.Controller().Runtime().Resource("skills"); ok {
 			if svc, ok := value.(*skills.Service); ok && svc != nil {

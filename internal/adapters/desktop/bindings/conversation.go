@@ -21,15 +21,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
-const (
-	// startRetryWindow bounds how long StartTurn waits for a
-	// replacement Host after a transient lifecycle error before
-	// surfacing the original error.
-	startRetryWindow = 10 * time.Second
-	// maxStartAttempts caps StartRun retries inside one StartTurn RPC.
-	maxStartAttempts = 3
-)
-
 // Conversation exposes chat lifecycle methods over the active Host.
 type Conversation struct {
 	core *core.Core
@@ -158,97 +149,53 @@ func (b *Conversation) StartTurn(
 			})
 		},
 	}
-	// A Host rebuild can retire the current Host between the frontend
-	// send and StartRun. Those lifecycle guards run before any turn
-	// side effect, so wait for the replacement Host and retry inside
-	// this one RPC instead of surfacing the transient failure. For an
-	// active-workspace turn a switch during the wait aborts the retry
-	// (the replacement Host would serve the new workspace); a
-	// background turn keeps its owner across switches, so it retries
-	// against that workspace's Host either way.
-	notReadyErr := fmt.Errorf("conversation: runtime is not ready")
-	deadline := time.Now().Add(startRetryWindow)
-	var lastErr error
-	for attempt := 0; attempt < maxStartAttempts; attempt++ {
-		h, hostErr := b.turnHost(ctx, workDir, background)
-		switch {
-		case hostErr != nil:
-			lastErr = hostErr
-		case h == nil:
-			lastErr = notReadyErr
-			if strings.TrimSpace(workDir) == "" {
-				return TurnStart{}, lastErr
-			}
-		default:
-			run, err := h.StartRun(ctx, opts)
-			if err == nil {
-				startedAt := time.Now().UTC()
-				b.core.Conversation.TrackRun(workDir, contextID, run.RunID())
-				b.core.Shell.Emit(core.EventStatus, core.StatusEvent{Busy: true})
-				go func() {
-					defer releaseSink()
-					b.waitTurn(ctx, run, contextID)
-				}()
-				return TurnStart{
-					RunID:          run.RunID(),
-					ConversationID: contextID,
-					RequestedAt:    requestedAt.Format(time.RFC3339),
-					StartedAt:      startedAt.Format(time.RFC3339),
-				}, nil
-			}
-			lastErr = err
-			if !host.IsRetryableStartError(lastErr) {
-				return TurnStart{}, lastErr
-			}
-		}
-		if time.Now().After(deadline) ||
-			ctx.Err() != nil ||
-			(!background && !core.SameWorkspace(b.core.ActiveWorkDir(), active)) {
-			return TurnStart{}, lastErr
-		}
-		if err := b.ensureHostWithin(
-			ctx, deadline, workDir, background, lastErr,
-		); err != nil {
-			return TurnStart{}, err
-		}
+	// A Host rebuild can retire the workspace's Host between the
+	// frontend send and StartRun. Those lifecycle guards run before any
+	// turn side effect, so wait for the replacement Host and retry
+	// inside this one RPC instead of surfacing the transient failure.
+	//
+	// A turn meant for the workspace on screen gives up when the window
+	// moves during that wait; a draft draining in a workspace the
+	// window has already left keeps its claim across switches, which is
+	// the same reason it was routed there in the first place.
+	stop := func() bool {
+		return !core.SameWorkspace(b.core.ActiveWorkDir(), workDir)
 	}
-	// No run ever started, so the sink registration would outlive its
-	// reason to exist.
-	releaseSink()
-	return TurnStart{}, lastErr
-}
-
-// turnHost resolves the Host that serves one turn. Active workspaces
-// track the UI (the current Host, replaced when it retires); a
-// workspace the window has left is served by its own pooled Host.
-func (b *Conversation) turnHost(
-	ctx context.Context,
-	workDir string,
-	background bool,
-) (*host.Host, error) {
-	if !background {
-		return b.core.Runtime.Current(), nil
-	}
-	return b.core.Runtime.HostInWorkspace(
-		host.WithAssemblyReason(ctx, host.ReasonConversation), workDir)
-}
-
-// ensureHostWithin waits for a usable Host inside the retry window,
-// using the active-workspace path for the window's workspace and the
-// background path for a workspace the UI has left.
-func (b *Conversation) ensureHostWithin(
-	ctx context.Context,
-	deadline time.Time,
-	workDir string,
-	background bool,
-	lastErr error,
-) error {
 	if background {
-		return b.core.Runtime.EnsureHostInWorkspaceWithin(
-			ctx, deadline, workDir, lastErr,
-		)
+		stop = nil
 	}
-	return b.core.Runtime.EnsureUsableHostWithin(ctx, deadline, workDir, lastErr)
+	start := TurnStart{ConversationID: contextID}
+	err := b.core.Runtime.Do(
+		host.WithAssemblyReason(ctx, host.ReasonConversation),
+		workDir, stop,
+		func(h *host.Host) error {
+			run, err := h.StartRun(ctx, opts)
+			if err != nil {
+				return err
+			}
+			startedAt := time.Now().UTC()
+			b.core.Conversation.TrackRun(workDir, contextID, run.RunID())
+			b.core.Shell.Emit(core.EventStatus, core.StatusEvent{Busy: true})
+			start = TurnStart{
+				RunID:          run.RunID(),
+				ConversationID: contextID,
+				RequestedAt:    requestedAt.Format(time.RFC3339),
+				StartedAt:      startedAt.Format(time.RFC3339),
+			}
+			go func() {
+				defer releaseSink()
+				b.waitTurn(ctx, run, contextID)
+			}()
+			return nil
+		},
+	)
+	if err != nil {
+		// No run ever started, so the sink registration would outlive
+		// its reason to exist.
+		releaseSink()
+		return TurnStart{}, err
+	}
+	return start, nil
 }
 
 // resolveConversationWorkspace returns the workspace that owns one
@@ -315,7 +262,7 @@ func (b *Conversation) workspaceSessions(
 	ctx context.Context,
 	workDir string,
 ) (*sessions.Store, func(), error) {
-	if h := b.core.Runtime.Current(); h != nil && h.Sessions() != nil &&
+	if h := b.core.ActiveHost(); h != nil && h.Sessions() != nil &&
 		core.SameWorkspace(h.WorkDir(), workDir) {
 		return h.Sessions(), func() {}, nil
 	}
@@ -460,7 +407,7 @@ func (b *Conversation) SessionMode() string {
 func (b *Conversation) ResumeSession(id string) error {
 	ctx := b.core.Shell.Context()
 	workDir := b.core.ActiveWorkDir()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return fmt.Errorf("conversation: session store is not ready")
 	}
@@ -487,7 +434,7 @@ func (b *Conversation) ForkTurn(
 ) (string, error) {
 	ctx := b.core.Shell.Context()
 	workDir := b.core.ActiveWorkDir()
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return "", fmt.Errorf("conversation: session store is not ready")
 	}
@@ -529,7 +476,7 @@ func (b *Conversation) SetSessionMode(mode string) error {
 		return fmt.Errorf(
 			"conversation: only yolo sandbox mode is available in this build")
 	}
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h != nil && h.Sessions() != nil {
 		if err := h.Sessions().SetMode(
 			ctx, b.core.Conversation.Current(workDir), m,
@@ -566,29 +513,25 @@ func (b *Conversation) Steer(runID, text string) error {
 // runHost resolves the Host that owns one live run, for the actions a
 // window takes on a run it did not necessarily start in the workspace
 // it is showing. A run attributed to a conversation is served by the
-// workspace that conversation lives in — the workspace's pooled Host
-// when the window has left it, the same routing StartTurn uses — so a
-// steer or a stop reaches a turn the window moved away from instead of
-// dying on whatever Host happens to be current. A run this process did
-// not attribute (an automation task's run) falls back to the current
-// Host, which is the Host its runner acquired when the task's
-// workspace is the one on screen.
+// workspace that conversation lives in — the same routing StartTurn
+// uses — so a steer or a stop reaches a turn the window moved away from
+// instead of dying on whatever Host happens to be on screen. A run this
+// process did not attribute (an automation task's run) falls back to
+// the window's Host, which is the Host its runner acquired when the
+// task's workspace is the one being shown.
 func (b *Conversation) runHost(
 	ctx context.Context,
 	runID string,
 ) (*host.Host, error) {
-	if workDir := b.core.Conversation.WorkspaceForRun(runID); workDir != "" {
-		if h := b.core.Runtime.Current(); h != nil &&
-			core.SameWorkspace(h.WorkDir(), workDir) {
+	workDir := b.core.Conversation.WorkspaceForRun(runID)
+	if workDir == "" {
+		if h := b.core.ActiveHost(); h != nil {
 			return h, nil
 		}
-		return b.core.Runtime.HostInWorkspace(
-			host.WithAssemblyReason(ctx, host.ReasonConversation), workDir)
+		return nil, errNotReady("conversation")
 	}
-	if h := b.core.Runtime.Current(); h != nil {
-		return h, nil
-	}
-	return nil, errNotReady("conversation")
+	return b.core.Runtime.EnsureHost(
+		host.WithAssemblyReason(ctx, host.ReasonConversation), workDir)
 }
 
 // ReplyPrompt answers one pending interaction.

@@ -84,7 +84,7 @@ func (b *Settings) SetThink(level string) error {
 		return fmt.Errorf("unknown think level %q", level)
 	}
 	b.core.Conversation.SetThink(workDir, string(lv))
-	if h := b.core.Runtime.Current(); h != nil && h.Sessions() != nil {
+	if h := b.core.ActiveHost(); h != nil && h.Sessions() != nil {
 		return h.Sessions().SetThink(
 			ctx, b.core.Conversation.Current(workDir), lv,
 		)
@@ -103,7 +103,7 @@ func (b *Settings) SetModel(model string) error {
 	workDir := b.core.ActiveWorkDir()
 	model = strings.TrimSpace(model)
 	b.core.Conversation.SetModel(workDir, model)
-	if h := b.core.Runtime.Current(); h != nil && h.Sessions() != nil {
+	if h := b.core.ActiveHost(); h != nil && h.Sessions() != nil {
 		return h.Sessions().SetModel(
 			ctx, b.core.Conversation.Current(workDir), model,
 		)
@@ -171,7 +171,7 @@ func (b *Settings) DenyEscalatedPermission(rule string) error {
 // execPolicy resolves the shared exec policy manager from the current
 // runtime.
 func (b *Settings) execPolicy() (*execpolicy.Manager, error) {
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Controller() == nil || h.Controller().Runtime() == nil {
 		return nil, errors.New("settings: runtime is not ready")
 	}
@@ -188,7 +188,7 @@ func (b *Settings) execPolicy() (*execpolicy.Manager, error) {
 }
 
 func (b *Settings) skillsService() (*skills.Service, error) {
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Controller() == nil || h.Controller().Runtime() == nil {
 		return nil, errors.New("settings: runtime is not ready")
 	}

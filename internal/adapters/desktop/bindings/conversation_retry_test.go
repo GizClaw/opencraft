@@ -34,22 +34,23 @@ func TestStartTurnRetriesAfterHostRetirement(t *testing.T) {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("rebuild runtime: %v", err)
 	}
-	old := c.Runtime.Current()
+	old := c.ActiveHost()
 	if old == nil {
 		t.Fatal("no current host after rebuild")
 	}
 
-	// Retire the idle Host. Runtime.current still points at the closed
-	// Host, which is exactly the state StartTurn must recover from.
+	// Retire the idle Host. The pool stops serving the workspace with
+	// it — the retiring Host is dropped once its teardown settles — so
+	// this is exactly the state StartTurn must recover from: no Host,
+	// and a start that has to assemble the replacement itself.
 	if err := old.Close(); err != nil {
 		t.Fatalf("close host: %v", err)
 	}
 	if !old.IsClosing() {
 		t.Fatal("closed host must report IsClosing")
 	}
-	if got := c.Runtime.Current(); got != old {
-		t.Fatalf("current after Close = %p, want the retired host %p",
-			got, old)
+	if got := c.ActiveHost(); got != nil {
+		t.Fatalf("current after Close = %p, want the workspace unserved", got)
 	}
 
 	b := NewConversationBinding(c)
@@ -64,7 +65,7 @@ func TestStartTurnRetriesAfterHostRetirement(t *testing.T) {
 		t.Fatalf("start result = %+v, want run and conversation ids", start)
 	}
 
-	replacement := c.Runtime.Current()
+	replacement := c.ActiveHost()
 	if replacement == nil || replacement == old {
 		t.Fatalf("current after retry = %p, want a replacement host", replacement)
 	}

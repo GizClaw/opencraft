@@ -10,6 +10,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // Workspaces lists previously opened workspaces, newest first.
@@ -29,6 +30,15 @@ func (c *Core) ActiveWorkDir() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.WorkDir
+}
+
+// ActiveHost returns the Host serving the window's active workspace, or
+// nil when that workspace has none: never assembled, or already torn
+// down. It is the one way an adapter asks "where do the reads for what
+// the UI shows go"; the pool answers per workspace, so a background
+// acquire for another workspace cannot redirect them.
+func (c *Core) ActiveHost() *host.Host {
+	return c.Runtime.HostFor(c.ActiveWorkDir())
 }
 
 // RecordWorkspace persists one workspace open. Failures are best-effort.

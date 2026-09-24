@@ -442,6 +442,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   racing, reusing its error as well as its result. A storm used to build
   one runtime per waker and close all but the first; the `host: runtime
   assembled` count for one workspace is the number that shows it.
+- Which assembly serves a workspace is now a question only the Host pool
+  answers, asked per workspace, and nothing outside it keeps its own
+  answer. The desktop's runtime service used to hold a process-wide
+  "current Host" pointer plus everything needed to keep it honest: the
+  set of workspaces whose replacement was already armed, a map of which
+  Hosts had been configured, and a second "acquire in the background"
+  entry point whose only job was to keep work for a workspace the window
+  had left from overwriting that pointer. All of it is gone. A
+  workspace's replacement is armed on the pool (`ScheduleReplacement`,
+  one per workspace), and the pool waits out the retiring Host before
+  assembling the successor, consulting the adapter only for whether the
+  workspace is still wanted — a workspace the window has left is not
+  rebuilt behind the user's back — and to announce the one that landed.
+  `Runtime` is left holding the pool and the provider handles, and the
+  deferred-rebuild watcher, the drain wait and the "is a replacement
+  already scheduled" query live where the knowledge already was: who is
+  draining, and who has retired.
+- The retry that carries a call across a Host retirement is one function
+  (`core.Runtime.Do`) instead of a copy per call site. Starting a turn
+  and deleting a conversation each spelled out the same wait-for-a-
+  replacement window, attempt budget and re-ensure sequence by hand, and
+  each re-derived "the request is stale now" from a different expression.
+  The window (bounded by the time left, never by the caller's whole RPC,
+  so a drain can stretch neither past ten seconds), the attempt budget
+  and the classification (`host.IsRetryableStartError`, which stays in
+  the package that mints the guards) now have one home, and the pool
+  supplies the replacement. A caller states what makes its request stale
+  — for the window's own work, the window moving off that workspace —
+  which drops the *retry* but never the first attempt: that attempt is
+  resolved against the workspace the call named rather than against
+  whatever Host is current, so a send that races a workspace switch still
+  lands where its conversation lives.
 - Folding an oversized transcript into memory condenses its shards in
   parallel (at most four requests in flight) rather than one after
   another, and a single message larger than one request is sent as
@@ -682,6 +714,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A turn could be started on the wrong workspace's Host, or refuse to
+  start where a usable Host existed. Recovering from a retired Host
+  meant retrying against "the current Host" — a process-wide pointer
+  that a workspace switch had already moved — so a start that raced a
+  switch was resolved against whatever workspace the window showed
+  instead of the one that owns the conversation, and a start for a
+  workspace whose replacement was being assembled failed with the
+  transient guard while the pool was about to hand out a perfectly good
+  Host. Every host lifecycle call is now resolved by workspace through
+  the pool, and the workspace's identity is the only thing a retry
+  carries.
 - Opening an agent in the graph editor no longer takes the page down when
   its source omits the `edges` (or `nodes`) key. A single-node subagent
   has no transitions at all, so the key can legitimately be absent, and

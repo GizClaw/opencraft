@@ -97,7 +97,7 @@ func (b *Delegation) DelegationState() (DelegationState, error) {
 // live runtime's directory. It is best effort: a runtime that is not
 // assembled yet reports no suggestions rather than failing the card.
 func (b *Delegation) delegationTargets() ([]string, bool) {
-	h := b.core.Runtime.Current()
+	h := b.core.ActiveHost()
 	if h == nil || h.Controller() == nil || h.Controller().Runtime() == nil {
 		return nil, false
 	}

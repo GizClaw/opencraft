@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -11,23 +10,23 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/httpprobe"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
-	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
-// RebuildRuntime invalidates pooled Hosts and immediately reassembles
-// one for the active workspace when inference is configured. Bindings
-// use this when the reload changes engine assembly inputs (plugin
-// install/uninstall, workspace switch, startup). When the active
-// workspace still has live runs the swap is deferred: the old runtime
-// keeps serving until idle, then rebuilds in the background so no
-// second Host ever serves the same workspace concurrently. The
-// deferred rebuild is armed whenever Acquire hands out a retiring
-// (stale) Host for the active workspace, including after a workspace
-// switch away and back, so Runtime.current is never left pinned to a
-// Host that closes itself once its live runs end.
+// RebuildRuntime invalidates every pooled Host and immediately
+// reassembles the active workspace's one when inference is configured.
+// Bindings use this when the reload changes engine assembly inputs
+// (plugin install/uninstall, workspace switch, startup).
+//
+// A workspace whose old runtime still has live runs cannot be
+// reassembled yet — a second Host would serve the same conversations
+// concurrently — so that swap is deferred: the retirement, the wait for
+// the drain and the assembly of the replacement belong to the pool
+// (host.Manager.ScheduleReplacement), which is the only layer that
+// knows who is draining and who has already retired. This method only
+// decides what the UI has to hear.
 func (c *Core) RebuildRuntime(ctx context.Context) error {
 	c.reconcileProbe(ctx)
-	oldHost := c.Runtime.Current()
+	announced := c.readyWorkspace()
 	if err := c.Runtime.Reload(ctx); err != nil {
 		return err
 	}
@@ -52,82 +51,31 @@ func (c *Core) RebuildRuntime(ctx context.Context) error {
 		c.EmitReady()
 		return nil
 	}
-	if _, err = c.Runtime.Acquire(ctx, workDir, interact.Auto{}); err != nil {
+	h, err := c.Runtime.EnsureHost(ctx, workDir)
+	if err != nil {
 		return err
 	}
-	if h := c.Runtime.Current(); h != nil && h.IsStale() {
-		// The active workspace's old runtime is still draining live
-		// turns; rebuild once it is fully torn down. IsStale covers the
-		// switch-away-and-back case where the draining Host was not the
-		// previously current one, which used to leave the current Host
-		// closed with no replacement scheduled.
-		c.armRebuildAfterDrain(ctx, h, workDir)
-		if oldHost == nil ||
-			filepath.Clean(oldHost.WorkDir()) != filepath.Clean(workDir) {
-			// A workspace switch landed on a draining Host: emit ready
-			// now so the UI switches immediately; the deferred rebuild
-			// emits again once the replacement Host is installed.
+	if h.IsStale() {
+		// The active workspace is still running on the assembly this
+		// reload retired. The pool assembles its replacement as soon as
+		// the drain ends and announces it through EmitReady; arming is
+		// once per workspace, so a reload storm inside one drain asks
+		// for one replacement.
+		c.Runtime.ScheduleReplacement(ctx, workDir)
+		if !SameWorkspace(announced, workDir) {
+			// A switch away and back lands on a Host that was retired
+			// while the window was elsewhere: that Host has no
+			// replacement scheduled (leaving a workspace does not
+			// rebuild it), and the UI switches workspaces on ready
+			// alone — it cannot wait out a drain that may last a whole
+			// turn. Announce the switch now; the replacement announces
+			// itself again when it lands.
 			c.EmitReady()
 		}
 		return nil
 	}
 	c.EmitReady()
 	return nil
-}
-
-// armRebuildAfterDrain schedules the deferred replacement of a
-// draining Host, at most one per workspace. A settings save, a
-// workspace switch and a plugin write can all invalidate the same
-// workspace inside one drain; without this guard every invalidation
-// spawned its own watcher, and all of them assembled a replacement the
-// moment the old Host closed — one runtime built and thrown away per
-// waker. The single armed watcher always assembles from the document
-// on disk at the time it runs, so a later invalidation needs no
-// watcher of its own.
-func (c *Core) armRebuildAfterDrain(
-	ctx context.Context,
-	old *host.Host,
-	workDir string,
-) {
-	if !c.markRebuildPending(workDir) {
-		return
-	}
-	go c.rebuildAfterDrain(context.WithoutCancel(ctx), old, workDir)
-}
-
-// markRebuildPending claims the armed-rebuild slot for one workspace
-// and reports whether this caller owns it.
-func (c *Core) markRebuildPending(workDir string) bool {
-	key := filepath.Clean(workDir)
-	c.rebuildMu.Lock()
-	defer c.rebuildMu.Unlock()
-	if _, ok := c.rebuildPending[key]; ok {
-		return false
-	}
-	if c.rebuildPending == nil {
-		c.rebuildPending = make(map[string]struct{})
-	}
-	c.rebuildPending[key] = struct{}{}
-	return true
-}
-
-// clearRebuildPending releases the armed-rebuild slot, so a later
-// reload can arm a new one.
-func (c *Core) clearRebuildPending(workDir string) {
-	key := filepath.Clean(workDir)
-	c.rebuildMu.Lock()
-	delete(c.rebuildPending, key)
-	c.rebuildMu.Unlock()
-}
-
-// rebuildPendingFor reports whether a replacement is already armed for
-// one workspace.
-func (c *Core) rebuildPendingFor(workDir string) bool {
-	key := filepath.Clean(workDir)
-	c.rebuildMu.Lock()
-	defer c.rebuildMu.Unlock()
-	_, ok := c.rebuildPending[key]
-	return ok
 }
 
 // ApplyDocumentReload applies document-only configuration changes
@@ -141,7 +89,7 @@ func (c *Core) ApplyDocumentReload(ctx context.Context) error {
 	// their clients, so the probe has to be reconciled before either
 	// path reaches the runtime.
 	c.reconcileProbe(ctx)
-	h := c.Runtime.Current()
+	h := c.ActiveHost()
 	if h == nil {
 		return c.RebuildRuntime(ctx)
 	}
@@ -264,32 +212,4 @@ func probeBlocker(userDir string) string {
 		}
 	}
 	return ""
-}
-
-// rebuildAfterDrain waits for a stale Host to finish teardown, then
-// acquires a fresh Host for the same workspace and signals readiness.
-// Acquire itself never assembles a replacement while the old Host is
-// still closing, so this is safe under any number of concurrent
-// reloads.
-func (c *Core) rebuildAfterDrain(
-	ctx context.Context,
-	old *host.Host,
-	workDir string,
-) {
-	defer c.clearRebuildPending(workDir)
-	if err := old.WaitClosed(ctx); err != nil {
-		return
-	}
-	// The user may switch workspaces while the retired Host drains;
-	// only reinstall a replacement when this workspace is still
-	// active, so a background retire never hijacks Runtime.current for
-	// a different workspace.
-	if filepath.Clean(c.ActiveWorkDir()) != filepath.Clean(workDir) {
-		return
-	}
-	ctx = host.WithAssemblyReason(ctx, host.ReasonRetryAfterDrain)
-	if _, err := c.Runtime.Acquire(ctx, workDir, interact.Auto{}); err != nil {
-		return
-	}
-	c.EmitReady()
 }

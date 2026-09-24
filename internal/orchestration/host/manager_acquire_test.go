@@ -188,3 +188,52 @@ func (m *Manager) pendingAssemblies() int {
 	defer m.mu.Unlock()
 	return len(m.assembling)
 }
+
+// TestHostConfiguratorAppliesOncePerPooledHost pins the contract the
+// adapter's UI wiring depends on: the callback runs when a Host enters
+// the pool, once per Host rather than once per Acquire, and the marker
+// rides the pool entry — so a Host the pool has forgotten stops being
+// referenced by the bookkeeping that configured it (see
+// TestRebuiltHostIsCollectable in the desktop core package).
+func TestHostConfiguratorAppliesOncePerPooledHost(t *testing.T) {
+	m := NewManagerAt(t.TempDir(), t.TempDir())
+	release := make(chan struct{})
+	close(release)
+	var builds atomic.Int32
+	blockingAssembler(t, m, release, &builds, nil)
+
+	var (
+		mu         sync.Mutex
+		configured []*Host
+	)
+	m.SetHostConfigurator(func(h *Host) {
+		mu.Lock()
+		defer mu.Unlock()
+		configured = append(configured, h)
+	})
+
+	workDir := "/workspace/configure-once"
+	ctx := context.Background()
+	first, err := m.Acquire(ctx, workDir, interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	second, err := m.Acquire(ctx, workDir, interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("second acquire: %v", err)
+	}
+	if second != first {
+		t.Fatalf("second acquire returned %p, want the pooled %p",
+			second, first)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(configured) != 1 {
+		t.Fatalf("configurator ran %d times for one pooled Host, want 1",
+			len(configured))
+	}
+	if configured[0] != first {
+		t.Fatalf("configurator ran on %p, want the pooled Host %p",
+			configured[0], first)
+	}
+}

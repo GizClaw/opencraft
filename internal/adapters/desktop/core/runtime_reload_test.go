@@ -40,7 +40,7 @@ func TestApplyDocumentReloadEmitsReady(t *testing.T) {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
-	host := c.Runtime.Current()
+	host := c.ActiveHost()
 	if host == nil {
 		t.Fatal("no current host after rebuild")
 	}
@@ -60,7 +60,7 @@ func TestApplyDocumentReloadEmitsReady(t *testing.T) {
 	}
 	// The in-place branch is the one under test: a rebuild would replace
 	// the current Host and emit ready through RebuildRuntime instead.
-	if got := c.Runtime.Current(); got != host {
+	if got := c.ActiveHost(); got != host {
 		t.Fatal("document reload replaced the host; want the in-place path")
 	}
 	mu.Lock()
@@ -91,7 +91,7 @@ func TestApplyDocumentReloadLogsRebuildFallback(t *testing.T) {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
-	if c.Runtime.Current() == nil {
+	if c.ActiveHost() == nil {
 		t.Fatal("no current host after rebuild")
 	}
 
@@ -134,19 +134,21 @@ func TestApplyDocumentReloadLogsRebuildFallback(t *testing.T) {
 }
 
 // TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack pins the
-// lifecycle gap where a workspace switch away and back left
-// Runtime.current pointing at a closed Host. The scenario:
+// lifecycle gap where a workspace switch away and back left the
+// workspace with a Host that closes itself and nothing scheduled in its
+// place. The scenario:
 //
 //   - workdir A has a live turn when the active workspace moves to B;
 //   - A's Host is marked stale but keeps serving until the turn ends;
-//   - the active workspace moves back to A before the turn ends, so
-//     Acquire hands the stale Host out again and it becomes current;
+//   - the active workspace moves back to A before the turn ends, so the
+//     pool hands the stale Host out again and A is served by a
+//     generation this reload already retired;
 //   - once the last turn ends, that Host retires and closes itself.
 //
-// RebuildRuntime must arm the idle-rebuild watcher whenever Acquire
-// returns a stale Host for the active workspace, not only when that
-// Host is the same object that was current before the reload. Without
-// the watcher nothing reassembles A after teardown and StartRun keeps
+// RebuildRuntime must schedule a replacement whenever the active
+// workspace's Host is stale, not only when it is the Host that was
+// serving the window at the start of the reload. Without the
+// replacement nothing reassembles A after teardown and StartRun keeps
 // failing with "host: runtime is closing" until an unrelated rebuild.
 func TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
@@ -167,7 +169,7 @@ func TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack(t *testing.T) {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("rebuild for A: %v", err)
 	}
-	hostA := c.Runtime.Current()
+	hostA := c.ActiveHost()
 	if hostA == nil {
 		t.Fatal("no current host after rebuilding A")
 	}
@@ -196,7 +198,7 @@ func TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack(t *testing.T) {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("rebuild for B: %v", err)
 	}
-	if got := c.Runtime.Current(); got == nil || got == hostA {
+	if got := c.ActiveHost(); got == nil || got == hostA {
 		t.Fatalf("current host after switch to B = %p, want a B host", got)
 	}
 	if !hostA.IsStale() {
@@ -210,7 +212,7 @@ func TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack(t *testing.T) {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("rebuild for A after switch-back: %v", err)
 	}
-	if got := c.Runtime.Current(); got != hostA {
+	if got := c.ActiveHost(); got != hostA {
 		t.Fatalf("current host after switch back to A = %p, want draining host A (%p)",
 			got, hostA)
 	}
@@ -226,7 +228,7 @@ func TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack(t *testing.T) {
 	// The background watcher must install a fresh, usable Host for A.
 	deadline := time.Now().Add(45 * time.Second)
 	for {
-		h := c.Runtime.Current()
+		h := c.ActiveHost()
 		if h != nil && h != hostA && !h.IsStale() {
 			second, err := h.StartRun(ctx, host.RunOptions{
 				Message: message.NewTextMessage(
@@ -248,7 +250,7 @@ func TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack(t *testing.T) {
 			return
 		}
 		if time.Now().After(deadline) {
-			cur := c.Runtime.Current()
+			cur := c.ActiveHost()
 			stale := cur != nil && cur.IsStale()
 			t.Fatalf(
 				"current host was never replaced after retire "+
@@ -260,12 +262,12 @@ func TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack(t *testing.T) {
 	}
 }
 
-// TestEnsureUsableHostRebuildsRetiredWorkspace covers the recovery
+// TestEnsureHostRebuildsRetiredWorkspace covers the recovery
 // primitive behind the binding retry: once a stale Host retired while
-// another workspace was current, EnsureUsableHost must wait out the
+// another workspace was on screen, EnsureHost must wait out the
 // teardown and assemble a fresh Host for the original workspace that
 // immediately accepts new turns.
-func TestEnsureUsableHostRebuildsRetiredWorkspace(t *testing.T) {
+func TestEnsureHostRebuildsRetiredWorkspace(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
 	workA := t.TempDir()
 	workB := t.TempDir()
@@ -283,7 +285,7 @@ func TestEnsureUsableHostRebuildsRetiredWorkspace(t *testing.T) {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("rebuild for A: %v", err)
 	}
-	hostA := c.Runtime.Current()
+	hostA := c.ActiveHost()
 	if hostA == nil {
 		t.Fatal("no current host after rebuilding A")
 	}
@@ -311,7 +313,7 @@ func TestEnsureUsableHostRebuildsRetiredWorkspace(t *testing.T) {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("rebuild for B: %v", err)
 	}
-	if got := c.Runtime.Current(); got == nil || got == hostA {
+	if got := c.ActiveHost(); got == nil || got == hostA {
 		t.Fatalf("current host after switch to B = %p, want a B host", got)
 	}
 
@@ -324,14 +326,14 @@ func TestEnsureUsableHostRebuildsRetiredWorkspace(t *testing.T) {
 		t.Fatal("host A must have retired after its last run ended")
 	}
 
-	// EnsureUsableHost must assemble a replacement for A even though
-	// no rebuild was armed while B was current.
-	h, err := c.Runtime.EnsureUsableHost(ctx, workA)
+	// EnsureHost must assemble a replacement for A even though no
+	// rebuild was armed while B was on screen.
+	h, err := c.Runtime.EnsureHost(ctx, workA)
 	if err != nil {
 		t.Fatalf("ensure usable host for A: %v", err)
 	}
 	if h == nil || h == hostA {
-		t.Fatalf("EnsureUsableHost returned %p, want a fresh host", h)
+		t.Fatalf("EnsureHost returned %p, want a fresh host", h)
 	}
 	if h.IsClosing() || h.IsStale() {
 		t.Fatalf("replacement host closing=%v stale=%v, want usable host",
@@ -340,8 +342,12 @@ func TestEnsureUsableHostRebuildsRetiredWorkspace(t *testing.T) {
 	if h.WorkDir() != workA {
 		t.Fatalf("replacement host workdir = %q, want %q", h.WorkDir(), workA)
 	}
-	if got := c.Runtime.Current(); got != h {
-		t.Fatalf("current after EnsureUsableHost = %p, want %p", got, h)
+	// The replacement serves A, which is not the workspace on screen.
+	if got := c.Runtime.HostFor(workA); got != h {
+		t.Fatalf("host for A after EnsureHost = %p, want %p", got, h)
+	}
+	if got := c.ActiveHost(); got == h {
+		t.Fatalf("ensuring A moved the window's Host to %p", got)
 	}
 
 	second, err := h.StartRun(ctx, host.RunOptions{

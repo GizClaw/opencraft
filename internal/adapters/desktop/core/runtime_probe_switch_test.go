@@ -107,7 +107,7 @@ func TestProbeFollowsTheDiagnosticsSwitch(t *testing.T) {
 // the recorder is listening.
 func runProbeTurn(t *testing.T, c *Core) {
 	t.Helper()
-	h := c.Runtime.Current()
+	h := c.ActiveHost()
 	if h == nil {
 		t.Fatal("no current host")
 	}

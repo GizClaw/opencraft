@@ -46,7 +46,7 @@ func (c *Core) ConfigStatus() ConfigStatus {
 		UserDir:          c.UserDir,
 		Version:          version.ServiceVersion,
 	}
-	if h := c.Runtime.Current(); h != nil && h.Agents() != nil {
+	if h := c.ActiveHost(); h != nil && h.Agents() != nil {
 		st.Agents = len(h.Agents().List())
 	}
 	return st
@@ -55,7 +55,21 @@ func (c *Core) ConfigStatus() ConfigStatus {
 // EmitReady broadcasts the current configuration state to the UI.
 // Runtime reloads and workspace switches call this after their host
 // state has settled so the frontend can refresh sessions, model
-// options and the active workspace in one pass.
+// options and the active workspace in one pass. It is also what moves
+// the window: the frontend switches workspaces on this event alone, so
+// the workspace it names is recorded here (see readyWorkDir).
 func (c *Core) EmitReady() {
-	c.Shell.Emit(EventReady, c.ConfigStatus())
+	st := c.ConfigStatus()
+	c.mu.Lock()
+	c.readyWorkDir = st.WorkDir
+	c.mu.Unlock()
+	c.Shell.Emit(EventReady, st)
+}
+
+// readyWorkspace returns the workspace the last ready event named, or
+// "" before the first one.
+func (c *Core) readyWorkspace() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.readyWorkDir
 }

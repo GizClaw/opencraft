@@ -105,7 +105,7 @@ type SkillLifecycleSettingsRequest struct {
 // skillsServiceOf resolves the live skills registry out of the
 // assembled runtime, or false when the runtime is not ready.
 func skillsServiceOf(c *core.Core) (*skills.Service, bool) {
-	h := c.Runtime.Current()
+	h := c.ActiveHost()
 	if h == nil || h.Controller() == nil || h.Controller().Runtime() == nil {
 		return nil, false
 	}

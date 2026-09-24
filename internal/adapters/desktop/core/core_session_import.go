@@ -12,7 +12,6 @@ import (
 	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
-	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
 // maxSessionImportBundleBytes bounds one imported session bundle. A
@@ -88,7 +87,7 @@ func (c *Core) handlePluginSessionImport(
 	if err != nil {
 		return pluginruntime.SessionImportResult{}, err
 	}
-	if h == c.Runtime.Current() {
+	if h == c.ActiveHost() {
 		c.Shell.Emit(EventSessionUpdated, map[string]string{"id": id})
 	}
 	return pluginruntime.SessionImportResult{
@@ -163,19 +162,14 @@ func (c *Core) pluginImportWorkDir(workspace string) (string, error) {
 	return wd, nil
 }
 
-// hostForPluginImport returns the shared Host for workDir, reusing the
-// currently active Host when it matches. Assembling a Host for a
+// hostForPluginImport returns the shared Host for workDir, which is the
+// active workspace's Host when it matches. Assembling a Host for a
 // background workspace is the same cost automation turns already pay.
 func (c *Core) hostForPluginImport(
 	ctx context.Context, workDir string,
 ) (*host.Host, error) {
-	if h := c.Runtime.Current(); h != nil &&
-		filepath.Clean(h.WorkDir()) == filepath.Clean(workDir) {
-		return h, nil
-	}
-	h, err := c.Runtime.AcquireBackground(
-		host.WithAssemblyReason(ctx, host.ReasonSessionImport),
-		workDir, interact.Auto{})
+	h, err := c.Runtime.EnsureHost(
+		host.WithAssemblyReason(ctx, host.ReasonSessionImport), workDir)
 	if err != nil {
 		return nil, fmt.Errorf("session.import: workspace runtime: %w", err)
 	}

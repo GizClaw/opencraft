@@ -39,13 +39,13 @@ func rebuildAndRetireHost(t *testing.T) weak.Pointer[host.Host] {
 
 	c := NewCore(configDir, t.TempDir(), "")
 	c.SetWorkDir(t.TempDir())
-	c.Runtime.SetHostConfigurator(func(*host.Host) {})
+	c.Runtime.Manager().SetHostConfigurator(func(*host.Host) {})
 
 	ctx := context.Background()
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("first rebuild: %v", err)
 	}
-	retired := c.Runtime.Current()
+	retired := c.ActiveHost()
 	if retired == nil {
 		t.Fatal("no current host after the first rebuild")
 	}
@@ -56,7 +56,7 @@ func rebuildAndRetireHost(t *testing.T) weak.Pointer[host.Host] {
 	if err := c.RebuildRuntime(ctx); err != nil {
 		t.Fatalf("second rebuild: %v", err)
 	}
-	if c.Runtime.Current() == retired {
+	if c.ActiveHost() == retired {
 		t.Fatal("the second rebuild reused the host; nothing retired")
 	}
 	return probe

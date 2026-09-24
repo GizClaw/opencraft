@@ -489,7 +489,7 @@ func (b *Config) MCPStatus() ([]MCPStatusDTO, error) {
 		return nil, err
 	}
 	var src *mcp.Source
-	if h := b.core.Runtime.Current(); h != nil &&
+	if h := b.core.ActiveHost(); h != nil &&
 		h.Controller() != nil && h.Controller().Runtime() != nil {
 		if v, ok := h.Controller().Runtime().Resource("tool.mcp"); ok {
 			src, _ = v.(*mcp.Source)
