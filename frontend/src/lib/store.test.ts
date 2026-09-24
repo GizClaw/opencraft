@@ -2269,9 +2269,10 @@ describe('store: interactions and artifacts', () => {
     let strips = useStore.getState().conversations['s-1'].turnArtifacts;
     expect(strips).toHaveLength(2);
     expect(strips[1]).toMatchObject({ runID: 'r-auto', start: 2, docs: [] });
-    expect(
-      useStore.getState().conversations['s-1'].messages[2],
-    ).toMatchObject({ role: 'user', text: 'write the brief' });
+    expect(useStore.getState().conversations['s-1'].messages[2]).toMatchObject({
+      role: 'user',
+      text: 'write the brief',
+    });
 
     handle({
       type: 'stream',
