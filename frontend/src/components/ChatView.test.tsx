@@ -1608,6 +1608,41 @@ describe('ChatView turn end notice diagnostics', () => {
     expect(screen.queryByText(/resp-xyz/)).not.toBeInTheDocument();
     expect(screen.queryByText('context canceled')).not.toBeInTheDocument();
   });
+
+  it('reads a deadline as a timeout, not as a user stop', () => {
+    setConversation(
+      [{ id: 'm-1', role: 'user', text: 'hello', items: [], attachments: [] }],
+      [
+        {
+          id: 't-1',
+          start: 0,
+          docs: [],
+          status: 'canceled',
+          error: 'context deadline exceeded',
+          errorKind: 'timeout',
+          requestID: 'req-xyz',
+          responseID: 'resp-xyz',
+        },
+      ],
+    );
+    render(<ChatView />);
+
+    // Same canceled status as the user stop above, different ending:
+    // the notice says so, keeps the raw reason (and the ids) and lets
+    // the turn be carried on.
+    expect(screen.getByText('Reply timed out')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'This turn timed out before it finished. Try again, or split the work into smaller steps.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('context deadline exceeded')).toBeInTheDocument();
+    expect(screen.getByText(/Request ID: req-xyz/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Continue' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Reply cancelled')).not.toBeInTheDocument();
+  });
 });
 
 describe('ChatView jump-to-latest pill', () => {
@@ -1650,6 +1685,12 @@ describe('ChatView jump-to-latest pill', () => {
     ).not.toBeInTheDocument();
   });
 
+  // The heaviest test of the suite: it mounts two 250-message transcripts
+  // (~2x the 200-row window) through the markdown renderer, which is ~2s
+  // on a laptop and has crossed the default 5s budget on a loaded CI
+  // runner. It asserts the same thing either way, so it gets the room the
+  // rendering cost needs instead of a thinner fixture that would stop
+  // proving the window sits at the newest row.
   it('re-pins the follow when another conversation is opened', () => {
     setConversation(manyMessages(250));
     render(<ChatView />);
@@ -1713,7 +1754,7 @@ describe('ChatView jump-to-latest pill', () => {
     expect(
       screen.queryByRole('button', { name: 'Jump to latest' }),
     ).not.toBeInTheDocument();
-  });
+  }, 15000);
 });
 
 describe('ChatView projections', () => {
@@ -2847,6 +2888,32 @@ describe('ChatView header', () => {
     expect(stop).toHaveAttribute('data-status', 'canceled');
     expect(stop).toHaveTextContent('Reply cancelled');
     expect(stop.className).toContain('text-dim');
+  });
+
+  it('reports a deadline with its own words', () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    act(() => {
+      actor?.send({
+        type: 'TURN_ENDED',
+        runID: 'r-1',
+        status: 'canceled',
+        error: 'context deadline exceeded',
+        errorKind: 'timeout',
+      });
+    });
+
+    // The same status as the quiet user stop above, read as a warning:
+    // the header mirrors the transcript's notice instead of blaming the
+    // user for the run's own deadline.
+    const stop = screen.getByTestId('chat-turn-stop');
+    expect(stop).toHaveAttribute('data-status', 'canceled');
+    expect(stop).toHaveTextContent('Reply timed out');
+    expect(stop.className).toContain('text-warn');
+    expect(stop).toHaveAttribute('data-tip', 'context deadline exceeded');
   });
 });
 

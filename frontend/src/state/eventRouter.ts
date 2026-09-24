@@ -47,6 +47,7 @@ interface TurnEndPayload {
   conversation_id?: string;
   status: string;
   error?: string;
+  error_kind?: string;
 }
 
 function streamStage(delta: StreamPayload['delta']): string | undefined {
@@ -98,6 +99,7 @@ export function toConversationEvent(
         runID: data.run_id,
         status,
         error: data.error,
+        errorKind: data.error_kind,
       };
     }
     default:

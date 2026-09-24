@@ -256,6 +256,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not decode still renders as a card from the row's own text, and a
   kind from a newer build is carried through without being guessed at.
 
+- The Diagnostics charts now measure the app the way the machine does, not
+  only the Go heap: a new "The app's processes" section charts
+  `proc.mem.family_total` — every process this app is running — and
+  `proc.mem.footprint`, the same number split by role: `self` is the Go
+  host process, `child` everything it spawns (sandbox children, MCP
+  servers, plugin binaries, and what they run), and `webcontent` / `gpu` /
+  `networking` / `helper` the platform processes that work on the app's
+  behalf while being reparented to launchd. That last group is what no Go
+  gauge can see: on macOS the WKWebView renderers are several times the
+  heap, they hold on to freed memory after a large conversation or a
+  preview pane, and this series is what tells that apart from ordinary heap
+  growth. The reading comes from the OS itself, in the new
+  `internal/foundation/procmem` package: libproc, with the same
+  process-ownership API Activity Monitor groups by (resolved with `dlsym`,
+  so a platform that stops exporting it degrades to the pid tree instead of
+  losing the series) and `/proc` on Linux. A full-system scan costs about
+  2.7ms, and the sampler takes one a minute, next to the 15-second Go
+  gauges. Each sample carries the role, the process name and its pid; the
+  total carries the process count and how membership was resolved. Samples
+  land in the same `metric_samples` table (30-day retention) and need no
+  permission prompts, because every family member runs as this user.
+  Windows has no probe yet, so the section is empty there.
+
 ### Changed
 
 - A conversation's model-side history is now a projection of the
@@ -619,6 +642,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call site that wants the affordance the engine's spinner used to give
   can ask for −/+ cells, which take their accessible name from the
   field's label.
+- Turns get twice the wall clock, and the subagents the assistant
+  registers get the same pair: `build.timeout` (a single `Execute`) and
+  `policy.run_timeout` (the whole run, revise attempts included) move
+  from 1h to 2h together — the inner deadline is the one a single
+  attempt actually feels, so it cannot stay behind — and the node
+  budget stays lifted (`build.max_iterations: 0`), which leaves the
+  run timeout the one bound a turn can hit. A long-horizon turn was
+  reaching the old hour with its work still in flight.
 
 ### Fixed
 
@@ -817,6 +848,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truncates, and the answer it had to shorten is one hover away and
   spelled out in the expanded body, where every option is still listed
   with the ticked ones marked.
+- A turn the deadline ended no longer reads as a turn the user stopped.
+  The engine reports a timeout and a user stop as the same `canceled`
+  status and the UI believed the status: the transcript's notice said
+  "You stopped this reply", the header's chip said "Reply cancelled",
+  and the reason the archive had kept (`context deadline exceeded`,
+  with `error_kind: "timeout"`) was hidden as user-stop noise. The
+  structured error kind now decides. The notice keeps its own words
+  and tone — "Reply timed out", on the same warning rung an
+  interruption uses — keeps the diagnostics, and offers the continue /
+  edit-and-resend actions an interrupted turn does, because a deadline
+  is the same kind of ending: work cut off mid-flight with the partial
+  reply in context. The header chip reads the same split, and the
+  native turn-finished banner stops calling a deadline "Task
+  cancelled".
 
 ## [0.5.3] - 2026-09-17
 

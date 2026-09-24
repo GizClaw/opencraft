@@ -9,14 +9,24 @@ import (
 
 func TestNotifyStatusUsesTexts(t *testing.T) {
 	zh := core.TextsFor("zh")
-	if got := notifyStatus(zh, "completed"); got != "任务完成" {
+	if got := notifyStatus(zh, "completed", ""); got != "任务完成" {
 		t.Fatalf("completed status = %q, want zh copy", got)
 	}
 	en := core.TextsFor("en")
-	if got := notifyStatus(en, "canceled"); got != "Task cancelled" {
+	if got := notifyStatus(en, "canceled", ""); got != "Task cancelled" {
 		t.Fatalf("canceled status = %q, want en copy", got)
 	}
-	if got := notifyStatus(en, "some-other"); got != "some-other" {
+	// The engine reports a deadline as a canceled status; the error
+	// kind is what keeps the banner from blaming the user.
+	if got := notifyStatus(en, "canceled", "timeout"); got != "Task timed out" {
+		t.Fatalf("timeout status = %q, want timeout copy", got)
+	}
+	// An automation run has the status of its own; the banner names it
+	// instead of leaking the enum.
+	if got := notifyStatus(en, "timeout", ""); got != "Task timed out" {
+		t.Fatalf("automation timeout status = %q, want timeout copy", got)
+	}
+	if got := notifyStatus(en, "some-other", ""); got != "some-other" {
 		t.Fatalf("unknown status = %q, want passthrough", got)
 	}
 }

@@ -28,7 +28,7 @@ interface MetricPoint {
 
 interface MetricDef {
   name: string;
-  section: 'turn' | 'frontend' | 'probe' | 'memory' | 'gc';
+  section: 'turn' | 'frontend' | 'probe' | 'memory' | 'gc' | 'proc';
   unit: string;
   // How samples fold when a range has more points than the chart draws.
   // A running value must stay a value the page actually had ('last'), a
@@ -254,6 +254,27 @@ const METRICS: MetricDef[] = [
     unit: '',
     aggregate: 'last',
   },
+  // The app as the machine sees it, sampled every 15s next to the Go
+  // gauges: family_total is every process this app is running, and
+  // footprint breaks it down by role — self (the Go host process), child
+  // (everything it spawned: sandbox children, MCP servers, plugin
+  // binaries) and the platform helpers that run on its behalf while being
+  // reparented to launchd (webcontent / gpu / networking). The renderers
+  // are several times the Go heap and no Go gauge can see them, so this is
+  // the series a window or a preview pane leaking into shows up in.
+  {
+    name: 'proc.mem.family_total',
+    section: 'proc',
+    unit: 'B',
+    aggregate: 'last',
+  },
+  {
+    name: 'proc.mem.footprint',
+    section: 'proc',
+    unit: 'B',
+    aggregate: 'last',
+    split: 'role',
+  },
 ];
 
 const SECTIONS: {
@@ -271,6 +292,11 @@ const SECTIONS: {
     key: 'probe',
     labelKey: 'config.metricsSectionProbe',
     hintKey: 'config.metricsSectionProbeHint',
+  },
+  {
+    key: 'proc',
+    labelKey: 'config.metricsSectionProc',
+    hintKey: 'config.metricsSectionProcHint',
   },
   { key: 'memory', labelKey: 'config.metricsSectionMemory' },
   { key: 'gc', labelKey: 'config.metricsSectionGC' },

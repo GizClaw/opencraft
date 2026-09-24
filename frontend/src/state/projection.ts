@@ -82,6 +82,7 @@ export function projectConversation(snapshot: {
     turnStage?: string;
     supersededRunID?: string;
     failureStatus?: 'failed' | 'aborted' | 'canceled' | 'interrupted';
+    failureErrorKind?: string;
     turnError?: string;
   };
 }): ConversationViewState {
@@ -134,6 +135,7 @@ export function projectConversation(snapshot: {
         name: 'failed',
         status: snapshot.context.failureStatus ?? 'failed',
         error: snapshot.context.turnError,
+        errorKind: snapshot.context.failureErrorKind,
       };
       break;
     default:

@@ -212,8 +212,8 @@ func TestCreateRegistersAndPersists(t *testing.T) {
 	if got := build["max_iterations"]; got != float64(0) {
 		t.Errorf("build.max_iterations = %v, want 0 (unlimited)", got)
 	}
-	if def.Policy == nil || def.Policy.RunTimeout != "1h" {
-		t.Errorf("policy = %+v, want run_timeout 1h", def.Policy)
+	if def.Policy == nil || def.Policy.RunTimeout != "2h" {
+		t.Errorf("policy = %+v, want run_timeout 2h", def.Policy)
 	}
 
 	// Persisted declaration round-trips.

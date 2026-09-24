@@ -19,6 +19,7 @@ type DesktopTexts struct {
 	NotifyDone        string
 	NotifyFailed      string
 	NotifyCancelled   string
+	NotifyTimeout     string
 	NotifyInterrupted string
 	NotifyInteract    string
 	// Menu is the native menu bar's copy (macOS). The tray stays flat
@@ -70,6 +71,7 @@ var desktopLocales = map[string]DesktopTexts{
 		NotifyDone:        "任务完成",
 		NotifyFailed:      "任务失败",
 		NotifyCancelled:   "任务已取消",
+		NotifyTimeout:     "任务超时",
 		NotifyInterrupted: "任务已中断",
 		NotifyInteract:    "需要你的输入",
 		Menu: MenuTexts{
@@ -111,6 +113,7 @@ var desktopLocales = map[string]DesktopTexts{
 		NotifyDone:        "Task finished",
 		NotifyFailed:      "Task failed",
 		NotifyCancelled:   "Task cancelled",
+		NotifyTimeout:     "Task timed out",
 		NotifyInterrupted: "Task interrupted",
 		NotifyInteract:    "Input needed",
 		Menu: MenuTexts{

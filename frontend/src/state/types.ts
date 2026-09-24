@@ -22,7 +22,7 @@ export type TurnState =
   | { name: 'starting'; supersededRunID?: string }
   | { name: 'running'; runID: string; stage: string }
   | { name: 'succeeded' }
-  | { name: 'failed'; status: TurnEndKind; error?: string };
+  | { name: 'failed'; status: TurnEndKind; error?: string; errorKind?: string };
 
 export type LifecycleState = { name: 'alive' } | { name: 'deleted' };
 

@@ -195,7 +195,7 @@ func TestAssistantAgentLiftsIterationGuard(t *testing.T) {
 	if *build.MaxIterations != 0 {
 		t.Fatalf("build.max_iterations = %d, want 0 (unlimited)", *build.MaxIterations)
 	}
-	if got := assistant.Policy.RunTimeout; got != "1h" {
-		t.Fatalf("policy.run_timeout = %q, want 1h once the iteration guard is lifted", got)
+	if got := assistant.Policy.RunTimeout; got != "2h" {
+		t.Fatalf("policy.run_timeout = %q, want 2h once the iteration guard is lifted", got)
 	}
 }

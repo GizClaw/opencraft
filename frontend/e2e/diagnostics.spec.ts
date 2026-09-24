@@ -24,7 +24,11 @@ test('opens the diagnostics dialogs without crashing the UI', async ({
   await expect(charts.locator('svg.recharts-surface').first()).toBeVisible();
   // The renderer probe's series are charted next to the web-vitals ones;
   // they live in their own section because they are per-30s-window stats.
-  await expect(charts.getByText('Renderer probe')).toBeVisible();
+  // Exact, because the copy of another section's hint mentions the probe:
+  // a substring match would resolve to both.
+  await expect(
+    charts.getByText('Renderer probe', { exact: true }),
+  ).toBeVisible();
   // The grid is taller than the dialog: the body has to scroll, or half
   // the charts are unreachable behind the panel's overflow.
   const body = charts.locator('div.overflow-y-auto').first();
