@@ -1,3 +1,4 @@
+import { UIEventChannel, UIEventType } from '../lib/events';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Events } from '@wailsio/runtime';
@@ -69,10 +70,14 @@ export function PetBehaviorPanel() {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2000);
     // The pet window pushes its mount report the moment it mounts, so
-    // show it without waiting for the next poll.
-    const off = Events.On('pet:runtime_status', (event) => {
+    // show it without waiting for the next poll. The report is a UI
+    // event like any other: it rides on the shared channel, with the
+    // type inside the envelope.
+    const off = Events.On(UIEventChannel, (event) => {
       if (!alive) return;
-      const next = (event.data ?? null) as PetRuntimeStatus | null;
+      const ev = event.data as { type?: string; data?: unknown } | null;
+      if (ev?.type !== UIEventType.petRuntimeStatus) return;
+      const next = (ev.data ?? null) as PetRuntimeStatus | null;
       setRuntime(next ? { status: next, reported: true } : null);
     });
     return () => {

@@ -1,6 +1,10 @@
 package sessions
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
+)
 
 func FuzzRequireID(f *testing.F) {
 	for _, seed := range []string{
@@ -13,7 +17,7 @@ func FuzzRequireID(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, id string) {
-		_ = ValidID(id)
+		_ = ids.IsSession(id)
 		_ = requireID(id)
 	})
 }

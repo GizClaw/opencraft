@@ -12,6 +12,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
@@ -272,7 +273,7 @@ func TestExecuteMergesNewMessagesWithArtifact(t *testing.T) {
 
 	// The artifact now covers all three messages.
 	var art artifact
-	if err := store.ReadState("s-1", compactStateName, &art); err != nil {
+	if err := store.ReadState("s-1", sessions.DocumentCompact, &art); err != nil {
 		t.Fatal(err)
 	}
 	if len(art.Covered) != 3 {

@@ -138,15 +138,20 @@ func (b *Conversation) StartTurn(
 		Backend:   b.core.Prompt,
 		Sink:      sink,
 		QueueSize: 256,
+		// A person pressed send: a turn they started may preempt a
+		// live one on the same conversation (that is what barge-in and
+		// steering rely on). Automation turns carry their own origin
+		// and step aside instead.
+		Origin: host.OriginInteractive,
 		OnUsage: func(_ context.Context, usage inference.Usage) {
-			b.core.Shell.Emit("usage", core.NewUsageEvent(usage))
+			b.core.Shell.Emit(core.EventUsage, core.NewUsageEvent(usage))
 		},
 		// A boundary that takes steered messages reports how many are
 		// still waiting: the transcript flips those rows to delivered
 		// right away instead of holding them at "waiting for the next
 		// step" until the turn ends.
 		OnSteerPending: func(_ context.Context, runID string, pending int) {
-			b.core.Shell.Emit("steer_pending", core.SteerPendingEvent{
+			b.core.Shell.Emit(core.EventSteerPending, core.SteerPendingEvent{
 				RunID:          runID,
 				ConversationID: contextID,
 				SteerPending:   pending,
@@ -179,7 +184,7 @@ func (b *Conversation) StartTurn(
 			if err == nil {
 				startedAt := time.Now().UTC()
 				b.core.Conversation.TrackRun(workDir, contextID, run.RunID())
-				b.core.Shell.Emit("status", core.StatusEvent{Busy: true})
+				b.core.Shell.Emit(core.EventStatus, core.StatusEvent{Busy: true})
 				go func() {
 					defer releaseSink()
 					b.waitTurn(ctx, run, contextID)
@@ -385,8 +390,8 @@ func (b *Conversation) waitTurn(
 	end.InterruptCause = class.InterruptCause
 	end.ErrorKind = class.ErrorKind
 	end.AgentID = core.AssistantAgentID
-	b.core.Shell.Emit("turn_end", end)
-	b.core.Shell.Emit("status", core.StatusEvent{})
+	b.core.Shell.Emit(core.EventTurnEnd, end)
+	b.core.Shell.Emit(core.EventStatus, core.StatusEvent{})
 }
 
 // agentIDOrAssistant returns the envelope agent header, falling back to

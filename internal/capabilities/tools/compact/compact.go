@@ -28,6 +28,7 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
@@ -36,11 +37,6 @@ const Name = "compact"
 
 // DefaultBudgetChars is the default summary budget in characters.
 const DefaultBudgetChars = 4096
-
-// compactStateName is the per-conversation JSON document holding the
-// latest compaction artifact (session store WriteState), so a
-// compaction does not re-summarize messages it already covered.
-const compactStateName = "compact"
 
 // maxCondenseChars bounds one condensation request. A fold can carry
 // megabytes of rendered messages — a single compaction call was observed
@@ -206,25 +202,29 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 		}
 	}
 
-	ids := make([]string, len(args.Conversation))
+	messageIDs := make([]string, len(args.Conversation))
 	covered := map[string]bool{}
 	for i, m := range args.Conversation {
-		ids[i] = stableID(m)
-		covered[ids[i]] = true
+		messageIDs[i] = stableID(m)
+		covered[messageIDs[i]] = true
 	}
 
 	var art artifact
 	// Delegated subagent runs mint ephemeral "ctx-" ids the session store
 	// rejects (see the writer below): skip the load instead of warning on
 	// every fold they run.
-	if sessions.ValidID(args.ConversationID) {
-		if err := t.store.ReadState(args.ConversationID, compactStateName, &art); err != nil &&
-			!errors.Is(err, os.ErrNotExist) {
-			telemetry.WarnErr(ctx, "compact: load previous compaction state failed",
-				err, otellog.String("conversation.id", args.ConversationID))
+	if ids.IsSession(args.ConversationID) {
+		if err := t.store.ReadStateStrict(
+			args.ConversationID, sessions.DocumentCompact, &art,
+		); err != nil && !errors.Is(err, os.ErrNotExist) {
+			// Unreadable, and the store reported the row: drop whatever
+			// the failed decode left behind, so this fold condenses from
+			// scratch and rewrites the document below instead of trusting
+			// half of it.
+			art = artifact{}
 		}
 	}
-	if art.Summary != "" && setsEqual(art.Covered, ids) {
+	if art.Summary != "" && setsEqual(art.Covered, messageIDs) {
 		return encodePatch(art.Summary)
 	}
 
@@ -238,7 +238,7 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 			summarytext.IsSummaryText(summarytext.RenderMessage(m)) {
 			continue
 		}
-		if !containsID(art.Covered, ids[i]) {
+		if !containsID(art.Covered, messageIDs[i]) {
 			fresh = append(fresh, m)
 		}
 	}
@@ -274,13 +274,13 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	merged := mergeIDs(art.Covered, ids)
+	merged := mergeIDs(art.Covered, messageIDs)
 	// Delegated subagent runs mint ephemeral "ctx-" ids the session store
 	// rejects. Their fold still applies to the channel; it just cannot
 	// remember the artifact between rounds.
-	if sessions.ValidID(args.ConversationID) {
+	if ids.IsSession(args.ConversationID) {
 		telemetry.WarnErr(ctx, "compact: persist compaction state failed",
-			t.store.WriteState(args.ConversationID, compactStateName, artifact{
+			t.store.WriteState(args.ConversationID, sessions.DocumentCompact, artifact{
 				Covered: merged,
 				Summary: summary,
 			}), otellog.String("conversation.id", args.ConversationID))

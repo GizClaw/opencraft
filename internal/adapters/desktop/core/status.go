@@ -57,5 +57,5 @@ func (c *Core) ConfigStatus() ConfigStatus {
 // state has settled so the frontend can refresh sessions, model
 // options and the active workspace in one pass.
 func (c *Core) EmitReady() {
-	c.Shell.Emit("ready", c.ConfigStatus())
+	c.Shell.Emit(EventReady, c.ConfigStatus())
 }

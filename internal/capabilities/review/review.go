@@ -39,6 +39,7 @@ import (
 	reviewstore "github.com/GizClaw/opencraft/internal/capabilities/review/store"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
@@ -262,13 +263,12 @@ func (o *Observer) reviewDisabled(ctx context.Context, id agent.Identity) bool {
 			return true
 		}
 	}
-	return strings.HasPrefix(id.ConversationID, reviewConversationPrefix)
+	// Review runs execute in ephemeral contexts ("ctx-", ids.ContextPrefix),
+	// the same kind delegation uses: subagent and review contexts are not
+	// user conversations, and reviewing them would spend model calls on
+	// machinery.
+	return ids.IsContext(id.ConversationID)
 }
-
-// reviewConversationPrefix marks the conversations a review runs in.
-// Subagent and review contexts are not user conversations; reviewing
-// them would spend model calls on machinery.
-const reviewConversationPrefix = "ctx-"
 
 // IsReviewRun reports whether ctx belongs to review work. The marker is
 // set on the review's own context so a nested observation (an observer

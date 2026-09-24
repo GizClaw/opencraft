@@ -1,3 +1,4 @@
+import { MenuCommandChannel, UIEventChannel, UIEventType } from './lib/events';
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
@@ -103,12 +104,12 @@ export default function App() {
     // Load installed plugins once the shell mounts; the plugin host
     // registers its settings panels and sidebar entries afterwards.
     void usePluginStore.getState().load();
-    const off = Events.On('opencraft:ui', (e) => {
+    const off = Events.On(UIEventChannel, (e) => {
       const ev = e.data as UIEvent;
       // Interact prompts and finished turns still reach handleEvent below;
       // their system notifications are raised Go-side so hidden windows do
       // not lose them.
-      if (ev.type === 'turn_end') {
+      if (ev.type === UIEventType.turnEnd) {
         // Flush any deltas still waiting on the stream coalescer so the
         // transcript settles. The system notification for finished turns
         // is raised Go-side from the same event.
@@ -127,7 +128,7 @@ export default function App() {
   const runShortcutRef = useRef(runShortcut);
   runShortcutRef.current = runShortcut;
   useEffect(() => {
-    return Events.On('opencraft:menu', (e) => {
+    return Events.On(MenuCommandChannel, (e) => {
       const data = e.data as { command?: unknown } | null | undefined;
       const command = data?.command;
       if (typeof command === 'string' && command !== '') {

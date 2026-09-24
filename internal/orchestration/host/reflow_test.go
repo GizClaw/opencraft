@@ -16,6 +16,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
@@ -194,7 +195,7 @@ func TestReflowDelegationRefusesForeignConversations(t *testing.T) {
 func TestReflowDelegationSkipsEphemeralConversations(t *testing.T) {
 	h, notified := newReflowHost(t)
 	ctx := context.Background()
-	ephemeral := subagentConversationPrefix + "run-child"
+	ephemeral := ids.ContextPrefix + "run-child"
 	if err := h.SessionsStore().State().EnsureConversation(ctx,
 		state.Conversation{ID: ephemeral, Title: "delegated run"}); err != nil {
 		t.Fatalf("ensure ephemeral conversation: %v", err)

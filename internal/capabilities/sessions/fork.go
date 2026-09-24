@@ -20,8 +20,7 @@ import (
 
 // ForkResult describes one newly forked conversation. Turns contains
 // the archived messages copied into the new session (with attachment
-// paths rewritten to the fork's own media/files directories), so the
-// caller can seed memory from exactly the fork point onward.
+// paths rewritten to the fork's own media/files directories).
 type ForkResult struct {
 	ID    string
 	Turns []TurnRecord
@@ -31,9 +30,9 @@ type ForkResult struct {
 // session and returns its id. The fork keeps mode/think/model and the
 // source's custom title; user attachment files are copied into the new
 // session directory so deleting the source later does not break the
-// fork. Memory rows are deliberately not copied here: orchestration/host
-// seeds them after the archive transaction so the model continues with
-// exactly the forked prefix.
+// fork. There is no memory to copy or seed: the model's history is a
+// projection of the transcript, and the fork's transcript is the
+// source's prefix by construction (see capabilities/memory/projection.go).
 func (s *Store) Fork(
 	ctx context.Context, sourceID, sourceRunID string,
 ) (ForkResult, error) {
@@ -178,9 +177,12 @@ func (s *Store) copyForkSettings(
 		return err
 	}
 	var customTitle string
-	if err := s.ReadState(sourceID, "title", &customTitle); err == nil &&
+	// The title document is the cosmetic kind (see ReadState): a fork
+	// whose source title cannot be read keeps the title derived from its
+	// first turn instead of failing the fork.
+	if err := s.ReadState(sourceID, DocumentTitle, &customTitle); err == nil &&
 		strings.TrimSpace(customTitle) != "" {
-		return s.WriteState(newID, "title", customTitle)
+		return s.WriteState(newID, DocumentTitle, customTitle)
 	}
 	return nil
 }

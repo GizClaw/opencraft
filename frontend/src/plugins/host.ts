@@ -1,3 +1,4 @@
+import { UIEventChannel } from '../lib/events';
 import * as React from 'react';
 import { Context } from '@cordisjs/core';
 import { Events } from '@wailsio/runtime';
@@ -80,7 +81,7 @@ let eventBusAttached = false;
 function attachEventBus() {
   if (eventBusAttached) return;
   eventBusAttached = true;
-  Events.On('opencraft:ui', (e) => {
+  Events.On(UIEventChannel, (e) => {
     const ev = e.data as UIEvent;
     (app?.emit as (type: string, data: unknown) => void)(ev.type, ev.data);
   });

@@ -146,7 +146,7 @@ func New(opts Options) (*Desktop, error) {
 	c.Prompt.SetNotifier(c.Shell.Emit)
 	c.Prompt.SetRunConvResolver(c.Conversation.ConversationForRun)
 	c.Runtime.Manager().SetUsageObserver(func(_ context.Context, usage inference.Usage) {
-		c.Shell.Emit("usage", core.NewUsageEvent(usage))
+		c.Shell.Emit(core.EventUsage, core.NewUsageEvent(usage))
 	})
 	c.Runtime.SetHostConfigurator(func(h *host.Host) {
 		h.SetArtifactObserver(func(ctx context.Context, path string, data []byte) {
@@ -157,15 +157,16 @@ func New(opts Options) (*Desktop, error) {
 			if !ok || info.ConversationID == "" {
 				return
 			}
-			c.Shell.Emit("artifact", map[string]any{
+			c.Shell.Emit(core.EventArtifact, map[string]any{
 				"conversation_id": info.ConversationID,
+				"run_id":          info.RunID,
 				"path":            path,
 				"bytes":           len(data),
 			})
 		})
 		h.SetSessionUpdated(func(_ context.Context, contextID string) {
 			if h == c.Runtime.Current() {
-				c.Shell.Emit("session_updated", map[string]string{"id": contextID})
+				c.Shell.Emit(core.EventSessionUpdated, map[string]string{"id": contextID})
 			}
 		})
 	})
@@ -354,15 +355,9 @@ func (d *Desktop) Startup(ctx context.Context) {
 	}
 	if err := d.core.RebuildRuntime(
 		host.WithAssemblyReason(ctx, host.ReasonStartup)); err != nil {
-		d.core.Shell.Emit("fatal", map[string]any{"error": err.Error()})
+		d.core.Shell.Emit(core.EventFatal, map[string]any{"error": err.Error()})
 	}
 	d.ensureAssistantPet(ctx)
-}
-
-// EmitUI is the single UI-event entry used by the v3 entry point outside the
-// domain services; everything else already routes through core.Shell.Emit.
-func (d *Desktop) EmitUI(typ string, data any) {
-	d.core.Shell.Emit(typ, data)
 }
 
 // QuitAllowed is the v3 quit gate: it returns true only when quitting may
@@ -462,10 +457,10 @@ func (d *Desktop) startAutomations(ctx context.Context) {
 		Window: 2 * time.Minute,
 		Limit:  4,
 		OnChange: func() {
-			d.core.Shell.Emit("automation_changed", map[string]any{})
+			d.core.Shell.Emit(core.EventAutomationChanged, map[string]any{})
 		},
 		OnRun: func(run automations.Run) {
-			d.core.Shell.Emit("automation_run", bindings.ToAutomationRunDTO(run))
+			d.core.Shell.Emit(core.EventAutomationRun, bindings.ToAutomationRunDTO(run))
 		},
 	})
 	if err != nil {
@@ -497,17 +492,16 @@ func (d *Desktop) runAutomation(
 		Think:     task.Think,
 		Model:     task.Model,
 		Backend:   interact.Auto{},
+		Origin:    host.OriginAutomation,
 	})
 	if err != nil {
-		return automations.RunResult{Status: automations.RunFailed}, err
+		return automationStartFailure(err, task.ConversationID)
 	}
 	runID := run.RunID()
 	contextID := run.ContextID()
 	if current {
-		d.core.Shell.Emit("automation_run_started", map[string]any{
-			"run_id":          runID,
-			"conversation_id": contextID,
-		})
+		d.core.Shell.Emit(core.EventAutomationRunStarted,
+			automationRunStartedPayload(runID, contextID, task.Prompt))
 	}
 	// The manager's run context carries the task timeout; WaitBounded
 	// turns that deadline into a cancel and waits for the settle, so
@@ -545,7 +539,7 @@ func (d *Desktop) runAutomation(
 		end.ErrorKind = class.ErrorKind
 		end.AgentID = core.AssistantAgentID
 		end.Notify = &notify
-		d.core.Shell.Emit("turn_end", end)
+		d.core.Shell.Emit(core.EventTurnEnd, end)
 	} else if notify {
 		// No UI consumer for this payload: the automation panels refresh
 		// from automation_run / automation_changed, so the banner is
@@ -562,6 +556,49 @@ func (d *Desktop) runAutomation(
 		return result, waitErr
 	}
 	return result, nil
+}
+
+// conversationBusyReason is the stable marker stored on a run that was
+// skipped because its conversation had a live turn. The automations
+// panel localizes it, the way it already does for
+// interrupted_by_app_restart.
+const conversationBusyReason = "conversation_busy"
+
+// automationRunStartedPayload is the run-start event's payload: the run,
+// the conversation it streams into, and the message the run was started
+// with (task.Prompt through message.NewTextMessage). The frontend draws
+// that message as the turn's user row — the same text the host archives
+// as this turn's user message — so a run the UI did not start gets the
+// turn it belongs to: its live answer, its terminal state and the files
+// it writes all land on that turn's strip instead of on whichever turn
+// happens to be last.
+func automationRunStartedPayload(
+	runID, conversationID, prompt string,
+) map[string]any {
+	return map[string]any{
+		"run_id":          runID,
+		"conversation_id": conversationID,
+		"message":         prompt,
+	}
+}
+
+// automationStartFailure maps a refused start to the run record. A
+// conversation busy with a live turn is a skip, not a failure: the
+// scheduled run steps aside (its next occurrence tries again), the
+// record keeps the reason and the conversation, and nothing about the
+// live turn changes. Any other start error stays a failure and reaches
+// the manager as before.
+func automationStartFailure(
+	err error, conversationID string,
+) (automations.RunResult, error) {
+	if errors.Is(err, host.ErrConversationBusy) {
+		return automations.RunResult{
+			Status:         automations.RunSkipped,
+			Error:          conversationBusyReason,
+			ConversationID: conversationID,
+		}, nil
+	}
+	return automations.RunResult{Status: automations.RunFailed}, err
 }
 
 // automationOutput returns the bounded text of the run's final
@@ -595,10 +632,17 @@ func automationOutput(res *agent.Result) string {
 	return ""
 }
 
-// suppressAutomationNotify applies the task's notification policy.
+// suppressAutomationNotify applies the task's notification policy. A
+// skipped run is never announced: nothing ran — the conversation was
+// busy with a live turn — and the run record in the panel is where that
+// is read. A banner would only interrupt the very turn that caused the
+// skip.
 func suppressAutomationNotify(
 	task automations.Task, status automations.RunStatus, errorText string,
 ) bool {
+	if status == automations.RunSkipped {
+		return true
+	}
 	switch task.Notify {
 	case automations.NotifyNever:
 		return true

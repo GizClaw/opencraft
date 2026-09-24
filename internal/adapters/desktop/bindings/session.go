@@ -18,6 +18,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
@@ -55,9 +56,10 @@ func toSessionMeta(m sessions.Meta) SessionMeta {
 }
 
 // SessionTurnDTO is the wire form of one archived turn. Times are
-// RFC3339 strings and the UI duration is computed from the stored
-// started/finished stamps with the same legacy fallbacks older
-// archives relied on.
+// RFC3339 strings, resolved once by the store (TurnRecord.Timing):
+// a timestamp the archive never recorded displays as the turn's own
+// `at`, and duration_ms is measured from the recorded start/finish
+// pair.
 type SessionTurnDTO struct {
 	Seq         int    `json:"seq"`
 	At          string `json:"at"`
@@ -118,30 +120,14 @@ type SessionDeleteResult struct {
 func toSessionTurnDTO(
 	ctx context.Context, conversationID string, t sessions.TurnRecord,
 ) SessionTurnDTO {
-	requestedAt := t.RequestedAt
-	if requestedAt.IsZero() {
-		requestedAt = t.At
-	}
-	startedAt := t.StartedAt
-	if startedAt.IsZero() {
-		startedAt = t.At
-	}
-	finishedAt := t.FinishedAt
-	if finishedAt.IsZero() {
-		finishedAt = t.At
-	}
-	var durationMs int64
-	if !t.StartedAt.IsZero() && !t.FinishedAt.IsZero() &&
-		t.FinishedAt.After(t.StartedAt) {
-		durationMs = t.FinishedAt.Sub(t.StartedAt).Milliseconds()
-	}
+	timing := t.Timing()
 	return SessionTurnDTO{
 		Seq:            t.Seq,
-		At:             t.At.UTC().Format(time.RFC3339),
-		RequestedAt:    requestedAt.UTC().Format(time.RFC3339),
-		StartedAt:      startedAt.UTC().Format(time.RFC3339),
-		FinishedAt:     finishedAt.UTC().Format(time.RFC3339),
-		DurationMs:     durationMs,
+		At:             timing.At.UTC().Format(time.RFC3339),
+		RequestedAt:    timing.RequestedAt.UTC().Format(time.RFC3339),
+		StartedAt:      timing.StartedAt.UTC().Format(time.RFC3339),
+		FinishedAt:     timing.FinishedAt.UTC().Format(time.RFC3339),
+		DurationMs:     timing.Duration.Milliseconds(),
 		RunID:          t.RunID,
 		Status:         t.Status,
 		Error:          t.Error,
@@ -228,7 +214,11 @@ func listStoredMetas(store *sessions.Store) ([]SessionMeta, error) {
 	out := make([]SessionMeta, 0, len(metas))
 	for i := range metas {
 		var custom string
-		if store.ReadState(metas[i].ID, "title", &custom) == nil &&
+		// The title document is the cosmetic kind (see
+		// sessions.Store.ReadState): a title that cannot be read falls
+		// back to the conversations.title column rather than failing the
+		// whole listing.
+		if store.ReadState(metas[i].ID, sessions.DocumentTitle, &custom) == nil &&
 			strings.TrimSpace(custom) != "" {
 			metas[i].Title = custom
 		}
@@ -307,14 +297,14 @@ func (b *Session) Rename(id, title string) error {
 	if title == "" {
 		return errors.New("title is required")
 	}
-	if !sessions.ValidID(id) {
+	if !ids.IsSession(id) {
 		return fmt.Errorf("invalid session id %q", id)
 	}
 	h := b.core.Runtime.Current()
 	if h == nil || h.Sessions() == nil {
 		return errNotReady("session")
 	}
-	return h.Sessions().WriteState(id, "title", title)
+	return h.Sessions().WriteState(id, sessions.DocumentTitle, title)
 }
 
 // Delete removes one conversation and, when the deleted conversation

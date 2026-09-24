@@ -14,6 +14,7 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
@@ -104,9 +105,9 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 
 	// Delegated subagent contexts are ephemeral ("ctx-" ids minted per
 	// delegation) and never archived: the session store only accepts
-	// "s-" conversation ids. Mirror the committer's guard so both paths
-	// agree on what gets persisted.
-	if !sessions.ValidID(id.ConversationID) {
+	// "s-" conversation ids. Mirror the committer's guard
+	// (ids.IsSession) so both paths agree on what gets persisted.
+	if !ids.IsSession(id.ConversationID) {
 		return
 	}
 

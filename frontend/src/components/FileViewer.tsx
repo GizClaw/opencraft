@@ -1,3 +1,4 @@
+import { UIEventChannel, UIEventType } from '../lib/events';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -680,9 +681,13 @@ function FileTreePanel({
         });
     };
     read();
-    const off = Events.On('opencraft:ui', (e) => {
+    const off = Events.On(UIEventChannel, (e) => {
       const ev = e.data as { type?: string } | undefined;
-      if (ev?.type === 'git_changed' || ev?.type === 'turn_end') read();
+      if (
+        ev?.type === UIEventType.gitChanged ||
+        ev?.type === UIEventType.turnEnd
+      )
+        read();
     });
     const wake = () => {
       if (!document.hidden) read();

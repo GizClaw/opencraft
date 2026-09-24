@@ -3,8 +3,6 @@ package worldstate
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"os"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -15,6 +13,7 @@ import (
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
@@ -112,7 +111,7 @@ func (s *Service) usageAnchorBoardValue(
 	// Delegated subagent runs mint ephemeral "ctx-" ids the store rejects
 	// (recordUsageAnchor guards the write side the same way): there is no
 	// anchor to read, and asking would warn on every subagent turn.
-	if !ocsessions.ValidID(contextID) {
+	if !ids.IsSession(contextID) {
 		return nil, false
 	}
 	if !s.replaysFullHistory() {
@@ -120,10 +119,8 @@ func (s *Service) usageAnchorBoardValue(
 	}
 	anchor, err := s.sessionStore.ReadUsageAnchor(contextID)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			telemetry.WarnErr(ctx, "worldstate: read usage anchor failed", err,
-				otellog.String("conversation.id", contextID))
-		}
+		// An unreadable anchor was reported by the store; a missing one
+		// just means there is no measurement yet.
 		return nil, false
 	}
 	if !anchor.Valid() {
@@ -201,7 +198,7 @@ func recordUsageAnchor(
 	}
 	// Delegated subagent runs are ephemeral ("ctx-..."), so there is no
 	// conversation to anchor.
-	if !ocsessions.ValidID(contextID) {
+	if !ids.IsSession(contextID) {
 		return
 	}
 	usage, ok := boardUsage(board)

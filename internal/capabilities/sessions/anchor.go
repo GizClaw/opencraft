@@ -4,12 +4,6 @@ import (
 	"time"
 )
 
-// usageAnchorStateName is the conversation_state document holding the last
-// provider-measured prompt size. It is written at turn end and read by the
-// next turn's world-state prepare hook, which exposes it to the graph's
-// compaction node.
-const usageAnchorStateName = "usage_anchor"
-
 // UsageAnchor is the provider's own measurement of one request: how many
 // input tokens a prompt of AnchoredMessages messages cost. The compaction
 // node uses it as the base of its next budget estimate and adds the token
@@ -52,18 +46,20 @@ func (s *Store) WriteUsageAnchor(id string, anchor UsageAnchor) error {
 	if s == nil || !anchor.Valid() {
 		return nil
 	}
-	return s.WriteState(id, usageAnchorStateName, anchor)
+	return s.WriteState(id, DocumentUsageAnchor, anchor)
 }
 
 // ReadUsageAnchor loads the conversation's last usage anchor. A missing
 // document returns os.ErrNotExist, matching ReadState: callers treat it as
-// "no measurement yet" and fall back to the character estimate.
+// "no measurement yet" and fall back to the character estimate. A
+// document that cannot be decoded is reported (ReadStateStrict): losing
+// the anchor silently would only show up as compaction that folds late.
 func (s *Store) ReadUsageAnchor(id string) (UsageAnchor, error) {
 	var anchor UsageAnchor
 	if s == nil {
 		return UsageAnchor{}, nil
 	}
-	if err := s.ReadState(id, usageAnchorStateName, &anchor); err != nil {
+	if err := s.ReadStateStrict(id, DocumentUsageAnchor, &anchor); err != nil {
 		return UsageAnchor{}, err
 	}
 	if !anchor.Valid() {

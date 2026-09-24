@@ -13,6 +13,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 const (
@@ -145,7 +146,7 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 			"sessions: import contains no archiveable messages")
 	}
 
-	id := NewID()
+	id := ids.NewSession()
 	dir := s.dir(id)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err

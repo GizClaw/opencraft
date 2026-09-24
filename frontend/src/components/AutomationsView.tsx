@@ -158,6 +158,9 @@ function runErrorMessage(error: string, t: (key: string) => string): string {
   if (error === 'interrupted_by_app_restart' || error === '应用重启中断') {
     return t('automations.interruptedRestart');
   }
+  if (error === 'conversation_busy') {
+    return t('automations.skippedBusy');
+  }
   return error;
 }
 

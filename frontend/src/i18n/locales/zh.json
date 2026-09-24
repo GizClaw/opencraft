@@ -1430,6 +1430,7 @@
     "noRuns": "暂无运行记录",
     "duration": "耗时",
     "interruptedRestart": "应用已关闭或重启，运行被中断",
+    "skippedBusy": "已跳过：该会话已有正在进行的回合",
     "openSession": "打开会话"
   },
   "graph": {

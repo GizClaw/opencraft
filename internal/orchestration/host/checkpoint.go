@@ -9,7 +9,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 // The engine stamps one checkpoint per completed wave while a turn runs
@@ -69,7 +69,7 @@ func recoveryRequestAttributes(request agent.Request) map[string]string {
 // belongs to: the recovery annotation when present, otherwise the
 // board var the world node sets. The "oc-" prefix is stripped so a
 // delegated or legacy id never looks like a conversation; callers still
-// validate the result with sessions.ValidID.
+// validate the result with ids.IsSession.
 func checkpointConversationID(cp *agent.Checkpoint) string {
 	if cp == nil {
 		return ""
@@ -140,13 +140,13 @@ func (h *Host) deleteConversationCheckpoints(ctx context.Context, contextID stri
 		return
 	}
 	stateStore := h.store.State()
-	ids, err := stateStore.List(ctx)
+	checkpointIDs, err := stateStore.List(ctx)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: list run checkpoints failed", err)
 		return
 	}
-	for _, id := range ids {
-		if !strings.HasPrefix(id, state.RunCheckpointPrefix) {
+	for _, id := range checkpointIDs {
+		if !ids.IsRun(id) {
 			continue
 		}
 		cp, err := stateStore.Load(ctx, id)

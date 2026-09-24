@@ -78,7 +78,7 @@ func (c *Core) wirePluginInference() {
 // error reaches the plugin.
 func (c *Core) applyPluginInferenceWrite(changed bool) error {
 	if changed {
-		c.Shell.Emit("inference_changed", map[string]any{})
+		c.Shell.Emit(EventInferenceChanged, map[string]any{})
 	} else if c.pluginWrites.lastRebuildApplied() &&
 		c.runtimeServesActiveWorkspace() {
 		return nil

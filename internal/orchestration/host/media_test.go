@@ -14,6 +14,7 @@ import (
 	"github.com/disintegration/imaging"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 func TestPersistUserAttachmentsCopiesLocalImages(t *testing.T) {
@@ -31,7 +32,7 @@ func TestPersistUserAttachmentsCopiesLocalImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := ocsessions.NewID()
+	id := ids.NewSession()
 	parts, err := persistUserAttachments(
 		store, id, []message.Part{message.ImagePart{Source: source}},
 	)
@@ -78,7 +79,7 @@ func TestPersistUserAttachmentsNormalizesSupportedImageToJPEG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := ocsessions.NewID()
+	id := ids.NewSession()
 	parts, err := persistUserAttachments(
 		store, id, []message.Part{message.ImagePart{Source: source}},
 	)
@@ -129,7 +130,7 @@ func TestPersistUserAttachmentsKeepsUprightJPEGBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := ocsessions.NewID()
+	id := ids.NewSession()
 	parts, err := persistUserAttachments(
 		store, id, []message.Part{message.ImagePart{Source: source}},
 	)

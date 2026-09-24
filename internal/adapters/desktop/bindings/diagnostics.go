@@ -597,7 +597,7 @@ type RecoveryDTO struct {
 	// Pending counts checkpoints the pass did not examine (its cap).
 	Pending int `json:"pending"`
 	// CheckpointRows is every row of the table; CheckpointRuns is the
-	// assistant-run subset under state.RunCheckpointPrefix, which is
+	// assistant-run subset under ids.RunPrefix, which is
 	// what the recovery pass examines. CheckpointBytes is their
 	// encoded size.
 	CheckpointRows  int   `json:"checkpoint_rows"`

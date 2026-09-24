@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 // ScheduleType is one of the four supported scheduling modes.
@@ -250,7 +252,7 @@ func (t Task) Validate() error {
 	default:
 		return fmt.Errorf("unknown think level %q", t.Think)
 	}
-	if t.ConversationID != "" && !strings.HasPrefix(t.ConversationID, "s-") {
+	if t.ConversationID != "" && !ids.IsSession(t.ConversationID) {
 		return fmt.Errorf("conversation must be a session id")
 	}
 	switch t.Notify {
@@ -330,7 +332,12 @@ const (
 	// panel. Like RunTimeout it is kept apart from "failed": a
 	// deliberate stop is not a failure of the work.
 	RunCanceled RunStatus = "canceled"
-	RunSkipped  RunStatus = "skipped"
+	// RunSkipped is a run the scheduler declined to execute: the
+	// conversation it targets already had a live turn, and a scheduled
+	// run never preempts a turn the user is watching. It is neither a
+	// failure nor a cancellation; the Error field says why it stepped
+	// aside (the desktop runner stores a localizable marker there).
+	RunSkipped RunStatus = "skipped"
 )
 
 // Run is one execution record of a task.

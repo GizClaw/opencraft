@@ -8,6 +8,7 @@
 // the slow poll is the backstop for everything that does not announce
 // itself. Results are compared by value so an unchanged answer never
 // re-renders the editor.
+import { UIEventChannel, UIEventType } from '../../lib/events';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Events } from '@wailsio/runtime';
 import { api } from '../../lib/api';
@@ -80,16 +81,20 @@ export function useFileMarks(
 
   useEffect(() => {
     if (!active) return;
-    const off = Events.On('opencraft:ui', (e) => {
+    const off = Events.On(UIEventChannel, (e) => {
       const ev = e.data as
         { type?: string; data?: { path?: string } } | undefined;
-      if (ev?.type === 'git_changed' || ev?.type === 'turn_end') {
+      if (
+        ev?.type === UIEventType.gitChanged ||
+        ev?.type === UIEventType.turnEnd
+      ) {
         schedule();
         return;
       }
       // artifact fires per written file; only this tab's own file has to
       // re-read, or every write during a turn would re-run the query.
-      if (ev?.type === 'artifact' && ev.data?.path === rel) schedule();
+      if (ev?.type === UIEventType.artifact && ev.data?.path === rel)
+        schedule();
     });
     const wake = () => {
       if (!document.hidden) schedule();

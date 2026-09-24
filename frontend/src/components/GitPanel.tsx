@@ -7,6 +7,7 @@
 // any run is active on the current workspace's Host. The
 // in_workspace marker is informational: entries outside the workspace
 // subtree are shown and remain fully operable.
+import { UIEventChannel, UIEventType } from '../lib/events';
 import {
   useCallback,
   useEffect,
@@ -201,11 +202,14 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
   // git_changed after every successful mutation, so refresh when the
   // workspace repository changes underneath this panel.
   useEffect(() => {
-    const off = Events.On('opencraft:ui', (e) => {
+    const off = Events.On(UIEventChannel, (e) => {
       const ev = e.data as { type?: string } | undefined;
       // git_changed covers UI writes from any panel; turn_end covers
       // agent/automation turns that may have touched the repository.
-      if (ev?.type === 'git_changed' || ev?.type === 'turn_end') {
+      if (
+        ev?.type === UIEventType.gitChanged ||
+        ev?.type === UIEventType.turnEnd
+      ) {
         void refresh(true);
       }
     });

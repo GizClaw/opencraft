@@ -75,6 +75,12 @@ export interface MockConfig {
   petPosition?: { x: number; y: number; ready: boolean };
   petDiagnostics?: unknown;
   petRuntimeStatus?: unknown;
+  /**
+   * Stop answering the runtime-status poll after its first read, so a
+   * mount report a spec pushes as a UI event cannot be clobbered by the
+   * panel's 2s snapshot while the assertion is in flight.
+   */
+  petRuntimeStatusFreezePoll?: boolean;
   assistantCharacter?: string;
   petsEnabled?: boolean;
   /**
@@ -117,6 +123,7 @@ export function mockBackend(cfg?: MockConfig) {
   // spec can see "the drag called SetPosition" is this recording.
   const petCalls: { method: string; args: unknown[] }[] = [];
   const petReports: unknown[] = [];
+  let petRuntimeStatusReads = 0;
   // Steer call log: a mid-turn message leaves the composer as exactly one
   // RPC (Conversation.Steer), so the arguments are the only proof the
   // text went to the live run with that run's id instead of into the Tab
@@ -647,6 +654,10 @@ export function mockBackend(cfg?: MockConfig) {
         recordPet('ReportRuntimeStatus', [status]);
       },
       RuntimeStatus: async () => {
+        petRuntimeStatusReads += 1;
+        if (config.petRuntimeStatusFreezePoll && petRuntimeStatusReads > 1) {
+          return new Promise(() => {});
+        }
         if (config.petRuntimeStatus) {
           return { status: config.petRuntimeStatus, reported: true };
         }

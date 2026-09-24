@@ -35,7 +35,7 @@ func (b *Pet) RegisterPack(p pet.Pack) error {
 		return err
 	}
 	b.core.Packs.Register(p)
-	b.core.Shell.Emit("pet:packs_changed", map[string]any{
+	b.core.Shell.Emit(core.EventPetPacksChanged, map[string]any{
 		"pack_id": p.ID,
 	})
 	return nil
@@ -45,7 +45,7 @@ func (b *Pet) RegisterPack(p pet.Pack) error {
 // overrode (the builtin, when present).
 func (b *Pet) UnregisterPack(id string) {
 	b.core.Packs.Unregister(id)
-	b.core.Shell.Emit("pet:packs_changed", map[string]any{
+	b.core.Shell.Emit(core.EventPetPacksChanged, map[string]any{
 		"pack_id": id,
 	})
 }

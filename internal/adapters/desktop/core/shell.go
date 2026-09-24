@@ -249,7 +249,7 @@ func (s *Shell) SetPetRuntimeStatus(status petfeed.RuntimeStatus) {
 	s.petRuntime = status
 	s.hasPetRuntime = true
 	s.mu.Unlock()
-	s.Emit("pet:runtime_status", status)
+	s.Emit(EventPetRuntimeStatus, status)
 }
 
 // PetRuntimeStatus returns the last renderer report, and whether the
@@ -301,8 +301,8 @@ func (s *Shell) SetNotificationSink(fn func(typ string, data any)) {
 // the frontend handles: interact/turn_end are UI events that also
 // notify, while the automation result has no UI consumer at all.
 const (
-	NotifyInteract   = "interact"
-	NotifyTurnEnd    = "turn_end"
+	NotifyInteract   = EventInteract
+	NotifyTurnEnd    = EventTurnEnd
 	NotifyAutomation = "automation_notify"
 )
 
@@ -395,7 +395,7 @@ func (s *Shell) OpenURL(url string) {
 // buffered deltas are flushed first, so turn_end, usage or any status
 // event can never overtake the text it follows.
 func (s *Shell) Emit(typ string, data any) {
-	if typ != "stream" {
+	if typ != EventStream {
 		s.flushStreams()
 	}
 	s.deliver(typ, data)
@@ -406,7 +406,7 @@ func (s *Shell) Emit(typ string, data any) {
 // buffer first; EmitStream holds the buffer lock across delivery).
 func (s *Shell) deliver(typ string, data any) {
 	if app, _ := s.attached(); app != nil {
-		app.Event.Emit("opencraft:ui", map[string]any{
+		app.Event.Emit(UIEventChannel, map[string]any{
 			"type": typ,
 			"data": data,
 		})

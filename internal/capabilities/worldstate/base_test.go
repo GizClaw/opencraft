@@ -23,7 +23,7 @@ func TestInstructionSectionsOrderRolesAndBudget(t *testing.T) {
 		"base_format",
 	}
 	if len(secs) != len(wantIDs) {
-		t.Fatalf("base sections = %d (%v), want %d", len(secs), ids(secs), len(wantIDs))
+		t.Fatalf("base sections = %d (%v), want %d", len(secs), sectionIDs(secs), len(wantIDs))
 	}
 	total := 0
 	for i, sec := range secs {
@@ -190,7 +190,7 @@ func TestModeAndPersonalityEmbeddedFragmentsMatchInventory(t *testing.T) {
 func TestPlanModeFragmentInjected(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir(), CollaborationMode: "plan"})
 	secs := svc.instructionSections(context.Background())
-	base := ids(secs)
+	base := sectionIDs(secs)
 	planAt := -1
 	for i, id := range base {
 		if id == "mode_plan" {
@@ -216,7 +216,7 @@ func TestPlanModeFragmentInjected(t *testing.T) {
 
 	// Unknown modes degrade to default behavior.
 	unknown := New(Options{WorkBase: t.TempDir(), CollaborationMode: "research"})
-	if got := ids(unknown.instructionSections(context.Background())); len(got) != len(baseFragmentOrder) {
+	if got := sectionIDs(unknown.instructionSections(context.Background())); len(got) != len(baseFragmentOrder) {
 		t.Fatalf("unknown mode sections = %v, want base only", got)
 	}
 }
@@ -224,7 +224,7 @@ func TestPlanModeFragmentInjected(t *testing.T) {
 func TestPersonalityFragmentInjected(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir(), Personality: "friendly"})
 	secs := svc.instructionSections(context.Background())
-	got := ids(secs)
+	got := sectionIDs(secs)
 	if got[len(got)-1] != "personality_friendly" {
 		t.Fatalf("personality must follow base/mode: %v", got)
 	}
@@ -233,7 +233,7 @@ func TestPersonalityFragmentInjected(t *testing.T) {
 	}
 
 	prag := New(Options{WorkBase: t.TempDir(), Personality: "pragmatic"})
-	if got := ids(prag.instructionSections(context.Background())); got[len(got)-1] != "personality_pragmatic" {
+	if got := sectionIDs(prag.instructionSections(context.Background())); got[len(got)-1] != "personality_pragmatic" {
 		t.Fatalf("pragmatic sections = %v", got)
 	}
 
@@ -245,7 +245,7 @@ func TestPersonalityFragmentInjected(t *testing.T) {
 	}
 
 	unknown := New(Options{WorkBase: t.TempDir(), Personality: "energetic"})
-	if got := ids(unknown.instructionSections(context.Background())); len(got) != len(baseFragmentOrder) {
+	if got := sectionIDs(unknown.instructionSections(context.Background())); len(got) != len(baseFragmentOrder) {
 		t.Fatalf("unknown personality sections = %v, want base only", got)
 	}
 }

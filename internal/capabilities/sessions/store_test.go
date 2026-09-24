@@ -13,6 +13,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
+
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
 // TestStoreSearchMessages pins the public search surface: a turn
@@ -533,7 +535,7 @@ func TestSeedStartTitleVisibleBeforeArchive(t *testing.T) {
 	}
 	defer func() { _ = store.CloseDB() }()
 	ctx := context.Background()
-	id := NewID()
+	id := ids.NewSession()
 
 	if err := store.SeedStartTitle(ctx, id, []message.Message{
 		message.NewTextMessage(message.RoleUser, "fix the build\nand run tests"),
@@ -903,8 +905,9 @@ func TestListEmptyWhenRootMissing(t *testing.T) {
 }
 
 // TestBufferArtifactMergesIntoTurn verifies buffered artifacts are
-// attached to the next archived turn (deduped by path with the latest
-// byte count), cleared after append, and readable back through Turns.
+// attached to the turn of the run that wrote them (deduped by path with
+// the latest byte count), cleared after append, and readable back
+// through Turns.
 func TestBufferArtifactMergesIntoTurn(t *testing.T) {
 	store, err := newMigratedStore(t.TempDir(), 40)
 	if err != nil {
@@ -915,25 +918,29 @@ func TestBufferArtifactMergesIntoTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.BufferArtifact(id, "docs/report.md", 100); err != nil {
+	const runID = "run-1"
+	if err := store.BufferArtifact(id, runID, "docs/report.md", 100); err != nil {
 		t.Fatalf("BufferArtifact: %v", err)
 	}
 	// Re-writing the same path refreshes bytes in place.
-	if err := store.BufferArtifact(id, "docs/report.md", 250); err != nil {
+	if err := store.BufferArtifact(id, runID, "docs/report.md", 250); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.BufferArtifact(id, "slides.pptx", 5000); err != nil {
+	if err := store.BufferArtifact(id, runID, "slides.pptx", 5000); err != nil {
 		t.Fatal(err)
 	}
 	// Invalid ids are rejected before touching state.
-	if err := store.BufferArtifact("bad-id", "x.md", 1); err == nil {
+	if err := store.BufferArtifact("bad-id", runID, "x.md", 1); err == nil {
 		t.Fatal("BufferArtifact accepted invalid session id")
 	}
+	// A write with no run behind it has no turn to belong to.
+	if err := store.BufferArtifact(id, "", "x.md", 1); err == nil {
+		t.Fatal("BufferArtifact accepted an empty run id")
+	}
 
-	if err := store.AppendTurn(context.Background(), id, []message.Message{
-		message.NewTextMessage(message.RoleUser, "x"),
-	}); err != nil {
-		t.Fatalf("AppendTurn: %v", err)
+	if err := store.AppendTurnWithRunID(context.Background(), id, runID,
+		[]message.Message{message.NewTextMessage(message.RoleUser, "x")}); err != nil {
+		t.Fatalf("AppendTurnWithRunID: %v", err)
 	}
 	turns, err := store.Turns(context.Background(), id)
 	if err != nil {
@@ -954,10 +961,9 @@ func TestBufferArtifactMergesIntoTurn(t *testing.T) {
 	}
 
 	// The buffer is consumed: the next turn archives no artifacts.
-	if err := store.AppendTurn(context.Background(), id, []message.Message{
-		message.NewTextMessage(message.RoleUser, "y"),
-	}); err != nil {
-		t.Fatalf("AppendTurn #2: %v", err)
+	if err := store.AppendTurnWithRunID(context.Background(), id, "run-2",
+		[]message.Message{message.NewTextMessage(message.RoleUser, "y")}); err != nil {
+		t.Fatalf("AppendTurnWithRunID #2: %v", err)
 	}
 	turns, err = store.Turns(context.Background(), id)
 	if err != nil {
@@ -971,6 +977,92 @@ func TestBufferArtifactMergesIntoTurn(t *testing.T) {
 	}
 	if turns[0].Seq != 1 || turns[1].Seq != 2 {
 		t.Fatalf("seqs = %d,%d want 1,2", turns[0].Seq, turns[1].Seq)
+	}
+}
+
+// TestBufferArtifactStaysWithItsRun pins the attribution rule from the
+// store side: a turn takes exactly the files of its own run. Another
+// run's buffered files survive it — the conversation can have two live
+// runs at once (a barge-in, a delegation note the app appends while the
+// run that spawned it is still working), and the turn that archives
+// first must not carry off what the other one wrote.
+func TestBufferArtifactStaysWithItsRun(t *testing.T) {
+	store, err := newMigratedStore(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	ctx := context.Background()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BufferArtifact(id, "run-parent", "docs/report.md", 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BufferArtifact(id, "subagent:card-1", "note.md", 10); err != nil {
+		t.Fatal(err)
+	}
+
+	// The note archives first, while the parent run is still going.
+	if err := store.AppendTurnWithOriginAndRunID(
+		ctx, id, "subagent:card-1",
+		TurnOrigin{Kind: "delegation_note"},
+		[]message.Message{message.NewTextMessage(message.RoleUser, "note")},
+	); err != nil {
+		t.Fatalf("note turn: %v", err)
+	}
+	note, err := store.TurnByRunID(ctx, id, "subagent:card-1")
+	if err != nil {
+		t.Fatalf("TurnByRunID: %v", err)
+	}
+	if len(note.Artifacts) != 1 || note.Artifacts[0].Path != "note.md" {
+		t.Fatalf("note artifacts = %+v, want only the file it wrote", note.Artifacts)
+	}
+
+	// The parent's turn takes its own file, which the note left alone.
+	if err := store.AppendTurnWithRunID(ctx, id, "run-parent",
+		[]message.Message{message.NewTextMessage(message.RoleUser, "x")}); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := store.TurnByRunID(ctx, id, "run-parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parent.Artifacts) != 1 || parent.Artifacts[0].Path != "docs/report.md" {
+		t.Fatalf("parent artifacts = %+v, want its own file", parent.Artifacts)
+	}
+
+	// A turn with no run id takes nothing at all: it is not evidence
+	// that some other run's files are finished.
+	if err := store.BufferArtifact(id, "run-third", "slides.pptx", 5000); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(ctx, id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "unattributed"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	turns, err := store.Turns(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 3 {
+		t.Fatalf("turns = %d, want 3", len(turns))
+	}
+	if len(turns[2].Artifacts) != 0 {
+		t.Fatalf("unattributed turn artifacts = %+v, want none", turns[2].Artifacts)
+	}
+	if err := store.AppendTurnWithRunID(ctx, id, "run-third",
+		[]message.Message{message.NewTextMessage(message.RoleUser, "z")}); err != nil {
+		t.Fatal(err)
+	}
+	third, err := store.TurnByRunID(ctx, id, "run-third")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third.Artifacts) != 1 || third.Artifacts[0].Path != "slides.pptx" {
+		t.Fatalf("third run artifacts = %+v, want its own file", third.Artifacts)
 	}
 }
 

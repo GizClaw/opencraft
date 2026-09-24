@@ -4,12 +4,14 @@
 // steps may be in_progress at the same time (e.g. parallel subagent
 // work); a plan with several in_progress steps is never rejected.
 // The latest snapshot is persisted per session by the session store
-// (WriteState/ReadState); this package only owns the plan semantics.
+// under sessions.DocumentPlans; this package only owns the plan
+// semantics.
 package plan
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -94,22 +96,32 @@ func (s *Store) Update(agentID, sessionID string, args UpdatePlanArgs) (Plan, er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	byAgent := map[string]Plan{}
-	if err := s.store.ReadState(sessionID, "plans", &byAgent); err != nil &&
-		!os.IsNotExist(err) {
+	// The plan document is read strictly: a document that exists but
+	// cannot be decoded is reported by the store instead of being
+	// replaced by the new snapshot without a trace.
+	if err := s.store.ReadStateStrict(
+		sessionID, sessions.DocumentPlans, &byAgent,
+	); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Plan{}, err
 	}
 	byAgent[agentID] = p
-	if err := s.store.WriteState(sessionID, "plans", byAgent); err != nil {
+	if err := s.store.WriteState(
+		sessionID, sessions.DocumentPlans, byAgent,
+	); err != nil {
 		return Plan{}, err
 	}
 	return p, nil
 }
 
 // Latest returns the most recent plan snapshot for the agent/session
-// pair.
+// pair. An unreadable document is reported by the store and reads as
+// "no plan" here: this feeds a prompt section, and a broken document
+// must not fail the turn.
 func (s *Store) Latest(agentID, sessionID string) (Plan, bool) {
 	var byAgent map[string]Plan
-	if err := s.store.ReadState(sessionID, "plans", &byAgent); err != nil {
+	if err := s.store.ReadStateStrict(
+		sessionID, sessions.DocumentPlans, &byAgent,
+	); err != nil {
 		return Plan{}, false
 	}
 	p, ok := byAgent[agentID]

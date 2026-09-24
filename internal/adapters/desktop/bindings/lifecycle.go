@@ -63,7 +63,7 @@ func (b *Lifecycle) SetPetsSettings(settings PetsSettings) error {
 	); err != nil {
 		return err
 	}
-	b.core.Shell.Emit("pet:settings_changed", settings)
+	b.core.Shell.Emit(core.EventPetSettingsChanged, settings)
 	return nil
 }
 

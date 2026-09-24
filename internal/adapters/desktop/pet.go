@@ -614,7 +614,7 @@ func (d *Desktop) runPetWindowLoop(
 				continue
 			}
 			last = payload
-			app.Event.Emit("pet:state", payload)
+			app.Event.Emit(desktopcore.EventPetState, payload)
 		}
 	}
 }

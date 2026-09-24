@@ -888,3 +888,45 @@ test('shows the mount report in Settings > Diagnostics', async ({ page }) => {
     page.getByText('binding "walking": property "galloping"'),
   ).toBeVisible();
 });
+
+test('takes a pushed mount report without waiting for the poll', async ({
+  page,
+}) => {
+  // The panel's poll answers once ("never reported") and then stops
+  // answering, so the report pushed below is the only thing that can put
+  // a character in the row.
+  await page.addInitScript(
+    mockBackend as never,
+    {
+      petRuntimeStatusFreezePoll: true,
+    } as never,
+  );
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'Diagnostics' }).click();
+
+  await expect(page.getByText('Pet behavior')).toBeVisible();
+  await expect(page.getByText('Character').locator('..')).toContainText('—');
+
+  await page.evaluate(
+    (data) =>
+      (
+        window as unknown as {
+          __emit: (name: string, value: unknown) => void;
+        }
+      ).__emit('opencraft:ui', { type: 'pet:runtime_status', data }),
+    {
+      pack_id: 'pushed-pack',
+      artboard: 'Pet',
+      view_model: 'PetVM',
+      ok: false,
+      missing: ['binding "walking": property "galloping"'],
+    },
+  );
+
+  await expect(page.getByText('pushed-pack')).toBeVisible();
+  await expect(page.getByText('Degraded')).toBeVisible();
+  await expect(
+    page.getByText('binding "walking": property "galloping"'),
+  ).toBeVisible();
+});
