@@ -278,6 +278,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   land in the same `metric_samples` table (30-day retention) and need no
   permission prompts, because every family member runs as this user.
   Windows has no probe yet, so the section is empty there.
+- The renderer probe reports what the loaded transcripts hold, in the
+  units the store's budgets are written in: `store_media_bytes` (inline
+  image payloads — an attachment's preview, the frame a `view_image`
+  result carries), `store_text_bytes` (message bodies, tool arguments
+  and results), `loaded_convs` and `dom_images`. `proc.mem.footprint`
+  says what the app family costs the machine and cannot say how much of
+  it a window's own retention accounts for; read beside it on the same
+  30s sample (Diagnostics > DEV tools, "Renderer probe"), a footprint
+  that climbs while both byte series stay flat is not the transcript's
+  doing.
 
 ### Changed
 
@@ -1001,6 +1011,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the caller could have used was dropped and the RPC was refused with
   a guard nobody could act on — a send that did not start, a delete
   that failed — until the next call.
+- The transcript is bounded in the renderer instead of growing with the
+  archive. Three read paths could hold whatever a session happened to
+  contain: inline media was capped one image at a time (10 MiB) while a
+  conversation kept every frame it had ever loaded — a screenshot-heavy
+  session's 84 frames sit at 16 MiB on their own, and paging back
+  through them is where hundreds of megabytes of WebKit Malloc came
+  from; a tool result had no text cap, so one chatty command wrote its
+  whole output into the store and into every re-render of its turn; and
+  a paged-in page never reached the fold that trims text. A conversation
+  now settles on every write path: 16 MiB of inline media and 16 MiB of
+  text (`MAX_CONV_MEDIA_BYTES` / `MAX_CONV_TEXT_BYTES`), the newest 24
+  messages untouched, the oldest giving up their bytes first — an
+  evicted image keeps its path, which is all either viewer needs (the
+  attachment re-reads its preview on mount, the `view_image` card
+  re-reads the file on first expand), and a folded result keeps its
+  head, its tail and the marker that says how much went. One result is
+  capped at 256 KiB as it lands (`MAX_TOOL_RESULT_CHARS`). Paging back
+  through history settles the byte budgets too, keeping only the message
+  cap out of it so the page just fetched stays where it landed — that
+  path skipped settling altogether, which is how a reading came back at
+  20.7 MiB against a 16 MiB budget. The budgets are a bound, not a
+  promise: a conversation whose newest 24 messages alone exceed one
+  keeps them, since trimming there would fold text and drop images the
+  reader is looking at.
 
 ## [0.5.3] - 2026-09-17
 

@@ -367,8 +367,14 @@ func (b *File) ReadPreview(path string) (FilePreview, error) {
 		Kind:      "meta",
 		MtimeNS:   info.ModTime().UnixNano(),
 	}
+	// Video and PDF come back as a loopback URL rather than base64. The
+	// viewer's own loader then reads what it needs (a player seeks
+	// through ranges, pdf.js fetches the pages it is about to draw)
+	// instead of paying for a base64 copy in Go, a second one across the
+	// IPC bridge, and a third in the renderer's heap — which for a PDF is
+	// what the 40 MiB preview cap used to buy.
 	if url := b.streamURL(root, rel, mediaType); url != "" {
-		out.Kind = "video"
+		out.Kind = previewKind(mediaType)
 		out.StreamURL = url
 		return out, nil
 	}
@@ -407,11 +413,15 @@ func (b *File) ReadPreview(path string) (FilePreview, error) {
 	return out, nil
 }
 
-// streamURL returns the loopback URL a video preview plays from, or ""
-// when the file is not a workspace video or streaming is unavailable.
+// streamURL returns the loopback URL a video or PDF preview loads from,
+// or "" when the file is not workspace media or streaming is
+// unavailable.
 func (b *File) streamURL(root, rel, mediaType string) string {
-	if b.mediaURL == nil || root != "workspace" || rel == "" ||
-		filetype.Family(mediaType) != "video" {
+	if b.mediaURL == nil || root != "workspace" || rel == "" {
+		return ""
+	}
+	if filetype.Family(mediaType) != "video" &&
+		mediaType != "application/pdf" {
 		return ""
 	}
 	url, err := b.mediaURL(rel)
@@ -428,10 +438,13 @@ func previewableMediaType(mediaType string) bool {
 	return family == "image" || family == "pdf"
 }
 
-// previewKind maps an inline-previewable media type to the UI kind.
+// previewKind maps a previewable media type to the UI kind. Video only
+// ever arrives here through the streaming path — it has no inline form —
+// and the viewer renders it from StreamURL the same way it renders a
+// PDF.
 func previewKind(mediaType string) string {
 	family := filetype.Family(mediaType)
-	if family == "image" || family == "pdf" {
+	if family == "image" || family == "pdf" || family == "video" {
 		return family
 	}
 	return "meta"

@@ -13,7 +13,10 @@ const HOST_PAD = 16;
 const MIN_PAGE_WIDTH = 240;
 const MAX_PAGE_WIDTH = 1100;
 
-export function PdfPane({ dataUrl, name }: { dataUrl: string; name: string }) {
+// `file` is whatever pdf.js can open: a loopback URL for a workspace PDF
+// (it fetches the pages it draws, through byte ranges) or a data URL for
+// one that lives outside the workspace.
+export function PdfPane({ file, name }: { file: string; name: string }) {
   const [pages, setPages] = useState(0);
   const [error, setError] = useState('');
   const hostRef = useRef<HTMLDivElement>(null);
@@ -86,7 +89,12 @@ export function PdfPane({ dataUrl, name }: { dataUrl: string; name: string }) {
     >
       {error && <div className="py-8 text-xs text-err">{error}</div>}
       <Document
-        file={dataUrl}
+        file={file}
+        // A streamed PDF is not pulled in ahead of the reader: pdf.js
+        // asks for the ranges of the pages the virtualizer is about to
+        // draw. (For a data URL the bytes are already here, so the flag
+        // would mean nothing.)
+        options={{ disableAutoFetch: !file.startsWith('data:') }}
         onLoadSuccess={({ numPages }) => setPages(numPages)}
         onLoadError={(err) => setError(String(err))}
       >

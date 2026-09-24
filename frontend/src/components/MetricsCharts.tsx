@@ -114,6 +114,37 @@ const METRICS: MetricDef[] = [
     unit: '',
     aggregate: 'last',
   },
+  // What the loaded transcripts hold, and what the renderer has mounted.
+  // These are the series that say whether the app family's footprint is
+  // the store's doing: conv_messages counts rows, and a row can carry
+  // megabytes (an inline screenshot, a command's output). Both byte
+  // series are bounded per conversation by the store's budgets (see
+  // store.ts), so a flat line here with a rising proc.mem.footprint rules
+  // the transcript out.
+  {
+    name: 'frontend.store_media_bytes',
+    section: 'probe',
+    unit: 'B',
+    aggregate: 'last',
+  },
+  {
+    name: 'frontend.store_text_bytes',
+    section: 'probe',
+    unit: 'B',
+    aggregate: 'last',
+  },
+  {
+    name: 'frontend.loaded_convs',
+    section: 'probe',
+    unit: '',
+    aggregate: 'last',
+  },
+  {
+    name: 'frontend.dom_images',
+    section: 'probe',
+    unit: '',
+    aggregate: 'last',
+  },
   { name: 'frontend.frames', section: 'probe', unit: '', aggregate: 'mean' },
   {
     name: 'frontend.frame_max',

@@ -12,6 +12,7 @@ import {
   isUserStop,
   pendingConversationIDs,
   streamFlushStats,
+  storeBytes,
   useStore,
 } from './store';
 
@@ -2390,6 +2391,290 @@ describe('store: transcript cap', () => {
     expect(conv.messages).toHaveLength(900);
     expect(conv.messages[0].text).toBe('message-100');
     expect(conv.turnArtifacts.map((t) => t.start)).toEqual([0, 800]);
+  });
+});
+
+describe('store: memory budgets', () => {
+  // 256 KiB is small enough that the newest BUDGET_KEEP_MESSAGES (24)
+  // are well under the 16 MiB budget, so the eviction below can actually
+  // reach it.
+  const CHARS = 256 << 10;
+  const BUDGET = 16 << 20;
+
+  function imageMessage(i: number): MessageView {
+    return {
+      id: `m-${i}`,
+      role: 'user',
+      text: '',
+      items: [],
+      attachments: [
+        {
+          id: `att-${i}`,
+          kind: 'image',
+          path: `/tmp/shot-${i}.png`,
+          name: `shot-${i}.png`,
+          media_type: 'image/jpeg',
+          data_url: `data:image/jpeg;base64,${'A'.repeat(CHARS)}`,
+        },
+      ],
+    };
+  }
+
+  function resultMessage(i: number): MessageView {
+    return {
+      id: `m-${i}`,
+      role: 'assistant',
+      text: '',
+      attachments: [],
+      items: [
+        {
+          kind: 'tool_call',
+          id: `item-${i}`,
+          tool: {
+            id: `call-${i}`,
+            name: 'bash',
+            args: '{}',
+            status: 'done',
+            result: 'B'.repeat(CHARS),
+          },
+        },
+      ],
+    };
+  }
+
+  async function load(messages: MessageView[]) {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages,
+        },
+      },
+    });
+    // Any write path settles the conversation: setThink goes through
+    // updateConv, the same settle a stream flush calls.
+    await useStore.getState().setThink('high');
+  }
+
+  it('drops the oldest inline images just past the media budget', async () => {
+    const count = 100;
+    await load(Array.from({ length: count }, (_, i) => imageMessage(i)));
+
+    const conv = useStore.getState().conversations['s-1'];
+    const held = storeBytes();
+    expect(held.media).toBeLessThanOrEqual(BUDGET);
+    // Oldest first and no further: the total lands within one image of
+    // the budget instead of clearing the transcript.
+    expect(held.media).toBeGreaterThan(BUDGET - (CHARS + 32));
+    // An evicted entry keeps everything but the bytes: the path is what
+    // both viewers re-read from.
+    const first = conv.messages[0].attachments[0];
+    expect(first.data_url).toBeUndefined();
+    expect(first.path).toBe('/tmp/shot-0.png');
+    expect(first.media_type).toBe('image/jpeg');
+    // The newest message is what the reader is looking at.
+    expect(conv.messages[count - 1].attachments[0].data_url).toBeDefined();
+  });
+
+  it('leaves the newest messages alone when they alone blow the budget', async () => {
+    // Two images per message, 1 MiB each: the protected tail holds
+    // 24 messages × 2 MiB, which is already past the budget. The bound is
+    // what it is — trimming there would drop the pictures on screen.
+    const count = 40;
+    const heavy: MessageView[] = Array.from({ length: count }, (_, i) => {
+      const msg = imageMessage(i);
+      return {
+        ...msg,
+        attachments: [
+          {
+            ...msg.attachments[0],
+            data_url: `data:image/jpeg;base64,${'C'.repeat(1 << 20)}`,
+          },
+          {
+            ...msg.attachments[0],
+            id: `att-b-${i}`,
+            data_url: `data:image/jpeg;base64,${'D'.repeat(1 << 20)}`,
+          },
+        ],
+      };
+    });
+    await load(heavy);
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(storeBytes().media).toBeGreaterThan(BUDGET);
+    expect(conv.messages[0].attachments[0].data_url).toBeUndefined();
+    expect(conv.messages[0].attachments[1].data_url).toBeUndefined();
+    expect(conv.messages[count - 1].attachments[0].data_url).toBeDefined();
+  });
+
+  it('folds the oldest tool results past the text budget', async () => {
+    const count = 100;
+    await load(Array.from({ length: count }, (_, i) => resultMessage(i)));
+
+    const conv = useStore.getState().conversations['s-1'];
+    const held = storeBytes();
+    expect(held.text).toBeLessThanOrEqual(BUDGET);
+    const folded = conv.messages[0].items[0];
+    expect(folded.kind).toBe('tool_call');
+    if (folded.kind !== 'tool_call') return;
+    // Folded, not dropped: the marker says how much went, and the tail
+    // (where a failure says why) stays.
+    expect(folded.tool.result).toContain('…[trimmed');
+    expect(folded.tool.result?.endsWith('BBBB')).toBe(true);
+    expect(folded.tool.result?.length ?? 0).toBeLessThan(4 << 10);
+    const newest = conv.messages[count - 1].items[0];
+    if (newest.kind === 'tool_call') {
+      expect(newest.tool.result).toHaveLength(CHARS);
+    }
+  });
+
+  it('caps one tool result at MAX_TOOL_RESULT_CHARS when it lands', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    useStore.setState({ runConvs: { 'r-1': 's-1' } });
+    const handle = useStore.getState().handleEvent;
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: {
+            type: 'tool_call',
+            call: { id: 'call-1', name: 'bash', arguments: { cmd: 'cat log' } },
+          },
+        },
+      },
+    });
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: {
+            type: 'tool_result',
+            result: {
+              call_id: 'call-1',
+              content: {
+                parts: [{ type: 'text', text: 'L'.repeat(700 << 10) }],
+              },
+              is_error: false,
+            },
+          },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    const item = useStore.getState().conversations['s-1'].messages[0].items[0];
+    expect(item.kind).toBe('tool_call');
+    if (item.kind !== 'tool_call') return;
+    expect(item.tool.result).toContain('…[trimmed');
+    // The bound plus the marker that says where the middle went.
+    expect(item.tool.result?.length ?? 0).toBeLessThan((256 << 10) + 64);
+    expect(item.tool.result?.endsWith('LLLL')).toBe(true);
+  });
+
+  it('engages the media budget on the paging write itself', async () => {
+    // Scrolling back through screenshot-heavy history: paged-in turns
+    // used to skip settleConversation altogether, so their inline frames
+    // piled up untrimmed (the fixture run that found this read 20.7 MiB
+    // against the 16 MiB budget). Paging settles the budgets now — and
+    // still skips the message cap, so the page just fetched stays.
+    const FRAME = 2 << 20;
+    const seed: MessageView[] = Array.from({ length: 30 }, (_, i) => ({
+      id: `seed-${i}`,
+      role: i % 2 === 0 ? ('user' as const) : ('assistant' as const),
+      text: `seed-${i}`,
+      items: [],
+      attachments: [],
+    }));
+    const frame = (seq: number) => ({
+      seq,
+      at: '2026-09-01T00:00:00Z',
+      messages: [
+        {
+          role: 'user',
+          content: { parts: [{ type: 'text', text: `look-${seq}` }] },
+        },
+        {
+          role: 'assistant',
+          content: {
+            parts: [
+              {
+                type: 'tool_call',
+                call: {
+                  id: `c-${seq}`,
+                  name: 'view_image',
+                  arguments: { path: `shots/${seq}.png` },
+                },
+              },
+            ],
+          },
+        },
+        {
+          role: 'tool',
+          content: {
+            parts: [
+              {
+                type: 'tool_result',
+                result: {
+                  call_id: `c-${seq}`,
+                  content: {
+                    parts: [
+                      {
+                        type: 'image',
+                        source: {
+                          kind: 'inline',
+                          media_type: 'image/png',
+                          data: 'A'.repeat(FRAME),
+                        },
+                      },
+                    ],
+                  },
+                  is_error: false,
+                },
+              },
+            ],
+          },
+        },
+      ],
+      artifacts: [],
+    });
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: seed,
+          historyHasMore: true,
+          historySeq: 90,
+        },
+      },
+    });
+    // One extra turn rides ahead of the page (historyPage drops it), ten
+    // turns keep their frame each: 20 MiB of frames against the 16 MiB.
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(87, 'extra', 'extra'),
+      ...Array.from({ length: 10 }, (_, i) => frame(88 + i)),
+    ]);
+
+    const added = await useStore.getState().loadEarlierHistory('s-1');
+    expect(added).toBe(20);
+
+    const conv = useStore.getState().conversations['s-1'];
+    const held = storeBytes();
+    expect(held.media).toBeLessThanOrEqual(BUDGET);
+    expect(held.media).toBeGreaterThan(BUDGET - (FRAME + 64));
+    // The oldest frames went; the newest page turn kept the picture the
+    // reader just scrolled to.
+    const first = conv.messages[1].items[0];
+    if (first.kind !== 'tool_call') throw new Error('expected a tool call');
+    expect(first.tool.images).toBeUndefined();
+    const newest = conv.messages[19].items[0];
+    if (newest.kind !== 'tool_call') throw new Error('expected a tool call');
+    expect(newest.tool.images).toHaveLength(1);
   });
 });
 

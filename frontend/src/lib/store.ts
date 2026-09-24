@@ -379,6 +379,41 @@ const MAX_ITEM_TEXT_CHARS = 256 << 10;
 // JSON string for the card to parse.
 const MAX_TOOL_ARGS_CHARS = 512 << 10;
 
+// MAX_TOOL_RESULT_CHARS caps the text one tool result keeps in the
+// store. A result is a JSON envelope a card renders (a file dump, a
+// command's output) and nothing re-reads it; the archive keeps the whole
+// text, and the head/tail marker says it was cut. Without a bound one
+// chatty command wrote megabytes into every re-render of its turn.
+const MAX_TOOL_RESULT_CHARS = 256 << 10;
+
+// MAX_CONV_MEDIA_BYTES bounds the inline image payload — base64 data
+// URLs, counted in string characters — one conversation keeps in the
+// store. Only a single image is capped anywhere else
+// (imageutil.MaxInlineImageBytes, 10 MiB): the archive's screenshot-heavy
+// conversation holds 84 inline frames (16 MiB) on its own, and a renderer
+// that pages back through a few turns of them is where hundreds of
+// megabytes of WebKit Malloc came from. An evicted entry keeps its path,
+// which is all either viewer needs: AttachmentImage re-reads its preview
+// on mount and the view_image card re-reads the file on expand.
+const MAX_CONV_MEDIA_BYTES = 16 << 20;
+
+// MAX_CONV_TEXT_BYTES bounds the text one conversation keeps: message
+// text, block text, tool arguments and tool results. It is the safety net
+// under the per-block caps (MAX_ITEM_TEXT_CHARS, MAX_TOOL_ARGS_CHARS,
+// MAX_TOOL_RESULT_CHARS): those bound one block, and a long turn holds up
+// to MAX_ITEMS_PER_MESSAGE of them.
+const MAX_CONV_TEXT_BYTES = 16 << 20;
+
+// BUDGET_KEEP_MESSAGES is the tail both budgets leave alone. The
+// transcript renders the newest turns, so trimming there would be
+// visible work on text the reader is looking at; everything older is off
+// screen or a scroll away, and getting it back is one fetch.
+const BUDGET_KEEP_MESSAGES = 24;
+
+// BUDGET_FOLD_CHARS is the tail one block keeps once the text budget
+// folds it: enough for the block to still read as itself.
+const BUDGET_FOLD_CHARS = 2 << 10;
+
 // flushDurations keeps the last few stream-flush timings so the optional
 // perf probe can report the transcript's per-frame cost without a
 // profiler attached. It is a fixed-size ring: no growth, no allocation
@@ -446,6 +481,176 @@ function capConversation(conv: ConversationState): ConversationState {
     .filter((t) => t.start >= 0);
   const historySeq = turnArtifacts[0]?.seq ?? conv.historySeq;
   return { ...conv, messages, turnArtifacts, historySeq };
+}
+
+// The three helpers below read a message defensively (`?? []`): they run
+// on every stream flush, so one row that arrived without an array — an
+// old store snapshot, a test fixture, a fixture-shaped archive row —
+// must not be able to throw inside the store's write path.
+
+// mediaCharsOf sums the inline image bytes one message holds: attachment
+// previews above a user bubble and the image parts of a view_image
+// result. Everything else about an attachment is a path and a few
+// numbers.
+function mediaCharsOf(msg: MessageView): number {
+  let total = 0;
+  for (const att of msg.attachments ?? []) {
+    if (att.data_url) total += att.data_url.length;
+  }
+  for (const item of msg.items ?? []) {
+    if (item.kind !== 'tool_call') continue;
+    for (const image of item.tool.images ?? []) total += image.data_url.length;
+  }
+  return total;
+}
+
+// textCharsOf sums the text one message holds. A streaming block is
+// counted through its chunk array: joining it here would allocate the
+// whole block on every budget check, which is exactly the cost this
+// exists to avoid.
+function textCharsOf(msg: MessageView): number {
+  let total = msg.text?.length ?? 0;
+  for (const item of msg.items ?? []) {
+    if (item.kind === 'tool_call') {
+      total += (item.tool.args?.length ?? 0) + (item.tool.result?.length ?? 0);
+      continue;
+    }
+    total += item.text?.length ?? 0;
+    if (item.chunks) {
+      for (const chunk of item.chunks ?? []) total += chunk.length;
+    }
+  }
+  return total;
+}
+
+// dropMessageMedia clears the inline images of one message, keeping the
+// paths. Returns the message unchanged when it held none.
+function dropMessageMedia(msg: MessageView): MessageView {
+  let changed = false;
+  const attachments = (msg.attachments ?? []).map((att) => {
+    if (!att.data_url) return att;
+    changed = true;
+    const { data_url: _dropped, ...rest } = att;
+    return rest as AttachmentView;
+  });
+  const items = (msg.items ?? []).map((item) => {
+    if (item.kind !== 'tool_call' || !item.tool.images?.length) return item;
+    changed = true;
+    return { ...item, tool: { ...item.tool, images: undefined } };
+  });
+  return changed ? { ...msg, attachments, items } : msg;
+}
+
+// foldMessageText folds one message's blocks and tool results down to
+// BUDGET_FOLD_CHARS: what the reader sees stays (a marker and the end of
+// the text), what the store holds does not.
+//
+// Tool arguments are deliberately left alone. They are what the cards
+// render as structured artifacts (a diff, the body of a file being
+// written), and they are not where the bytes are: in the heaviest
+// archived conversation the calls' arguments came to 1.7 MiB against
+// 23.3 MiB of results. Results are output, and a folded result still
+// ends the way it ended.
+function foldMessageText(msg: MessageView): MessageView {
+  let changed = false;
+  const items = (msg.items ?? []).map((item) => {
+    if (item.kind === 'tool_call') {
+      const tool = item.tool;
+      if (tool.result === undefined) return item;
+      const result = capChars(tool.result, BUDGET_FOLD_CHARS);
+      if (result === tool.result) return item;
+      changed = true;
+      return { ...item, tool: { ...tool, result } };
+    }
+    if (item.text.length <= BUDGET_FOLD_CHARS) return item;
+    changed = true;
+    return capTextItem(foldTextItem(item), BUDGET_FOLD_CHARS);
+  });
+  return changed ? { ...msg, items } : msg;
+}
+
+// settleConversation is the one place a conversation's in-memory size is
+// enforced: the message cap first, then the two byte budgets. It is
+// called from every write path that can grow a transcript (a stream
+// flush, a send, a history page, an archive reconcile), so no path can
+// quietly bypass a budget.
+//
+// opts.cap=false is for the paging write (see loadEarlierHistory): the
+// page a reader just scrolled to must not be yanked away by the message
+// cap, but the byte budgets still run — paging back through
+// screenshot-heavy history is exactly where the media payload grows,
+// and it grew unbounded while this path skipped settle altogether.
+//
+// The budgets are a bound, not a promise: a conversation whose newest
+// BUDGET_KEEP_MESSAGES alone exceed one keeps it anyway. Trimming the
+// tail would fold text and drop images the reader is looking at, and
+// what those bytes are is exactly what the store_media_bytes /
+// store_text_bytes probe series exist to show.
+function settleConversation(
+  conv: ConversationState,
+  opts?: { cap?: boolean },
+): ConversationState {
+  const capped = opts?.cap === false ? conv : capConversation(conv);
+  let media = 0;
+  let text = 0;
+  for (const msg of capped.messages) {
+    media += mediaCharsOf(msg);
+    text += textCharsOf(msg);
+  }
+  const overMedia = media > MAX_CONV_MEDIA_BYTES;
+  const overText = text > MAX_CONV_TEXT_BYTES;
+  if (!overMedia && !overText) return capped;
+  // The oldest messages give up their bytes first: dropping a data URL
+  // costs a re-fetch when the row is looked at again, folding text costs
+  // reading a marker. Media goes first because it is what a screenshot-
+  // heavy transcript spends its memory on.
+  const keepFrom = Math.max(0, capped.messages.length - BUDGET_KEEP_MESSAGES);
+  let changed = false;
+  const messages = capped.messages.map((msg, index) => {
+    if (index >= keepFrom) return msg;
+    let next = msg;
+    if (overMedia && media > MAX_CONV_MEDIA_BYTES) {
+      const before = mediaCharsOf(next);
+      if (before > 0) {
+        next = dropMessageMedia(next);
+        media -= before;
+      }
+    }
+    if (overText && text > MAX_CONV_TEXT_BYTES) {
+      const before = textCharsOf(next);
+      const folded = foldMessageText(next);
+      if (folded !== next) {
+        text -= before - textCharsOf(folded);
+        next = folded;
+      }
+    }
+    if (next !== msg) changed = true;
+    return next;
+  });
+  return changed ? { ...capped, messages } : capped;
+}
+
+// storeBytes reports what the loaded transcripts hold, the two byte
+// budgets and the conversation count. The perf probe reports it every
+// window: `proc.mem.footprint` says what the renderer costs, and these
+// say how much of it the store can account for.
+export function storeBytes(): {
+  media: number;
+  text: number;
+  conversations: number;
+} {
+  const state = useStore.getState();
+  let media = 0;
+  let text = 0;
+  let conversations = 0;
+  for (const conv of Object.values(state.conversations)) {
+    conversations += 1;
+    for (const msg of conv.messages) {
+      media += mediaCharsOf(msg);
+      text += textCharsOf(msg);
+    }
+  }
+  return { media, text, conversations };
 }
 
 // normalizeArgs coerces the wire form of tool arguments to a string:
@@ -702,8 +907,8 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
         const item = byCallID.get(p.result.call_id);
         if (item) {
           item.tool.status = p.result.is_error ? 'error' : 'done';
-          item.tool.result = sanitizeToolResult(
-            toolResultText(p.result.content),
+          item.tool.result = capToolResult(
+            sanitizeToolResult(toolResultText(p.result.content)),
           );
           const images = toolResultImages(p.result.content);
           if (images.length > 0) item.tool.images = images;
@@ -968,11 +1173,14 @@ function mergeAppend(
 // tail (it is never rendered); visible text keeps head and tail with a
 // marker in between. The chunk array is trimmed in place, so a block that
 // already dropped its oldest chunks is not re-joined on every delta.
-function capTextItem<T extends TextItem>(item: T): T {
+// `foldTo` overrides the bound: the conversation text budget folds an old
+// message's blocks down to a tail instead of dropping them outright.
+function capTextItem<T extends TextItem>(item: T, foldTo?: number): T {
   // Fold the chunks first: the bound is expressed over the whole text.
   const total = itemText(item);
   const limit =
-    item.kind === 'reasoning' ? MAX_REASONING_CHARS : MAX_ITEM_TEXT_CHARS;
+    foldTo ??
+    (item.kind === 'reasoning' ? MAX_REASONING_CHARS : MAX_ITEM_TEXT_CHARS);
   if (total.length <= limit) {
     return item;
   }
@@ -1002,6 +1210,23 @@ function capTextItem<T extends TextItem>(item: T): T {
     ...item,
     text: `${total.slice(0, head)}\n…[trimmed ${total.length - limit} chars]…\n${total.slice(-tail)}`,
   };
+}
+
+// capChars keeps the head and the tail of one long string with a marker
+// between them — the shape capTextItem gives a text block, and the same
+// one both the per-result cap and the conversation budget use. Neither
+// end is arbitrary: a dump says what it is at the top and why it failed
+// at the bottom.
+function capChars(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const head = Math.floor(limit / 2);
+  const tail = limit - head;
+  return `${text.slice(0, head)}\n…[trimmed ${text.length - limit} chars]…\n${text.slice(-tail)}`;
+}
+
+// capToolResult enforces MAX_TOOL_RESULT_CHARS on one result string.
+function capToolResult(text: string): string {
+  return capChars(text, MAX_TOOL_RESULT_CHARS);
 }
 
 // foldTextItem turns a streaming block's chunks back into one string.
@@ -1222,7 +1447,9 @@ function applyStream(
               status: part.result.is_error
                 ? ('error' as const)
                 : ('done' as const),
-              result: sanitizeToolResult(toolResultText(part.result.content)),
+              result: capToolResult(
+                sanitizeToolResult(toolResultText(part.result.content)),
+              ),
               endedAt: Date.now(),
               images: toolResultImages(part.result.content),
             },
@@ -1488,7 +1715,7 @@ export const useStore = create<StoreState>((set, get) => {
       return {
         conversations: {
           ...state.conversations,
-          [id]: capConversation({ ...conv, ...patch }),
+          [id]: settleConversation({ ...conv, ...patch }),
         },
       };
     });
@@ -2009,7 +2236,7 @@ export const useStore = create<StoreState>((set, get) => {
               runConvs,
               conversations: {
                 ...state.conversations,
-                [conversationID]: capConversation({
+                [conversationID]: settleConversation({
                   ...conv,
                   messages,
                   turnArtifacts,
@@ -2386,7 +2613,7 @@ export const useStore = create<StoreState>((set, get) => {
         return {
           conversations: {
             ...stateNow.conversations,
-            [conversationID]: capConversation({
+            [conversationID]: settleConversation({
               ...conv,
               messages: [
                 ...conv.messages.slice(0, start),
@@ -2485,7 +2712,7 @@ export const useStore = create<StoreState>((set, get) => {
         return {
           conversations: {
             ...state.conversations,
-            [id]: capConversation(folded),
+            [id]: settleConversation(folded),
           },
         };
       });
@@ -2678,7 +2905,7 @@ export const useStore = create<StoreState>((set, get) => {
               set((state) => ({
                 conversations: {
                   ...state.conversations,
-                  [currentSession]: capConversation({
+                  [currentSession]: settleConversation({
                     ...(state.conversations[currentSession] ?? emptyConv()),
                     messages: page.messages,
                     turnArtifacts: page.turnArtifacts,
@@ -3212,10 +3439,11 @@ export const useStore = create<StoreState>((set, get) => {
       stateRoot.sendFocus({ type: 'BACK' });
     },
 
-    // loadEarlierHistory pages backwards through the archive. Turns the
-    // user already paged in stay put: the trim in capConversation only
-    // runs when the transcript changes, so an explicit "scroll up" is
-    // never undone by a cap that would drop the page just fetched.
+    // loadEarlierHistory pages backwards through the archive. The merge
+    // settles the conversation — the byte budgets have to run here, this
+    // is the path that pages screenshot-heavy history into the store —
+    // but skips the message cap, so an explicit "scroll up" is never
+    // undone by a cap that would drop the page just fetched.
     loadEarlierHistory: async (id) => {
       const conv = get().conversations[id];
       if (!conv || conv.historyLoading || !conv.historyHasMore) return 0;
@@ -3239,14 +3467,17 @@ export const useStore = create<StoreState>((set, get) => {
           return {
             conversations: {
               ...state.conversations,
-              [id]: {
-                ...current,
-                messages: [...page.messages, ...current.messages],
-                turnArtifacts: [...page.turnArtifacts, ...shiftedTurns],
-                historySeq: page.historySeq,
-                historyHasMore: page.historyHasMore,
-                historyLoading: false,
-              },
+              [id]: settleConversation(
+                {
+                  ...current,
+                  messages: [...page.messages, ...current.messages],
+                  turnArtifacts: [...page.turnArtifacts, ...shiftedTurns],
+                  historySeq: page.historySeq,
+                  historyHasMore: page.historyHasMore,
+                  historyLoading: false,
+                },
+                { cap: false },
+              ),
             },
           };
         });
@@ -3275,7 +3506,7 @@ export const useStore = create<StoreState>((set, get) => {
         set((state) => ({
           conversations: {
             ...state.conversations,
-            [id]: capConversation({
+            [id]: settleConversation({
               ...emptyConv(),
               mode: state.conversations[id]?.mode ?? 'workspace',
               think: state.conversations[id]?.think ?? 'medium',
@@ -3416,7 +3647,7 @@ export const useStore = create<StoreState>((set, get) => {
             toolsView: null,
             conversations: {
               ...state.conversations,
-              [resolvedID]: capConversation({
+              [resolvedID]: settleConversation({
                 ...emptyConv(),
                 mode: snapshot.mode,
                 think: snapshot.think,

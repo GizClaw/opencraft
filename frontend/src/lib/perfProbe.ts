@@ -7,7 +7,7 @@ import {
   SUSPENDED_GAP_MS,
 } from './perfMetrics';
 import { buildVersion, reportLabels } from './perfLabels';
-import { streamFlushStats, useStore } from './store';
+import { storeBytes, streamFlushStats, useStore } from './store';
 
 // perfProbe is the renderer-side observability hook that a long-turn
 // investigation needs: it reports what the page holds and how expensive
@@ -139,6 +139,7 @@ async function report() {
   reportedFlushTotal = flush.total;
   const commit = flushCommitStats();
   const markdown = markdownStats();
+  const bytes = storeBytes();
   const labels = reportLabels(build);
   const samples: Array<{
     name: string;
@@ -173,6 +174,18 @@ async function report() {
     { name: 'flush_md_p95', value: markdown.p95, unit: 'ms', labels },
     { name: 'conv_messages', value: countMessages(), unit: '1', labels },
     { name: 'mounted_rows', value: mountedRows(), unit: '1', labels },
+    // What the store holds, in the units the two budgets are written in
+    // (string characters; the base64 payloads that dominate media are
+    // Latin-1, so one character is one byte). These are the series that
+    // say whether a rising renderer footprint is the store's doing —
+    // proc.mem.footprint says what the family costs, these say how much
+    // of it the transcript can account for.
+    { name: 'store_media_bytes', value: bytes.media, unit: 'B', labels },
+    { name: 'store_text_bytes', value: bytes.text, unit: 'B', labels },
+    { name: 'loaded_convs', value: bytes.conversations, unit: '1', labels },
+    // Decoded images are the renderer's side of the same question: a
+    // mounted image holds a bitmap the store's byte counts do not see.
+    { name: 'dom_images', value: document.images.length, unit: '1', labels },
   ];
   // Only a window that held an interaction carries the sample, and the
   // slowest one names it in the label: `interaction_max` alone could not

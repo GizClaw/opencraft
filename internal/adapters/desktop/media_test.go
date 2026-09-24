@@ -153,6 +153,69 @@ func TestMediaServerServesRanges(t *testing.T) {
 	}
 }
 
+// TestMediaServerAnswersCrossOrigin pins the headers pdf.js needs. The
+// page and the loopback listener are different origins, so a fetch of a
+// workspace PDF is a CORS request: without these the viewer would fall
+// back to a base64 payload it no longer gets.
+func TestMediaServerAnswersCrossOrigin(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "report.pdf"), []byte("%PDF-1.4 x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	server, err := newMediaServer(func() string { return root })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	link, err := server.URL("report.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, link, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "wails://wails.localhost")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("allow-origin = %q, want *", got)
+	}
+	// A range-capable loader reads these to decide whether it can seek.
+	for _, header := range []string{"Accept-Ranges", "Content-Range"} {
+		if !strings.Contains(
+			resp.Header.Get("Access-Control-Expose-Headers"), header,
+		) {
+			t.Errorf("exposed headers = %q, want %s",
+				resp.Header.Get("Access-Control-Expose-Headers"), header)
+		}
+	}
+
+	preflight, err := http.NewRequest(http.MethodOptions, link, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflight.Header.Set("Origin", "wails://wails.localhost")
+	preflight.Header.Set("Access-Control-Request-Headers", "range")
+	pre, err := http.DefaultClient.Do(preflight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pre.Body.Close()
+	if pre.StatusCode != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want 204", pre.StatusCode)
+	}
+	if got := pre.Header.Get("Access-Control-Allow-Headers"); !strings.Contains(
+		strings.ToLower(got), "range",
+	) {
+		t.Errorf("allow-headers = %q, want range", got)
+	}
+}
+
 func TestMediaServerRejectsForeignRequests(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "clip.mp4"), mp4Bytes(), 0o644); err != nil {

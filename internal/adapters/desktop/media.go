@@ -115,6 +115,26 @@ func (m *mediaServer) Close() {
 // resolved under the active workspace with symlink escapes rejected.
 // http.ServeContent answers range requests, so seeking works.
 func (m *mediaServer) handle(w http.ResponseWriter, r *http.Request) {
+	// The listener is http://127.0.0.1:<port> while the page is a
+	// wails:// document (the Vite dev server in development), so every
+	// request here is cross-origin. A <video> plays across that boundary
+	// on its own, but a fetch does not, and pdf.js reads a PDF — ranges
+	// included — through fetch. The token in the path is the capability;
+	// the origin the bytes are handed to is not a second one.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	// Content-Range and Accept-Ranges are not CORS-safelisted response
+	// headers, and pdf.js decides whether seeking is possible from them.
+	w.Header().Set("Access-Control-Expose-Headers",
+		"Accept-Ranges, Content-Range, Content-Length")
+	if r.Method == http.MethodOptions {
+		// A range request stays a simple request (Range is safelisted),
+		// so no preflight is expected; answering one costs nothing and
+		// keeps a loader that sends it working.
+		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Range")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
