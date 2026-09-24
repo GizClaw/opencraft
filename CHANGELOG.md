@@ -986,6 +986,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guard while the pool was about to hand out a perfectly good Host.
   Every host lifecycle call is now resolved by workspace through the
   pool, and the workspace's identity is the only thing a retry carries.
+- A Host the pool hands out for work is wired with the adapter's host
+  configurator first, whichever path handed it out. The apply-once
+  marker rides the pool entry and only the acquiring caller ran the
+  callback, so a Host reached through `Ensure`'s pooled branch while
+  its assembly was still being published could start a run with the
+  adapter's observers never attached — its artifacts and session
+  updates go unannounced for the rest of that Host's life, and a run
+  on a Host that outlived its assembly change is exactly the one that
+  keeps serving after the next reload.
+- A call that waited out the retry window no longer answers "runtime
+  is not ready" when the pool resolved a Host as the window closed.
+  The expiry check ran before the resolution was examined, so a Host
+  the caller could have used was dropped and the RPC was refused with
+  a guard nobody could act on — a send that did not start, a delete
+  that failed — until the next call.
 
 ## [0.5.3] - 2026-09-17
 

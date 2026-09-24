@@ -150,9 +150,12 @@ func TestDoSurfacesTheCallersOwnCancellation(t *testing.T) {
 // TestDoBoundsTheWaitForAReplacement pins the window: a workspace whose
 // old Host never finishes draining does not hold the RPC open for the
 // length of somebody else's run. The caller gets the guard it hit, not
-// the wait's own deadline.
+// the wait's own deadline. The case shortens the window so it asserts
+// on the bound without paying the production one.
 func TestDoBoundsTheWaitForAReplacement(t *testing.T) {
 	r := NewRuntime(t.TempDir(), t.TempDir(), "")
+	window := 200 * time.Millisecond
+	r.window = window
 	blocking := make(chan struct{})
 	defer close(blocking)
 	r.ensureHost = func(attemptCtx context.Context, _ string) (*host.Host, error) {
@@ -170,12 +173,44 @@ func TestDoBoundsTheWaitForAReplacement(t *testing.T) {
 	if !errors.Is(err, host.ErrRuntimeNotReady) {
 		t.Fatalf("Do = %v, want the not-ready guard it never got past", err)
 	}
-	if elapsed < startRetryWindow {
+	if elapsed < window {
 		t.Fatalf("Do gave up after %v, want the window %v",
-			elapsed, startRetryWindow)
+			elapsed, window)
 	}
-	if elapsed > startRetryWindow+5*time.Second {
+	if elapsed > window+2*time.Second {
 		t.Fatalf("Do waited %v, want the wait bounded by %v",
-			elapsed, startRetryWindow)
+			elapsed, window)
+	}
+}
+
+// TestDoUsesAHostResolvedAsTheWindowClosed pins where the expiry check
+// sits. A resolution can land after the attempt's deadline has already
+// passed — the pool finished the teardown just as the window ran out —
+// and reporting "runtime is not ready" then drops a usable Host on the
+// floor: the caller refuses a request the workspace can serve, and only
+// the next RPC gets the Host that was there all along.
+func TestDoUsesAHostResolvedAsTheWindowClosed(t *testing.T) {
+	r := NewRuntime(t.TempDir(), t.TempDir(), "")
+	r.window = 100 * time.Millisecond
+	resolved := &host.Host{}
+	r.ensureHost = func(attemptCtx context.Context, _ string) (*host.Host, error) {
+		<-attemptCtx.Done()
+		return resolved, nil
+	}
+
+	var calls int
+	err := r.Do(context.Background(), "/workspace/a", nil,
+		func(h *host.Host) error {
+			calls++
+			if h != resolved {
+				t.Fatalf("fn got host %p, want %p", h, resolved)
+			}
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("Do = %v, want nil: the Host was resolved and usable", err)
+	}
+	if calls != 1 {
+		t.Fatalf("fn calls = %d, want 1", calls)
 	}
 }

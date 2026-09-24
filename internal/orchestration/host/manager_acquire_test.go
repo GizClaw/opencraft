@@ -237,3 +237,66 @@ func TestHostConfiguratorAppliesOncePerPooledHost(t *testing.T) {
 			configured[0], first)
 	}
 }
+
+// TestEnsureWiresAHostThePoolAlreadyHeld pins the other half of the
+// configurator contract: no hand-out path returns a Host that can serve
+// runs unconfigured. Ensure's pooled branch is the one that could: it
+// returns a Host the assembler has not reached yet (Acquire configures
+// after publishing), and one that was pooled before the configurator
+// was installed is reachable the same way. Handing either out unwired
+// means the adapter never sees that Host's artifacts or session
+// updates, for the whole life of a run it starts — a run that outlives
+// the assembly change by design.
+func TestEnsureWiresAHostThePoolAlreadyHeld(t *testing.T) {
+	m := NewManagerAt(t.TempDir(), t.TempDir())
+	release := make(chan struct{})
+	close(release)
+	var builds atomic.Int32
+	blockingAssembler(t, m, release, &builds, nil)
+
+	workDir := "/workspace/configure-on-ensure"
+	ctx := context.Background()
+	pooled, err := m.Acquire(ctx, workDir, interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+
+	var (
+		mu         sync.Mutex
+		configured []*Host
+	)
+	m.SetHostConfigurator(func(h *Host) {
+		mu.Lock()
+		defer mu.Unlock()
+		configured = append(configured, h)
+	})
+
+	h, err := m.Ensure(ctx, workDir)
+	if err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if h != pooled {
+		t.Fatalf("ensure returned %p, want the pooled %p", h, pooled)
+	}
+	mu.Lock()
+	ran := len(configured)
+	var wired *Host
+	if ran > 0 {
+		wired = configured[0]
+	}
+	mu.Unlock()
+	if ran != 1 || wired != pooled {
+		t.Fatalf("configurator ran %d times (first %p), want once on %p",
+			ran, wired, pooled)
+	}
+
+	if _, err := m.Ensure(ctx, workDir); err != nil {
+		t.Fatalf("second ensure: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(configured) != 1 {
+		t.Fatalf("configurator ran %d times for one pooled Host, want 1",
+			len(configured))
+	}
+}

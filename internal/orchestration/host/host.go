@@ -866,6 +866,8 @@ func (m *Manager) Current(workDir string) *Host {
 // counts), and otherwise a fresh assembly, once any retiring Host for
 // the workspace has finished teardown. It never assembles a second Host
 // while one is still draining, and never hands out another workspace's.
+// A Host it returns is wired with the host configurator, whether it
+// came out of the pool or from an assembly this call started.
 //
 // Programmatic callers make up this pool's supply side, so the assembly
 // runs on the backend they all use (interact.Auto); a caller that needs
@@ -876,6 +878,11 @@ func (m *Manager) Ensure(ctx context.Context, workDir string) (*Host, error) {
 		return nil, ErrNoWorkspace
 	}
 	if h := m.Current(workDir); h != nil && !h.IsClosing() {
+		// The pooled branch hands out a Host the assembler may not
+		// have reached yet (it configures after publishing), so the
+		// configurator is applied here too: no hand-out path leaves a
+		// Host that can serve runs unwired.
+		m.configureHost(h)
 		return h, nil
 	}
 	return m.Acquire(ctx, workDir, interact.Auto{}, nil)
@@ -891,9 +898,16 @@ func (m *Manager) SetHostConfigurator(fn func(*Host)) {
 	m.mu.Unlock()
 }
 
-// configureHost applies the host configurator once per pooled Host.
-// The callback runs without the pool lock held: adapter callbacks ask
-// the pool questions of their own.
+// configureHost applies the host configurator once per pooled Host, on
+// every path that hands one out for work (Acquire, and Ensure's pooled
+// branch). The callback runs without the pool lock held: adapter
+// callbacks ask the pool questions of their own.
+//
+// A Host the pool has already forgotten is skipped instead of wired
+// late: the apply-once marker rides the pool entry, and a missing (or
+// replaced) entry means that Host retired. It is closing, and the paths
+// that hand out work do not return one of those — Ensure refuses it,
+// Acquire waits out its teardown.
 func (m *Manager) configureHost(h *Host) {
 	if h == nil {
 		return

@@ -19,7 +19,8 @@ import (
 // Host, and how many times it may ask for one.
 const (
 	// startRetryWindow bounds how long a StartTurn/Delete call waits
-	// for a replacement Host.
+	// for a replacement Host. It is the default for Runtime.window,
+	// which tests shorten.
 	startRetryWindow = 10 * time.Second
 	// maxStartAttempts caps the retries inside one binding RPC.
 	maxStartAttempts = 3
@@ -49,6 +50,21 @@ type Runtime struct {
 	// window and the loop can be pinned without assembling a real
 	// engine.
 	ensureHost func(context.Context, string) (*host.Host, error)
+
+	// window is how long Do waits for a workspace's replacement Host.
+	// Zero means startRetryWindow; a test covering the wait shortens
+	// it so it pays the window it asserts on rather than the
+	// production one.
+	window time.Duration
+}
+
+// retryWindow is the wait budget Do spends on one call: the field a
+// test shortens, on top of the production default.
+func (r *Runtime) retryWindow() time.Duration {
+	if r.window > 0 {
+		return r.window
+	}
+	return startRetryWindow
 }
 
 // NewRuntime creates the runtime service rooted at the three launch
@@ -207,7 +223,7 @@ func (r *Runtime) Do(
 	stop func() bool,
 	fn func(*host.Host) error,
 ) error {
-	deadline := time.Now().Add(startRetryWindow)
+	deadline := time.Now().Add(r.retryWindow())
 	lastErr := host.ErrRuntimeNotReady
 	for attempt := 0; attempt < maxStartAttempts; attempt++ {
 		remaining := time.Until(deadline)
@@ -219,9 +235,13 @@ func (r *Runtime) Do(
 		// Only the window's own expiry is absorbed below. A caller whose
 		// context died (a canceled RPC, a deadline of its own) keeps
 		// its error, and so does an assembly that failed for its own
-		// reasons.
+		// reasons. A window that closed with a Host in hand is not an
+		// expiry either: the pool resolved one as the wait ran out, and
+		// answering "not ready" would throw away a Host the caller can
+		// use.
 		expired := ctx.Err() == nil &&
-			errors.Is(attemptCtx.Err(), context.DeadlineExceeded)
+			errors.Is(attemptCtx.Err(), context.DeadlineExceeded) &&
+			(err != nil || h == nil)
 		cancel()
 		switch {
 		case expired:
