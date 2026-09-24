@@ -279,7 +279,12 @@ export function FilePreviewPane({
     );
   }
 
-  if (preview.kind === 'pdf' && preview.data_url) {
+  // A workspace PDF streams from the loopback endpoint (pdf.js fetches
+  // the pages it is about to draw); anything else arrives embedded. The
+  // pane only mounts for the active tab, so unmounting it is what
+  // releases the document, its worker transfer and the page canvases.
+  const pdfSource = preview.stream_url ?? preview.data_url ?? '';
+  if (preview.kind === 'pdf' && pdfSource !== '') {
     return (
       <LazyBoundary>
         <Suspense
@@ -289,7 +294,7 @@ export function FilePreviewPane({
             </div>
           }
         >
-          <PdfPane dataUrl={preview.data_url} name={tab.name} />
+          <PdfPane file={pdfSource} name={tab.name} />
         </Suspense>
       </LazyBoundary>
     );

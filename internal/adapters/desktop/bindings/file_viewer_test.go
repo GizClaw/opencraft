@@ -419,6 +419,57 @@ func TestReadPreviewStreamsWorkspaceVideo(t *testing.T) {
 	}
 }
 
+// TestReadPreviewStreamsWorkspacePDF pins the PDF half of the streaming
+// path: a workspace PDF is handed over as a loopback URL so pdf.js reads
+// the pages it draws, instead of a base64 copy crossing the bridge (and
+// sitting in the renderer's heap) for every file up to previewPdfLimit.
+// A PDF outside the workspace root keeps the embedded form, because the
+// media server only serves the active workspace.
+func TestReadPreviewStreamsWorkspacePDF(t *testing.T) {
+	workDir := t.TempDir()
+	doc := filepath.Join(workDir, "docs", "report.pdf")
+	if err := os.MkdirAll(filepath.Dir(doc), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(doc, []byte("%PDF-1.4 fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
+	b := NewFileBinding(c)
+
+	// Without a stream builder the payload falls back to the embedded
+	// form the renderer used to always get.
+	embedded, err := b.ReadPreview("docs/report.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if embedded.Kind != "pdf" ||
+		!strings.HasPrefix(embedded.DataURL, "data:application/pdf;base64,") ||
+		embedded.StreamURL != "" {
+		t.Fatalf("pdf preview without a stream builder = %+v", embedded)
+	}
+
+	var gotRel string
+	b.SetMediaURL(func(rel string) (string, error) {
+		gotRel = rel
+		return "http://127.0.0.1:1/media/token/" + rel, nil
+	})
+	streamed, err := b.ReadPreview("docs/report.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRel != "docs/report.pdf" {
+		t.Errorf("stream builder rel = %q", gotRel)
+	}
+	if streamed.Kind != "pdf" ||
+		streamed.StreamURL != "http://127.0.0.1:1/media/token/docs/report.pdf" {
+		t.Fatalf("pdf preview = %+v", streamed)
+	}
+	if streamed.DataURL != "" || streamed.TooLarge {
+		t.Fatalf("streamed pdf must not embed bytes: %+v", streamed)
+	}
+}
+
 func TestListReturnsRelativePaths(t *testing.T) {
 	workDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workDir, "docs"), 0o755); err != nil {

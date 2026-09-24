@@ -26,6 +26,7 @@ const storeMock = vi.hoisted(() => {
     state,
     useStore: { getState: () => state },
     streamFlushStats: vi.fn(() => ({ total: 0, p50: 0, p95: 0, max: 0 })),
+    storeBytes: vi.fn(() => ({ media: 0, text: 0, conversations: 0 })),
     activeConversationID: vi.fn(() => 'c-42'),
   };
 });
@@ -57,6 +58,11 @@ beforeEach(() => {
     p50: 0,
     p95: 0,
     max: 0,
+  });
+  storeMock.storeBytes.mockReturnValue({
+    media: 0,
+    text: 0,
+    conversations: 0,
   });
   storeMock.state.workspace = 'w-1';
   storeMock.state.configOpen = false;
@@ -129,6 +135,10 @@ describe('perfProbe', () => {
         'dom_nodes',
         'conv_messages',
         'mounted_rows',
+        'store_media_bytes',
+        'store_text_bytes',
+        'loaded_convs',
+        'dom_images',
         'flush_p95',
         'flush_commit_p95',
         'flush_md_p95',
@@ -141,6 +151,21 @@ describe('perfProbe', () => {
     expect(perfProbeRunning()).toBe(false);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(apiMock.reportFrontendPerf).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports what the loaded transcripts hold', async () => {
+    // These three series are what a memory review reads beside
+    // proc.mem.footprint: the store's own account of the bytes it keeps,
+    // and how many conversations are loaded at all.
+    storeMock.storeBytes.mockReturnValue({
+      media: 21 << 20,
+      text: 3 << 20,
+      conversations: 2,
+    });
+    const values = await lastSampleValues();
+    expect(values.get('store_media_bytes')).toBe(21 << 20);
+    expect(values.get('store_text_bytes')).toBe(3 << 20);
+    expect(values.get('loaded_convs')).toBe(2);
   });
 
   it('labels every sample with surface, view, build and the active conversation', async () => {
