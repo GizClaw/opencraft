@@ -216,4 +216,20 @@ describe('SettingsDisplay appearance', () => {
       gitMarks: false,
     });
   });
+
+  // The accent is a swatch row: the id is what is stored, the colour is the
+  // stylesheet's, and the click applies it (the attribute) before the
+  // desktop document has confirmed it.
+  it('stores the accent preset the swatch names', async () => {
+    const user = userEvent.setup();
+    render(<SettingsDisplay />);
+
+    await user.click(screen.getByRole('button', { name: /^Violet$|^紫色$/ }));
+
+    expect(apiMock.setUISettings).toHaveBeenCalledWith({
+      ...DEFAULT_UI_SETTINGS,
+      accent: 'violet',
+    });
+    expect(document.documentElement.dataset.accent).toBe('violet');
+  });
 });

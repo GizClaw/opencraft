@@ -6,12 +6,14 @@ import (
 	"testing"
 )
 
-// The renderer maps these ids onto CSS stacks (frontend/src/lib/appearance.ts).
-// A rename on either side must fail here instead of silently dropping the
-// user's font choice back to the system preset.
+// The renderer maps these ids onto CSS stacks and colour rungs
+// (frontend/src/lib/appearance.ts, style.css). A rename on either side must
+// fail here instead of silently dropping the user's choice back to the
+// default.
 func TestUIPrefPresetIDsMatchTheRendererContract(t *testing.T) {
 	wantFonts := []string{FontPresetSystem, FontPresetCustom}
 	wantCode := []string{FontPresetSystem, FontPresetCustom}
+	wantAccents := []string{"blue", "violet", "teal", "orange", "rose"}
 	if len(uiFontPresetIDs) != len(wantFonts) {
 		t.Fatalf("interface font presets = %v, want %v", uiFontPresetIDs, wantFonts)
 	}
@@ -28,6 +30,18 @@ func TestUIPrefPresetIDsMatchTheRendererContract(t *testing.T) {
 			t.Fatalf("code font preset %q missing, want %v", id, wantCode)
 		}
 	}
+	if len(uiAccentIDs) != len(wantAccents) {
+		t.Fatalf("accent presets = %v, want %v", uiAccentIDs, wantAccents)
+	}
+	for _, id := range wantAccents {
+		if !uiAccentIDs[id] {
+			t.Fatalf("accent preset %q missing, want %v", id, wantAccents)
+		}
+	}
+	if !uiAccentIDs[DefaultAccent] {
+		t.Fatalf("default accent %q is not a preset, want one of %v",
+			DefaultAccent, wantAccents)
+	}
 }
 
 func TestDefaultPrefsCarryAppearanceDefaults(t *testing.T) {
@@ -37,6 +51,9 @@ func TestDefaultPrefsCarryAppearanceDefaults(t *testing.T) {
 	}
 	if prefs.FontScale != DefaultFontScale {
 		t.Fatalf("default scale = %v, want %v", prefs.FontScale, DefaultFontScale)
+	}
+	if prefs.Accent != DefaultAccent {
+		t.Fatalf("default accent = %q, want %q", prefs.Accent, DefaultAccent)
 	}
 
 	// A preference document written before appearance settings existed
@@ -56,7 +73,8 @@ func TestLoadPrefsRepairsAppearanceSection(t *testing.T) {
 	    "fontFamily": "comic-sans",
 	    "codeFont": "custom",
 	    "codeFontName": "  Fira   Code ;  ",
-	    "fontScale": 9
+	    "fontScale": 9,
+	    "accent": "chartreuse"
 	  }
 	}`
 	if err := os.WriteFile(
@@ -77,6 +95,10 @@ func TestLoadPrefsRepairsAppearanceSection(t *testing.T) {
 	}
 	if ui.FontScale != maxFontScale {
 		t.Fatalf("scale = %v, want clamped to %v", ui.FontScale, maxFontScale)
+	}
+	if ui.Accent != DefaultAccent {
+		t.Fatalf("unknown accent survived as %q, want %q",
+			ui.Accent, DefaultAccent)
 	}
 }
 
@@ -144,6 +166,9 @@ func TestShellUISettingsPersistAndValidate(t *testing.T) {
 		FontFamilyName: "LXGW WenKai",
 		CodeFont:       FontPresetSystem,
 		FontScale:      1.25,
+		// The accent is a preset id, so it travels with the section it
+		// lives in.
+		Accent: "violet",
 	}
 	if err := s.SetUISettings(want); err != nil {
 		t.Fatal(err)
@@ -168,6 +193,11 @@ func TestShellUISettingsPersistAndValidate(t *testing.T) {
 	bad.FontScale = maxFontScale + 0.5
 	if err := s.SetUISettings(bad); err == nil {
 		t.Fatal("out-of-range font scale was accepted")
+	}
+	bad = want
+	bad.Accent = "chartreuse"
+	if err := s.SetUISettings(bad); err == nil {
+		t.Fatal("unknown accent preset was accepted")
 	}
 	if got := s.UISettings(); got != want {
 		t.Fatalf("rejected writes changed the document: %+v", got)

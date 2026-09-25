@@ -1,5 +1,5 @@
 // UI appearance (Settings > Interface): the interface font, the code/mono
-// font and the whole-UI scale.
+// font, the whole-UI scale and the accent colour.
 //
 // The Go desktop preference document (~/.opencraft/config/desktop.json) is
 // the durable copy. A localStorage mirror lets the very first paint use the
@@ -10,7 +10,7 @@
 // host font catalogue (internal/foundation/sysfont) or typed by hand. Turning
 // that family into a CSS stack — quoting it and appending the platform
 // fallback — is this module's job, so the desktop document never carries CSS.
-// The preset ids are a contract with
+// The preset ids — fonts, accents — are a contract with
 // internal/adapters/desktop/core/ui_prefs.go: keep both sides in sync.
 
 export interface UISettings {
@@ -24,6 +24,12 @@ export interface UISettings {
   codeFontName: string;
   /** Whole-UI scale applied to the 14px design base. */
   fontScale: number;
+  /**
+   * Accent preset id (see ACCENT_PRESETS). Renders as `data-accent` on
+   * documentElement, where style.css re-points `--color-accent` at the
+   * preset's rung; the rung carries both themes' values.
+   */
+  accent: string;
   /** List dot-entries in the chat rail's workspace tree and quick-open. */
   showHiddenFiles: boolean;
   /** Draw the file viewer's per-line git change marks. Defaults on. */
@@ -70,6 +76,49 @@ export const CODE_FONT_PRESETS: FontPreset[] = [
   },
 ];
 
+export interface AccentPreset {
+  /** Preset id: the `data-accent` value, and the Go contract id. */
+  id: string;
+  /** Translation key of the option label (config.* namespace). */
+  labelKey: string;
+  /** The stylesheet rung the swatch is painted from (see style.css). */
+  swatch: string;
+}
+
+// ACCENT_PRESETS is the accent picker's list. The ids are the whole
+// renderer/desktop contract (core/ui_prefs.go keeps the same set); the
+// colours live in style.css, one rung per preset per theme, so a theme flip
+// repaints a swatch (and the accent itself) without this module knowing.
+export const ACCENT_DEFAULT = 'blue';
+
+export const ACCENT_PRESETS: AccentPreset[] = [
+  {
+    id: ACCENT_DEFAULT,
+    labelKey: 'config.uiAccentBlue',
+    swatch: 'var(--oc-accent-blue)',
+  },
+  {
+    id: 'violet',
+    labelKey: 'config.uiAccentViolet',
+    swatch: 'var(--oc-accent-violet)',
+  },
+  {
+    id: 'teal',
+    labelKey: 'config.uiAccentTeal',
+    swatch: 'var(--oc-accent-teal)',
+  },
+  {
+    id: 'orange',
+    labelKey: 'config.uiAccentOrange',
+    swatch: 'var(--oc-accent-orange)',
+  },
+  {
+    id: 'rose',
+    labelKey: 'config.uiAccentRose',
+    swatch: 'var(--oc-accent-rose)',
+  },
+];
+
 // Mirrors the Go-side bounds (core.DefaultFontScale / minFontScale /
 // maxFontScale) so a value that survives one side survives the other.
 export const DEFAULT_FONT_SCALE = 1.12;
@@ -92,6 +141,7 @@ export const DEFAULT_UI_SETTINGS: UISettings = {
   codeFont: FONT_PRESET_SYSTEM,
   codeFontName: '',
   fontScale: DEFAULT_FONT_SCALE,
+  accent: ACCENT_DEFAULT,
   showHiddenFiles: false,
   gitMarks: true,
 };
@@ -162,6 +212,11 @@ export function applyUISettings(settings: UISettings): void {
   root.setProperty('--oc-font-sans', resolveSansStack(settings));
   root.setProperty('--oc-font-mono', resolveMonoStack(settings));
   root.setProperty('--oc-root-font-size', rootFontSize(settings.fontScale));
+  // The accent is one attribute; style.css re-points --color-accent (and
+  // its theme-light half) from it, so nothing here has to know a colour.
+  // The default id is written too: the state stays legible in the DOM, and
+  // a stylesheet without a rule for it just keeps the @theme value.
+  document.documentElement.dataset.accent = settings.accent;
 }
 
 // normalizeUISettings coerces a binding payload (or a cached document) into
@@ -215,6 +270,11 @@ export function normalizeUISettings(raw: unknown): UISettings | null {
         ? source.fontScale
         : DEFAULT_FONT_SCALE,
     ),
+    // An id this build does not know (an older document, a newer one) keeps
+    // the shipped accent instead of leaving --color-accent unset.
+    accent: ACCENT_PRESETS.some((candidate) => candidate.id === source.accent)
+      ? (source.accent as string)
+      : ACCENT_DEFAULT,
     // A hand-edited or older document has no switch; false keeps the
     // tree showing the tracked content only.
     showHiddenFiles: source.showHiddenFiles === true,

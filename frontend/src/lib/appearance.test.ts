@@ -31,6 +31,19 @@ describe('font stacks', () => {
     expect(resolveMonoStack(DEFAULT_UI_SETTINGS)).toContain('ui-monospace');
   });
 
+  it('keeps a known accent id and falls back for anything else', () => {
+    expect(normalizeUISettings({ accent: 'teal' })).toEqual({
+      ...DEFAULT_UI_SETTINGS,
+      accent: 'teal',
+    });
+    // A hand-edited document, or one written by a newer build with a preset
+    // this one does not draw: the shipped accent, never an unset attribute.
+    expect(normalizeUISettings({ accent: 'chartreuse' })).toEqual(
+      DEFAULT_UI_SETTINGS,
+    );
+    expect(normalizeUISettings({ accent: 7 })).toEqual(DEFAULT_UI_SETTINGS);
+  });
+
   it('renders a named family with the system fallback', () => {
     const stack = resolveSansStack({
       ...DEFAULT_UI_SETTINGS,
@@ -119,6 +132,18 @@ describe('applying settings', () => {
     expect(root.style.getPropertyValue('--oc-root-font-size')).toBe('17.50px');
   });
 
+  // The accent is one attribute too: style.css re-points --color-accent at
+  // the preset's rung, and the id (not a colour) is what the document
+  // carries, so the swatch and the accent can never disagree with a theme
+  // flip.
+  it('writes the accent preset as a document attribute', () => {
+    applyUISettings({ ...DEFAULT_UI_SETTINGS, accent: 'violet' });
+    expect(document.documentElement.dataset.accent).toBe('violet');
+    expect(
+      document.documentElement.style.getPropertyValue('--color-accent'),
+    ).toBe('');
+  });
+
   it('round-trips the mirror and repaints from it', () => {
     const settings = {
       ...DEFAULT_UI_SETTINGS,
@@ -179,6 +204,7 @@ describe('normalizeUISettings', () => {
       codeFont: 'system',
       codeFontName: '',
       fontScale: MAX_FONT_SCALE,
+      accent: 'blue',
       showHiddenFiles: false,
       gitMarks: true,
     });

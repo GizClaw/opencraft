@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  Blend,
   Check,
   ChevronDown,
   GitCompare,
@@ -13,6 +14,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import {
+  ACCENT_PRESETS,
   CODE_FONT_PRESETS,
   FONT_SCALE_STEPS,
   nearestFontScaleIndex,
@@ -29,8 +31,8 @@ import { ICON } from './ui/icon';
 import { Segmented } from './ui/Segmented';
 
 // SettingsDisplay is the interface/display settings tab: language,
-// light/dark theme, interface/code font and text size, plus the plugin
-// contribution area for this surface.
+// light/dark theme, the accent colour, interface/code font and text size,
+// plus the plugin contribution area for this surface.
 export function SettingsDisplay() {
   const { t, i18n } = useTranslation();
   const lang = i18n.resolvedLanguage?.startsWith('zh') ? 'zh' : 'en';
@@ -208,6 +210,44 @@ export function SettingsDisplay() {
               },
             ]}
           />
+        </div>
+      </div>
+      <div className="rounded-card border border-edge bg-panel2 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-title font-semibold">
+              <Blend size={ICON.md} className="text-accent" />
+              {t('config.uiAccent')}
+            </div>
+            <p className="mt-1 text-xs text-dim">{t('config.uiAccentHint')}</p>
+          </div>
+          {/* The swatch row: the id is the whole choice, the colour is the
+              stylesheet rung it names (style.css), and the selected dot
+              carries a check so the state does not ride on colour alone. */}
+          <div className="flex shrink-0 items-center gap-2 pt-0.5">
+            {ACCENT_PRESETS.map((preset) => {
+              const selected = uiSettings.accent === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  aria-label={t(preset.labelKey)}
+                  aria-pressed={selected}
+                  data-tip={t(preset.labelKey)}
+                  onClick={() => persist({ ...uiSettings, accent: preset.id })}
+                  className="grid h-6 w-6 place-items-center rounded-full text-white transition-transform hover:scale-110"
+                  style={{
+                    background: preset.swatch,
+                    boxShadow: selected
+                      ? `0 0 0 2px var(--color-panel2), 0 0 0 4px ${preset.swatch}`
+                      : undefined,
+                  }}
+                >
+                  {selected && <Check size={ICON.xs} />}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
       <div className="rounded-card border border-edge bg-panel2 p-4">

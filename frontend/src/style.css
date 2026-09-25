@@ -246,6 +246,19 @@
     sans-serif;
   --oc-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --oc-root-font-size: 15.68px;
+  /* Accent presets (Settings > Interface). --color-accent stays the one
+     knob every component reads; a preset re-points it at one of these
+     rungs, and the rung carries both themes' values, so the override
+     never has to combine `data-accent` with `.theme-light` in one
+     selector. `blue` is the shipped default; it has a rung because the
+     picker draws its swatch from it, but no override rule. Charts keep
+     their own series palette — a chart line is a data colour, not the
+     UI's accent. */
+  --oc-accent-blue: #4f8cff;
+  --oc-accent-violet: #b26ffe;
+  --oc-accent-teal: #02a287;
+  --oc-accent-orange: #f26202;
+  --oc-accent-rose: #fd4c84;
 }
 
 /* Light theme: utilities reference the @theme variables at runtime, so
@@ -263,6 +276,12 @@
   --color-dim: #4c5768;
   --color-faint: #5f6a7e;
   --color-accent: #2f6fe0;
+  /* The accent presets' light half (see the rungs in :root). */
+  --oc-accent-blue: #2f6fe0;
+  --oc-accent-violet: #7c3aed;
+  --oc-accent-teal: #0f766e;
+  --oc-accent-orange: #c2410c;
+  --oc-accent-rose: #be185d;
   --color-ok: #0f9d6e;
   --color-warn: #b47d00;
   --color-err: #d64545;
@@ -280,6 +299,25 @@
   --color-graph-dot: rgb(100 116 139 / 0.3);
   --color-viewer-backdrop: #ccd2dc;
   --color-media-backdrop: rgb(9 12 18 / 0.92);
+}
+
+/* One rule per preset (blue needs none: it is the @theme value). The rung
+   the rule points at is re-declared by .theme-light above, so a theme
+   flip repaints the accent without any preset rule knowing about it. */
+html[data-accent='violet'] {
+  --color-accent: var(--oc-accent-violet);
+}
+
+html[data-accent='teal'] {
+  --color-accent: var(--oc-accent-teal);
+}
+
+html[data-accent='orange'] {
+  --color-accent: var(--oc-accent-orange);
+}
+
+html[data-accent='rose'] {
+  --color-accent: var(--oc-accent-rose);
 }
 
 /* The app animates overlay chrome on purpose and nothing else; a user

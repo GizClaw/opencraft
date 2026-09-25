@@ -1506,6 +1506,12 @@ interface StoreState {
   sessionDefaults: SessionDefaults;
   yoloOnly: boolean;
   theme: 'dark' | 'light' | 'auto';
+  /**
+   * The theme with auto already resolved (the class on documentElement).
+   * Kept in the store so a JS-picked colour scheme — CodeMirror's — can
+   * subscribe to it; CSS reads the class itself.
+   */
+  resolvedTheme: 'dark' | 'light';
   // Appearance preferences (Settings > Interface). The cached copy paints
   // the first frame; the Go desktop document is the durable source and
   // reconciles this value during init.
@@ -1628,8 +1634,12 @@ let themeMedia: MediaQueryList | null = null;
 let themeMediaHandler: (() => void) | null = null;
 
 // applyTheme resolves dark/light/auto (auto follows the OS preference)
-// and keeps a media-query listener alive while auto is selected.
-function applyTheme(theme: 'dark' | 'light' | 'auto') {
+// and keeps a media-query listener alive while auto is selected. It
+// returns the resolved value, which the store mirrors as `resolvedTheme`:
+// a surface whose colours are picked in JS rather than read from a CSS
+// variable (the file viewer's CodeMirror theme) has no way to notice a
+// class flip otherwise.
+function applyTheme(theme: 'dark' | 'light' | 'auto'): 'dark' | 'light' {
   const mq = window.matchMedia('(prefers-color-scheme: dark)');
   const resolved = theme === 'auto' ? (mq.matches ? 'dark' : 'light') : theme;
   document.documentElement.classList.toggle(
@@ -1637,16 +1647,20 @@ function applyTheme(theme: 'dark' | 'light' | 'auto') {
     resolved === 'light',
   );
   if (theme === 'auto') {
-    if (themeMedia === mq) return;
-    themeMedia?.removeEventListener('change', themeMediaHandler!);
-    themeMedia = mq;
-    themeMediaHandler = () => applyTheme('auto');
-    mq.addEventListener('change', themeMediaHandler);
+    if (themeMedia !== mq) {
+      themeMedia?.removeEventListener('change', themeMediaHandler!);
+      themeMedia = mq;
+      themeMediaHandler = () => {
+        useStore.setState({ resolvedTheme: applyTheme('auto') });
+      };
+      mq.addEventListener('change', themeMediaHandler);
+    }
   } else {
     themeMedia?.removeEventListener('change', themeMediaHandler!);
     themeMedia = null;
     themeMediaHandler = null;
   }
+  return resolved;
 }
 
 // activeConversationID is the session the focus state machine currently
@@ -2812,6 +2826,7 @@ export const useStore = create<StoreState>((set, get) => {
     sessionDefaults: { mode: 'workspace', think: 'medium' },
     yoloOnly: false,
     theme: 'dark',
+    resolvedTheme: 'dark',
     uiSettings: readCachedUISettings() ?? DEFAULT_UI_SETTINGS,
     workspaces: [],
     toasts: [],
@@ -2820,8 +2835,7 @@ export const useStore = create<StoreState>((set, get) => {
     init: async () => {
       const saved = window.localStorage.getItem('opencraft.theme');
       const theme = saved === 'light' || saved === 'auto' ? saved : 'dark';
-      applyTheme(theme);
-      set({ theme });
+      set({ theme, resolvedTheme: applyTheme(theme) });
       try {
         const [
           status,
@@ -2878,7 +2892,8 @@ export const useStore = create<StoreState>((set, get) => {
         void api
           .uiSettings()
           .then((ui) => {
-            if (ui !== null) get().setUISettings(ui);
+            if (ui === null) return;
+            get().setUISettings(ui);
           })
           .catch(() => {
             // Keep the cached appearance; the user can still change it.
@@ -3759,9 +3774,9 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     setTheme: (theme) => {
-      applyTheme(theme);
+      const resolved = applyTheme(theme);
       window.localStorage.setItem('opencraft.theme', theme);
-      set({ theme });
+      set({ theme, resolvedTheme: resolved });
     },
 
     // setUISettings applies the appearance immediately and mirrors it for
