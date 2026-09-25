@@ -157,6 +157,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pointer capture, arrows to nudge, double-click to reset, one storage
   write per gesture, and `role="separator"` reporting its range.
   (#179)
+- The UI owns one component and scale layer instead of hand-written
+  values: `components/ui` carries Button, IconButton, Input, Badge,
+  Modal, SaveBar and Segmented, the ladders for text, radius, elevation
+  and icons live in `style.css` and `ui/icon.ts`, and a contract test
+  fails a raw rem literal, a Tailwind radius or shadow utility and a
+  default-palette colour, so the ladders stay the only vocabulary.
+  `npm run audit:ui` renders the real frontend against the mock backend
+  and writes one screenshot per surface in both themes, so a design
+  change can be reviewed as an image. An interaction prompt says how
+  much it matters (`foundation/interact` gains `Severity` — info,
+  notice, danger — defaulting from the prompt kind and falling back on
+  an unknown value, so a typo cannot downgrade a danger prompt; the
+  producers tag their own, sandbox escalation danger,
+  `request_permissions` and `confirm` notice, `ask_user` info, and
+  `InteractionCard` is the one place mapping it to chrome), and a
+  clicked link goes through one classifier (`lib/linkTarget.ts`): a URL
+  scheme reaches the system browser, a Windows drive path stays local,
+  an empty target and a `#anchor` are ignored, and everything else
+  resolves under the backend read roots into the caller's handler —
+  chat rail tab, dialog page, system file manager. (#161)
+- The workspace panel lists hidden files when asked to: the eye beside
+  the search box persists `ui.showHiddenFiles` (off by default, and a
+  failed save rolls the applied value back), `File.List` and
+  `File.Search` take the decision from the caller so each surface owns
+  its own scope, and "hidden" is the platform rule — a leading dot on
+  Unix, plus the hidden/system attribute on Windows, where `.venv` and
+  `.next` carry none — with `.git` still skipped unconditionally and
+  `list_dir` and `grep` reading the same helper. The composer no
+  longer paints a scrim or a mask: the transcript runs the full column,
+  the card covers what slides behind it, and the wrapper stays
+  click-through so the wheel and the margins still reach the scroller.
+  (#162)
 
 ### Changed
 
@@ -289,6 +321,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   move onto one stack that owns Escape (topmost layer only), focus
   trap and restore, scroll lock and click-outside, with one shared
   `ConfirmDialog`. (#174)
+- The sandbox supervisor speaks protobuf over a private per-child
+  channel — a `socketpair` passed as fd 3 on Unix, a named pipe on
+  Windows, closed as soon as the child takes the descriptor over —
+  instead of JSON-RPC on a per-child socket, and the exposure that
+  design carried goes with it: a sandboxed command can no longer read
+  or forge frames on the host channel. `Hello` compares the protocol
+  version before anything else, a request runs on its own goroutine
+  with the frame's deadline as a real context, and its `Cancel` is
+  registered before the handler starts. Sandboxed children come from a
+  pool: it forks nothing until the first sandboxed command and keeps
+  `Prewarm` children warm afterwards, its active bound is a reuse
+  bound rather than a refusal — a lease beyond it gets a dedicated
+  child, reclaimed when its runner closes — a settings change trims
+  idle children immediately, and the orphan sweep verifies a child's
+  identity (launch nonce, or image name plus creation time) before
+  killing anything. Settings ▸ Diagnostics gained a Command pool card
+  with the knobs and the live idle/active counts. (#165)
+- flowcraft core moves to v0.4.5: a failed MCP liveness probe now
+  closes the session it dropped (every reconnect used to leak the
+  stdio child tree), a server negotiated at `2026-07-28` is watched
+  through its connection instead of pinged — that revision removed
+  `ping`, so a healthy server was torn down and redialed every fifteen
+  seconds — and a per-server `liveness` can pin the probe or switch it
+  off. (#167)
+- `apply_patch` renders as a card instead of a bare diff block: a
+  summary header with per-file glyphs and totals, a skeleton while the
+  patch loads, and the result JSON only when it adds something. The
+  viewer wraps long diff lines in chat and sizes rows to content in
+  panels, a painted scrim replaces the CSS mask on the scroll box, and
+  "Show full diff" says when lines are hidden. (#168)
+- The prompt is two board vars, so the provider's cache survives a
+  rephrased question: `world.sections` is the cache-stable prefix
+  (instructions, environment, permissions, `AGENTS.md`, then the
+  folded summary and the raw window), and `world.tail_block` — the
+  plan, the ranked skills list, the activated skill bodies — rides on
+  the user's own message, the one position expected to differ every
+  turn. Compaction decides from a measurement rather than a character
+  estimate: the graph records each call's usage, the compact node
+  stamps the channel length that call saw, and the pair persists per
+  conversation as the next turn's anchor (with no measurement yet, the
+  node waits one round). `max_compactions` becomes a
+  consecutive-failure backoff plus a per-turn fold budget, and a turn
+  still over budget is asked to wrap up once, never between a tool call
+  and its result. (#170)
+- flowcraft drivers move to v0.3.3: anthropic, openai and bytedance
+  report cache-inclusive prompt totals, so a conversation served mostly
+  from cache no longer reads as an empty one, and negative or
+  contradictory wire counters are clamped instead of shrinking the
+  total. The normalization the context work added at the sessions
+  boundary degrades to a pass-through as a result, without a code
+  change. (#171)
 
 ### Fixed
 
@@ -393,6 +476,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   react-markdown's `node` prop is stripped before props are spread
   onto real elements — React 19 was writing `node="[object Object]"`
   into the DOM for tables and code fences. (#176)
+- A tool call with a bad argument names it and lists the accepted
+  ones: `toolargs.Decode` rejects unknown keys by name and lets a tool
+  declare aliases, so `exec_command` accepts `cmd` for `command` — the
+  slip models kept making, 26 of 324 exec calls in one session coming
+  back as "command is required" and costing a round trip each. A failed
+  `apply_patch` hunk names itself and why it did not match, `view_image`
+  reports a missing file as a missing file instead of "workspace: not
+  found", and `grep` says the path must be a directory. (#160)
+- A file is classified by its leading bytes, not its name: `.ts` is
+  TypeScript, but the platform's table called it `video/mp2t` and the
+  preview rendered a `<video>`, and nothing told a screenshot saved as
+  `.txt` from a note. One classifier reads the sample (net/http's
+  mimesniff), lets the name refine what the bytes cannot say, and falls
+  back to the table; a payload without a NUL byte is text, whatever the
+  name claims. The preview, attachments, the media stream handler and
+  `read_file`'s image hint all read it, and the hand-maintained
+  code-extension whitelist is gone. (#163)
+- An oversized JSON tool result stays parseable: truncation runs after
+  the result limit and excerpts inside the string fields before
+  re-encoding, instead of cutting the envelope and handing the model
+  something it cannot read. (#165)
+- The log keeps the signal and drops the noise: a subagent context,
+  which is not a persisted session by design, no longer warns on every
+  skill activation, quitting detaches the notification sink before the
+  runtime closes instead of logging `sql: database is closed`,
+  forwarded plugin stderr masks credential query values, a git failure
+  names its repository and its argv, an installed OTLP sink is a
+  configuration event rather than a warning, and a forwarded renderer
+  error keeps its message and stack on one physical line. (#166)
+- Workspace history shows the order it just recorded: the open is
+  written before the `ready` event that makes the UI re-read it, equal
+  or unparsable stamps rank stably by title and path, and the frontend
+  drops a response overtaken by a newer request and keeps an identical
+  snapshot, with the active workspace promoted in render only. (#168)
+- Escape is owned from the moment an overlay renders: the handlers move
+  from a passive effect to a layout effect, closing the task-wide
+  window in which Escape went to the surface underneath — the defect
+  that left a just-opened preview dialog open. (#168)
+- A stopped turn is archived: the archive hook wrote with the run's own
+  context, already canceled on a Stop, so the first store call failed,
+  the error was swallowed, and the turn, its tool activity and the
+  user's message left no trace for the next replay. Archive writes use
+  a context without cancellation now, and a write that fails says so.
+  (#169)
+- Compaction folds instead of stacking summaries: the compact node
+  wrote its summary and left the folded prefix on `MainChannel`, so
+  every over-budget turn re-sent the whole history and spent its
+  condensation budget without shrinking anything. The prefix moves to
+  the archive channel before it is removed, the turn's user message and
+  a tool call's pairing are protected at the boundary, a failed fold
+  changes nothing and remembers where it stopped, and memory re-unions
+  the side channel so nothing leaves the archive for being folded.
+  (#169)
+- Cache statistics are honest across providers: Anthropic's wire
+  `input_tokens` counts only the tokens neither read from nor written
+  to the cache, so a hit rate could exceed 100% and the UI clamped it
+  to a confident "100%". Prompt totals normalize to the inclusive
+  reading at the sessions boundary, `lib/usageRate.ts` is the one
+  formula behind the hero and the settings page, a row that cannot
+  state a ratio shows a dash, and the cost notices land where the
+  change is made — a model switched mid-conversation, a provider
+  credential changed, a turn that folded. (#170)
+- The compactor's patch parsing never worked: a tool result's content
+  crosses the board bridge as a parts array, not a JSON string, so
+  `JSON.parse` threw every time — folding had never applied, and every
+  over-budget turn paid for a summarization call and re-sent the full
+  history. `world.compact.epoch`, a per-turn fold count read as a
+  cross-turn generation, splits into `epoch_total` (persisted with the
+  anchor) and `folds_turn` for the UI. (#170)
+- Quitting no longer drops the last thing a crashing plugin did: the
+  capability manager tracks its exit watchers and `Shutdown` waits on
+  them, so an audit line written by the crash handler lands before the
+  data directory can go away, and a manager that has shut down refuses
+  to start a process whose lifetime nothing would own. (#173)
 
 ## [0.5.3] - 2026-09-17
 
