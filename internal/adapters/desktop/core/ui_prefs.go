@@ -8,8 +8,8 @@ import (
 )
 
 // Desktop interface preferences (Settings > Interface): the interface font,
-// the code/mono font, the whole-UI scale and the workspace tree's
-// hidden-file switch.
+// the code/mono font, the whole-UI scale, the accent colour and the
+// workspace tree's hidden-file switch.
 //
 // A font is stored as a preset id plus, for the "custom" preset, the family
 // name to render with. The catalogue of names comes from the host
@@ -46,6 +46,19 @@ var uiCodeFontPresetIDs = map[string]bool{
 	FontPresetCustom: true,
 }
 
+// DefaultAccent is the accent preset a document starts on; the ids are the
+// renderer/desktop contract (frontend/src/lib/appearance.ts keeps the same
+// set, and style.css draws each one's rungs).
+const DefaultAccent = "blue"
+
+var uiAccentIDs = map[string]bool{
+	"blue":   true,
+	"violet": true,
+	"teal":   true,
+	"orange": true,
+	"rose":   true,
+}
+
 // UIPrefs is the persisted interface section of the desktop preference
 // document. The family names are only meaningful while their selection is
 // "custom".
@@ -55,6 +68,9 @@ type UIPrefs struct {
 	CodeFont       string  `json:"codeFont,omitempty"`
 	CodeFontName   string  `json:"codeFontName,omitempty"`
 	FontScale      float64 `json:"fontScale,omitempty"`
+	// Accent is the highlight-colour preset id (blue/violet/teal/orange/
+	// rose, see uiAccentIDs).
+	Accent string `json:"accent,omitempty"`
 	// ShowHiddenFiles lists dot-entries in the chat rail's workspace
 	// tree and quick-open search. Off by default: a fresh workspace
 	// reads as its tracked content, not as .git and editor litter.
@@ -72,6 +88,7 @@ func defaultUIPrefs() UIPrefs {
 		FontFamily: FontPresetSystem,
 		CodeFont:   FontPresetSystem,
 		FontScale:  DefaultFontScale,
+		Accent:     DefaultAccent,
 	}
 }
 
@@ -97,6 +114,9 @@ func normalizeUIPrefs(prefs UIPrefs) UIPrefs {
 		prefs.CodeFont = defaults.CodeFont
 	}
 	prefs.FontScale = normalizeFontScale(prefs.FontScale)
+	if !uiAccentIDs[prefs.Accent] {
+		prefs.Accent = defaults.Accent
+	}
 	return prefs
 }
 
@@ -120,6 +140,9 @@ func validateUIPrefs(prefs UIPrefs) error {
 			"ui prefs: font scale %v outside [%v, %v]",
 			prefs.FontScale, minFontScale, maxFontScale,
 		)
+	}
+	if !uiAccentIDs[prefs.Accent] {
+		return fmt.Errorf("ui prefs: unknown accent preset %q", prefs.Accent)
 	}
 	return nil
 }

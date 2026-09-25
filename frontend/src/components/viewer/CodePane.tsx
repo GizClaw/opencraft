@@ -26,6 +26,7 @@ import {
   layoutSignature,
   lineCountOf,
 } from '../../lib/fileMarks';
+import { useStore } from '../../lib/store';
 import type { GitFileMarks } from '../../lib/types';
 import { marksGutter } from './gitMarksGutter';
 
@@ -149,7 +150,11 @@ export function CodePane({
 }) {
   const { t } = useTranslation();
   const lang = useMemo(() => languageFor(name), [name]);
-  const light = document.documentElement.classList.contains('theme-light');
+  // CodeMirror takes its colour scheme as a prop rather than from CSS, so
+  // this is a store subscription and not a class read: a theme flip (or an
+  // OS flip under "auto") has to reconfigure the editor, which reading
+  // documentElement once per mount would miss.
+  const light = useStore((s) => s.resolvedTheme) === 'light';
 
   // The gutter is derived from the text on screen, so a range the
   // binding reported for a newer revision can never paint a wrong line.

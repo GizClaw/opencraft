@@ -2,6 +2,7 @@
 // are stored through the desktop preference document, the font picker lists
 // the families the host reports, and the localStorage mirror paints the first
 // frame before the binding resolves.
+import { readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import { handlerSources, mockBackend } from './mock/backend';
 
@@ -121,4 +122,113 @@ test('paints a stored font and size on launch', async ({ page }) => {
   await expect.poll(() => cssVar(page, '--oc-root-font-size')).toBe('19.60px');
   expect(await cssVar(page, '--oc-font-sans')).toContain('LXGW WenKai');
   expect(await cssVar(page, '--oc-font-mono')).toContain('Fira Code');
+});
+
+test('stores the accent preset the swatch names', async ({ page }) => {
+  await page.addInitScript(mockBackend as never, {} as never);
+  await page.goto('/');
+  await openInterfaceTab(page);
+
+  await page.getByRole('button', { name: 'Violet' }).click();
+
+  await expect(page.locator('html')).toHaveAttribute('data-accent', 'violet');
+  // The attribute is only useful with the stylesheet behind it: this is the
+  // rung it re-points the accent at.
+  expect(
+    await page.evaluate(() =>
+      getComputedStyle(document.documentElement)
+        .getPropertyValue('--color-accent')
+        .trim(),
+    ),
+  ).toBe('#b26ffe');
+
+  const calls = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __ocUISettingsCalls?: { accent?: string }[];
+        }
+      ).__ocUISettingsCalls ?? [],
+  );
+  expect(calls.at(-1)).toMatchObject({ accent: 'violet' });
+});
+
+function selectorsIn(css: string): string[] {
+  const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const out: string[] = [];
+  // Each open block is either 'rules' (a group rule like @media), 'decls' (a
+  // style rule, @theme, @font-face) or 'keyframes' (whose steps are not
+  // selectors).
+  const open: ('rules' | 'decls' | 'keyframes')[] = [];
+  let prelude = '';
+  const clears = () => {
+    if (open.length === 0 || open.at(-1) === 'decls') prelude = '';
+  };
+  const group = /^@(media|supports|layer|container|scope|document)\b/;
+  for (const ch of src) {
+    if (ch === '{') {
+      const head = prelude.trim();
+      prelude = '';
+      if (head.startsWith('@')) {
+        open.push(
+          /^@(-\w+-)?keyframes\b/.test(head)
+            ? 'keyframes'
+            : group.test(head)
+              ? 'rules'
+              : 'decls',
+        );
+      } else if (
+        head !== '' &&
+        open.at(-1) !== 'decls' &&
+        open.at(-1) !== 'keyframes'
+      ) {
+        out.push(head);
+        open.push('decls');
+      } else {
+        open.push('decls');
+      }
+    } else if (ch === '}') {
+      open.pop();
+      prelude = '';
+    } else if (ch === ';') {
+      clears();
+    } else {
+      prelude += ch;
+    }
+  }
+  return out;
+}
+
+test('every stylesheet selector survives the browser parser', async ({
+  page,
+}) => {
+  await page.goto('/');
+
+  const sheets = [
+    'src/style.css',
+    'src/styles/controls.css',
+    'src/pet/pet.css',
+  ];
+  let checked = 0;
+  for (const sheet of sheets) {
+    const list = selectorsIn(readFileSync(sheet, 'utf8'));
+    checked += list.length;
+    const dropped = await page.evaluate((sels) => {
+      const probe = document.createElement('style');
+      document.head.append(probe);
+      const bad: string[] = [];
+      for (const sel of sels) {
+        probe.textContent = `${sel} { --oc-probe: 1 }`;
+        // An invalid selector drops the entire rule, so "no rule" is exactly
+        // the underline the editor draws.
+        if (probe.sheet?.cssRules.length !== 1) bad.push(sel);
+      }
+      probe.remove();
+      return bad;
+    }, list);
+    expect(dropped, sheet).toEqual([]);
+  }
+  // Guards the extractor too: a path or a parse that silently yields nothing
+  // would otherwise make this test pass by having nothing to check.
+  expect(checked).toBeGreaterThan(100);
 });

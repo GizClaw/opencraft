@@ -2752,6 +2752,23 @@ describe('store: init session bootstrap', () => {
     expect(apiMock.newChat).not.toHaveBeenCalled();
     expect(stateRoot.focusSnapshot.value).toBe('no-session');
   });
+
+  // The theme mirror is a localStorage preference, so it is what the first
+  // frame paints from — before the desktop document reconciles the rest of
+  // the appearance.
+  it('paints the theme the mirror carries', async () => {
+    stateRoot.resetWorkspace();
+    stubInitApi({ currentSession: 's-1', workspace: '/tmp/w' });
+    window.localStorage.setItem('opencraft.theme', 'light');
+
+    await useStore.getState().init();
+
+    expect(useStore.getState().theme).toBe('light');
+    expect(useStore.getState().resolvedTheme).toBe('light');
+    expect(document.documentElement.classList.contains('theme-light')).toBe(
+      true,
+    );
+  });
 });
 
 describe('store: workspace switch session restore', () => {

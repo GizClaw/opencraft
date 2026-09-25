@@ -61,9 +61,12 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     tab: 'display',
     labelKey: 'config.tabDisplay',
     keywords:
-      'display interface theme dark light auto font size scale zoom mono ' +
+      'display interface theme dark light auto accent colour highlight ' +
+      'blue violet teal orange rose ' +
+      'font size scale zoom mono ' +
       'language pet character ' +
-      '外观 界面 主题 深色 浅色 跟随系统 字体 字号 缩放 等宽 语言 宠物 形象',
+      '外观 界面 主题 深色 浅色 跟随系统 强调色 高亮 蓝色 紫色 青色 橙色 玫红 ' +
+      '字体 字号 缩放 等宽 语言 宠物 形象',
   },
   {
     tab: 'inference',

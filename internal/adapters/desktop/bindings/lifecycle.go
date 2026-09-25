@@ -70,8 +70,8 @@ func (b *Lifecycle) SetPetsSettings(settings PetsSettings) error {
 // UISettings is the desktop interface preference surface (Settings >
 // Interface). A font is a preset id plus, for "custom", the family name from
 // the system catalogue; the renderer turns that into a CSS font stack (see
-// frontend/src/lib/appearance.ts). ShowHiddenFiles drives the workspace
-// tree's dotfile switch.
+// frontend/src/lib/appearance.ts). Accent is the highlight-colour preset id.
+// ShowHiddenFiles drives the workspace tree's dotfile switch.
 type UISettings struct {
 	FontFamily      string  `json:"fontFamily"`
 	FontFamilyName  string  `json:"fontFamilyName,omitempty"`
@@ -79,6 +79,9 @@ type UISettings struct {
 	CodeFontName    string  `json:"codeFontName,omitempty"`
 	FontScale       float64 `json:"fontScale"`
 	ShowHiddenFiles bool    `json:"showHiddenFiles"`
+	// Accent is the highlight-colour preset id (blue/violet/teal/orange/
+	// rose): the renderer re-points --color-accent at it.
+	Accent string `json:"accent"`
 	// GitMarks draws the file viewer's per-line git change marks. A
 	// missing value means enabled (the default), so only the explicit
 	// false a user picked is ever absent from the document.
@@ -95,6 +98,7 @@ func (b *Lifecycle) GetUISettings() UISettings {
 		CodeFontName:    ui.CodeFontName,
 		FontScale:       ui.FontScale,
 		ShowHiddenFiles: ui.ShowHiddenFiles,
+		Accent:          ui.Accent,
 		GitMarks:        ui.GitMarks,
 	}
 }
@@ -109,6 +113,7 @@ func (b *Lifecycle) SetUISettings(settings UISettings) error {
 		CodeFontName:    settings.CodeFontName,
 		FontScale:       settings.FontScale,
 		ShowHiddenFiles: settings.ShowHiddenFiles,
+		Accent:          settings.Accent,
 		GitMarks:        settings.GitMarks,
 	})
 }
