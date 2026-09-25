@@ -8,19 +8,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A deleted conversation stays deleted: the three usage writers
-  (`RecordUsage`, `RecordUsageIfEmpty`, `AddUsage`) each read the row,
-  minted a fresh conversation when the read missed, and wrote it back
-  through an upsert — so a usage call landing after the delete (a
-  detached review, a turn ending inside the race) rebuilt the row it
-  was writing to as an `(empty)` entry that the delete tombstone then
-  made neither openable nor deletable. They now persist through
-  `state.UpdateConversationUsage`, an UPDATE that never inserts
-  (`conversations.usage_json` is a cache on a row the transcript owns);
-  a row that is gone when the write lands is a skip, not a rebuild.
-  The repeat delete also purges whatever came back under a tombstoned
-  id, and the sidebar answers a click on a deleted conversation instead
-  of loading a chat that can never arrive. (#218)
+- A deleted conversation stays deleted. Deleting one retires its id in
+  the same transaction that removes its rows (`deleted_conversations`,
+  workspace migration 021), and every writer that could recreate the
+  conversation refuses a retired id: the transcript append and the
+  start-title seed, the metadata upsert, the conversation-state
+  documents, session settings, and memory fold nodes. The writers that
+  outlive a turn are the ones that bit — a detached review, a fold
+  condensing in the background, a delegation note reflowing after the
+  subagent finished — and they are the reason the in-process checks
+  (auto title, delegation reflow) are a fast path in front of the store
+  rather than the fix itself: "deleted" now holds across restarts, for
+  writers this process never sees. A one-way migration step (022)
+  removes the zero-turn, usage-only `(empty)` rows older builds had
+  already resurrected and retires their ids, so an upgrade does not ask
+  for a second delete.
+- The usage writers no longer mint the conversation they write to.
+  `AddUsage` and `RecordUsageIfEmpty` (and `RecordUsage`, the verbatim
+  overwrite with no production caller) used to read the row and, when
+  the read missed, create it and write the totals back through an
+  upsert — so a usage call landing after the delete rebuilt the row it
+  was writing to as an `(empty)` entry that the sidebar kept listing.
+  They now persist through `state.UpdateConversationUsage`, an UPDATE
+  that never inserts (`conversations.usage_json` is a cache on a row the
+  transcript owns); a row that is gone when the write lands is a skip,
+  not a rebuild. `RecordUsageIfEmpty` reports which of the three
+  outcomes it was — written, already accounted for, or the row was gone
+  — so an import whose conversation was deleted while it settled still
+  forwards the bundle's spent tokens to the user-level ledger instead of
+  dropping them or counting them twice.
+- The repeat delete purges whatever came back under a deleted id and
+  still reports success — the caller asked for "this conversation is
+  gone", and the rows were already gone the first time. A listing that
+  raced the delete is filtered by the same tombstone, so the sidebar
+  cannot show an entry that every path into it refuses. (#218)
 
 ## [0.6.0] - 2026-09-25
 
