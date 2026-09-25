@@ -791,6 +791,52 @@ func TestReportUsageAttributesTheParentConversation(t *testing.T) {
 	}
 }
 
+// TestReportUsageAfterDeleteLeavesNoConversation pins the late-write
+// rule at the layer that actually produces late writes: a detached
+// review finishes after the user deleted the conversation it reviewed,
+// reports its own model call, and must not bring the conversation back.
+// The call is still metered — the model spent those tokens — but the
+// session store stays empty.
+func TestReportUsageAfterDeleteLeavesNoConversation(t *testing.T) {
+	o, _, _, usage := newObserver(t, enabledCfg())
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.sessions = store
+	ctx := context.Background()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(ctx, id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "the reviewed turn"),
+	}); err != nil {
+		t.Fatalf("append reviewed turn: %v", err)
+	}
+	if err := store.Remove(ctx, id); err != nil {
+		t.Fatalf("delete reviewed conversation: %v", err)
+	}
+
+	o.reportUsage(ctx, agent.Identity{ConversationID: id},
+		inference.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15})
+
+	if usage.count() != 1 {
+		t.Fatalf("usage observer reports = %d, want the review's call metered",
+			usage.count())
+	}
+	metas, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 0 {
+		t.Fatalf("list after the review's usage call = %+v, want empty", metas)
+	}
+	if got, err := store.LoadUsage(ctx, id); err != nil || got.TotalTokens != 0 {
+		t.Fatalf("usage after the review's call = %+v, %v; want zero", got, err)
+	}
+}
+
 func TestSuggestionIDIsStable(t *testing.T) {
 	if got := suggestionID(agent.Identity{RunID: "run-1"}, 2); got != "rv-run-1-2" {
 		t.Fatalf("id = %q, want rv-run-1-2", got)

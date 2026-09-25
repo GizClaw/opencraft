@@ -425,9 +425,16 @@ func TestAssemblyPairAwareFoldOnSQLiteTurnStore(t *testing.T) {
 // upsert (insert + replace), list, delete-by-level-keeping-one, and
 // delete-by-id (how another generation's coverage is retired).
 func TestSQLiteTurnStoreSummaryNodes(t *testing.T) {
-	adapter, _ := newSQLiteTurnStore(t)
+	adapter, store := newSQLiteTurnStore(t)
 	ctx := context.Background()
 	const conv = "s-1"
+	// A summary node describes an existing conversation's transcript:
+	// the writer refuses nodes for a conversation that is not there (a
+	// deleted one), so the fixture seeds the row it folds.
+	if err := store.EnsureConversation(ctx,
+		state.Conversation{ID: conv, Title: "summary"}); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
 
 	now := time.Now().UTC()
 	n1 := summary.SummaryNode{
@@ -527,6 +534,10 @@ func TestSQLiteTurnStoreSummaryNodes(t *testing.T) {
 
 	// Delete by id retires exactly the named nodes, and only in the
 	// conversation that owns them.
+	if err := store.EnsureConversation(ctx,
+		state.Conversation{ID: "s-2", Title: "other"}); err != nil {
+		t.Fatalf("seed other conversation: %v", err)
+	}
 	if err := adapter.UpsertSummaryNode(ctx, summary.SummaryNode{
 		ID:        "node-4",
 		ThreadID:  "s-2",

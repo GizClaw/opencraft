@@ -188,6 +188,89 @@ func TestReflowDelegationRefusesForeignConversations(t *testing.T) {
 	}
 }
 
+// TestReflowDelegationDropsDeletedConversation pins the third guard: a
+// delegation note is a turn of the conversation that asked for it, and
+// a subagent finishing after the user deleted that conversation must
+// drop the note. Appending it is what used to resurrect the parent —
+// the row came back with a turn count, so the sidebar listed it again
+// as a conversation the frontend's tombstone then refused to open.
+func TestReflowDelegationDropsDeletedConversation(t *testing.T) {
+	h, notified := newReflowHost(t)
+	ctx := context.Background()
+	conversationID, err := h.SessionsStore().Create()
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if err := h.SessionsStore().AppendTurn(ctx, conversationID, []message.Message{
+		message.NewTextMessage(message.RoleUser, "ask the researcher"),
+	}); err != nil {
+		t.Fatalf("append turn: %v", err)
+	}
+	// The delete started while the card was still running: the Host
+	// knows, the rows are still there, and the note is exactly the
+	// write that would land between the two.
+	h.mu.Lock()
+	h.deleted = map[ConversationID]bool{ConversationID(conversationID): true}
+	h.mu.Unlock()
+
+	h.reflowDelegation(ctx, reflowResult(conversationID))
+
+	turns, err := h.SessionsStore().Turns(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("turns: %v", err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("turns = %d, want the delegation note dropped", len(turns))
+	}
+	if got := notified.conversations(); len(got) != 0 {
+		t.Fatalf("notifications = %v, want the deleted conversation left alone", got)
+	}
+}
+
+// TestReflowDelegationRefusesRetiredConversation pins the durable half
+// of the same guard: a Host that never saw the delete — a later
+// generation, a store restored out of band — still cannot append the
+// note to the retired id, because the store refuses the write and the
+// note is dropped the way any post-delete writer is.
+func TestReflowDelegationRefusesRetiredConversation(t *testing.T) {
+	h, notified := newReflowHost(t)
+	ctx := context.Background()
+	conversationID, err := h.SessionsStore().Create()
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if err := h.SessionsStore().Remove(ctx, conversationID); err != nil {
+		t.Fatalf("remove conversation: %v", err)
+	}
+	// The row under the retired id, the way a build that does not know
+	// about deleted_conversations puts it back: the append below has a
+	// row to write to, and only the retirement stops it.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := h.SessionsStore().Database().SQLDB().ExecContext(ctx, `
+		INSERT INTO conversations(
+			id, title, created_at, updated_at, turn_count, message_count,
+			usage_json, import_source, import_ready
+		) VALUES (?, 'came back', ?, ?, 0, 0, '{}', '', 0)`,
+		conversationID, now, now); err != nil {
+		t.Fatalf("recreate conversation row: %v", err)
+	}
+
+	h.reflowDelegation(ctx, reflowResult(conversationID))
+
+	var archived int
+	if err := h.SessionsStore().Database().SQLDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM archive_turns WHERE conversation_id = ?`,
+		conversationID).Scan(&archived); err != nil {
+		t.Fatalf("count archive turns: %v", err)
+	}
+	if archived != 0 {
+		t.Fatalf("archived turns = %d, want the note refused", archived)
+	}
+	if got := notified.conversations(); len(got) != 0 {
+		t.Fatalf("notifications = %v, want the retired conversation left alone", got)
+	}
+}
+
 // TestReflowDelegationSkipsEphemeralConversations pins the second
 // guard: delegated runs execute under "ctx-" conversations whose
 // contexts are never archived, so a note addressed there would create

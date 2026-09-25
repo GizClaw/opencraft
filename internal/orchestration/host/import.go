@@ -64,6 +64,13 @@ func (h *Host) ImportSession(
 // the earliest turn time when the bundle carries turns, so historical
 // imports land in their own hourly buckets instead of being attributed
 // to the import moment.
+//
+// Forwarding gates on the outcome, not on the session write: the
+// user-level tables are a spend ledger, and a bundle whose conversation
+// was deleted while the import settled still spent its tokens. Only a
+// conversation that already carried totals is skipped — there, the
+// tokens were accounted for when they were first recorded, and
+// forwarding again would double count.
 func (h *Host) recordImportUsage(
 	ctx context.Context,
 	id string,
@@ -73,13 +80,19 @@ func (h *Host) recordImportUsage(
 	if h == nil || h.store == nil || usage == nil || usage.TotalTokens <= 0 {
 		return
 	}
-	recorded, err := h.store.RecordUsageIfEmpty(ctx, id, *usage)
+	outcome, err := h.store.RecordUsageIfEmpty(ctx, id, *usage)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: record imported session usage failed", err,
 			otellog.String("conversation.id", id))
 		return
 	}
-	if recorded {
+	switch outcome {
+	case ocsessions.UsageAlreadyRecorded, ocsessions.UsageNotWritten:
+		// The totals were already recorded when the conversation ran, or
+		// there were none to record; forwarding again would double count.
+	default:
+		// Written now, or the conversation is gone: either way the
+		// bundle's tokens were spent and the ledger gets them.
 		h.forwardUsageRecorder(ctx, id, *usage, at)
 	}
 }

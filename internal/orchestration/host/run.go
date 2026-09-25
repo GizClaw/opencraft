@@ -722,7 +722,17 @@ func (h *Host) persistTurnUsage(
 // desktop deletion uses so a running session is stopped before its
 // data disappears. The delete is all-or-nothing until the store
 // removal: a timeout or flowcraft refusal leaves the conversation
-// intact for a retry, and a second call after success is a no-op.
+// intact for a retry, and the store removal itself retires the id, so
+// "gone" is durable (state.ErrRetired).
+//
+// Calling it again for an id this Host already deleted purges whatever
+// came back under the retired id and reports success either way: the
+// caller asks for "this conversation is gone", and a repeat call is not
+// a different request. The purge can only fail on the leftovers the
+// rows no longer depend on (a directory a file handle still pins), and
+// failing the caller's retry for that would report a completed delete
+// as broken. The tombstone check at StartRun keeps a retry from
+// starting a run under the retired id.
 func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 	if h == nil {
 		return nil
@@ -755,7 +765,11 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 		// Host's life. Removing an already-removed conversation is a
 		// no-op, so the repeat delete really means "gone".
 		if err := store.Remove(ctx, id); err != nil {
-			return fmt.Errorf("host: remove session %q: %w", id, err)
+			// The rows went with the first delete; what can still fail
+			// here is the directory purge, and the caller's request is
+			// already satisfied.
+			telemetry.WarnErr(ctx, "host: purge deleted session residue failed", err,
+				otellog.String("conversation.id", id))
 		}
 		h.deleteConversationCheckpoints(ctx, id)
 		return nil
@@ -849,8 +863,10 @@ func (h *Host) clearDeleting(id ConversationID) {
 }
 
 // conversationGone reports whether one conversation is being deleted
-// or already deleted, so post-turn writers (auto titles) can skip
-// late writes that would resurrect removed rows.
+// or already deleted, so post-turn writers (auto titles, delegation
+// reflows) can skip late writes that would resurrect removed rows.
+// This is the in-process fast path; the durable answer is the retired
+// id the store keeps, which refuses the same writes after a restart.
 func (h *Host) conversationGone(id ConversationID) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()

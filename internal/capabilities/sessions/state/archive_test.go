@@ -14,21 +14,30 @@ import (
 
 // TestUpdateConversationUsageIsUpdateOnly pins the state-level half of
 // the late-write rule: the usage column is written by an UPDATE, so a
-// conversation that is gone stays gone, and the columns the archive owns
-// are left alone.
+// conversation that is gone answers ErrNotFound and keeps its delta
+// dropped, and the columns the archive owns — the title, the counts,
+// the creation time — are left alone.
 func TestUpdateConversationUsageIsUpdateOnly(t *testing.T) {
 	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
 	ctx := context.Background()
 	const id = "s-usage"
+	created := time.Date(2026, 9, 25, 8, 0, 0, 0, time.UTC)
 	if err := s.EnsureConversation(ctx, state.Conversation{
-		ID:    id,
-		Title: "kept",
+		ID:           id,
+		Title:        "kept",
+		CreatedAt:    created,
+		UpdatedAt:    created,
+		TurnCount:    2,
+		MessageCount: 4,
 	}); err != nil {
 		t.Fatalf("seed conversation: %v", err)
 	}
 
+	// The sidebar lists by updated_at, so the write has to carry the
+	// caller's timestamp rather than one of its own.
+	at := time.Date(2026, 9, 25, 9, 30, 0, 0, time.UTC)
 	if err := s.UpdateConversationUsage(ctx, id,
-		[]byte(`{"total_tokens":42}`), time.Now().UTC()); err != nil {
+		[]byte(`{"total_tokens":42}`), at); err != nil {
 		t.Fatalf("update usage: %v", err)
 	}
 	c, err := s.Conversation(ctx, id)
@@ -37,6 +46,16 @@ func TestUpdateConversationUsageIsUpdateOnly(t *testing.T) {
 	}
 	if string(c.UsageJSON) != `{"total_tokens":42}` || c.Title != "kept" {
 		t.Fatalf("conversation after usage update = %+v", c)
+	}
+	if !c.UpdatedAt.Equal(at) {
+		t.Fatalf("updated_at = %s, want %s", c.UpdatedAt, at)
+	}
+	if !c.CreatedAt.Equal(created) {
+		t.Fatalf("created_at = %s, want %s", c.CreatedAt, created)
+	}
+	if c.TurnCount != 2 || c.MessageCount != 4 {
+		t.Fatalf("counts after usage update = %d/%d, want 2/4 (the archive owns them)",
+			c.TurnCount, c.MessageCount)
 	}
 
 	if err := s.DeleteConversationRows(ctx, id); err != nil {
@@ -47,8 +66,110 @@ func TestUpdateConversationUsageIsUpdateOnly(t *testing.T) {
 	if !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("update after delete = %v, want ErrNotFound", err)
 	}
+}
+
+// TestRetiredConversationRefusesEveryWriter pins the fence that makes a
+// delete final: the delete records the id in deleted_conversations, and
+// every writer that could recreate the conversation refuses that id by
+// name — from the database, so a second process and a later generation
+// refuse it too. The regression the fence closes is a writer landing
+// after the delete (a detached review, a folded condensation, a
+// delegation note) and rebuilding the row it was writing to.
+func TestRetiredConversationRefusesEveryWriter(t *testing.T) {
+	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
+	ctx := context.Background()
+	const id = "s-retired"
+	commitTurn(t, s, id, "doomed", "run-1", time.Now().UTC(), userText("hello"))
+	if err := s.SetConversationState(ctx, id, "plan", []byte("{}")); err != nil {
+		t.Fatalf("seed state document: %v", err)
+	}
+	if err := s.DeleteConversationRows(ctx, id); err != nil {
+		t.Fatalf("delete conversation: %v", err)
+	}
+	retired, err := s.Retired(ctx, id)
+	if err != nil || !retired {
+		t.Fatalf("Retired after delete = %v, %v; want true", retired, err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"EnsureConversation", func() error {
+			return s.EnsureConversation(ctx, state.Conversation{ID: id})
+		}},
+		{"UpsertConversation", func() error {
+			return s.UpsertConversation(ctx, state.Conversation{
+				ID: id, Title: "back again",
+			})
+		}},
+		{"CommitConversationTurn", func() error {
+			return s.CommitConversationTurn(ctx,
+				state.Conversation{ID: id},
+				state.ArchiveTurn{RunID: "run-2"},
+				[]state.ArchiveMessage{{
+					Role: string(message.RoleUser),
+					Content: message.Content{
+						Parts: []message.Part{message.TextPart{Text: "again"}},
+					},
+				}})
+		}},
+		{"SetConversationState", func() error {
+			return s.SetConversationState(ctx, id, "plan", []byte(`{"late":true}`))
+		}},
+		{"SetModel", func() error {
+			return s.SetModel(ctx, id, "m")
+		}},
+	} {
+		if err := tc.call(); !errors.Is(err, state.ErrRetired) {
+			t.Errorf("%s after delete = %v, want ErrRetired", tc.name, err)
+		}
+	}
+
+	// Nothing came back: not the row, not a document for it, not the
+	// state the refused writes would have replaced.
 	if _, err := s.Conversation(ctx, id); !errors.Is(err, state.ErrNotFound) {
-		t.Fatalf("conversation after rejected update = %v, want ErrNotFound", err)
+		t.Errorf("conversation after the refused writes = %v, want ErrNotFound", err)
+	}
+	if _, err := s.GetConversationState(ctx, id, "plan"); !errors.Is(err, state.ErrNotFound) {
+		t.Errorf("state document after the refused writes = %v, want ErrNotFound", err)
+	}
+	// The fence is per id: a live conversation is written as before.
+	const live = "s-live"
+	if err := s.EnsureConversation(ctx, state.Conversation{ID: live}); err != nil {
+		t.Fatalf("ensure a live conversation: %v", err)
+	}
+	if err := s.SetModel(ctx, live, "m"); err != nil {
+		t.Fatalf("write a live conversation's settings: %v", err)
+	}
+}
+
+// TestUpdateConversationUsageDefaultsTheCallersGaps pins the two
+// defensive branches of the write: an empty usage block is stored as an
+// empty JSON object, and a caller that passes no timestamp — the zero
+// time, which would land in a column the sidebar sorts by — gets the
+// write's own moment.
+func TestUpdateConversationUsageDefaultsTheCallersGaps(t *testing.T) {
+	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
+	ctx := context.Background()
+	const id = "s-usage-defaults"
+	if err := s.EnsureConversation(ctx, state.Conversation{ID: id}); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+
+	before := time.Now().UTC().Add(-time.Second)
+	if err := s.UpdateConversationUsage(ctx, id, nil, time.Time{}); err != nil {
+		t.Fatalf("update usage: %v", err)
+	}
+	c, err := s.Conversation(ctx, id)
+	if err != nil {
+		t.Fatalf("conversation after usage update: %v", err)
+	}
+	if string(c.UsageJSON) != "{}" {
+		t.Fatalf("empty usage stored as %s, want {}", c.UsageJSON)
+	}
+	if c.UpdatedAt.Before(before) || c.UpdatedAt.After(time.Now().UTC().Add(time.Second)) {
+		t.Fatalf("updated_at = %s, want the write's own moment", c.UpdatedAt)
 	}
 }
 

@@ -403,13 +403,24 @@ func (b *Conversation) SessionMode() string {
 	return string(b.core.Conversation.Mode(b.core.ActiveWorkDir()))
 }
 
-// ResumeSession selects an existing conversation and its settings.
+// ResumeSession selects an existing conversation and its settings. A
+// conversation that was deleted is refused by name: the store retires
+// deleted ids (state.ErrRetired), so the id can come back neither from
+// this Host nor from a later one, and focusing it would open a chat
+// that can never arrive.
 func (b *Conversation) ResumeSession(id string) error {
 	ctx := b.core.Shell.Context()
 	workDir := b.core.ActiveWorkDir()
 	h := b.core.ActiveHost()
 	if h == nil || h.Sessions() == nil {
 		return fmt.Errorf("conversation: session store is not ready")
+	}
+	retired, err := h.Sessions().State().Retired(ctx, id)
+	if err != nil {
+		return err
+	}
+	if retired {
+		return fmt.Errorf("conversation: session %q was deleted", id)
 	}
 	mode, err := h.Sessions().Mode(ctx, id)
 	if err != nil {

@@ -2,10 +2,20 @@ package compat
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
 )
+
+// ErrConversationRetired reports that the store refused to write
+// something for a legacy session because that conversation id was
+// deleted in this workspace. The walker treats it as "nothing to
+// import": the user deleted the session, and re-adopting it from the
+// files it was read from would undo that. The store that owns the rows
+// raises the refusal; this sentinel is the port's own answer, so the
+// walker never has to know the store's error vocabulary.
+var ErrConversationRetired = errors.New("compat: conversation is retired")
 
 // WorkspaceImport is one pre-SQLite session as the migration reads it:
 // the legacy metadata document, the archived turns, and the per-session

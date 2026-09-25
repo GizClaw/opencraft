@@ -27,6 +27,15 @@ func requireStateName(name string) error {
 }
 
 // WriteState atomically persists a JSON document in conversation_state.
+//
+// A document write never creates the conversation it belongs to: the
+// row is seeded by whoever starts or imports the conversation
+// (Store.Create, SeedStartTitle, Store.Import), and documents are
+// allowed to exist without it in exactly one case — the settings of a
+// draft the user is composing, which have no run yet. Recreating the
+// row here instead (which is what this used to do) is how a late writer
+// brought a deleted chat back as an empty entry. A retired id is
+// refused by the store below (state.ErrRetired).
 func (s *Store) WriteState(id, name string, v any) error {
 	if err := requireID(id); err != nil {
 		return err
@@ -36,11 +45,6 @@ func (s *Store) WriteState(id, name string, v any) error {
 	}
 	data, err := json.Marshal(v)
 	if err != nil {
-		return err
-	}
-	if err := s.db.EnsureConversation(context.Background(), state.Conversation{
-		ID: id,
-	}); err != nil {
 		return err
 	}
 	return s.db.SetConversationState(context.Background(), id, name, data)

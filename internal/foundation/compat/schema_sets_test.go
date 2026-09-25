@@ -29,7 +29,7 @@ func TestWorkspaceAndUserMigrationSets(t *testing.T) {
 	for _, table := range []string{
 		"conversations", "archive_turns", "archive_messages",
 		"conversation_state", "agent_checkpoints",
-		"summary_nodes", "message_fts",
+		"summary_nodes", "message_fts", "deleted_conversations",
 	} {
 		var n int
 		if err := ws.SQLDB().QueryRowContext(ctx,

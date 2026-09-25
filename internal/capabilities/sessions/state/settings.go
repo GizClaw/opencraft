@@ -170,6 +170,15 @@ func (s *Store) updateSessionSettings(
 		return fmt.Errorf(
 			"state: read session settings %s: %w", contextID, err)
 	}
+	// A retired id has no settings to change: the conversation was
+	// deleted, and a settings document written now would be the half of
+	// it that outlived the delete. A draft with no row yet is not
+	// retired — its settings are exactly what this write is for.
+	if retiredID, err := retired(ctx, tx, contextID); err != nil {
+		return err
+	} else if retiredID {
+		return ErrRetired
+	}
 	doc := sessionSettings{}
 	if exists {
 		if doc, err = decodeSessionSettings(contextID, raw); err != nil {
