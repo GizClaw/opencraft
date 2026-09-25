@@ -3563,6 +3563,16 @@ export const useStore = create<StoreState>((set, get) => {
           set({ toolsView: null, configOpen: false });
           return;
         }
+        if (stateRoot.registry.isDeleted(id)) {
+          // This id was deleted in this process and the backend never
+          // reuses a session id, so there is nothing to resume. Saying
+          // so beats switching focus to a conversation whose actor can
+          // never be created (the registry refuses tombstoned ids): the
+          // chat would sit on "loading history" with no event able to
+          // finish it.
+          get().toast(i18n.t('chat.sessionDeleted'), 'warning');
+          return;
+        }
         stateRoot.sendFocus({ type: 'OPEN_SESSION', id });
         const request = stateRoot.focusSnapshot.context.request;
         try {

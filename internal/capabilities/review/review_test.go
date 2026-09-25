@@ -758,6 +758,14 @@ func TestReportUsageAttributesTheParentConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	o.sessions = store
+	// The reviewed turn is already committed when a review reports its
+	// own call, so its conversation exists; the usage write updates that
+	// row and never creates one (a late write must not resurrect a
+	// deleted conversation).
+	if err := store.SeedStartTitle(context.Background(), "s-1",
+		[]message.Message{message.NewTextMessage(message.RoleUser, "turn")}); err != nil {
+		t.Fatal(err)
+	}
 
 	o.reportUsage(context.Background(), agent.Identity{ConversationID: "s-1"},
 		inference.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15})

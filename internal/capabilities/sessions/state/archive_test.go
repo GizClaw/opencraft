@@ -2,6 +2,7 @@ package state_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +11,46 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 )
+
+// TestUpdateConversationUsageIsUpdateOnly pins the state-level half of
+// the late-write rule: the usage column is written by an UPDATE, so a
+// conversation that is gone stays gone, and the columns the archive owns
+// are left alone.
+func TestUpdateConversationUsageIsUpdateOnly(t *testing.T) {
+	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
+	ctx := context.Background()
+	const id = "s-usage"
+	if err := s.EnsureConversation(ctx, state.Conversation{
+		ID:    id,
+		Title: "kept",
+	}); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+
+	if err := s.UpdateConversationUsage(ctx, id,
+		[]byte(`{"total_tokens":42}`), time.Now().UTC()); err != nil {
+		t.Fatalf("update usage: %v", err)
+	}
+	c, err := s.Conversation(ctx, id)
+	if err != nil {
+		t.Fatalf("conversation after usage update: %v", err)
+	}
+	if string(c.UsageJSON) != `{"total_tokens":42}` || c.Title != "kept" {
+		t.Fatalf("conversation after usage update = %+v", c)
+	}
+
+	if err := s.DeleteConversationRows(ctx, id); err != nil {
+		t.Fatalf("delete conversation: %v", err)
+	}
+	err = s.UpdateConversationUsage(ctx, id,
+		[]byte(`{"total_tokens":1}`), time.Now().UTC())
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("update after delete = %v, want ErrNotFound", err)
+	}
+	if _, err := s.Conversation(ctx, id); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("conversation after rejected update = %v, want ErrNotFound", err)
+	}
+}
 
 func TestConversationArchiveCommitRoundTrip(t *testing.T) {
 	s := openState(t, filepath.Join(t.TempDir(), "session.db"))

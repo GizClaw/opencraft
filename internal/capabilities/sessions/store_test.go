@@ -663,6 +663,67 @@ func TestRemoveRejectsTraversalID(t *testing.T) {
 	}
 }
 
+// TestLateUsageWritesNeverResurrectDeletedConversation pins the write
+// rule usage shares with the archive: usage_json is a cache on the
+// conversations row, and only the transcript writers create that row. A
+// writer that arrives after the user deleted the conversation — a
+// detached review that outlives its turn, a turn end that raced the
+// delete — used to recreate the row, which put the conversation back in
+// the sidebar as a zero-turn "(empty)" entry (List keeps rows that carry
+// usage) that the frontend's delete tombstone then made impossible to
+// open.
+func TestLateUsageWritesNeverResurrectDeletedConversation(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	ctx := context.Background()
+
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(ctx, id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "this chat is going away"),
+	}); err != nil {
+		t.Fatalf("AppendTurn: %v", err)
+	}
+	if err := store.Remove(ctx, id); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	// Every usage writer a background call can still reach afterwards.
+	late := Usage{Model: "deepseek-flash", InputTokens: 906, TotalTokens: 911}
+	if err := store.AddUsage(ctx, id, late); err != nil {
+		t.Fatalf("AddUsage after delete: %v", err)
+	}
+	if err := store.RecordUsage(ctx, id, late); err != nil {
+		t.Fatalf("RecordUsage after delete: %v", err)
+	}
+	recorded, err := store.RecordUsageIfEmpty(ctx, id, late)
+	if err != nil {
+		t.Fatalf("RecordUsageIfEmpty after delete: %v", err)
+	}
+	if recorded {
+		t.Fatal("RecordUsageIfEmpty reported a write for a deleted conversation")
+	}
+
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("list after late usage writes = %+v, want empty", list)
+	}
+	if usage, err := store.LoadUsage(ctx, id); err != nil || usage != (Usage{}) {
+		t.Fatalf("LoadUsage after delete = %+v, %v; want zero", usage, err)
+	}
+	if store.Exists(id) {
+		t.Fatal("conversation came back after a late usage write")
+	}
+}
+
 func TestListMeta(t *testing.T) {
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {

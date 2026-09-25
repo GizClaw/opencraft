@@ -99,6 +99,59 @@ func TestHostDeleteConversationCancelsLiveRun(t *testing.T) {
 	}
 }
 
+// TestHostDeleteConversationRemovesRowsThatCameBack pins the repeat
+// delete path. The tombstone stops the id from being minted again, but
+// the rows are what the sidebar lists: an entry that reappears under a
+// tombstoned id (a late usage write from an older build, a store
+// restored out of band) must still be deletable — otherwise it stays on
+// screen for the rest of the Host's life as an entry that cannot be
+// opened either, because the frontend has the id tombstoned too.
+func TestHostDeleteConversationRemovesRowsThatCameBack(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+
+	workDir := t.TempDir()
+	dataDir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dataDir, "home"))
+	configDir := filepath.Join(dataDir, "config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeConfig(t, configDir, provider.URL())
+
+	mgr := host.NewManagerAt(dataDir, configDir)
+	ctx := context.Background()
+	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire host: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+
+	id, err := h.Sessions().Create()
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if err := h.DeleteConversation(ctx, id); err != nil {
+		t.Fatalf("DeleteConversation: %v", err)
+	}
+	// The row is back, the way a late usage write from an older build
+	// would have put it there; the id itself stays tombstoned.
+	if err := h.Sessions().SeedStartTitle(ctx, id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "came back"),
+	}); err != nil {
+		t.Fatalf("recreate conversation row: %v", err)
+	}
+	if !h.Sessions().Exists(id) {
+		t.Fatal("setup: conversation row missing")
+	}
+
+	if err := h.DeleteConversation(ctx, id); err != nil {
+		t.Fatalf("second DeleteConversation: %v", err)
+	}
+	if h.Sessions().Exists(id) {
+		t.Fatal("conversation still exists after the repeat delete")
+	}
+}
+
 // TestHostDeleteConversationRemovesIdleConversation pins the no-run
 // path: an idle conversation's settings rows disappear with the
 // delete, and deleting an unknown id stays a no-op.

@@ -206,6 +206,42 @@ func (s *Store) UpsertConversation(ctx context.Context, c Conversation) error {
 	return nil
 }
 
+// UpdateConversationUsage overwrites one conversation's cached usage
+// block. It is an UPDATE and never an insert: usage_json sums up turns
+// the transcript already owns, so a missing row means the conversation
+// was deleted while the writer was in flight. Recreating the row here
+// would resurrect the conversation as a zero-turn entry in the sidebar
+// (List keeps rows that carry usage), so the writer gets ErrNotFound
+// instead and drops its delta.
+func (s *Store) UpdateConversationUsage(
+	ctx context.Context, id string, usage []byte, updatedAt time.Time,
+) error {
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("state: conversation id is required")
+	}
+	if len(usage) == 0 {
+		usage = []byte("{}")
+	}
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+	res, err := s.db.SQLDB().ExecContext(ctx, `
+		UPDATE conversations SET usage_json = ?, updated_at = ?
+		WHERE id = ?`,
+		string(usage), updatedAt.UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return fmt.Errorf("state: update conversation usage: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("state: update conversation usage: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ListConversations returns every conversation, newest first.
 func (s *Store) ListConversations(ctx context.Context) ([]Conversation, error) {
 	rows, err := s.db.SQLDB().QueryContext(ctx, `

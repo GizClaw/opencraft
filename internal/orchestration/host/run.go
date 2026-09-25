@@ -747,6 +747,17 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 	}
 	if h.deleted[conv] {
 		h.mu.Unlock()
+		// The tombstone outlives the rows, and the rows are what the
+		// sidebar lists: a conversation that came back under a deleted
+		// id (a late write from an older build, a store restored out of
+		// band) would otherwise stay on screen as an entry that can
+		// neither be opened nor deleted again for the rest of this
+		// Host's life. Removing an already-removed conversation is a
+		// no-op, so the repeat delete really means "gone".
+		if err := store.Remove(ctx, id); err != nil {
+			return fmt.Errorf("host: remove session %q: %w", id, err)
+		}
+		h.deleteConversationCheckpoints(ctx, id)
 		return nil
 	}
 	if h.deleting[conv] {

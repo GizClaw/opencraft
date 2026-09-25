@@ -3,6 +3,7 @@ import { COMPACT_SUMMARY_PREFIX } from './compact';
 import { flushCommitStats, setPerfMetricsEnabled } from './perfMetrics';
 import type { MessageView } from './store';
 import type { WorkspaceMeta } from './types';
+import i18n from '../i18n';
 import { stateRoot } from '../state/app';
 import {
   firstMessageTitle,
@@ -515,6 +516,23 @@ describe('store: send and stream', () => {
 
     expect(useStore.getState().toolsView).toBeNull();
     expect(apiMock.resumeSession).not.toHaveBeenCalled();
+  });
+
+  it('resume refuses an id this process already deleted', async () => {
+    stateRoot.registry.markDeleted('s-2');
+
+    await useStore.getState().resume('s-2');
+
+    // The backend never reuses a session id, so there is nothing to
+    // resume: the click is answered instead of focusing a conversation
+    // whose actor can never be created.
+    expect(apiMock.resumeSession).not.toHaveBeenCalled();
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-1');
+    expect(useStore.getState().toasts).toHaveLength(1);
+    expect(useStore.getState().toasts[0].kind).toBe('warning');
+    expect(useStore.getState().toasts[0].text).toBe(
+      i18n.t('chat.sessionDeleted'),
+    );
   });
 
   it('forkTurn creates the fork and switches to its hydrated history', async () => {

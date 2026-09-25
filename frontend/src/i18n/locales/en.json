@@ -875,6 +875,7 @@
     "startNew": "Start a new conversation",
     "opening": "Opening conversation…",
     "switchFailed": "Couldn't open that conversation",
+    "sessionDeleted": "That conversation was deleted; it can't be reopened",
     "backToSession": "Back",
     "retrySwitch": "Try again",
     "loadingHistory": "Loading history…",
