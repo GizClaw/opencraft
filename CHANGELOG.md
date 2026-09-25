@@ -6,1035 +6,550 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-25
+
 ### Added
 
-- The keyboard is one table with one place to read it. Every key the
-  shell owns now lives in `frontend/src/lib/keys.ts` — the combos, plus
-  whether a command also fires while a text field has the caret
-  (`editable`), whether it may run underneath an overlay (`overlay:
-  'runs'`) and whether holding it repeats — and one capture-phase
-  listener (`lib/useShortcuts.ts`) dispatches it, so a key can no longer
-  be documented in one place and bound in another. ⌘/ opens the
-  reference: the table's groups (global, chat, composer, lists, palette)
-  together with the keys a surface owns rather than the shell (the
-  composer's Enter / Tab / ⌘Enter, the approval card's Space, the ruler's
-  ↑↓, the palette's own walk), rendered from the same table the
-  dispatcher reads. The command palette shows each command's combo beside
-  its title, and the palette, the keys and the macOS menu bar all run the
-  same ids through one dispatcher (`lib/shellCommands.ts`). New bindings:
-  Esc — or ⌘., where a bare Escape is an odd thing to advertise — stops
-  the running reply, with one deliberate exception: a text surface keeps
-  its own Escape (an inline rename cancels, a path field closes, the
-  composer's mention popup exits), so the shell takes the key only where
-  nobody else owns it, and the composer runs the stop from its own
-  handler. Also new: ⌘L focuses the composer, ⌘⇧C copies the last reply,
-  ⌘↑ / ⌘↓ walk the transcript question by question, ⌘1 … ⌘4 resume a
-  numbered session, ⌘[ / ⌘] move between sessions and ⌘⇧[ / ⌘⇧] between
-  workspaces, ⌘⇧G toggles the Git panel and ⌘⇧T cycles the theme. Those
-  digits are the sidebar's own numbering: the badge on a row and the key
-  that jumps to it read one function (`lib/sessionSlots.ts`), the number
-  follows the visible order (a running conversation leads its workspace's
-  list, so the digits move with it), and an empty slot — or the session
-  already open — does nothing. A number is a hint, not a label: it appears
-  while the modifier that runs it is held and is out of sight otherwise
-  (`lib/modifierHeld.ts`), the way a menu bar reveals its accelerators.
-  That state is not a down/up pair of the modifier key — the up is
-  swallowed whenever the press ends somewhere else (⌘-Tab, Spotlight,
-  Mission Control, the window losing focus) and the hints would stay on
-  for good — so it is recomputed from every keyboard event's own
-  modifier, and cleared when the window loses focus or the page goes
-  hidden. The row keeps the badge's place while the hint is away:
-  hidden, not unmounted, so holding ⌘ never re-truncates the title the
-  reader is looking at, and the hint steps aside for the row's own
-  buttons when the pointer is over it.
-  The row's hover card carries the number too — the badge is a hint, and a
-  hint has to be known before it can be looked for — so the mouse can
-  learn which key owns a row without holding anything down. No digit
-  names a row the collapsed list does not draw, either: the preview
-  window and the slot count are held together by a test. A control that
-  has a key says so in its hint (`data-tip-keys`, drawn by the one tooltip
-  layer from the same table, and a test walks every site), so the mouse
-  finds the keyboard too. Combos render per platform from one formatter
-  (⌘⇧[ on macOS, Ctrl+Shift+[ elsewhere) instead of the user-agent
-  sniffing each surface used to do, keys fire only where the table says
-  they may (an IME's composition still owns the keyboard, and Escape
-  belongs to the topmost overlay first), and nothing is remappable yet:
-  the sheet is a reference, not an editor.
-- An input method owns the keyboard in one place. `lib/ime.ts`
-  (`imeKeyOwner`) answers what a keydown belongs to — composing, a press
-  the IME already took, or the app's — and the dispatcher, the overlay
-  stack, the composer, the palette, the font picker and the approval card
-  all ask it instead of each carrying their own `isComposing` check. It
-  covers what the flag alone does not: Chromium — and therefore WebView2
-  on Windows — delivers the key that *ends* a composition again after
-  `compositionend`, with `isComposing` already false, so committing a
-  Chinese or Japanese candidate looked exactly like the user pressing
-  Enter: the palette ran its highlighted command, the composer sent, a
-  dialog closed. That press is now recognised and consumed before any
-  surface sees it, and a list that filters as you type renders the frozen
-  results while a composition is in flight instead of flashing empty.
-- macOS has a menu bar the app owns. The default one that came with the
-  window was never ours: View ▸ Reload reloaded the webview, and Help ▸
-  Learn More navigated the main window to wails.io. The bar is now built
-  from a table (`internal/adapters/desktop/menuspec.go`), every item
-  localized, with the platform's own rows (Edit, Window, zoom, full
-  screen, the Services submenu) kept as roles and the app's commands as
-  *bridged* rows: the item carries the accelerator, macOS consumes the
-  key, and a click emits the frontend's own shortcut id over the
-  `opencraft:menu` event, so one implementation backs both fronts and the
-  menu cannot drift from the sheet. File ▸ Close Window funnels into the
-  same close-to-tray-or-quit gate the traffic lights use. Keys are only
-  written where AppKit can match them — it compares the character the key
-  types ignoring every modifier but ⇧, so the ⌘-and-a-plain-key combos go
-  in whole, ⇧-punctuation works (⇧⌘[ is spelled `CmdOrCtrl+Shift+[` and
-  the bar draws it), and a ⇧-letter can never match a key Wails has
-  lowercased, which is why Redo carries no key rather than one that does
-  nothing. Windows and Linux are unchanged: an in-app top bar over a
-  frameless window, with the frontend dispatcher as the only owner of
-  keys. A test reads the TypeScript table and holds the Go one to it (ids
-  exist, accelerators equal the combos, a non-`editable` key may not be
-  advertised, no key is claimed twice), because the two languages cannot
-  import each other.
-- Past sessions are searchable by the assistant, not only by the UI: the
-  `session_search` tool runs a full-text recall over this workspace's
-  archived turns (SQLite FTS5, trigram tokenizer, so a substring inside
-  Chinese text matches too). The index stores the message's prompt
-  projection — its text plus the tool lines a reader would see, never the
-  stored JSON — is written in the same transaction as the archive row,
-  and databases written before it existed are backfilled once, off the
-  open path and retried on the next open if interrupted.
-  Queries shorter than three characters fall back to a substring scan
-  with the fallback reported in the tool's note, hits are de-duplicated
-  per conversation, and each hit carries a snippet with the match marked.
-  The tool is deferred: the model discovers it through tool_search.
-- The assistant can remember facts across sessions. A user-level store
+- Settings ▸ Interface gains **Accent colour**: five presets — blue (the
+  default), violet, teal, orange, rose — each a rung per theme, so a
+  theme flip repaints the accent, the swatches and the focus rings
+  without a component knowing. The id is written as `data-accent` on
+  documentElement, the rungs live in `style.css`, and the ids are a
+  contract with `core/ui_prefs.go` — an unknown id falls back to the
+  shipped accent. (#216)
+- The keyboard is one table with one place to read it: every key the
+  shell owns lives in `frontend/src/lib/keys.ts` (the combo, whether
+  it runs in a text field, under an overlay, or repeats) with one
+  capture-phase dispatcher, and ⌘/ opens the reference from the same
+  table. New bindings: Esc or ⌘. stops a reply, ⌘L the composer,
+  ⌘↑/⌘↓ walk the transcript, ⌘1–⌘4 resume a session, ⌘[ / ⌘] move
+  sessions and ⌘⇧[ / ⌘⇧] workspaces, ⌘⇧G toggles Git, ⌘⇧T cycles the
+  theme; session digits are the sidebar's own numbering, shown while
+  the modifier that runs them is held. An input method owns the
+  keyboard through `lib/ime.ts`, which covers what the flag alone does
+  not — Chromium and WebView2 re-deliver the key that *ends* a
+  composition after `compositionend`, and the guard arms only for a
+  keydown the composition itself reported, so an ordinary keydown can
+  no longer disarm it and commit Enter to the palette or the composer.
+  (#205, #215)
+- macOS has a menu bar the app owns, built from a table
+  (`internal/adapters/desktop/menuspec.go`): every item localized, the
+  platform's rows kept as roles, and the app's commands as bridged
+  rows — the item carries the accelerator and a click emits the
+  frontend's shortcut id over `opencraft:menu`, so the menu runs the
+  same command table as the palette and the sheet and cannot drift. A
+  test holds the Go table to the TypeScript one. (#205)
+- Past sessions are searchable by the assistant: `session_search` runs
+  FTS5 full-text recall (trigram tokenizer, so a substring inside
+  Chinese matches) over this workspace's archived turns. The index
+  stores the prompt projection, is written in the archive's own
+  transaction, and older databases backfill once off the open path;
+  queries under three characters fall back to a substring scan, and
+  hits de-duplicate per conversation with a marked snippet. (#204)
+- The assistant can remember facts across sessions: a user-level store
   (`user.db`) holds them with the workspace and conversation they came
-  from; the `remember` tool asks for confirmation before writing,
-  applies the same secret rules the tool-result middleware applies and
-  refuses text that looks like a credential instead of storing a
-  redacted version. Dedupe, caps and provenance live in the store, so
-  the settings page, the tool and an accepted review suggestion all
-  write through one path. Live facts are injected at the top of every
-  turn (bounded by count and by a byte budget, newest first, with the
-  number that did not fit reported) and the section is re-read each
-  turn, so an accepted fact is live on the next one. Settings ▸ Memory
-  gained a card for browsing, editing, staling and deleting facts.
-- A post-turn write-back review proposes facts worth keeping. When
-  enabled — it ships off — and the turn meets the configured cadence and
-  tool-use threshold, one inference call reviews the finished turn and
-  returns strict JSON candidates; they wait in a pending queue in the
-  settings card, and accepting one writes it through the same user-memory
-  path as the tool. A review never reviews its own work (the recursion
-  guard covers the marker, the conversation and the in-flight slot),
-  never spends calls on subagent traffic, and records its own usage.
+  from. The `remember` tool confirms before writing and applies the
+  same secret rules as tool results; dedupe, caps and provenance live
+  in the store, so the tool, the settings card and an accepted review
+  suggestion all write through one path. Live facts enter the top of
+  every turn, and Settings ▸ Memory browses, edits and deletes them.
+  (#204)
+- A post-turn write-back review proposes facts worth keeping: off by
+  default, one inference call per turn that meets its cadence and
+  tool-use threshold returns strict JSON candidates that wait in the
+  settings card's pending queue, and accepting one writes through the
+  same user-memory path. (#204)
 - Skills track how they are used and can be retired without losing
-  anything. Each activation records a use under the skill's key; the
-  skills page shows uses, last used, pins and retirement state, and the
-  curator marks idle rarely-used skills as candidates. Retiring a skill
-  snapshots it to a tar.gz under the app home and records the archive;
-  restoring puts it back. Builtin skills are never candidates and no
-  file is ever deleted.
-- Delegated runs are visible end to end. The desktop now supplies the
+  anything: uses, pins and retirement state show on the skills page,
+  the curator marks idle rarely-used skills as candidates, and
+  retiring snapshots a skill to a tar.gz under the app home. Builtin
+  skills are never candidates and no file is deleted. (#204)
+- Delegated runs are visible end to end: the desktop supplies the
   stream resolver and exporter core's delegation service takes, so an
-  asynchronous delegated run's deltas land in the conversation that
-  asked for it and the finished run's result flows back into the parent
-  transcript once (idempotent by child run). The SubagentDock nests a
-  delegated run under the run that spawned it (collapse/expand, open the
-  child conversation), and Settings ▸ Tools gained a delegation card:
-  the concurrency and depth limits plus the curated allow/block target
-  lists, enforced on every delegate call — hiding a target from the
-  listing is a hint, a call that names a restricted target is refused.
-- Mid-turn steering: a message submitted while a turn is running now
-  reaches the model at the next tool-round boundary instead of waiting
-  for the turn to end. Enter in the composer sends it
-  (`Conversation.Steer`); the model reads it as a standalone user
-  message right after the round's tool results, and several corrections
-  waiting at the same boundary arrive as one message. A boundary
-  injects at most one core-sized steer (32 KiB of text); a submit that
-  would exceed that is refused with the text left in the caller's
-  hands. The transcript keeps the interjection where it was typed,
-  written as a note the reply continues under rather than as a second
-  bubble opening a turn of its own, and the note carries its own state:
-  waiting for a boundary, taken by one, or undelivered because the turn
-  ended first. A boundary reports what it took as it takes it, so a row
-  that made it says so mid-turn instead of holding "waiting for the next
-  step" until the turn ends; what never made it stays in place with
-  resend, copy and discard instead of disappearing with the conversation
-  archive. A resumed session rebuilds these rows from the archive (a
-  boundary's batch comes back as one row, which is all the archive still
-  proves), and a turn result whose undelivered count cannot be read
-  keeps every such row rather than assuming delivery. (#181)
-- Unattended automations get a per-task run limit: `timeout` bounds one
-  run (whole minutes, empty = the 15-minute default, at most 24h). A run
-  that outlives it is cancelled, its record says `timeout` with the
-  bound, and the concurrency slot comes back once the turn settles. The
-  editor gains a run-limit field and the run list a timeout badge.
-  (#181)
-- A live scheduled run can be stopped from the automations panel:
-  `Automation.CancelRun` cancels the run context the manager owns, the
-  desktop runner's bounded wait turns that into the host's turn cancel,
-  and the record is written as `canceled` with no error text once the
-  turn settles (archive, memory commit, usage and the concurrency slot
-  all still run). The run list offers the action on a running row and
-  the task menu on a task whose run is live; the failure notification
-  policy stays quiet for a stop the user asked for. (#186)
-- A reply the process never finished is no longer lost: every turn now
-  writes one checkpoint per completed wave, and the next assembly turns
-  a checkpoint with no archive row into an interrupted turn — same
-  conversation, same run id, the original user message (media left in
-  its URL form) plus whatever assistant and tool output the crash had
-  already produced, archived and folded into memory in one transaction.
-  The transcript shows it as `interrupted` with the cause `app_restart`,
-  and the newest such turn offers **Continue** (say it again as a fresh
-  turn, with the partial reply in context) and **Edit & resend** (put
-  the message back in the composer). The frontier is deliberately not
-  replayed: the wave that was in flight may have run side-effecting
-  tools, so there is no safe place to resume from. (#188)
-- Settings ▸ Diagnostics grew a Crash recovery card: what the last pass
-  did (recovered / already archived / discarded / skipped-as-live /
-  failed / not examined) and what the active workspace's checkpoint
-  table holds right now. A checkpoint is dropped as soon as its turn is
-  archived, so rows left behind are a live run or a turn the next pass
-  has to reconstruct. (#188)
-- Settings ▸ Diagnostics grew a Provider round-trip probe card (behind
-  DEV tools). It wraps the process HTTP transport, so every provider
-  call leaves two records — when the request left the process and when
-  the response headers arrived — which is the split a per-turn latency
-  number cannot show: the gap between the two is network plus provider
-  time to first byte, the gap after the previous step is local assembly.
-  The switch is `desktop.json`'s `diagnostics.httpProbe`; turning it on
-  reloads the runtime, because the provider drivers read the transport
-  when they build their clients, while turning it off takes effect in
-  place. It parks itself while an HTTP MCP server is configured (that
-  client cannot run under a wrapped transport) and says so on the card,
-  and `OPENCRAFT_HTTP_PROBE` still forces it on over the switch.
-- A second instance can run next to the installed app: `--profile <name>`
-  (`OPENCRAFT_PROFILE`) keeps the shared *app home* — `config/`,
-  `keyring/`, `plugins/`, `agents/`, user skills — and moves the *state
-  root* to `~/.opencraft-<name>`, so a dev copy inherits the user's
-  configuration, credentials and plugins while its sessions, `user.db`,
-  logs and caches stay its own. `--data-dir DIR` moves both roots (the
-  self-contained instance CI and e2e want), `--app-home DIR` moves only
-  the content root, and `--config-dir DIR` alone keeps the historical
-  `opencraft run --config` rule: the state root becomes the config
-  directory's parent. The embedded deploy document resolves content
-  through a new `${ocraft:APP_HOME}` value (`${ocraft:DATA_DIR}` keeps
-  only state semantics; a contract test pins both halves), the execd
-  child resolves no user directory of its own — the sandbox cache root
-  travels with the bind request — and every root fallback that used to
-  happen silently now logs. The single-instance id is derived from the
-  canonical state root (`com.GizClaw.opencraft.d<hex12>`) instead of the
-  product name, so one state root keeps exactly one GUI process while
-  different roots coexist; a rejected second instance exits 1 instead of
-  silently exiting 0, `OPENCRAFT_NO_SINGLE_INSTANCE=1` deliberately
-  allows two GUIs on one root, and `desktop.New` runs *after*
-  `application.New` so the loser of that race never seeds a directory or
-  a log line on its way out. The profile shows up where a user sees it:
-  the window title, the tray tooltip and a Settings ▸ Diagnostics card
-  naming the profile, the state root and the app home. (#190)
-- A delegated subagent's report is filed as the app's own turn instead of
-  as something the user said. An async call has no return path of its own
-  — a tool result has to hang on a live turn, and rewriting a finished
-  turn is worse — so the note lands in the archive as a user-role row the
-  next turn's model reads; what is new is that "the app wrote this" is in
-  the data. `archive_turns.kind` names the writer and
-  `archive_turns.payload_json` holds its structured record: workspace
-  migration 018 adds both columns and files the notes older builds
-  archived as plain text by parsing the rendered sentence once, while the
-  live writer (`subagents.Result.Payload()`, which the note's own text
-  renders from) writes that exact object — a test pins the two encodings
-  byte for byte. Every reader goes by the kind or by a field: title
-  derivation, fork and import naming, `FirstUserMessage`, and the
-  transcript, which draws a note card (`data-testid=delegation-note`,
-  wearing the subagent dock's status dot) instead of a user bubble. A
-  note appended while its conversation is already open lands on its own:
-  when the backend reports a session changed, the transcript reads the
-  tail of the archive from the newest seq it holds (`Session.TurnsSince`)
-  and folds it in by seq, so a subagent that finishes long after the turn
-  that spawned it shows up without a reload or a session switch. Kind and
-  payload ride through fork, import and export unchanged; a payload that
-  does not decode still renders as a card from the row's own text, and a
-  kind from a newer build is carried through without being guessed at.
-
-- The Diagnostics charts now measure the app the way the machine does, not
-  only the Go heap: a new "The app's processes" section charts
-  `proc.mem.family_total` — every process this app is running — and
-  `proc.mem.footprint`, the same number split by role: `self` is the Go
-  host process, `child` everything it spawns (sandbox children, MCP
-  servers, plugin binaries, and what they run), and `webcontent` / `gpu` /
-  `networking` / `helper` the platform processes that work on the app's
-  behalf while being reparented to launchd. That last group is what no Go
-  gauge can see: on macOS the WKWebView renderers are several times the
-  heap, they hold on to freed memory after a large conversation or a
-  preview pane, and this series is what tells that apart from ordinary heap
-  growth. The reading comes from the OS itself, in the new
-  `internal/foundation/procmem` package: libproc, with the same
-  process-ownership API Activity Monitor groups by (resolved with `dlsym`,
-  so a platform that stops exporting it degrades to the pid tree instead of
-  losing the series) and `/proc` on Linux. A full-system scan costs about
-  2.7ms, and the sampler takes one a minute, next to the 15-second Go
-  gauges. Each sample carries the role, the process name and its pid; the
-  total carries the process count and how membership was resolved. Samples
-  land in the same `metric_samples` table (30-day retention) and need no
-  permission prompts, because every family member runs as this user.
-  Windows has no probe yet, so the section is empty there.
-- The renderer probe reports what the loaded transcripts hold, in the
-  units the store's budgets are written in: `store_media_bytes` (inline
-  image payloads — an attachment's preview, the frame a `view_image`
-  result carries), `store_text_bytes` (message bodies, tool arguments
-  and results), `loaded_convs` and `dom_images`. `proc.mem.footprint`
-  says what the app family costs the machine and cannot say how much of
-  it a window's own retention accounts for; read beside it on the same
-  30s sample (Diagnostics > DEV tools, "Renderer probe"), a footprint
-  that climbs while both byte series stay flat is not the transcript's
-  doing.
+  async run's deltas land in the conversation that asked for it and
+  its result flows back once (idempotent by child run). The SubagentDock
+  nests a delegated run under its parent, and Settings ▸ Tools gained
+  a delegation card — concurrency and depth limits plus allow/block
+  target lists. (#204)
+- Mid-turn steering: a message submitted while a turn runs reaches the
+  model at the next tool-round boundary (Enter sends it; barge-in
+  moves to Cmd/Ctrl+Enter beside a stop button), several waiting
+  corrections arrive as one message, at most one 32 KiB steer per
+  boundary, and an over-large submit is refused with its text kept.
+  Each interjection stays where it was typed with its state — waiting,
+  taken, or undelivered — with resend, copy and discard. (#181)
+- Automations get a per-task run limit and a stop. `timeout` bounds one
+  run in whole minutes (empty = the 15-minute default, at most 24h): a
+  run past it is cancelled and its record says `timeout`; a live
+  scheduled run can be stopped — its record reads `canceled`, and the
+  failure notification stays quiet for a stop the user asked for. The
+  editor gained a run-limit field and the run list a timeout badge.
+  (#181, #186)
+- A reply the process never finished is no longer lost: each completed
+  wave writes one checkpoint, and the next assembly turns a checkpoint
+  with no archive row into an interrupted turn — same conversation and
+  run id, the original message plus what the crash produced, archived
+  and folded in one transaction. The transcript offers **Continue**
+  and **Edit & resend** on the newest one, and Settings ▸ Diagnostics
+  gained a Crash recovery card. (#188)
+- Settings ▸ Diagnostics gained a Provider round-trip probe (DEV
+  tools): it wraps the process HTTP transport, so every provider call
+  leaves two records — request left, response headers — separating
+  network and provider time-to-first-byte from local assembly. The
+  switch is `desktop.json`'s `diagnostics.httpProbe`, and it parks
+  itself while an HTTP MCP server is configured. (#189)
+- A second instance can run next to the installed app: `--profile
+  <name>` keeps the shared app home and moves the state root to
+  `~/.opencraft-<name>`, with `--data-dir` / `--app-home` /
+  `--config-dir` for the other combinations; the deploy document
+  resolves `${ocraft:APP_HOME}` while `${ocraft:DATA_DIR}` keeps state
+  semantics. Window title, tray tooltip and a Diagnostics card name
+  the profile. (#190)
+- A delegated subagent's report is filed as the app's own turn:
+  `archive_turns.kind` names the writer and `payload_json` holds its
+  record (migration 018 parses older notes once). Every reader goes by
+  the kind — title derivation, fork and import naming, and the
+  transcript, which draws a note card instead of a user bubble — and a
+  note landing while its conversation is open is folded in by seq.
+  (#209)
+- Diagnostics measures the app the way the machine does: "The app's
+  processes" charts `proc.mem.family_total` and `proc.mem.footprint`
+  split by role — `self`, `child` and the platform's `webcontent` /
+  `gpu` / `networking` / `helper` processes — and a renderer probe
+  reports what loaded transcripts hold (`store_media_bytes`,
+  `store_text_bytes`, `loaded_convs`, `dom_images`). (#211, #214)
+- The command palette is rebuilt from live state on every open and
+  ranks through a pure function (`lib/commands.ts`), so it cannot
+  point at a workspace, session or settings tab that no longer exists.
+  It runs on the shared overlay stack, and the ⌘K shortcut is captured
+  on the window so it works while the composer has focus. Settings is
+  searchable through a static index (`settingsIndex.ts`) naming each
+  card's tab and anchor, since only the active tab is mounted. (#174)
+- The tool transcript says what each call did, not what it was called:
+  every tool gets one summary line (`toolTarget` plus a verb table,
+  shared with the collapsed group header), a duration from when the
+  call and its result arrived (archive replays stay undated), and a
+  shared collapsed window for long output. `exec_session` renders a
+  terminal block keyed by action, `view_image` shows the frame the
+  model saw, and a `read_file` result names the line window it came
+  from. (#176)
+- The composer can step out of a markdown wrapper: Shift+Enter on an
+  empty line inside a list, quote or heading moves the caret to a
+  plain paragraph after it, and Backspace at the start of a wrapped
+  line lifts the formatting while keeping the text. Usage numbers
+  render on one unit ladder (`lib/compactNumber.ts`, three significant
+  digits, k → E), shared by the hero, chart axes, settings and the
+  sidebar. (#176)
+- The Files pane marks git changes: `Git.FileMarks` answers one
+  bounded, read-only query per file with structured line ranges (base
+  `git diff HEAD -U0` — the working tree, never the index alone). The
+  preview draws a gutter (insertions, replaced lines, deletion wedges)
+  and a chip that hands the file to the Git panel; the tree carries
+  the same vocabulary as badges, with folders rolling their contents
+  up. The viewer re-reads a file when its mtime moves, and
+  `desktop.json`'s `gitMarks` switches it off (absent means on).
+  (#198)
+- The chat header is a 44px two-tier strip — the name and viewer
+  toggle on top; the sandbox policy, the session's turns and tokens,
+  and the live run's stage and in-flight clock underneath — with an
+  accent sweep along its bottom hairline while a turn runs. The
+  sidebar seam became a hairline owned by a `SidebarResizeHandle`:
+  pointer capture, arrows to nudge, double-click to reset, one storage
+  write per gesture, and `role="separator"` reporting its range.
+  (#179)
+- The UI owns one component and scale layer instead of hand-written
+  values: `components/ui` carries Button, IconButton, Input, Badge,
+  Modal, SaveBar and Segmented, the ladders for text, radius, elevation
+  and icons live in `style.css` and `ui/icon.ts`, and a contract test
+  fails a raw rem literal, a Tailwind radius or shadow utility and a
+  default-palette colour, so the ladders stay the only vocabulary.
+  `npm run audit:ui` renders the real frontend against the mock backend
+  and writes one screenshot per surface in both themes, so a design
+  change can be reviewed as an image. An interaction prompt says how
+  much it matters (`foundation/interact` gains `Severity` — info,
+  notice, danger — defaulting from the prompt kind and falling back on
+  an unknown value, so a typo cannot downgrade a danger prompt; the
+  producers tag their own, sandbox escalation danger,
+  `request_permissions` and `confirm` notice, `ask_user` info, and
+  `InteractionCard` is the one place mapping it to chrome), and a
+  clicked link goes through one classifier (`lib/linkTarget.ts`): a URL
+  scheme reaches the system browser, a Windows drive path stays local,
+  an empty target and a `#anchor` are ignored, and everything else
+  resolves under the backend read roots into the caller's handler —
+  chat rail tab, dialog page, system file manager. (#161)
+- The workspace panel lists hidden files when asked to: the eye beside
+  the search box persists `ui.showHiddenFiles` (off by default, and a
+  failed save rolls the applied value back), `File.List` and
+  `File.Search` take the decision from the caller so each surface owns
+  its own scope, and "hidden" is the platform rule — a leading dot on
+  Unix, plus the hidden/system attribute on Windows, where `.venv` and
+  `.next` carry none — with `.git` still skipped unconditionally and
+  `list_dir` and `grep` reading the same helper. The composer no
+  longer paints a scrim or a mask: the transcript runs the full column,
+  the card covers what slides behind it, and the wrapper stays
+  click-through so the wheel and the margins still reach the scroller.
+  (#162)
 
 ### Changed
 
-- A conversation's model-side history is now a projection of the
-  transcript instead of a second copy of it, and a message's identity is
-  the transcript coordinate it was appended with rather than a hash of
-  the position it happened to be loaded at. The window, the fold
-  coverage set and the context item ids all speak that coordinate
-  (`summary_nodes.source_ids` holds seqs, `stableMessageID` is gone), so
-  a row that is skipped, filtered or absent can no longer shift the
-  identity of every row after it. The memory read path reads
-  `archive_messages` and renders on read: tool calls and results keep
-  their canonical parts and gain their `tool_call:` / `tool_result:`
-  text when the window is built, and a row that has no prompt form (an
-  attachment-only turn) is left out of the window without moving the
-  rows around it. Nodes carry `metadata.identity = "seq-v1"`; a node
-  from an older build holds position hashes that no reader can map onto
-  rows, so it is ignored and retired by the next fold, which rebuilds it
-  from the transcript (deterministic and idempotent — nothing is
-  translated, since the old ids were never paired with transcript rows).
-  `memory_items` is still written in the commit transaction during this
-  step, and a parity test holds the projection and the stored copy to
-  the same answer row by row; the table and its write path leave in the
-  next step of docs/conversation-model-plan.md.
-- A conversation's own settings — reasoning effort, model hint, sandbox
-  permission mode — are now one `conversation_state` document
-  (`settings`) instead of a `session_settings` table sitting beside it,
-  so a session's state is one row of the workspace's single
-  per-conversation key/value table (workspace migration 019). The step
-  is written in Go rather than as a SQL file for two reasons: a database
-  that never created the legacy table is simply recorded as migrated,
-  and each row's three columns have to become one JSON document, which
-  SQL would need `json_object()` — an optional build of the SQLite
-  amalgamation — for. The store's own API is unchanged
-  (`sessions.Store.SetThink`/`Think`/`SetModel`/`Model`/`SetMode`/`Mode`,
-  and `sessions/state/settings.go` holds the read-modify-write in one
-  transaction so two writers touching different keys cannot lose one of
-  them); a document is written only when a value was actually set, so
-  "never set" and "set to empty" remain the same thing to every reader.
-  Which column of `conversations` is a fact and which is a cache is now
-  written down where it is read (`state.Conversation`) and in a new
-  reference page, docs/session-data-model.md: the transcript is the
-  fact, the row is an index over it, a chosen title lives in
-  `conversation_state["title"]` with the column as the derived fallback,
-  and the turn/message counters and the usage totals are recomputable
-  caches that no reader may treat as the only copy.
-- A conversation now has one history, not two. The model's window is a
-  projection of the transcript, built at read time by one rule set
-  (`capabilities/memory/projection.go`), so the second physical copy of
-  every message — `memory_items`, written inside the archive's
-  transaction and kept in step by convention — is gone (workspace
-  migration 020, a Go step that reports what the copy held, by category
-  and by conversation, before it drops the table). Two behaviors change
-  with it, deliberately: a delegation note is now in the model's
-  context, because it is a user-role row the app wrote and its `kind`
-  tells a *reader* what it is rather than keeping it out of the window;
-  and a turn that carries no text of its own enters the window as a
-  placeholder naming what it does carry (`[attachment: image]`, with a
-  counter and a warning when a row cannot be rendered at all) instead of
-  silently disappearing. Imported conversations are ready when their
-  transcript lands — there is no second history left to seed — so the
-  import/replace/abort dance and `Store.AbortImport` collapse into
-  `Store.Import`, and fork and import no longer seed memory. The
-  migration is one-way (an older binary fails on the missing table), so
-  this step is its own release decision (docs/conversation-model-plan.md
-  §6.4); in `replay_full_history` deployments the whole-history read now
-  comes from the transcript, which is the read opencraft#191 will bring
-  down to one.
-- flowcraft core moves to v0.4.8, closing an interrupt that could
-  silently do nothing: a sandbox session is spawned with the signal mask
-  cleared on a pinned thread and restored afterwards, so a child no
-  longer inherits a blocked SIGINT and `Session.Signal(Interrupt)` ends
-  the process instead of leaving the signal pending forever (that was
-  the intermittent `wait after signal: deadline exceeded` the execd
-  suite hit). Walk and Glob hand back slash-separated workspace paths on
-  every platform, which is the form this repository's tools and desktop
-  bindings already emit; `list_dir`'s depth arithmetic follows it now
-  (it counted the host separator, which on Windows would have read every
-  path as depth 0 and let `max_depth` walk to the leaf).
-- flowcraft core moves to v0.4.7, carrying the narrow board channel
-  reads this repository's hot paths asked for: Go gains
-  `Board.ChannelLen`/`LastMessage`/`ChannelTail`/`ChannelView` and a
-  batch `AppendChannelMessages`, the script surface gains
-  `board.channelLen`/`lastMessage`/`channelTail`, `board.appendChannel`
-  takes one message or an array of them validated as a whole, and
-  "a message on a channel is immutable" is now the Board contract
-  rather than a note on `ChannelView`. The consumer side migrated with
-  it: the steer node reads its tail through `board.lastMessage`
-  instead of projecting the whole channel on every tool round, the
-  compact node lands its folded prefix on the side channel in one
-  batched append (it never reads the archive back) and stamps its
-  anchor from the array it just wrote, and
-  `memory.ExtractTurnMessages` reads through `ChannelView` — the
-  persistence paths clone what they keep, so the defensive copies were
-  pure overhead. The media prepare hook keeps `Channel()`: it edits
-  the message it reads and writes the channel back, which the new
-  contract requires a copy for.
-- Checkpoints are a crash-recovery log rather than a resume cache: a
-  session now starts persistent so the engine stamps one per completed
-  wave, the host deletes a run's checkpoint once its turn has an
-  archive row (a turn whose archive write failed keeps it), and deleting
-  a conversation deletes the checkpoints that would otherwise resurrect
-  it on the next assembly. `runtime.sessions.resume` stays `false`:
-  board seeding, parking and `Resume` are a separate decision, and the
-  recovery pass reads only the checkpoint rows. (#188)
-- Stream deltas are coalesced before they reach the window: the desktop
-  shell folds adjacent text/reasoning deltas of one stream into a
-  single `stream` event per 25 ms window (or per 64 KiB / 128-delta
-  cap), by the same rule the frontend's own coalescer uses — so an
-  already-merged stream passes through it unchanged — and every
-  non-stream event flushes the buffer first, which keeps `turn_end`
-  behind the text it ends. A token burst that cost one IPC event per
-  token now costs one per window; the transcript renders the same.
-- SQLite handles open with `synchronous=NORMAL` instead of the default
-  `FULL`. WAL + NORMAL still writes each commit to the WAL before it is
-  acknowledged, so a crash cannot corrupt the database — the exposure
-  is the last transactions not yet checkpointed when the machine loses
-  power — and it halves the fsyncs every commit pays, including the
-  turn-end archive+memory transaction.
-- Runtime assembly is attributed in the log: `host: runtime assembled`
-  and `host: runtime invalidated` name the reason (`workspace_open`,
-  `settings_save`, `plugin_change`, `inference_change`, …), the
-  workspace, the duration, whether a turn was running, and the
-  workspace's in-process assembly sequence; an in-place document reload
-  logs `host: document reloaded in place` with its generation, and a
-  save that falls back to a full rebuild now reports why the swap was
-  refused instead of dropping the error. The stream coalescer reports
-  its merge ratio on a one-minute heartbeat.
+- A conversation's history is one transcript; the model's window is a
+  read-time projection of it (`capabilities/memory/projection.go`),
+  and a message's identity is its transcript coordinate
+  `(conversation_id, seq)` rather than a hash of the position it was
+  loaded at, so a skipped row cannot shift everything after it.
+  `memory_items` is dropped (migration 020, one-way), import is ready
+  when the transcript lands, and fork and import no longer seed
+  memory; a text-less turn enters the window as a placeholder naming
+  what it carries. (#210)
+- A conversation's settings — reasoning effort, model hint, sandbox
+  permission mode — are one `conversation_state` document (`settings`;
+  migration 019). The API is unchanged, the read-modify-write is one
+  transaction, and "never set" and "set to empty" stay the same thing.
+  (#210)
+- One name per thing across the session layer: document names in one
+  registry, an undecodable document comes back as a
+  `*state.CorruptDocumentError` naming its row, and every UI event
+  name has one home per side, held by a Go test that parses the
+  TypeScript map. (#212)
+- flowcraft core moves to v0.4.8 / v0.4.7: sandbox sessions spawn with
+  the signal mask cleared (so `Session.Signal(Interrupt)` ends the
+  process), Walk and Glob emit slash-separated paths on every
+  platform, and the narrow board reads arrived (`ChannelLen`,
+  `LastMessage`, `ChannelTail`, `ChannelView`) with channel messages
+  immutable by contract. Steer reads `board.lastMessage`, compact
+  lands its folded prefix in one batch, and `ExtractTurnMessages`
+  reads through `ChannelView`. (#202)
+- Stream deltas are coalesced before they reach the window (one
+  `stream` event per 25 ms, 64 KiB or 128 deltas, flushed ahead of
+  every non-stream event so `turn_end` stays behind the text it ends),
+  and SQLite handles open with `synchronous=NORMAL` instead of `FULL`
+  — WAL still acknowledges each commit before it is written, and every
+  commit pays half the fsyncs. (#187)
+- Runtime assembly is attributed in the log (`host: runtime assembled`
+  / `invalidated` name the workspace, duration and reason), and
+  folding an oversized transcript condenses its shards in parallel (at
+  most four in flight), sending one oversized message as pieces
+  instead of truncating it. (#189)
 - Skills are user-root only: `<workspace>/.agents/skills` is no longer
-  scanned (it was the one discovery input that varied per workspace, and
-  the one that put a workspace's own tree on the sandbox read
-  whitelist). Discovery, `skill_install`, `skill_create`/`skill_modify`
-  and the Settings import dialog all address the user root
-  (`~/.agents/skills`) now — the tools' `scope` argument, the dialog's
-  scope picker and `RenderSkillPatch`'s scope parameter are removed, and
-  a call that still passes `"repo"` fails as an unknown field. A leftover
-  `<workspace>/.agents/skills` tree is ignored too — no compatibility
-  path, no warning. `skills.settings.work_dir` is retired with it (a
-  hand-edited user layer that still sets it fails the strict settings
-  decode until the key is removed).
-- Enter in the composer now steers the running turn instead of
-  interrupting it; Tab keeps the after-turn queue, a draft carrying
-  attachments is refused with a hint rather than changed silently, and
-  barge-in moves to Cmd/Ctrl+Enter and to a stop button that stays
-  reachable while a draft is being written. (#181)
-- Automations saved without a run limit are bounded by the 15-minute
-  default. Tasks stored before the limit existed are not: the migration
-  seeds them with the one-hour bound they used to run under (the
-  assistant graph's run timeout), so an upgrade shortens no run nobody
-  asked to shorten — the 15-minute default is what a task saved without
-  a limit gets, not what existing tasks are given. (#181)
+  scanned, and discovery, `skill_install`, `skill_create`/`modify` and
+  the import dialog all address `~/.agents/skills`; the tools' `scope`
+  argument and the retired `skills.settings.work_dir` are gone. (#187)
 - Users overriding the assistant graph from disk (a `{file: …}`
   `assistant.yaml`) need the graph's new `steer` node too: copy
-  `graphs/nodes/steer.js` alongside it, or the graph references an
-  asset the deployment does not have and turns stop starting. Graphs
-  left at the shipped defaults pick it up on their own. (#181)
-- Runtime assembly is no longer repeated back to back. At most one
-  replacement is armed per workspace — a second invalidation while one
-  is already armed needs no watcher of its own, since that replacement
-  assembles from the document on disk when it runs — and concurrent
-  acquires of the same workspace share a single assembly instead of
-  racing, reusing its error as well as its result. A storm used to build
-  one runtime per waker and close all but the first; the `host: runtime
-  assembled` count for one workspace is the number that shows it.
-- Which assembly serves a workspace is now a question only the Host pool
-  answers, asked per workspace, and nothing outside it keeps its own
-  answer. The desktop's runtime service used to hold a process-wide
-  "current Host" pointer plus everything needed to keep it honest: the
-  set of workspaces whose replacement was already armed, a map of which
-  Hosts had been configured, and a second "acquire in the background"
-  entry point whose only job was to keep work for a workspace the window
-  had left from overwriting that pointer. All of it is gone. A
-  workspace's replacement is armed on the pool (`ScheduleReplacement`,
-  one per workspace), and the pool waits out the retiring Host before
-  assembling the successor, consulting the adapter only for whether the
-  workspace is still wanted — a workspace the window has left is not
-  rebuilt behind the user's back — and to announce the one that landed.
-  `Runtime` is left holding the pool and the provider handles, and the
-  deferred-rebuild watcher, the drain wait and the "is a replacement
-  already scheduled" query live where the knowledge already was: who is
-  draining, and who has retired.
-- The retry that carries a call across a Host retirement is one function
-  (`core.Runtime.Do`) instead of a copy per call site. Starting a turn
-  and deleting a conversation each spelled out the same wait-for-a-
-  replacement window, attempt budget and re-ensure sequence by hand —
-  and each re-derived "the request is stale now" from its own
-  expression.
-  The window (bounded by the time left, never by the caller's whole RPC,
-  so a drain can stretch neither past ten seconds), the attempt budget
-  and the classification (`host.IsRetryableStartError`, which stays in
-  the package that mints the guards) now have one home, and the pool
-  supplies the replacement. A caller states what makes its request stale
-  — for the window's own work, the window moving off that workspace —
-  which drops the *retry* but never the first attempt: that attempt is
-  resolved against the workspace the call named rather than against
-  whatever Host is current, so a send that races a workspace switch still
-  lands where its conversation lives.
-- Folding an oversized transcript into memory condenses its shards in
-  parallel (at most four requests in flight) rather than one after
-  another, and a single message larger than one request is sent as
-  pieces instead of being truncated at the cap — the text that used to
-  be dropped on the way into the summary now reaches it. The fold logs
-  its duration and request count (`compact: fold condensed`), because it
-  runs inside the turn and the next request has to carry its summary.
-- The graph analyzer's build findings are logged once per process: the
-  findings are static and the assistant graph reports the same five
-  host-seeded board references on every assembly, so a session with a
-  few dozen assemblies wrote hundreds of identical WARN lines into the
-  log file and buried everything else. The first occurrence of each
-  finding is kept, so a finding that is genuinely new still logs.
-- The renderer performance sampler pauses while the window is hidden. A
-  background window has its animation frames throttled or stopped by the
-  engine, so the gap between two samples measured the throttle rather
-  than the renderer — the multi-second `frame_max` samples in the log
-  were all background windows. Hiding drops the baseline and resuming
-  starts a new one, so `frame_max` only describes visible rendering.
-- The renderer's frame sampling separates "not a frame" from "a slow
-  frame". WebKit throttles a window another window occludes without
-  firing visibilitychange, a native menu runs the app's own run loop, and
-  a sleeping machine draws nothing at all — the log's 272-second and
-  4.5-minute `frame_max` samples were all of this, and folding them into
-  the metric is what made it useless for judging whether rendering got
-  cheaper. A gap past a second is now counted in `dropped_gaps` and kept
-  out of `frames`, `frame_max` and the long-frame counters, so a window
-  that was suspended — or stalled long enough that nothing could have
-  painted — reads as one that was not sampled rather than as a quiet one.
-- A report from a hidden window is skipped, and the next visible one
-  carries `window_ms` for the time it covers: those 12k-node rows with
-  zero frames in the log were a page nobody was looking at, and counting
-  them as quiet windows is what made the probe's numbers unreadable.
-  Frames that did render are counted in `long_frames_50` / `_100` /
-  `_200` rather than one 50ms counter, so a window with one bad frame is
-  distinguishable from one with fifty, and every sample carries the view
-  in front (`route`: `welcome` / `chat` / `settings` / `tools:<page>`)
-  beside the surface and the active conversation — the surface alone
-  could not say whether a long frame came from scrolling a transcript or
-  from a settings page.
-- A slow interaction is attributed to the interaction that caused it, not
-  just timed. Four top-level ones are measured from the click to the frame
-  that showed its result — send, session switch, opening settings, and a
-  settings save — and the report carries `interaction_max` with an
-  `interaction` label naming the slowest of its window. WebKit has no
-  `longtask` entry type, so the boundaries are explicit; a window that
-  held no interaction sends no sample at all, a measurement that spans the
-  window hiding is dropped rather than reporting the suspension, and a
-  click that landed on the baseline still names itself (`interaction_max`
-  alone could not say whether the stall was a send or a settings page).
-- A streaming flush is measured to the frame that followed it
-  (`flush_commit_p50` / `_p95` / `_max`), and one markdown block's own
-  render-to-commit cost beside it (`flush_md_p95`). `flush_p95` is what
-  routing the deltas cost synchronously and says nothing about whether
-  anything painted, so the number that describes what the reader waited
-  for is the flush's start to the next painted frame — and the markdown
-  parse is the part a long answer makes it pay, which is what a "render
-  streaming markdown as plain text" decision would rest on. Both live in
-  `lib/perfMetrics.ts`, share the sampler's line between "not rendered"
-  and "expensive to render" (visible windows only, gaps past a second and
-  measurements spanning a hide dropped), and cost one boolean check per
-  event while the sampler is off.
-- `frontend rum:` logs one line per report rather than one per sample. The
-  probe reports a dozen samples every 30 seconds and the log held nothing
-  else — 2294 lines of one shape in 13 days. The summary keeps the numbers
-  greppable as `name=value` pairs beside the batch's sample count, while
-  the same values still land in the metric store for the charts and the
-  review script. A batch is one transaction with one timestamp
-  (`host.RecordMetrics`), so the samples one report carries line up as a
-  single instant on the charts instead of a smear over the report's own
-  duration.
-- Renderer telemetry reports from the workbench only. The pet window is a
-  decorative 168px stage (see `lib/surface.ts`), and its frames and web
-  vitals would blend into — and drag — the main window's series.
-- lcp is neither collected nor charted any more: this window is an
-  always-open SPA, and the running largest-paint value keeps being raised
-  by content that renders long after startup (the stored series ran into
-  minutes), so it measured how large the last render got rather than how
-  fast the shell loads. Startup stays covered by dom_content_loaded/load
-  and interactivity by fid/inp.
-- Nothing that asks what the user said reads the app's own rows. A
-  conversation's title — on append, on fork, on import, and in the
-  renderer's local copy — falls to the first line a person wrote, and
-  `FirstUserMessage` skips app-authored turns, reading archive rows
-  joined against a turn kind rather than the message table alone.
-- Crash recovery defers to a live sibling process instead of guessing
-  from timestamps: the first assembly of a workspace takes a
-  non-blocking advisory lock (`<state root>/workspaces/<id>/live.lock` —
-  flock on Unix, a `LockFileEx` range on Windows, dropped by the kernel
-  when the holder dies) and a process that finds another one holding it
-  runs no pass at all. Every checkpoint it can see is either that
-  process's live work or a leftover it deliberately left, so they wait
-  for the next start that owns the workspace; the lock file names the
-  holder, which is what the diagnostics card and the assembly log
-  report. This closes the cross-process case the start-time heuristic
-  could not answer, and it matters because `opencraft run` shares the
-  state root of a running desktop app by design. A filesystem where the
-  lock cannot be taken at all fails open with a warning: a broken lock
-  must not silently disable recovery. (#190)
-- `engine.BuildRuntime` refuses to assemble without a workspace layout.
-  The fallback it used to take resolved the global user data directory,
-  which silently assembled a workspace against whatever state root the
-  process happened to have instead of the one it was launched with.
-  (#190)
-- The top-left corner of the chat pane is one activity card instead of a
-  plan panel: the current plan, the model's latest thought, and what the
-  conversation's sandboxed processes print. The card belongs to the
-  conversation rather than to the work: a turn ending does not take it
-  down, so the plan the model finished and the last thought stay where
-  they were, and the one state it paints nothing in is having nothing to
-  report at all — no plan, no thought, no running process — which is why
-  a fresh conversation starts without it. There is no close button
-  either: the card is the conversation's read-out and it goes when the
-  conversation does. Inside that life each section folds itself when its
-  content is done — a completed plan, where a later plan call is a new
-  checklist that opens at its default — while the thought and the
-  process output open on first sight and stay as the reader leaves them,
-  because they are themselves what the reader came to watch, and no
-  update re-opens one the reader folded: a plan revision, a new thought
-  and a new process all arrive without moving a section that was closed
-  by hand. The card itself folds the same way:
-  its header is one button that folds the whole overlay down to itself
-  — and shrinks it to the header's own width — while the dot goes on
-  pulsing in it, so the corner comes back without losing the report
-  that work is running; nothing that arrives re-opens a folded card
-  either — the reader's folds last as long as the conversation, since it
-  is a session change rather than a turn that remounts the card — and
-  unfolding brings the body back at the sections' own defaults, because
-  a folded card renders no body for a fold made inside it to survive in.
-  The process section is about live work: it lists the processes still
-  running (newest first, four rows plus the selected one) with the tail
-  of the selected one, and a process that stops drops off the card at
-  the next read — the exit status and the output it printed are the
-  transcript's record. Output is shown as the process wrote it: nothing
-  is redacted and nothing is inferred, which is also why the card offers
-  no actions — stopping a process stays a tool decision the model makes,
-  and the transcript's own session cards remain the place to act on one.
-- A conversation's sandboxed processes are readable while they run, not
-  only after the model reads them. A new `opencraft.processes` resource
-  taps every session the sandbox runner starts inside a session run
-  (exec_command and exec_session alike, on both sandbox backends) and
-  drains its output into a bounded 16 KiB tail that `Session.Processes`
-  serves to the desktop. Draining never consumes bytes — sandbox output
-  logs are cursor-based and replayable, so the feed reads with its own
-  cursor beside the model's — and closing a tapped session salvages
-  whatever the backend still buffers, so a command that closes its
-  session the moment it ends still lands complete instead of racing the
-  drain. Each read is windowed to a quarter second, which keeps a tap
-  from holding the process's single blocking read slot, and a read that
-  brings nothing is followed by a pause, so a silent server is asked
-  about twice a second rather than as fast as the backend answers. A
-  backend that trimmed output faster than the feed read it freezes the
-  tail and marks it truncated rather than retrying a dead cursor. The
-  feed is a per-generation resource: a runtime reload (a settings save,
-  a plugin install) starts on an empty feed, exactly like the sessions
-  it was watching.
-- A turn that is only thinking no longer commits at the pace of prose.
-  Reasoning is the one stream the transcript never renders — the
-  activity card's thought block is its only reader, and what it shows is
-  a tail meant to be skimmed — so a queue holding nothing but reasoning
-  now folds into the store at 250ms instead of the 100ms streaming text
-  keeps, which is four updates a second against a burst that used to
-  re-lay-out the card's largest text block ten times a second. The
-  answer's own words keep the fast beat, and prose joining a thought
-  pulls the queued commit in rather than waiting out the slower one.
+  `graphs/nodes/steer.js` alongside it, or turns stop starting. (#181)
+- Which assembly serves a workspace is a question only the Host pool
+  answers, asked per workspace: the desktop's process-wide "current
+  Host" pointer, its armed-replacement set, its configured-Host map
+  and its background-acquire entry point are gone. Replacements are
+  armed on the pool (`ScheduleReplacement`, waiting out the retiring
+  Host), the adapter is consulted only for whether a workspace is
+  still wanted, and concurrent acquires share one assembly. (#189,
+  #213)
+- The retry that carries a call across a Host retirement is one
+  function (`Runtime.Do`): the window (never past ten seconds), the
+  attempt budget and the classification have one home, and the first
+  attempt always resolves against the workspace the call named, not
+  whatever Host is current. (#213)
+- Turns get twice the wall clock: `build.timeout` and
+  `policy.run_timeout` both move from 1h to 2h, and the run timeout is
+  the one bound a turn can hit. (#211)
+- Renderer sampling separates "not a frame" from "a slow frame": the
+  sampler pauses while the window is hidden, gaps past a second count
+  in `dropped_gaps`, frames are counted in `long_frames_50`/`_100`/
+  `_200` with the view named, and a slow interaction is attributed to
+  its cause; telemetry comes from the workbench window only, and LCP
+  is no longer collected (an always-open SPA keeps raising a running
+  largest-paint). (#209)
+- The chat pane's top corner is one activity card — the plan, the
+  latest thought and the conversation's live sandboxed processes —
+  belonging to the conversation: a turn ending does not take it down,
+  sections fold themselves, and the process section lists what is
+  still running with a bounded tail, fed by `opencraft.processes`.
+  Reasoning folds into the store at 250 ms while prose keeps 100 ms.
+  (#192, #193, #194)
 - The sidebar folds a workspace's session list at four rows instead of
-  ten. Ten rows per workspace is most of the sidebar's height once two or
-  three workspaces are open, which pushes the collapsed nodes — the map
-  of where the reader was — off the bottom, and the rows a workspace
-  hides are one click away behind "More sessions" anyway. What the
-  preview counts is unchanged: rows for running sessions are still added
-  on top of it, so a workspace with a live turn shows the turn plus four
-  stored rows, and "More sessions" still counts only the stored rows it
-  folds away.
-- The app paints its own checkboxes, radios, number fields and sliders.
-  One skin (`frontend/src/styles/controls.css`, imported by
-  `style.css`) covers them from element selectors, so the same control
-  can no longer render three ways depending on which call site spelled
-  `accent-accent`, `accent-[var(--color-accent)]` or a size of its own —
-  and a future theme overrides every control at one address instead of N
-  call sites. The skin reads only design tokens (the check mark's data
-  URI is its one paint literal, and the scale contract test now scans
-  `src/styles/*.css` for raw colors outside `url()` and for
-  `!important`), and number fields lose the engine's spinner.
-  Checkboxes, radios and sliders also keep the keyboard focus ring the
-  text-input rule used to swallow — for them the outline is the only
-  focus affordance there is.
-- Number fields read the digits as they are typed and no longer save a
-  zero when the field is cleared. `Number('') || 0` meant a cleared field
-  committed a zero nobody typed; the new `ui/NumberField` (with
-  `ui/Textarea` beside it, and the settings rows rewired onto the first)
-  keeps a cleared field a draft — leaving it restores the last committed
-  value — and clamps to the field's own bounds only on the way out. Where
-  a limit is optional and falls back to a provider default, the call site
-  declares the empty state and the blur commits it. The field stays a
-  native `type="number"`, so min/max/step, the arrow keys and the value
-  hygiene are still the browser's job; the unit keeps its own cell, and a
-  call site that wants the affordance the engine's spinner used to give
-  can ask for −/+ cells, which take their accessible name from the
-  field's label.
-- Turns get twice the wall clock, and the subagents the assistant
-  registers get the same pair: `build.timeout` (a single `Execute`) and
-  `policy.run_timeout` (the whole run, revise attempts included) move
-  from 1h to 2h together — the inner deadline is the one a single
-  attempt actually feels, so it cannot stay behind — and the node
-  budget stays lifted (`build.max_iterations: 0`), which leaves the
-  run timeout the one bound a turn can hit. A long-horizon turn was
-  reaching the old hour with its work still in flight.
-- Every UI event name has one home per side, and the two sides are held
-  to each other. The Go half is
-  `internal/adapters/desktop/core/event_names.go` (the channel, every
-  type name, the pet feed, and the pet window's own `pet:state`
-  channel); the TypeScript half is `frontend/src/lib/events.ts`
-  (`UIEventChannel`, the menu's `MenuCommandChannel`, `PetStateChannel`,
-  `UIEventType`), and a Go test parses the TypeScript map so a rename on
-  one side fails instead of going quiet. Every `Emit` call site uses the
-  constant now, and two listeners that turned out to be spelled as
-  channels were dealt with: the diagnostics panel's mount report (fixed
-  below) and `ChatView`'s `files_dropped`, which goes away with the
-  drag-and-drop attachment path it belonged to — `EnableFileDrop` and
-  `Desktop.EmitUI` with it.
-- The session store's naming is one word per thing. Document names live
-  in one table (`sessions/documents.go`: a constant per document, plus a
-  registry recording its owner and shape generation), a document that
-  exists but cannot be decoded comes back as a `*state.CorruptDocumentError`
-  naming the row, and the read says which kind it is: `ReadState` where
-  the fallback is cosmetic (a custom title, which the
-  `conversations.title` column covers), `ReadStateStrict` where it would
-  silently disable a feature (plans, skill activations, the usage
-  anchor, the compaction artifact) — that one warns with the
-  conversation and the document name before returning. The id vocabulary
-  (`s-` conversations, `ctx-` ephemeral contexts, `run-` engine runs)
-  moved to `internal/foundation/ids`, so `ValidID`, `NewID` and the
-  three copies of the prefixes are gone. The timestamps an archived turn
-  displays are resolved in one place too (`state.ResolveTurnTiming`,
-  reached through `TurnRecord.Timing`), and the desktop DTO no longer
-  keeps a fallback of its own.
+  ten, so collapsed nodes stay on screen. (#201)
+- The app paints its own checkboxes, radios, number fields and sliders
+  from one skin (`styles/controls.css`) that reads only design tokens,
+  so a future theme overrides all of them at one address; number
+  fields keep a cleared field a draft instead of committing a zero.
+  (#206)
+- The transcript is windowed in the DOM, not just in the store: past
+  24 blocks the list renders the blocks around the viewport and
+  reserves the estimated height of the rest, measurements kept by
+  block key so history prepended underneath keeps its heights, and
+  jumps aim the list at the block that owns the message first.
+  Find-in-page no longer reaches messages that are not mounted — that
+  is what windowing costs. (#215)
+- Long turns no longer freeze the view, and history is paged:
+  `TurnBlock` is memoized, process rows virtualize, large patches fold
+  behind one row, the store caps items and reasoning and commits
+  streamed text on a flush interval, and `apply_patch` now accepts
+  standard unified diffs (`toUnifiedDiff()` copies one out; rename,
+  copy and binary hunks are refused with a clear error). Opening a
+  conversation reads `INITIAL_HISTORY_TURNS` and pages backwards
+  (`Session.Turns(id, limit, beforeSeq)`), capping on turn boundaries.
+  (#180)
+- Memory is bounded on the paths that grew: a rebuilt Host is
+  collectable again (the configure-once marker dies with its Host),
+  the skills index stores flat postings (0.93 MB → 0.41 MB with
+  identical ranking), `grep` retires oversized files on the walk's own
+  stat and reports matching binaries by path, and the session cache
+  drops to three minutes idle. (#182)
+- Diagnostics answers three questions instead of being one flat
+  column: the environment facts, command check, PATH editor, log pane
+  and charts are always visible (the last three behind dialogs
+  portalled out of the settings panel), a DEV switch gates the
+  renderer sampler, heap snapshots, the OTLP sink and the command
+  pool, and the sampler is a real start/stop switch
+  (`diagnostics.perfProbe`). Every chart declares how its samples fold
+  — a running value keeps, an event averages, a worst takes the max, a
+  count sums — with its own unit, and TTFB and CLS are gone with the
+  instruments that cannot measure them under `wails://`. (#180, #183,
+  #185)
+- Tool audit logging, the compact fold and log reads got bounds: audit
+  rotates and truncates its file, compact shards a large fold at
+  400 KiB, and `Settings.ReadLog` tail-reads; Diagnostics gains a
+  heap-profile card. (#180)
+- Turn artifacts have exactly one source — the workspace write
+  observer, buffered by the host and flushed by `ArchiveTurn` — and
+  the per-turn manifest snapshot reconciliation is gone: two full tree
+  walks per turn whose only reader was the archive. (#198)
+- Surfaces, text and charts read one token ladder (new rungs for
+  raised rows, meta text, scrims and a series palette, replacing
+  translucent fills and raw hex), and Overlay, Popover and Tooltip
+  move onto one stack that owns Escape (topmost layer only), focus
+  trap and restore, scroll lock and click-outside, with one shared
+  `ConfirmDialog`. (#174)
+- The sandbox supervisor speaks protobuf over a private per-child
+  channel — a `socketpair` passed as fd 3 on Unix, a named pipe on
+  Windows, closed as soon as the child takes the descriptor over —
+  instead of JSON-RPC on a per-child socket, and the exposure that
+  design carried goes with it: a sandboxed command can no longer read
+  or forge frames on the host channel. `Hello` compares the protocol
+  version before anything else, a request runs on its own goroutine
+  with the frame's deadline as a real context, and its `Cancel` is
+  registered before the handler starts. Sandboxed children come from a
+  pool: it forks nothing until the first sandboxed command and keeps
+  `Prewarm` children warm afterwards, its active bound is a reuse
+  bound rather than a refusal — a lease beyond it gets a dedicated
+  child, reclaimed when its runner closes — a settings change trims
+  idle children immediately, and the orphan sweep verifies a child's
+  identity (launch nonce, or image name plus creation time) before
+  killing anything. Settings ▸ Diagnostics gained a Command pool card
+  with the knobs and the live idle/active counts. (#165)
+- flowcraft core moves to v0.4.5: a failed MCP liveness probe now
+  closes the session it dropped (every reconnect used to leak the
+  stdio child tree), a server negotiated at `2026-07-28` is watched
+  through its connection instead of pinged — that revision removed
+  `ping`, so a healthy server was torn down and redialed every fifteen
+  seconds — and a per-server `liveness` can pin the probe or switch it
+  off. (#167)
+- `apply_patch` renders as a card instead of a bare diff block: a
+  summary header with per-file glyphs and totals, a skeleton while the
+  patch loads, and the result JSON only when it adds something. The
+  viewer wraps long diff lines in chat and sizes rows to content in
+  panels, a painted scrim replaces the CSS mask on the scroll box, and
+  "Show full diff" says when lines are hidden. (#168)
+- The prompt is two board vars, so the provider's cache survives a
+  rephrased question: `world.sections` is the cache-stable prefix
+  (instructions, environment, permissions, `AGENTS.md`, then the
+  folded summary and the raw window), and `world.tail_block` — the
+  plan, the ranked skills list, the activated skill bodies — rides on
+  the user's own message, the one position expected to differ every
+  turn. Compaction decides from a measurement rather than a character
+  estimate: the graph records each call's usage, the compact node
+  stamps the channel length that call saw, and the pair persists per
+  conversation as the next turn's anchor (with no measurement yet, the
+  node waits one round). `max_compactions` becomes a
+  consecutive-failure backoff plus a per-turn fold budget, and a turn
+  still over budget is asked to wrap up once, never between a tool call
+  and its result. (#170)
+- flowcraft drivers move to v0.3.3: anthropic, openai and bytedance
+  report cache-inclusive prompt totals, so a conversation served mostly
+  from cache no longer reads as an empty one, and negative or
+  contradictory wire counters are clamped instead of shrinking the
+  total. The normalization the context work added at the sessions
+  boundary degrades to a pass-through as a result, without a code
+  change. (#171)
 
 ### Fixed
 
-- Opening an agent in the graph editor no longer takes the page down when
-  its source omits the `edges` (or `nodes`) key. A single-node subagent
-  has no transitions at all, so the key can legitimately be absent, and
-  the binding marshals the parsed nil slice as `null` — which the canvas
-  layout iterated. The api adapter normalizes both lists to arrays on the
-  way in, and a test pins the path from the raw payload to the rendered
-  canvas.
-- Saving MCP servers no longer drops the rest of a hand-written `tools`
-  resource. The user-layer merge that is supposed to deep-merge the
-  generated keys into the existing resource inserted them into the
-  document that gets discarded instead of the one that is written, so a
-  layer that declared its own `tools` deps (or its `kind`/`impl`) came
-  out with only the generated `tool.mcp` dep. The merged node now
-  reaches the file, which is what the delegation policy's save also
-  relies on: saving the limits keeps the `delegate` resource's deps and
-  any hand-added key.
-- The ⌘K palette opens with the caret already in its search field, and
-  closing a dialog hands focus back to where it came from. The panel
-  mounted one commit after the overlay that wires keyboard behaviour,
-  so it found nothing to trap; and React's own focus restore undid
-  the restore while a panel was still on screen for its exit animation,
-  which is how the composer lost the caret every time the palette
-  closed. An approval prompt that arrives while the caret is in the
-  composer now owns the keyboard (nothing is pre-selected; Space picks,
-  Enter answers), and answering it returns the caret to the composer.
-- A generation tool's dialog no longer opens inside the settings panel
-  it was launched from. The panel clips its own overflow, and its
-  entrance animation — like every panel's, drawer's, popover's and
-  toast's — filled forwards, which leaves the element with an identity
-  matrix rather than no transform at all: a transformed panel is a
-  containing block for its own `position: fixed` descendants, so the
-  dialog was laid out against the panel and cut off by it. ByteDance's
-  ten dotted knobs made that plain, and the header and the save bar were
-  the two things the clip ate first. Entrance animations fill backwards
-  now, so the settled panel carries no transform, and the dialogs the
-  settings panel opens (the image and video tool cards, web search, an
-  MCP server) are portalled to the document body. The tool dialog also
-  grew to 42rem with a wrapping name line, so a vocabulary like
-  `optimize_prompt.thinking · auto · enabled · disabled` and its
-  provider-default control are read in full instead of truncated.
+- The file viewer follows a theme flip again: CodeMirror takes its
+  colour scheme as a prop, and the pane read the class on
+  documentElement once per mount, so a theme switch (or the OS
+  flipping under "auto") left the editor on the old scheme. (#216)
+- Folding survives a condensation that produces no text: a reasoning
+  model can spend the whole output budget thinking, and the fold then
+  failed with no fallback, sending an over-window request that killed
+  the turn. Compact probes the deployment's compiler, retries once
+  with the cap grown past the observed spend, and folds a model-free
+  mechanical digest when no summary arrives. (#175)
+- The turn ruler stays one dash per turn past 40 turns: it draws the
+  turns around the middle of the viewport and slides that block as the
+  transcript scrolls (clamped at both ends, where the cut edge fades),
+  and the scrubber's hit area follows the block. (#177)
+- Opening a conversation from another one lands at its newest message
+  again: the stick-to-bottom pin lived in refs that outlive the
+  scroller, so the fresh transcript rendered at its top with the
+  jump-to-latest pill up. It is re-pinned before paint. (#178)
+- The ⌘K palette opens with the caret in its search field, closing a
+  dialog hands focus back where it came from, and an approval prompt
+  arriving while the caret is in the composer owns the keyboard and
+  hands it back when answered. (#205)
+- Dialog and menu chrome: a settings dialog no longer opens clipped
+  inside its panel (entrance animations fill backwards; tool dialogs
+  portal to the body), an open menu no longer closes because a
+  scroller elsewhere moved, and the macOS traffic lights stay on the
+  chat header. (#203)
 - The file tools work on Windows again: `read_file`, `write_file`,
-  `list_dir`, `grep` and `glob` refused every nested path there.
-  `validatePath` compared `filepath.Clean(p)` against `p`, and on
-  Windows that rewrites `src/main.go` into backslashes, so the clean
-  check rejected the slash form the tools themselves emit — while the
-  backslash form is refused with a "use forward slashes" hint, leaving
-  no spelling that worked below the workspace root. Cleanliness is
-  judged with `path.Clean` now, and `list_dir`'s `max_depth` counts `/`
-  instead of the host separator (counting the separator reads every
-  walked path as depth 0, so the bound never trimmed). Windows CI runs
-  this package now, which is how it was found.
-- `apply_patch` no longer judges a patch path with the host separator.
-  On Windows `filepath.Clean` rewrites `../x` into `..\x`, so the
-  `../`-prefix check never matched there: a patch spelling an escape the
-  Windows way passed the parser and was only stopped by the layer below
-  (the workspace's own traversal check, or `pathsafe.RelRef` in the host
-  applier). Paths are judged in the workspace namespace now — backslashes
-  folded, `path.Clean`, and both readings of absolute: a leading slash
-  everywhere, plus the drive and UNC forms only Windows reads that way —
-  so a traversal is refused by the parser, with the parser's message,
-  whichever separator spells it, and on every platform. Folding is
-  for judging only: a plain Windows-style relative path keeps resolving,
-  since the workspace reads the backslash as a separator itself. Windows
-  CI runs the package's path tests, including the drive and UNC forms
-  that only exist there.
+  `list_dir`, `grep` and `glob` judge cleanliness with `path.Clean`
+  (the slash form they emit was rejected below the root), `list_dir`'s
+  `max_depth` counts `/`, and `apply_patch` judges patch paths in the
+  workspace namespace. Both packages run in Windows CI now. (#202)
+- Path containment is single-sourced: nine callers use `pathsafe`
+  instead of spelling the comparison by hand, and plugin resolution is
+  fixed with it — a missing leaf behind a symlinked directory used to
+  pass, so "escape/new.txt" was accepted out of a plugin. (#164)
 - A process started in a turn's last poll gap is no longer invisible
-  until the next message. The activity card's process section follows a
-  hook that reads the conversation's sandboxed processes on open and
-  then only while a turn runs or a process is known to run, so a
-  session whose row landed after the turn's final read (the sandbox
-  registers it at Start, and a turn can end right after its own tool
-  call returns) left nothing behind to read again: nothing running was
-  known, the feed stopped reading, and the still-running server stayed
-  out of sight until the next turn. The hook now also reads once on the
-  turn's falling edge — the row is always there by then — and a running
-  answer hands the conversation to the idle pace from there.
-- A sandboxed session read that stopped at its own request deadline
-  reported the child's wire error (`execd: read: deadline_exceeded:
-  request deadline exceeded`) instead of a timeout: the request deadline
-  and the client's own context cancel race each other, and only one of
-  the two outcomes looked like a timeout to a caller. The remote session
-  now translates that code — and the child's cancel code — into the
-  plain context errors the local backend has always returned, so a
-  reader that re-polls from its cursor reads "no output yet" instead of
-  a failure it has to classify itself.
-- One GUI per state root no longer rests on the shell's single-instance
-  machinery. The desktop app takes its own non-blocking lock on
-  `<state root>/gui.lock` (the same kernel primitives as the workspace
-  lock) before anything else runs, so the guarantee holds on every
-  platform instead of depending on `$TMPDIR` flock semantics, a session
-  bus (whose absence used to abort startup on Linux) or a named mutex.
-  A rejected second launch is no longer silent either: it asks the
-  holder to bring its window to the front over a per-root socket (a
-  named pipe on Windows), prints one line on stderr naming the holder
-  (pid, version, start time) and exits 1. A state root whose lock file
-  cannot be created fails open with a warning — a broken lock must not
-  keep a user out of their own app — and
-  `OPENCRAFT_NO_SINGLE_INSTANCE=1` still skips the gate entirely. The
-  shell's single-instance options stay enabled as a second,
-  opportunistic gate, which is what keeps launches from older builds of
-  the same root lineage in check. The lock is keyed on the state root,
-  exactly like the instance id: `--profile dev` (what `wails3 task dev`
-  runs as) keeps its own root and therefore still starts beside the
-  installed app, and a raise aimed at one root never touches the other
-  window. Only a second instance on the *same* root is rejected - the
-  installed app opened twice, or a dev build pointed at the installed
-  app's root without a profile.
-- A correction typed while a scheduled automation runs in the open
-  workspace is reported like one typed into an interactive turn: the
-  automation's terminal event carries the undelivered-steer count, so
-  the text becomes a resend/dismiss card instead of vanishing from the
-  transcript on the next archive reconciliation. (#181)
-- A wait cancelled before its turn settled no longer crashes the turn
-  goroutine: the settle path tolerates a result-less wait, so the turn
-  still archives and the caller still sees the cancellation. (#181)
-- The `automation` tool's nested `task`/`schedule` schema now reaches the
-  model intact. Nested properties were built as `ToolPropertyDef`
-  values, whose schema fields are unexported, so each one marshalled as
-  an empty object: the model saw property names with no type and no
-  description — including the run-limit field — and no allowed values
-  for the schedule kind. Nested properties are raw JSON Schema maps
-  now, like every other tool in the repo.
-- A staged draft (the Tab queue, or Enter pressed while the previous
-  send was still starting) runs in the workspace that owns its
-  conversation instead of the one on screen. The start used to resolve
-  its workspace from the active window, so a draft queued behind a
-  turn in another workspace was attached there as a brand-new session —
-  with that workspace's working directory and sandbox mode — and the
-  message never reached the conversation it was meant for. The start
-  request now carries the owning workspace, a workspace the window has
-  left is served by its own background Host (the UI's current Host is
-  never taken over), and a start for a conversation no store owns is
-  refused rather than minted somewhere.
-- A completion notification that races a workspace store close (runtime
-  rebuild, workspace switch, shutdown) no longer logs a spurious
-  `sql: database is closed`: a store that closed between the banner's
-  pre-check and its title read falls back to the app name like the
-  pre-check already intended, and only a store that was still open
-  reports the read as an error.
-- A settings write that changes nothing no longer invalidates the
-  runtime: a Host that is stale but already superseded counts as serving
-  its workspace, because its replacement reads the same document. A
-  plugin that re-submits its unchanged inference rows on every catalog
-  sync used to rebuild once per row while the workspace drained, each
-  rebuild arming another replacement for the same document.
-- The web-search tool and the page fetcher work under a wrapped process
-  transport (the round-trip probe above, or an SDK's tracing hook): both
-  cloned `http.DefaultTransport` through an unchecked
-  `*http.Transport` assertion, which panics on a wrapper. They apply the
-  same guard the official provider SDKs use, and the fetcher's default
-  client leaves `Transport` nil so its requests stay visible to the
-  probe.
-- The macOS traffic lights stay on the chat header. The 4pt nudge that
-  lines the three window buttons up with the 44pt header strip ran once
-  per page load and resolved its target as "the first window the app
-  owns", so any frame change AppKit re-laid out (a resize, the zoom
-  button, leaving fullscreen) dropped them back to its 26pt default
-  until the next load. The nudge now takes the main window's native
-  handle from the Wails window and is re-applied from a window-layout
-  observer, skipped while fullscreen so macOS keeps its own placement
-  there.
-- An open menu no longer closes because a scroller somewhere else in the
-  window moved. The popover dismissed itself on any scroll event in the
-  capture phase — the rule exists because a scroll invalidates the
-  measured anchor — and then closed whenever the scrolled node was not
-  inside its own panel, which is every pane the menu is not anchored in:
-  the chat transcript following a turn, the activity card re-pinning its
-  thought and process tails as they stream. A settings dropdown closed
-  under the reader's cursor the moment the model printed its next
-  thought. The dismissal now fires only for the page itself and for a
-  container the anchor is inside, which is the case that actually moved
-  it, while the panel's own list keeps scrolling itself as before.
-  Hover hints are pinned to a control the same way and now follow the
-  same rule instead of vanishing whenever anything in the window moved.
-- A text block the model had finished writing no longer sits on screen in
-  raw markdown until its turn ends. The transcript chose between plain
-  text and markdown once per message, with a flag that meant "this turn's
-  answer is still streaming", so every block of a running turn rendered
-  its markers literally: `## Plan` stayed `## Plan`, and the heading font
-  arrived only when the whole turn settled and the pane re-laid itself
-  out. The flag now marks the one item it was meant for — the message's
-  trailing block, while its turn runs — so a block that a tool call (or
-  the next block) ended is parsed the moment it stops growing. Only the
-  block still being written stays plain text, which is what keeps a
-  half-written `#` from being re-parsed on every delta.
-- An `ask_user` card's header no longer loses its question to a long
-  answer. The answer chip only ever grew — a multi-choice answer joined
-  its option texts — and the question was the one part of the row that
-  could give way, so three options of ordinary length squeezed it to
-  nothing and painted both past the card edge, with no ellipsis anywhere
-  because nothing was capped. A multi-choice answer is now named by its
-  count (`✓ 3 choices`), the chip is capped to its share of the row and
-  truncates, and the answer it had to shorten is one hover away and
-  spelled out in the expanded body, where every option is still listed
-  with the ticked ones marked.
-- A turn the deadline ended no longer reads as a turn the user stopped.
-  The engine reports a timeout and a user stop as the same `canceled`
-  status and the UI believed the status: the transcript's notice said
-  "You stopped this reply", the header's chip said "Reply cancelled",
-  and the reason the archive had kept (`context deadline exceeded`,
-  with `error_kind: "timeout"`) was hidden as user-stop noise. The
-  structured error kind now decides. The notice keeps its own words
-  and tone — "Reply timed out", on the same warning rung an
-  interruption uses — keeps the diagnostics, and offers the continue /
-  edit-and-resend actions an interrupted turn does, because a deadline
-  is the same kind of ending: work cut off mid-flight with the partial
-  reply in context. The header chip reads the same split, and the
-  native turn-finished banner stops calling a deadline "Task
-  cancelled".
-- A produced file is filed under the turn of the run that wrote it. The
-  turn strip such a write landed on was the newest one in the
-  transcript, and a turn the app appends on its own can sit above a run
-  that is still working — a delegated subagent's note, a barge-in
-  replacement — so the running turn's files showed up under the note
-  while it happened and moved to their own turn after a reload: the
-  archive had always attributed a write to its run, and only the live
-  view was guessing. The run id now travels the whole way: the
-  conversation's artifact buffer and the turn timing are keyed by
-  `(conversation, run)`, the `artifact` event carries `run_id`, and the
-  transcript looks the strip up by it. A write whose run is not in the
-  transcript yet (its start-turn response is still in flight) lands on
-  the trailing live entry; one with no run behind it at all is dropped
-  rather than merged into whatever turn is last.
-- A scheduled run draws its own turn in the conversation it fires on,
-  the way the archive draws it. Nothing in the UI started the run, so
-  no turn was opened for it: its live answer merged into the turn above
-  it (the stream appends to the trailing assistant row), and the strip
-  that carries its status, duration and produced files did not exist —
-  a run on the conversation on screen showed its work on somebody
-  else's turn, or not at all until a reload. The run-start event now
-  carries the message the run was started with, and the conversation
-  opens the same shape a sent turn gets: that message as the user row
-  (the text the host archives as this turn's user message), the answer
-  streaming under it, and the strip whose run id the artifact and
-  `turn_end` paths look the turn up by. The archive's copy of the turn
-  replaces the live one when the run ends.
-- The pet window's mount report reaches Settings ▸ Diagnostics the
-  moment it arrives. The panel listened on `pet:runtime_status` as if it
-  were a channel of its own, while the report is an event *type* on the
-  shared UI channel, so the row stayed empty until the next two-second
-  poll — and a report pushed while the assertion was in flight could be
-  clobbered by that poll. It listens to the one channel and matches the
-  type; a Playwright spec freezes the poll after its first answer to pin
-  that the push is what fills the row.
-- A scheduled run no longer cuts short a turn the user is watching. The
-  engine preempts whatever is running on a session when a turn starts,
-  and the automation scheduler made the same start a person's message
-  does, so an occurrence that fired mid-turn interrupted it — and its
-  record read as a failure rather than as an occurrence that stepped
-  aside. A start now carries its origin (interactive, automation, or
-  system; the empty value reads as interactive, as every caller before
-  it was, and an unknown one is rejected rather than defaulting), and
-  only a person's message may preempt. A scheduled start that collides
-  with a live run is refused before it reaches the engine, recorded as
-  `skipped` with a reason the panel localizes ("Skipped: the
-  conversation already had a running turn"), and announces nothing: the
-  run record is where that is read, and a banner would interrupt the
-  very turn that caused the skip. The conflict decision and the new
-  run's registration happen under one per-conversation start gate, so
-  two starts cannot both read "no live run" and have the later one
-  preempt the earlier.
-- A turn could be started on the wrong workspace's Host, or refuse to
-  start where a usable Host existed. Recovering from a retired Host
-  meant retrying against "the current Host" — a process-wide pointer a
-  workspace switch had already moved — so a start that raced a switch
-  was resolved against whatever workspace the window happened to show
-  instead of the one that owns the conversation, and a start for a
-  workspace whose replacement was mid-assembly failed with the transient
-  guard while the pool was about to hand out a perfectly good Host.
-  Every host lifecycle call is now resolved by workspace through the
-  pool, and the workspace's identity is the only thing a retry carries.
-- A Host the pool hands out for work is wired with the adapter's host
-  configurator first, whichever path handed it out. The apply-once
-  marker rides the pool entry and only the acquiring caller ran the
-  callback, so a Host reached through `Ensure`'s pooled branch while
-  its assembly was still being published could start a run with the
-  adapter's observers never attached — its artifacts and session
-  updates go unannounced for the rest of that Host's life, and a run
-  on a Host that outlived its assembly change is exactly the one that
-  keeps serving after the next reload.
-- A call that waited out the retry window no longer answers "runtime
-  is not ready" when the pool resolved a Host as the window closed.
-  The expiry check ran before the resolution was examined, so a Host
-  the caller could have used was dropped and the RPC was refused with
-  a guard nobody could act on — a send that did not start, a delete
-  that failed — until the next call.
-- The transcript is bounded in the renderer instead of growing with the
-  archive. Three read paths could hold whatever a session happened to
-  contain: inline media was capped one image at a time (10 MiB) while a
-  conversation kept every frame it had ever loaded — a screenshot-heavy
-  session's 84 frames sit at 16 MiB on their own, and paging back
-  through them is where hundreds of megabytes of WebKit Malloc came
-  from; a tool result had no text cap, so one chatty command wrote its
-  whole output into the store and into every re-render of its turn; and
-  a paged-in page never reached the fold that trims text. A conversation
-  now settles on every write path: 16 MiB of inline media and 16 MiB of
-  text (`MAX_CONV_MEDIA_BYTES` / `MAX_CONV_TEXT_BYTES`), the newest 24
-  messages untouched, the oldest giving up their bytes first — an
-  evicted image keeps its path, which is all either viewer needs (the
-  attachment re-reads its preview on mount, the `view_image` card
-  re-reads the file on first expand), and a folded result keeps its
-  head, its tail and the marker that says how much went. One result is
-  capped at 256 KiB as it lands (`MAX_TOOL_RESULT_CHARS`). Paging back
-  through history settles the byte budgets too, keeping only the message
-  cap out of it so the page just fetched stays where it landed — that
-  path skipped settling altogether, which is how a reading came back at
-  20.7 MiB against a 16 MiB budget. The budgets are a bound, not a
-  promise: a conversation whose newest 24 messages alone exceed one
-  keeps them, since trimming there would fold text and drop images the
-  reader is looking at.
+  until the next message, and a sandboxed session read that stopped at
+  its own deadline reads "no output yet" instead of the child's wire
+  error.
+- One GUI per state root no longer rests on the shell's
+  single-instance machinery: the app takes a non-blocking lock on
+  `<state root>/gui.lock` and a rejected second launch raises the
+  holder's window and exits 1. (#190)
+- Automation and tool loose ends: a correction typed during a
+  scheduled run reports its undelivered steer count; a cancelled wait
+  no longer crashes the turn goroutine; the `automation` tool's
+  nested `task`/`schedule` schema reaches the model intact; and a
+  scheduled run no longer cuts short a turn the user is watching.
+  (#181)
+- A staged draft — the Tab queue, or Enter pressed while the previous
+  send was still starting — runs in the workspace that owns its
+  conversation instead of the one on screen, and a start for a
+  conversation no store owns is refused rather than minted somewhere.
+  (#181)
+- A completion notification that races a store close falls back to the
+  app name instead of logging `sql: database is closed`, and a
+  settings write that changes nothing no longer invalidates the
+  runtime. (#187)
+- The delegation card wrote `delegate.policy.settings: {}` when both
+  target lists were empty — flowcraft rejects an empty settings
+  subtree, so the whole document failed to build and every workspace
+  stayed unassemblable until repaired by hand. Empty lists are written
+  as `[]`, and the other settings writers omit an empty key. (#207)
+- The post-turn review actually runs now: it gated on a tool count
+  read from the engine's narrowed `Result.Messages`, which never
+  carries a tool result, so every successful turn counted zero tools
+  and the review and its memory suggestions never ran. The turn is
+  projected from the board now. (#208)
+- A turn the deadline ended no longer reads as a turn the user
+  stopped: the host's structured `error_kind: "timeout"` decides, the
+  transcript says "Reply timed out" with the actions an interrupted
+  turn offers, and the native banner stops calling it "Task
+  cancelled". (#211)
+- A produced file is filed under the turn of the run that wrote it:
+  the artifact buffer and turn timing are keyed by `(conversation,
+  run)`, the `artifact` event carries `run_id`, and a write whose run
+  is not in the transcript yet lands on the trailing live entry.
+  (#212)
+- Host lifecycle fixes: every call resolves by workspace through the
+  pool (a start could be resolved against the wrong workspace's Host),
+  a Host handed out for work is wired with the adapter's configurator
+  first whichever path handed it out, and a call that waited out the
+  retry window no longer answers "runtime is not ready". (#213)
+- The transcript is bounded in the renderer instead of growing with
+  the archive: a conversation settles to 16 MiB of inline media and
+  16 MiB of text on every write path — the newest 24 messages
+  untouched, the oldest giving up bytes first — and one tool result is
+  capped at 256 KiB as it lands. (#214)
+- Long unbroken markdown tokens wrap instead of forcing the transcript
+  into horizontal scroll, and plugin panels are wrapped in
+  `ErrorBoundary` scopes so one crashing panel no longer takes the
+  page down. (#180)
+- A text block the model has finished writing no longer sits on screen
+  in raw markdown until its turn ends (the "still streaming" flag now
+  marks only the trailing block of a running turn), and an `ask_user`
+  card's header no longer loses its question to a long answer. (#200)
+- An expanded session list resets when its workspace collapses, and
+  react-markdown's `node` prop is stripped before props are spread
+  onto real elements — React 19 was writing `node="[object Object]"`
+  into the DOM for tables and code fences. (#176)
+- A tool call with a bad argument names it and lists the accepted
+  ones: `toolargs.Decode` rejects unknown keys by name and lets a tool
+  declare aliases, so `exec_command` accepts `cmd` for `command` — the
+  slip models kept making, 26 of 324 exec calls in one session coming
+  back as "command is required" and costing a round trip each. A failed
+  `apply_patch` hunk names itself and why it did not match, `view_image`
+  reports a missing file as a missing file instead of "workspace: not
+  found", and `grep` says the path must be a directory. (#160)
+- A file is classified by its leading bytes, not its name: `.ts` is
+  TypeScript, but the platform's table called it `video/mp2t` and the
+  preview rendered a `<video>`, and nothing told a screenshot saved as
+  `.txt` from a note. One classifier reads the sample (net/http's
+  mimesniff), lets the name refine what the bytes cannot say, and falls
+  back to the table; a payload without a NUL byte is text, whatever the
+  name claims. The preview, attachments, the media stream handler and
+  `read_file`'s image hint all read it, and the hand-maintained
+  code-extension whitelist is gone. (#163)
+- An oversized JSON tool result stays parseable: truncation runs after
+  the result limit and excerpts inside the string fields before
+  re-encoding, instead of cutting the envelope and handing the model
+  something it cannot read. (#165)
+- The log keeps the signal and drops the noise: a subagent context,
+  which is not a persisted session by design, no longer warns on every
+  skill activation, quitting detaches the notification sink before the
+  runtime closes instead of logging `sql: database is closed`,
+  forwarded plugin stderr masks credential query values, a git failure
+  names its repository and its argv, an installed OTLP sink is a
+  configuration event rather than a warning, and a forwarded renderer
+  error keeps its message and stack on one physical line. (#166)
+- Workspace history shows the order it just recorded: the open is
+  written before the `ready` event that makes the UI re-read it, equal
+  or unparsable stamps rank stably by title and path, and the frontend
+  drops a response overtaken by a newer request and keeps an identical
+  snapshot, with the active workspace promoted in render only. (#168)
+- Escape is owned from the moment an overlay renders: the handlers move
+  from a passive effect to a layout effect, closing the task-wide
+  window in which Escape went to the surface underneath — the defect
+  that left a just-opened preview dialog open. (#168)
+- A stopped turn is archived: the archive hook wrote with the run's own
+  context, already canceled on a Stop, so the first store call failed,
+  the error was swallowed, and the turn, its tool activity and the
+  user's message left no trace for the next replay. Archive writes use
+  a context without cancellation now, and a write that fails says so.
+  (#169)
+- Compaction folds instead of stacking summaries: the compact node
+  wrote its summary and left the folded prefix on `MainChannel`, so
+  every over-budget turn re-sent the whole history and spent its
+  condensation budget without shrinking anything. The prefix moves to
+  the archive channel before it is removed, the turn's user message and
+  a tool call's pairing are protected at the boundary, a failed fold
+  changes nothing and remembers where it stopped, and memory re-unions
+  the side channel so nothing leaves the archive for being folded.
+  (#169)
+- Cache statistics are honest across providers: Anthropic's wire
+  `input_tokens` counts only the tokens neither read from nor written
+  to the cache, so a hit rate could exceed 100% and the UI clamped it
+  to a confident "100%". Prompt totals normalize to the inclusive
+  reading at the sessions boundary, `lib/usageRate.ts` is the one
+  formula behind the hero and the settings page, a row that cannot
+  state a ratio shows a dash, and the cost notices land where the
+  change is made — a model switched mid-conversation, a provider
+  credential changed, a turn that folded. (#170)
+- The compactor's patch parsing never worked: a tool result's content
+  crosses the board bridge as a parts array, not a JSON string, so
+  `JSON.parse` threw every time — folding had never applied, and every
+  over-budget turn paid for a summarization call and re-sent the full
+  history. `world.compact.epoch`, a per-turn fold count read as a
+  cross-turn generation, splits into `epoch_total` (persisted with the
+  anchor) and `folds_turn` for the UI. (#170)
+- Quitting no longer drops the last thing a crashing plugin did: the
+  capability manager tracks its exit watchers and `Shutdown` waits on
+  them, so an audit line written by the crash handler lands before the
+  data directory can go away, and a manager that has shut down refuses
+  to start a process whose lifetime nothing would own. (#173)
 
 ## [0.5.3] - 2026-09-17
 
