@@ -6,6 +6,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A deleted conversation stays deleted: the three usage writers
+  (`RecordUsage`, `RecordUsageIfEmpty`, `AddUsage`) each read the row,
+  minted a fresh conversation when the read missed, and wrote it back
+  through an upsert — so a usage call landing after the delete (a
+  detached review, a turn ending inside the race) rebuilt the row it
+  was writing to as an `(empty)` entry that the delete tombstone then
+  made neither openable nor deletable. They now persist through
+  `state.UpdateConversationUsage`, an UPDATE that never inserts
+  (`conversations.usage_json` is a cache on a row the transcript owns);
+  a row that is gone when the write lands is a skip, not a rebuild.
+  The repeat delete also purges whatever came back under a tombstoned
+  id, and the sidebar answers a click on a deleted conversation instead
+  of loading a chat that can never arrive. (#218)
+
 ## [0.6.0] - 2026-09-25
 
 ### Added
