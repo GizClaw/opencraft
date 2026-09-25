@@ -3811,7 +3811,17 @@ export const useStore = create<StoreState>((set, get) => {
     loadSessions: async () => {
       set({ sessionsLoading: true });
       try {
-        set({ sessions: (await api.listSessions()) ?? [] });
+        const sessions = (await api.listSessions()) ?? [];
+        // An id deleted in this process never comes back on screen. The
+        // listing can race the delete — a response computed before the
+        // backend settled, a store restored out of band — and the
+        // sidebar is the one place a dead entry would look openable
+        // while every path into it is refused by the same tombstone.
+        set({
+          sessions: sessions.filter(
+            (session) => !stateRoot.registry.isDeleted(session.id),
+          ),
+        });
       } catch {
         // best-effort
       } finally {

@@ -620,6 +620,83 @@ describe('store: send and stream', () => {
     expect(useStore.getState().conversations['s-1']).toBeUndefined();
   });
 
+  it('a delete tombstones the id it deleted, and resume answers for it', async () => {
+    apiMock.deleteSession.mockResolvedValue({
+      session_id: 's-next',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+
+    await useStore.getState().deleteSession('s-1');
+
+    // The tombstone comes from the delete itself, not from the test: a
+    // producer that stopped marking the id would leave resume believing
+    // the conversation is still openable.
+    expect(stateRoot.registry.isDeleted('s-1')).toBe(true);
+    expect(
+      stateRoot.registry.ensure('s-1', {
+        workspaceGeneration: stateRoot.generation(),
+      }),
+    ).toBeUndefined();
+
+    await useStore.getState().resume('s-1');
+
+    expect(apiMock.resumeSession).not.toHaveBeenCalled();
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-next');
+    expect(useStore.getState().toasts.at(-1)?.text).toBe(
+      i18n.t('chat.sessionDeleted'),
+    );
+  });
+
+  it('a listing that raced the delete cannot put the row back on the sidebar', async () => {
+    apiMock.deleteSession.mockResolvedValue({
+      session_id: 's-next',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    // The backend refuses every writer of a deleted id, so a listing
+    // that still holds one was computed before the delete settled. It
+    // is filtered on the way in, by the tombstone resume answers with.
+    apiMock.listSessions.mockResolvedValue([
+      {
+        id: 's-1',
+        title: 'deleted',
+        created_at: '2026-09-25T08:00:00Z',
+        updated_at: '2026-09-25T08:00:00Z',
+        turns: 1,
+        messages: 2,
+        total_tokens: 0,
+      },
+      {
+        id: 's-next',
+        title: 'replacement',
+        created_at: '2026-09-25T08:01:00Z',
+        updated_at: '2026-09-25T08:01:00Z',
+        turns: 0,
+        messages: 0,
+        total_tokens: 0,
+      },
+    ]);
+
+    await useStore.getState().deleteSession('s-1');
+
+    expect(useStore.getState().sessions.map((s) => s.id)).toEqual(['s-next']);
+  });
+
+  it('deleting an id twice asks the backend twice and keeps it refused', async () => {
+    // The second call is the same request: the backend purges whatever
+    // came back under the retired id and reports success either way,
+    // and the frontend keeps answering for the id.
+    await useStore.getState().deleteSession('s-1');
+    await useStore.getState().deleteSession('s-1');
+
+    expect(apiMock.deleteSession).toHaveBeenCalledTimes(2);
+    expect(useStore.getState().statusText).toBe('');
+    expect(stateRoot.registry.isDeleted('s-1')).toBe(true);
+  });
+
   it('deleting a session prunes its file viewer state', async () => {
     apiMock.deleteSession.mockResolvedValue({
       session_id: 's-next',
