@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   transparent — without it the window silently stays opaque — at the cost of
   reading one undocumented WebKit property.
 
+### Removed
+
+- The `setup:docker` task is gone. It built the `wails-cross` image from
+  `build/docker/Dockerfile.cross`, a file this repo never carried, so it could
+  only ever fail; the per-platform `build:docker` cross tasks stay and now say
+  where the image has to come from.
+
 ### Fixed
 
 - A deleted conversation stays deleted. Deleting one retires its id in

@@ -53,11 +53,6 @@ tasks:
     cmds:
       - wails3 dev -config ./build/config.yml -port {{.VITE_PORT}}
 
-  setup:docker:
-    summary: Builds Docker image for cross-compilation (~800MB download)
-    cmds:
-      - task: common:setup:docker
-
   build:server:
     summary: Builds the application in server mode (no GUI, HTTP server only)
     cmds:

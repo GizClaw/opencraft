@@ -78,7 +78,9 @@ tasks:
       - sh: docker image inspect {{.CROSS_IMAGE}} > /dev/null 2>&1
         msg: |
           Docker image '{{.CROSS_IMAGE}}' not found.
-          Build it first: wails3 task setup:docker
+          This repo does not ship the cross-compile Dockerfile
+          (build/docker/Dockerfile.cross): build the image from the Wails v3
+          template's copy and tag it {{.CROSS_IMAGE}}.
     cmds:
       - task: generate:syso
         vars:
