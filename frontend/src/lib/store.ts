@@ -2762,7 +2762,7 @@ export const useStore = create<StoreState>((set, get) => {
   // the focus machine and local shell state without another RPC.
   const openMintedSession = (
     snapshot: {
-      session_id: string;
+      conversation_id: string;
       mode: string;
       think: string;
       model: string;
@@ -2772,16 +2772,16 @@ export const useStore = create<StoreState>((set, get) => {
     stateRoot.sendFocus({
       type: 'OPEN_SUCCEEDED',
       request,
-      sessionID: snapshot.session_id,
+      sessionID: snapshot.conversation_id,
     });
     const focus = stateRoot.focusSnapshot;
     if (
       focus.value !== 'active' ||
-      focus.context.sessionID !== snapshot.session_id
+      focus.context.sessionID !== snapshot.conversation_id
     ) {
       return;
     }
-    const id = snapshot.session_id;
+    const id = snapshot.conversation_id;
     set((state) => ({
       toolsView: null,
       conversations: {
@@ -3580,16 +3580,16 @@ export const useStore = create<StoreState>((set, get) => {
           stateRoot.sendFocus({
             type: 'OPEN_SUCCEEDED',
             request,
-            sessionID: snapshot.session_id,
+            sessionID: snapshot.conversation_id,
           });
           const focus = stateRoot.focusSnapshot;
           if (
             focus.value !== 'active' ||
-            focus.context.sessionID !== snapshot.session_id
+            focus.context.sessionID !== snapshot.conversation_id
           ) {
             return;
           }
-          const resolvedID = snapshot.session_id;
+          const resolvedID = snapshot.conversation_id;
           const actor = stateRoot.registry.ensure(resolvedID, {
             workspaceGeneration: stateRoot.generation(),
             workspace: get().workspace,
@@ -3730,7 +3730,7 @@ export const useStore = create<StoreState>((set, get) => {
         // Open that replacement only when this chat is still focused;
         // a selection made while the delete waited wins and should not
         // be stomped by an OPEN_NEW.
-        if (next.session_id && activeConversationID() === id) {
+        if (next.conversation_id && activeConversationID() === id) {
           stateRoot.sendFocus({ type: 'OPEN_NEW' });
           openMintedSession(next, stateRoot.focusSnapshot.context.request);
         }

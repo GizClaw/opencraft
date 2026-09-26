@@ -150,19 +150,19 @@ beforeEach(() => {
   apiMock.steerTurn.mockResolvedValue(undefined);
   apiMock.forkTurn.mockResolvedValue('s-fork');
   apiMock.deleteSession.mockResolvedValue({
-    session_id: '',
+    conversation_id: '',
     mode: '',
     think: '',
     model: '',
   });
   apiMock.newChat.mockResolvedValue({
-    session_id: 's-new',
+    conversation_id: 's-new',
     mode: 'workspace',
     think: 'medium',
     model: '',
   });
   apiMock.resumeSession.mockResolvedValue({
-    session_id: 's-2',
+    conversation_id: 's-2',
     mode: 'workspace',
     think: 'medium',
     model: '',
@@ -538,7 +538,7 @@ describe('store: send and stream', () => {
   it('forkTurn creates the fork and switches to its hydrated history', async () => {
     apiMock.forkTurn.mockResolvedValue('s-fork');
     apiMock.resumeSession.mockResolvedValue({
-      session_id: 's-fork',
+      conversation_id: 's-fork',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -573,7 +573,7 @@ describe('store: send and stream', () => {
 
   it('deletes the active conversation and opens the replacement minted by the backend', async () => {
     apiMock.deleteSession.mockResolvedValue({
-      session_id: 's-next',
+      conversation_id: 's-next',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -605,7 +605,7 @@ describe('store: send and stream', () => {
     // conversation, the UI stays in the draft state.
     stateRoot.sendFocus({ type: 'OPEN_DRAFT' });
     apiMock.deleteSession.mockResolvedValue({
-      session_id: 's-next',
+      conversation_id: 's-next',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -622,7 +622,7 @@ describe('store: send and stream', () => {
 
   it('a delete tombstones the id it deleted, and resume answers for it', async () => {
     apiMock.deleteSession.mockResolvedValue({
-      session_id: 's-next',
+      conversation_id: 's-next',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -651,7 +651,7 @@ describe('store: send and stream', () => {
 
   it('a listing that raced the delete cannot put the row back on the sidebar', async () => {
     apiMock.deleteSession.mockResolvedValue({
-      session_id: 's-next',
+      conversation_id: 's-next',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -699,7 +699,7 @@ describe('store: send and stream', () => {
 
   it('deleting a session prunes its file viewer state', async () => {
     apiMock.deleteSession.mockResolvedValue({
-      session_id: 's-next',
+      conversation_id: 's-next',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -870,7 +870,7 @@ describe('store: send and stream', () => {
       new Promise((resolve) => {
         resolveOldResume = () =>
           resolve({
-            session_id: 's-old',
+            conversation_id: 's-old',
             mode: 'workspace',
             think: 'medium',
             model: '',
@@ -2089,7 +2089,7 @@ describe('store: first-message workspace attribution', () => {
       .getState()
       .setSessionDefaults({ mode: 'read-only', think: 'high' });
     apiMock.newChat.mockResolvedValue({
-      session_id: 's-new',
+      conversation_id: 's-new',
       mode: 'read-only',
       think: 'high',
       model: '',
@@ -2907,7 +2907,7 @@ describe('store: workspace switch session restore', () => {
   it('switches back to the workspace saved session and hydrates it', async () => {
     apiMock.currentSession.mockResolvedValue('s-a');
     apiMock.resumeSession.mockResolvedValue({
-      session_id: 's-a',
+      conversation_id: 's-a',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -2946,7 +2946,7 @@ describe('store: workspace switch session restore', () => {
   it('ready after a workspace change restores the saved session', async () => {
     apiMock.currentSession.mockResolvedValue('s-a');
     apiMock.resumeSession.mockResolvedValue({
-      session_id: 's-a',
+      conversation_id: 's-a',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -3035,7 +3035,7 @@ describe('store: workspace switch session restore', () => {
       .mockResolvedValueOnce('')
       .mockResolvedValueOnce('s-1');
     apiMock.resumeSession.mockResolvedValue({
-      session_id: 's-1',
+      conversation_id: 's-1',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -3638,7 +3638,7 @@ describe('store: steered rows across transcript rebuilds', () => {
 
   it('restores a delegation note turn as an app-authored card row', async () => {
     apiMock.resumeSession.mockResolvedValue({
-      session_id: 's-note',
+      conversation_id: 's-note',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -3690,7 +3690,7 @@ describe('store: steered rows across transcript rebuilds', () => {
 
   it('tags an archived mid-turn user row as a delivered steer', async () => {
     apiMock.resumeSession.mockResolvedValue({
-      session_id: 's-archive',
+      conversation_id: 's-archive',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -3751,7 +3751,7 @@ describe('store: steered rows across transcript rebuilds', () => {
 
   it('does not tag a second turn, a summary, or a steer that precedes the reply', async () => {
     apiMock.resumeSession.mockResolvedValue({
-      session_id: 's-archive',
+      conversation_id: 's-archive',
       mode: 'workspace',
       think: 'medium',
       model: '',
@@ -3870,7 +3870,7 @@ describe('store: steered rows across transcript rebuilds', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     apiMock.resumeSession.mockResolvedValue({
-      session_id: 's-1',
+      conversation_id: 's-1',
       mode: 'workspace',
       think: 'medium',
       model: '',

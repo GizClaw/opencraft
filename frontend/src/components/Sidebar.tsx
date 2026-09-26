@@ -367,8 +367,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     try {
       const imported = await api.importSession(path);
       await loadSessions();
-      if (imported.session_id) {
-        await resume(imported.session_id);
+      if (imported.conversation_id) {
+        await resume(imported.conversation_id);
       }
       flash(t('sidebar.importedSession'));
     } catch (err) {

@@ -376,20 +376,22 @@ func lastAssistantOutput(res *agent.Result) string {
 // NewChatResult reports a freshly minted conversation with the
 // effective session defaults applied at mint time.
 type NewChatResult struct {
-	SessionID string `json:"session_id"`
-	Mode      string `json:"mode"`
-	Think     string `json:"think"`
-	Model     string `json:"model"`
+	// ConversationID is the freshly minted conversation.
+	ConversationID string `json:"conversation_id"`
+	Mode           string `json:"mode"`
+	Think          string `json:"think"`
+	Model          string `json:"model"`
 }
 
 // NewChat mints a fresh conversation id.
 func (b *Conversation) NewChat() NewChatResult {
 	workDir := b.core.ActiveWorkDir()
+	id := b.core.Conversation.New(workDir)
 	return NewChatResult{
-		SessionID: b.core.Conversation.New(workDir),
-		Mode:      string(b.core.Conversation.Mode(workDir)),
-		Think:     b.core.Conversation.Think(workDir),
-		Model:     b.core.Conversation.Model(workDir),
+		ConversationID: id,
+		Mode:           string(b.core.Conversation.Mode(workDir)),
+		Think:          b.core.Conversation.Think(workDir),
+		Model:          b.core.Conversation.Model(workDir),
 	}
 }
 

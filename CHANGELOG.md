@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The desktop and plugin wire calls the conversation id `conversation_id`
+  everywhere: in `NewChat`'s result, in the session-delete and bundle-import
+  DTOs, and in the plugin `session.import` result, which mirrors the desktop
+  wire. Until now those four hand-written DTOs spelled it `session_id` while
+  the store, the graph and the archive called it a conversation — one rename,
+  landed in one step (the two-release window the plan called for never got
+  released, so there is no alias to carry: a plugin written against an older
+  SDK and reading the id out of `session.import` has to read
+  `conversation_id`; the plugin templates in this repo never read that field).
+  The retired name is recorded in `foundation/wirevocab`, whose scan fails the
+  build when a hand-written struct tag uses it again. Three things are
+  deliberately out of its scope, each said where it lives: the generated
+  protobuf of the `execd` channel (process-to-process, not UI wire), the
+  `model_usage.session_id` SQL column (a migration, not a rename) and the
+  `session_id` argument websearch sends to Parallel's API (their vocabulary).
 - The desktop shell is on Wails v3.0.0-beta.26, from beta.17 — the bump lands
   in the three places that pin it (go.mod, `@wailsio/runtime`, the CI and
   release `wails3` installs). What it buys: `wails3 dev` now waits for the vite
