@@ -221,13 +221,15 @@ jobs:
       # takes flock. All 34 cases in the packages below run here (0 skips
       # on this lane: procmem's "no process probe" and sysfont's "no
       # font catalogue" skips belong to other platforms).
+      # -v is there so those counts are checkable from the log rather than
+      # from a reading of the case list: every case prints its own line.
       - name: Platform primitives (macos)
-        run: go test -count=1 ./internal/foundation/platform/sysfont ./internal/foundation/platform/procmem ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock ./internal/foundation/platform/wslock
+        run: go test -v -count=1 ./internal/foundation/platform/sysfont ./internal/foundation/platform/procmem ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock ./internal/foundation/platform/wslock
       # The pet window's own half: geometry/hover/mind/pack are pure, so
       # the whole package runs (45 cases) and the darwin cursor + DPI
       # build is exercised on the platform it is written for.
       - name: Pet window (macos)
-        run: go test -count=1 ./internal/adapters/desktop/pet
+        run: go test -v -count=1 ./internal/adapters/desktop/pet
 
   test-windows:
     name: test (windows)
@@ -299,8 +301,10 @@ jobs:
       # compiles the app binary, via buildOpencraft).
       # These are skips, not deletions: a renamed or added case fails this
       # lane loudly instead of being silently excluded from it.
+      # -v prints a line per case, which is where the counts above are
+      # read from after a run.
       - name: execd protocol + named-pipe launch (windows)
-        run: go test -count=1 ./internal/capabilities/execd
+        run: go test -v -count=1 ./internal/capabilities/execd
         shell: pwsh
       # The primitives whose Windows half is behind a build tag: the
       # FILE_ATTRIBUTE_HIDDEN branch of fshidden (its only test file is
@@ -309,8 +313,10 @@ jobs:
       # wslock's LockFileEx. 17 cases run, 2 skip: guilock's stale-socket
       # cleanup and socket path-length fallback assert the on-disk unix
       # socket and call requireUnixSocketEndpoint.
+      # -v prints a line per case, which is where those counts are read
+      # from after a run.
       - name: Platform primitives (windows)
-        run: go test -count=1 ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock ./internal/foundation/platform/wslock
+        run: go test -v -count=1 ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock ./internal/foundation/platform/wslock
         shell: pwsh
       - name: Compile check (sandbox/desktop/sessions/secrets)
         run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktop ./internal/capabilities/sessions ./internal/capabilities/secrets
