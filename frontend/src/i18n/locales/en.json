@@ -1044,7 +1044,6 @@
     "noInlinePreview": "No inline preview for this type:",
     "videoUnavailable": "This video cannot be played inline.",
     "tooLarge": "This file is too large for an inline preview.",
-    "outsideRoots": "This file lives outside the folders OpenCraft can read, so it cannot be opened here.",
     "viewerChunkFailed": "The preview module failed to load. Try again, or open the file with the system app."
   },
   "git": {

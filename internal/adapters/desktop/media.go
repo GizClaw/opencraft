@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -31,10 +32,12 @@ import (
 // ranges for free, so a generated video seeks without crossing the IPC
 // bridge as base64.
 //
-// The listener binds 127.0.0.1 on a random port and serves only regular
-// files under the active workspace, addressed through a per-launch
-// random token. Another local page cannot enumerate the workspace, and a
-// symlink that escapes the root is rejected.
+// The listener binds 127.0.0.1 on a random port and serves regular
+// files through a per-launch random token: workspace files by their
+// relative path (a symlink that escapes the root is rejected), plus the
+// single files the viewer opened outside the workspace through the
+// opaque ids AbsoluteURL mints. Another local page can enumerate
+// neither the workspace nor the id table.
 type mediaServer struct {
 	listener net.Listener
 	server   *http.Server
@@ -42,6 +45,14 @@ type mediaServer struct {
 	// root resolves the directory tree the server may serve. It is
 	// consulted per request so switching workspaces needs no restart.
 	root func() string
+
+	// extMu guards the absolute-file table: the id -> path mapping the
+	// viewer streams by, its reverse (one id per path), and the mint
+	// order the cap evicts from.
+	extMu         sync.Mutex
+	external      map[string]string
+	externalIDs   map[string]string
+	externalOrder []string
 }
 
 // newMediaServer starts the loopback listener.
@@ -97,6 +108,72 @@ func (m *mediaServer) URL(rel string) (string, error) {
 	return link.String(), nil
 }
 
+// mediaExternalLimit caps how many distinct files the absolute route
+// keeps addressable in one launch. A URL is minted per viewed file; the
+// cap only keeps a session that opens thousands of files from growing
+// the table without bound. An evicted URL 404s, which the viewer turns
+// into its plain system-app fallback.
+const mediaExternalLimit = 256
+
+// AbsoluteURL returns the loopback URL one local file streams from,
+// wherever it lives: the viewer's address for a video or PDF the user
+// opened outside the workspace. The id in the URL is minted here and
+// stays bound to this one path, so a URL cannot be edited into a
+// different file, and asking for the same path again reuses its URL.
+func (m *mediaServer) AbsoluteURL(abs string) (string, error) {
+	if m == nil {
+		return "", errors.New("desktop: media server is not running")
+	}
+	abs = strings.TrimSpace(abs)
+	if abs == "" || !filepath.IsAbs(abs) {
+		return "", errors.New("desktop: media URL needs an absolute path")
+	}
+	m.extMu.Lock()
+	defer m.extMu.Unlock()
+	if id, ok := m.externalIDs[abs]; ok {
+		return m.externalURL(id), nil
+	}
+	secret := make([]byte, 16)
+	if _, err := rand.Read(secret); err != nil {
+		return "", fmt.Errorf("desktop: media id: %w", err)
+	}
+	id := hex.EncodeToString(secret)
+	if m.external == nil {
+		m.external = make(map[string]string)
+		m.externalIDs = make(map[string]string)
+	}
+	m.external[id] = abs
+	m.externalIDs[abs] = id
+	m.externalOrder = append(m.externalOrder, id)
+	if len(m.externalOrder) > mediaExternalLimit {
+		oldest := m.externalOrder[0]
+		m.externalOrder = m.externalOrder[1:]
+		delete(m.externalIDs, m.external[oldest])
+		delete(m.external, oldest)
+	}
+	return m.externalURL(id), nil
+}
+
+// externalURL builds the request URL for one minted id. The path half
+// only carries the server token; the id travels as a query parameter,
+// so the workspace route below cannot be shadowed by it.
+func (m *mediaServer) externalURL(id string) string {
+	link := url.URL{
+		Scheme:   "http",
+		Host:     m.listener.Addr().String(),
+		Path:     "/media/" + m.token,
+		RawQuery: "id=" + id,
+	}
+	return link.String()
+}
+
+// externalPath resolves one minted id back to the file it names.
+func (m *mediaServer) externalPath(id string) string {
+	m.extMu.Lock()
+	defer m.extMu.Unlock()
+	return m.external[id]
+}
+
 // Close stops the listener and the requests it is serving. It is safe
 // on a nil server so callers can close unconditionally.
 func (m *mediaServer) Close() {
@@ -111,9 +188,10 @@ func (m *mediaServer) Close() {
 	}
 }
 
-// handle serves one media request: GET/HEAD only, token checked, path
-// resolved under the active workspace with symlink escapes rejected.
-// http.ServeContent answers range requests, so seeking works.
+// handle serves one media request: GET/HEAD only, token checked, and
+// either a path resolved under the active workspace (symlink escapes
+// rejected) or one file minted by AbsoluteURL. http.ServeContent
+// answers range requests, so seeking works.
 func (m *mediaServer) handle(w http.ResponseWriter, r *http.Request) {
 	// The listener is http://127.0.0.1:<port> while the page is a
 	// wails:// document (the Vite dev server in development), so every
@@ -145,18 +223,40 @@ func (m *mediaServer) handle(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	token, rel, ok := strings.Cut(rest, "/")
-	if !ok || rel == "" ||
-		subtle.ConstantTimeCompare([]byte(token), []byte(m.token)) != 1 {
+	token, rel, _ := strings.Cut(rest, "/")
+	if subtle.ConstantTimeCompare([]byte(token), []byte(m.token)) != 1 {
 		http.NotFound(w, r)
 		return
 	}
+	// A file the viewer opened outside the workspace streams by the id
+	// its URL was minted with; the path itself never appears in the
+	// request (see AbsoluteURL).
+	if id := r.URL.Query().Get("id"); id != "" {
+		full := m.externalPath(id)
+		if full == "" {
+			http.NotFound(w, r)
+			return
+		}
+		m.serve(w, r, full)
+		return
+	}
 	root := m.root()
+	if rel == "" {
+		http.NotFound(w, r)
+		return
+	}
 	full, err := pathsafe.ResolveUnder(root, rel)
 	if err != nil || !pathsafe.RealWithin(root, full) {
 		http.NotFound(w, r)
 		return
 	}
+	m.serve(w, r, full)
+}
+
+// serve sends one regular file's bytes with http.ServeContent, so a
+// player or pdf.js seeks through byte ranges. A file that vanished or
+// is not a regular file reports as absent.
+func (m *mediaServer) serve(w http.ResponseWriter, r *http.Request, full string) {
 	file, err := os.Open(full)
 	if err != nil {
 		http.NotFound(w, r)

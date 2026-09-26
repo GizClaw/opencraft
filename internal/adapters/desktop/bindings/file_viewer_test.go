@@ -64,24 +64,55 @@ func TestResolveTargetUsesDocumentBase(t *testing.T) {
 	}
 }
 
-func TestResolveTargetRejectsTraversal(t *testing.T) {
-	workDir := t.TempDir()
-	outside := t.TempDir()
-	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("x"), 0o644); err != nil {
+// The reader is not fenced into the workspace: an absolute path, and a
+// relative one climbing out through "..", both open as "external"
+// targets with no workspace-relative form. The surfaces that stay
+// inside are the tree (List/Search, pinned below) and the git diff.
+func TestResolveTargetOpensOutsideWorkspace(t *testing.T) {
+	base := t.TempDir()
+	workDir := filepath.Join(base, "work")
+	outside := filepath.Join(base, "outside")
+	for _, dir := range []string{workDir, outside} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(src, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
 	b := NewFileBinding(c)
 
-	if _, err := b.ResolveTarget("../secret.txt", ""); err == nil {
-		t.Fatal("traversal outside workspace unexpectedly allowed")
+	for name, target := range map[string]string{
+		"absolute": src,
+		"climbed":  filepath.Join("..", "outside", "secret.txt"),
+	} {
+		f, err := b.ResolveTarget(target, "")
+		if err != nil {
+			t.Fatalf("%s target: %v", name, err)
+		}
+		if f.Root != "external" || f.Rel != "" || f.Path != src {
+			t.Errorf("%s target = %+v", name, f)
+		}
 	}
-	if _, err := b.ResolveTarget("../secret.txt", "docs/.."); err == nil {
-		t.Fatal("traversal through base unexpectedly allowed")
+
+	// A document base outside the workspace anchors relative targets
+	// the same way a workspace directory does.
+	f, err := b.ResolveTarget("secret.txt", filepath.Join("..", "outside"))
+	if err != nil {
+		t.Fatalf("target under an outside base: %v", err)
+	}
+	if f.Path != src || f.Root != "external" {
+		t.Errorf("outside-base target = %+v", f)
 	}
 }
 
-func TestResolveTargetRejectsSymlinkEscape(t *testing.T) {
+// A symlink is followed and the label follows its target: a workspace
+// link to a file outside the workspace reads as external (no rel, so
+// the breadcrumb and the git marks stay out of it), while a link to
+// another workspace file stays a workspace target.
+func TestResolveTargetLabelsSymlinkTargets(t *testing.T) {
 	workDir := t.TempDir()
 	outside := t.TempDir()
 	src := filepath.Join(outside, "secret.txt")
@@ -91,11 +122,30 @@ func TestResolveTargetRejectsSymlinkEscape(t *testing.T) {
 	if err := os.Symlink(src, filepath.Join(workDir, "link.txt")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(workDir, "main.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inner := filepath.Join(workDir, "inner.go")
+	if err := os.Symlink(filepath.Join(workDir, "main.go"), inner); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
 	b := NewFileBinding(c)
 
-	if _, err := b.ResolveTarget("link.txt", ""); err == nil {
-		t.Fatal("symlink escape unexpectedly allowed")
+	out, err := b.ResolveTarget("link.txt", "")
+	if err != nil {
+		t.Fatalf("resolve symlink to an outside file: %v", err)
+	}
+	if out.Root != "external" || out.Rel != "" {
+		t.Errorf("escaped symlink target = %+v", out)
+	}
+
+	in, err := b.ResolveTarget("inner.go", "")
+	if err != nil {
+		t.Fatalf("resolve symlink inside the workspace: %v", err)
+	}
+	if in.Root != "workspace" || in.Rel != "inner.go" {
+		t.Errorf("inside symlink target = %+v", in)
 	}
 }
 
@@ -126,8 +176,112 @@ func TestResolveTargetAllowsDataRootAbsolute(t *testing.T) {
 	if err := os.WriteFile(secret, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.ResolveTarget(secret, ""); err == nil {
-		t.Fatal("absolute path outside every root unexpectedly allowed")
+	f, err = b.ResolveTarget(secret, "")
+	if err != nil {
+		t.Fatalf("resolve outside every labelled root: %v", err)
+	}
+	if f.Root != "external" || f.Rel != "" {
+		t.Fatalf("outside target = %+v", f)
+	}
+}
+
+// "~" and file:// targets name the same files as their plain paths, so
+// a document linking either one opens in the viewer.
+func TestResolveTargetExpandsHomeAndFileURL(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	workDir := t.TempDir()
+	notes := filepath.Join(home, "notes.md")
+	if err := os.WriteFile(notes, []byte("# Notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
+	b := NewFileBinding(c)
+
+	f, err := b.ResolveTarget("~/notes.md", "")
+	if err != nil {
+		t.Fatalf("resolve ~: %v", err)
+	}
+	if f.Path != notes || f.Root != "external" {
+		t.Fatalf("~/notes.md target = %+v", f)
+	}
+	dir, err := b.ResolveTarget("~", "")
+	if err != nil {
+		t.Fatalf("resolve the home directory: %v", err)
+	}
+	if !dir.IsDir || dir.Path != home {
+		t.Fatalf("home target = %+v", dir)
+	}
+
+	// The URL form of the same path: file:///abs/file, and the Windows
+	// spelling file:///C:/file.
+	slash := filepath.ToSlash(notes)
+	if !strings.HasPrefix(slash, "/") {
+		slash = "/" + slash
+	}
+	u, err := b.ResolveTarget("file://"+slash, "")
+	if err != nil {
+		t.Fatalf("resolve file URL: %v", err)
+	}
+	if u.Path != notes || u.Root != "external" {
+		t.Fatalf("file URL target = %+v", u)
+	}
+
+	// A URL naming another host is refused instead of being read as a
+	// relative path.
+	if _, err := b.ResolveTarget("file://example.com/notes.md", ""); err == nil {
+		t.Fatal("remote file URL unexpectedly resolved")
+	}
+}
+
+// A video or PDF the reader opened anywhere streams through the
+// absolute-file route (kind video/pdf + loopback URL) instead of
+// falling back to a base64 embed or the metadata pane.
+func TestReadPreviewStreamsOutsideFiles(t *testing.T) {
+	outside := t.TempDir()
+	pdf := filepath.Join(outside, "report.pdf")
+	if err := os.WriteFile(pdf, []byte("%PDF-1.4 fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clip := filepath.Join(outside, "clip.mp4")
+	data := append([]byte{0x00, 0x00, 0x00, 0x20}, []byte("ftypisom")...)
+	data = append(data, 0x00, 0x00, 0x00, 0x00)
+	data = append(data, []byte("mp41")...)
+	data = append(data, bytes.Repeat([]byte{0x42}, 32)...)
+	if err := os.WriteFile(clip, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := core.NewCore(t.TempDir(), t.TempDir(), t.TempDir())
+	b := NewFileBinding(c)
+
+	var streamed []string
+	b.SetMediaAbsURL(func(abs string) (string, error) {
+		streamed = append(streamed, abs)
+		return "http://127.0.0.1:1/media/token?id=" + filepath.Base(abs), nil
+	})
+	b.SetMediaURL(func(rel string) (string, error) {
+		t.Errorf("workspace stream builder used for %s", rel)
+		return "", nil
+	})
+
+	pp, err := b.ReadPreview(pdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pp.Kind != "pdf" || pp.Root != "external" || pp.DataURL != "" ||
+		pp.StreamURL != "http://127.0.0.1:1/media/token?id=report.pdf" {
+		t.Fatalf("pdf preview = %+v", pp)
+	}
+	pv, err := b.ReadPreview(clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pv.Kind != "video" || pv.StreamURL == "" {
+		t.Fatalf("video preview = %+v", pv)
+	}
+	if len(streamed) != 2 || streamed[0] != pdf || streamed[1] != clip {
+		t.Fatalf("absolute URLs minted for %v", streamed)
 	}
 }
 

@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import i18n from '../i18n';
-import {
-  isExternalHref,
-  linkErrorMessage,
-  resolveLinkTarget,
-} from './linkTarget';
+import { isExternalHref, resolveLinkTarget } from './linkTarget';
 import type { ResolvedTarget } from './types';
 
 const apiMock = vi.hoisted(() => ({ resolveTarget: vi.fn() }));
@@ -43,10 +38,25 @@ describe('resolveLinkTarget', () => {
     expect(apiMock.resolveTarget).not.toHaveBeenCalled();
   });
 
-  it('treats Windows drive paths as local targets', () => {
+  it('treats Windows drive paths and file URLs as local targets', () => {
     expect(isExternalHref('C:\\Users\\me\\report.md')).toBe(false);
     expect(isExternalHref('report.md')).toBe(false);
+    expect(isExternalHref('file:///Users/me/notes.md')).toBe(false);
     expect(isExternalHref('https://example.com')).toBe(true);
+  });
+
+  it('resolves a file URL as a local target', async () => {
+    apiMock.resolveTarget.mockResolvedValueOnce(
+      target({ path: '/Users/me/notes.md', rel: '', root: 'external' }),
+    );
+    expect(await resolveLinkTarget('file:///Users/me/notes.md')).toEqual({
+      kind: 'file',
+      target: target({ path: '/Users/me/notes.md', rel: '', root: 'external' }),
+    });
+    expect(apiMock.resolveTarget).toHaveBeenCalledWith(
+      'file:///Users/me/notes.md',
+      '',
+    );
   });
 
   it('reports directories separately from files', async () => {
@@ -67,20 +77,5 @@ describe('resolveLinkTarget', () => {
   it('surfaces resolve failures to the caller', async () => {
     apiMock.resolveTarget.mockRejectedValueOnce(new Error('file: missing'));
     await expect(resolveLinkTarget('missing.md')).rejects.toThrow('missing');
-  });
-});
-
-describe('linkErrorMessage', () => {
-  it('maps containment rejections onto the shared copy', () => {
-    const mapped = linkErrorMessage(
-      new Error('file: "/etc/passwd" is outside the readable roots'),
-    );
-    expect(mapped).toBe(i18n.t('files.outsideRoots'));
-  });
-
-  it('keeps other failures verbatim', () => {
-    expect(linkErrorMessage(new Error('file: stat "x": no such file'))).toBe(
-      'Error: file: stat "x": no such file',
-    );
   });
 });

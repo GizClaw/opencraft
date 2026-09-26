@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,13 +26,20 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
-// File exposes workspace file browsing operations.
+// File exposes the viewer's file operations. The workspace tree (List,
+// Search) and the git diff stay confined to the active workspace — that
+// is the agent's work scope — while preview, resolution and the system
+// hand-off accept any local path the user points at.
 type File struct {
 	core *core.Core
 	// mediaURL builds the loopback stream URL for one workspace-relative
 	// file. nil (tests, headless wiring) leaves video previews
 	// metadata-only.
 	mediaURL func(rel string) (string, error)
+	// mediaAbsURL builds the loopback stream URL for one absolute file
+	// outside the workspace (the user opened it in the viewer). nil
+	// leaves those previews metadata-only.
+	mediaAbsURL func(abs string) (string, error)
 }
 
 // previewTextLimit caps how many bytes ReadPreview returns for one
@@ -43,10 +51,11 @@ const previewTextLimit = 2 << 20
 // PDF viewer. Larger documents fall back to the system app.
 const previewPdfLimit = 40 << 20
 
-// readRoot is one containment root the file viewer may read from.
+// readRoot is one labelled location a viewer target can come from.
 // The workspace root is always present; the data root covers
 // conversation media/exports that live outside the workspace but are
-// still owned by the app.
+// still owned by the app; skill roots cover user/builtin skill
+// packages. Anything else reports as "external".
 type readRoot struct {
 	name string
 	dir  string
@@ -60,6 +69,12 @@ func NewFileBinding(c *core.Core) *File {
 // SetMediaURL installs the stream URL builder used for video previews.
 func (b *File) SetMediaURL(fn func(rel string) (string, error)) {
 	b.mediaURL = fn
+}
+
+// SetMediaAbsURL installs the stream URL builder used for video and PDF
+// previews of files outside the workspace.
+func (b *File) SetMediaAbsURL(fn func(abs string) (string, error)) {
+	b.mediaAbsURL = fn
 }
 
 // FileNode is one entry of the workspace file tree.
@@ -173,6 +188,9 @@ func (b *File) Search(query string, limit int, showHidden bool) ([]SearchFileHit
 	return hits, nil
 }
 
+// resolve resolves a target for the surfaces that stay confined to the
+// workspace: the git diff and the artifact save-as copy. The viewer's
+// own reads go through locatePath, which accepts any local path.
 func (b *File) resolve(path string) (string, error) {
 	root := b.core.ActiveWorkDir()
 	if root == "" {
@@ -221,16 +239,28 @@ func relOf(root, full string) string {
 	return filepath.ToSlash(rel)
 }
 
-// locatePath resolves a viewer target under containment: relative
-// targets resolve under base ("" = workspace root), absolute targets
-// must land inside one registered read root. Symlinks are evaluated
-// before the containment check so a link cannot smuggle reads outside
-// the roots.
+// locatePath resolves a viewer target into the absolute path the
+// viewer opens, plus the name of the root it lives under ("workspace",
+// "data", "skill" or "external"). Relative targets resolve under base
+// ("" = workspace root); absolute targets ("~" and file:// URLs
+// included) are taken as given. The reader is deliberately not fenced
+// in: the workspace is the agent's work scope, not a boundary around
+// the user's files, so the root is a label for the UI (breadcrumb, git
+// marks, where a directory link goes) rather than a gate. The surfaces
+// that do stay confined are the workspace tree (List, Search) and the
+// git diff.
+//
+// Symlinks are still evaluated: a target has to exist, and a link is
+// labelled by where it really points, so a workspace link to a file
+// outside reads as external.
 func (b *File) locatePath(target, base string) (string, string, error) {
 	if strings.TrimSpace(target) == "" {
 		return "", "", fmt.Errorf("file: empty path")
 	}
-	full := target
+	full, err := expandTarget(target)
+	if err != nil {
+		return "", "", err
+	}
 	if !filepath.IsAbs(full) {
 		wd := b.core.ActiveWorkDir()
 		if wd == "" {
@@ -238,13 +268,17 @@ func (b *File) locatePath(target, base string) (string, string, error) {
 		}
 		dir := wd
 		if base != "" {
-			if filepath.IsAbs(base) {
-				dir = base
+			expandedBase, err := expandTarget(base)
+			if err != nil {
+				return "", "", err
+			}
+			if filepath.IsAbs(expandedBase) {
+				dir = expandedBase
 			} else {
-				dir = filepath.Join(wd, filepath.FromSlash(base))
+				dir = filepath.Join(wd, filepath.FromSlash(expandedBase))
 			}
 		}
-		full = filepath.Join(dir, filepath.FromSlash(target))
+		full = filepath.Join(dir, filepath.FromSlash(full))
 	}
 	full = filepath.Clean(full)
 	eval, err := filepath.EvalSymlinks(full)
@@ -265,23 +299,81 @@ func (b *File) locatePath(target, base string) (string, string, error) {
 			return full, rr.name, nil
 		}
 	}
-	return "", "", fmt.Errorf("file: %q is outside the readable roots", target)
+	return full, "external", nil
 }
 
-// ResolvedTarget describes one containment-checked local target for
-// the file viewer and the link router.
+// expandTarget converts a user-facing target into a filesystem path: a
+// leading "~" becomes the user's home directory and a file:// URL is
+// decoded into the path it names. Everything else passes through
+// untouched.
+func expandTarget(target string) (string, error) {
+	target = strings.TrimSpace(target)
+	if strings.HasPrefix(strings.ToLower(target), "file:") {
+		return fileURLPath(target)
+	}
+	if target == "~" || strings.HasPrefix(target, "~/") ||
+		strings.HasPrefix(target, `~\`) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("file: expand %q: %w", target, err)
+		}
+		if target == "~" {
+			return home, nil
+		}
+		return filepath.Join(home, filepath.FromSlash(target[2:])), nil
+	}
+	return target, nil
+}
+
+// fileURLPath decodes one file:// URL into the local path it names.
+// "file:///path", "file://localhost/path" and the Windows drive form
+// "file:///C:/path" all name a local file; a URL naming another host
+// is rejected rather than silently treated as a relative path.
+func fileURLPath(target string) (string, error) {
+	u, err := url.Parse(target)
+	if err != nil {
+		return "", fmt.Errorf("file: parse %q: %w", target, err)
+	}
+	if !strings.EqualFold(u.Scheme, "file") {
+		return "", fmt.Errorf("file: %q is not a file URL", target)
+	}
+	if u.Host != "" && !strings.EqualFold(u.Host, "localhost") {
+		return "", fmt.Errorf("file: %q names the host %q", target, u.Host)
+	}
+	path := u.Path
+	if path == "" {
+		path = u.Opaque // "file:notes.md" carries the path as opaque.
+	}
+	if path == "" {
+		return "", fmt.Errorf("file: %q names no path", target)
+	}
+	// The URL form of a Windows drive path carries a leading slash
+	// that is not part of the path: file:///C:/dir -> C:/dir.
+	if runtime.GOOS == "windows" && len(path) > 2 &&
+		path[0] == '/' && path[2] == ':' {
+		path = path[1:]
+	}
+	return path, nil
+}
+
+// ResolvedTarget describes one local target for the file viewer and
+// the link router.
 type ResolvedTarget struct {
-	Path      string `json:"path"` // absolute resolved path
-	Rel       string `json:"rel"`  // workspace-relative display path
-	Root      string `json:"root"` // "workspace" | "data" | "skill"
+	Path string `json:"path"` // absolute resolved path
+	Rel  string `json:"rel"`  // workspace-relative display path
+	// Root labels where the target lives for the UI: "workspace",
+	// "data" (conversation media/exports), "skill" or "external" (any
+	// other local path).
+	Root      string `json:"root"`
 	Name      string `json:"name"`
 	IsDir     bool   `json:"is_dir"`
 	Size      int64  `json:"size,omitempty"`
 	MediaType string `json:"media_type,omitempty"`
 }
 
-// ResolveTarget resolves a viewer target (workspace-relative by
-// default, absolute for conversation media/exports) under containment.
+// ResolveTarget resolves a viewer target: relative targets against
+// base (the document's own directory, "" = the workspace root),
+// absolute ones — "~" and file:// included — as they are.
 func (b *File) ResolveTarget(target, base string) (ResolvedTarget, error) {
 	full, root, err := b.locatePath(target, base)
 	if err != nil {
@@ -310,8 +402,10 @@ func (b *File) ResolveTarget(target, base string) (ResolvedTarget, error) {
 // Previewable files carry Text or DataURL; everything else returns
 // metadata only so the UI can offer the system-app fallback.
 type FilePreview struct {
-	Path      string `json:"path"`
-	Rel       string `json:"rel"`
+	Path string `json:"path"`
+	Rel  string `json:"rel"`
+	// Root mirrors ResolvedTarget.Root: "workspace", "data", "skill"
+	// or "external".
 	Root      string `json:"root"`
 	Name      string `json:"name"`
 	Size      int64  `json:"size"`
@@ -322,9 +416,10 @@ type FilePreview struct {
 	Kind    string `json:"kind"`
 	Text    string `json:"text,omitempty"`
 	DataURL string `json:"data_url,omitempty"`
-	// StreamURL is the loopback URL a video plays from. It is only set
-	// for files under the workspace root; the media element streams and
-	// seeks through byte ranges, so no size cap applies.
+	// StreamURL is the loopback URL a video or PDF plays from, for
+	// workspace files and for local files outside it alike; the media
+	// element streams and seeks through byte ranges, so no size cap
+	// applies.
 	StreamURL string `json:"stream_url,omitempty"`
 	TooLarge  bool   `json:"too_large"`
 	// MtimeNS is the modification stamp of the file this payload was
@@ -373,7 +468,7 @@ func (b *File) ReadPreview(path string) (FilePreview, error) {
 	// instead of paying for a base64 copy in Go, a second one across the
 	// IPC bridge, and a third in the renderer's heap — which for a PDF is
 	// what the 40 MiB preview cap used to buy.
-	if url := b.streamURL(root, rel, mediaType); url != "" {
+	if url := b.streamURL(root, rel, full, mediaType); url != "" {
 		out.Kind = previewKind(mediaType)
 		out.StreamURL = url
 		return out, nil
@@ -414,17 +509,28 @@ func (b *File) ReadPreview(path string) (FilePreview, error) {
 }
 
 // streamURL returns the loopback URL a video or PDF preview loads from,
-// or "" when the file is not workspace media or streaming is
-// unavailable.
-func (b *File) streamURL(root, rel, mediaType string) string {
-	if b.mediaURL == nil || root != "workspace" || rel == "" {
-		return ""
-	}
+// or "" when the type does not stream or no stream builder is wired
+// (tests, headless). Workspace files go through the workspace-relative
+// route; anything else the reader opened goes through the absolute-file
+// route.
+func (b *File) streamURL(root, rel, full, mediaType string) string {
 	if filetype.Family(mediaType) != "video" &&
 		mediaType != "application/pdf" {
 		return ""
 	}
-	url, err := b.mediaURL(rel)
+	if root == "workspace" && rel != "" {
+		if b.mediaURL == nil {
+			return ""
+		}
+		if url, err := b.mediaURL(rel); err == nil {
+			return url
+		}
+		return ""
+	}
+	if b.mediaAbsURL == nil {
+		return ""
+	}
+	url, err := b.mediaAbsURL(full)
 	if err != nil {
 		return ""
 	}
@@ -484,9 +590,10 @@ func (b *File) OpenExternal(rawURL string) error {
 	}
 }
 
-// OpenPath opens a file or directory with the system default app.
-// Workspace-relative and absolute containment-root paths are both
-// accepted so conversation media can be handed to the system app.
+// OpenPath opens a file or directory with the system default app. It
+// hands the platform any local target: workspace-relative paths
+// resolve against the workspace, absolute ones — "~" and file://
+// included — are taken as they are.
 func (b *File) OpenPath(path string) error {
 	full, _, err := b.locatePath(path, "")
 	if err != nil {
@@ -509,7 +616,7 @@ func (b *File) OpenPath(path string) error {
 	return nil
 }
 
-// Reveal highlights a path in the platform file manager.
+// Reveal highlights any local path in the platform file manager.
 func (b *File) Reveal(path string) error {
 	full, _, err := b.locatePath(path, "")
 	if err != nil {

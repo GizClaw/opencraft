@@ -161,7 +161,7 @@ describe('FilePreviewModal', () => {
       preview('[secret](../../secret.txt)'),
     );
     apiMock.resolveTarget.mockRejectedValue(
-      new Error('file: "../../secret.txt" is outside the readable roots'),
+      new Error('file: resolve "../../secret.txt": no such file'),
     );
     render(<FilePreviewModal initial={target()} onClose={() => {}} />);
 
@@ -169,7 +169,7 @@ describe('FilePreviewModal', () => {
 
     await waitFor(() =>
       expect(useStore.getState().toasts.at(-1)?.text).toBe(
-        i18n.t('files.outsideRoots'),
+        'Error: file: resolve "../../secret.txt": no such file',
       ),
     );
     expect(

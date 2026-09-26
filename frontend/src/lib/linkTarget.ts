@@ -1,12 +1,12 @@
-import i18n from '../i18n';
 import { api } from './api';
 import type { ResolvedTarget } from './types';
 
 // LinkTarget is one clicked document link after classification. Links
 // appear in chat markdown, SKILL.md bodies and file previews, and every
 // surface has to dispose of them the same way: URL schemes go to the
-// system browser; everything else resolves under the backend's read
-// roots (workspace / data / skill) so the caller can render it.
+// system browser; everything else — file:// URLs and Windows drive
+// paths included — resolves as a local path so the caller can render
+// it.
 export type LinkTarget =
   | { kind: 'ignored' }
   | { kind: 'external'; url: string }
@@ -15,11 +15,15 @@ export type LinkTarget =
 
 // Windows drive paths (C:\dir\file.md) look like URL schemes but are
 // plain local targets, so they take the resolve path like any other.
+// A file:// URL names one local file, so it does too.
 const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/;
+const FILE_URL = /^file:/i;
 const URL_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 
 export function isExternalHref(href: string): boolean {
-  return !WINDOWS_DRIVE.test(href) && URL_SCHEME.test(href);
+  return (
+    !WINDOWS_DRIVE.test(href) && !FILE_URL.test(href) && URL_SCHEME.test(href)
+  );
 }
 
 // resolveLinkTarget classifies one click without side effects, so each
@@ -37,22 +41,12 @@ export async function resolveLinkTarget(
   return target.is_dir ? { kind: 'dir', target } : { kind: 'file', target };
 }
 
-// linkErrorMessage maps a resolve failure onto the copy the UI shows.
-// Containment rejections get the friendly wording; anything else keeps
-// the backend's message.
-export function linkErrorMessage(err: unknown): string {
-  const message = String(err);
-  return message.includes('outside the readable roots')
-    ? i18n.t('files.outsideRoots')
-    : message;
-}
-
 // followLinkTarget performs one clicked link's side effects: URL
 // schemes reach the system browser, directories the system file manager
 // (or the caller's own handler, e.g. the chat's file tree) and files
 // the caller's renderer — a viewer tab in the chat, a dialog page
-// anywhere else. Failures land in onError with the UI wording already
-// applied, so a click never dies silently.
+// anywhere else. A failure lands in onError as the backend's message,
+// so a click never dies silently.
 export async function followLinkTarget(
   href: string,
   base: string,
@@ -67,7 +61,7 @@ export async function followLinkTarget(
   try {
     link = await resolveLinkTarget(href, base);
   } catch (err) {
-    onError(linkErrorMessage(err));
+    onError(String(err));
     return;
   }
   if (link.kind === 'ignored') return;

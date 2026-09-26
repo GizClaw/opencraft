@@ -697,7 +697,10 @@ export interface FileNode {
 }
 
 // ResolvedTarget mirrors the File.ResolveTarget binding result: one
-// containment-checked local file or directory.
+// local file or directory. Root labels where it lives for the UI —
+// "workspace", "data" (conversation media/exports), "skill" or
+// "external" (any other local path) — and only workspace targets carry
+// a workspace-relative rel.
 export interface ResolvedTarget {
   path: string;
   rel: string;
@@ -714,6 +717,7 @@ export interface ResolvedTarget {
 export interface FilePreview {
   path: string;
   rel: string;
+  /** Mirrors ResolvedTarget.root: workspace/data/skill/external. */
   root: string;
   name: string;
   size: number;

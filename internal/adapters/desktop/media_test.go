@@ -277,6 +277,81 @@ func TestMediaServerRejectsForeignRequests(t *testing.T) {
 	}
 }
 
+// TestMediaServerStreamsMintedFiles pins the absolute-file route: the
+// viewer mints one URL per file it opens outside the workspace, the id
+// in the query is the capability, and neither an unknown id nor a bare
+// token opens anything.
+func TestMediaServerStreamsMintedFiles(t *testing.T) {
+	root := t.TempDir()
+	server, err := newMediaServer(func() string { return root })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	outside := t.TempDir()
+	data := mp4Bytes()
+	clip := filepath.Join(outside, "clip.mp4")
+	if err := os.WriteFile(clip, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	link, err := server.AbsoluteURL(clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Get(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "video/") {
+		t.Errorf("content type = %q, want a video type", got)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, data) {
+		t.Errorf("body = %d bytes, want %d", len(body), len(data))
+	}
+
+	// The same path keeps its URL, so reloading a preview does not grow
+	// the table.
+	again, err := server.AbsoluteURL(clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != link {
+		t.Errorf("second URL = %q, want %q", again, link)
+	}
+
+	base := "http://" + server.listener.Addr().String() + "/media/" + server.token
+	respUnknown, err := http.Get(base + "?id=deadbeef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	respUnknown.Body.Close()
+	if respUnknown.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown id status = %d, want 404", respUnknown.StatusCode)
+	}
+	respBare, err := http.Get(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	respBare.Body.Close()
+	if respBare.StatusCode != http.StatusNotFound {
+		t.Errorf("bare token status = %d, want 404", respBare.StatusCode)
+	}
+
+	if _, err := server.AbsoluteURL("clip.mp4"); err == nil {
+		t.Error("relative path unexpectedly minted a media URL")
+	}
+}
+
 // TestMediaServerFollowsWorkspaceSwitch pins that the served root is
 // resolved per request rather than captured at construction.
 func TestMediaServerFollowsWorkspaceSwitch(t *testing.T) {
