@@ -42,7 +42,8 @@ func (i workspaceImporter) State(
 func (i workspaceImporter) SetState(
 	ctx context.Context, conversationID, name string, data []byte,
 ) error {
-	return i.store.SetConversationState(ctx, conversationID, name, data)
+	return mapRetiredError(i.store.SetConversationState(
+		ctx, conversationID, name, data))
 }
 
 // BackfillSearchIndex indexes the archived messages a database written
@@ -57,6 +58,25 @@ func (i workspaceImporter) BackfillSearchIndex(ctx context.Context) error {
 // The order mirrors the pre-migration importer so an interrupted run
 // resumes from the same shape.
 func (i workspaceImporter) ImportConversation(
+	ctx context.Context, data compat.WorkspaceImport,
+) error {
+	if err := i.importConversation(ctx, data); err != nil {
+		return mapRetiredError(err)
+	}
+	return nil
+}
+
+// mapRetiredError maps this store's retired-id refusal to the
+// compatibility layer's own answer, so the walker can skip a session
+// the user deleted without depending on the store's error vocabulary.
+func mapRetiredError(err error) error {
+	if errors.Is(err, ErrRetired) {
+		return fmt.Errorf("%w: %w", compat.ErrConversationRetired, err)
+	}
+	return err
+}
+
+func (i workspaceImporter) importConversation(
 	ctx context.Context, data compat.WorkspaceImport,
 ) error {
 	conv := Conversation{

@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -901,26 +902,27 @@ func (s *Store) FirstUserMessage(id string) (string, error) {
 }
 
 // SeedStartTitle records the provisional archive fallback title on the
-// conversation row as soon as the session's first turn starts. The row
+// conversation row as soon as the session's first turn starts, and
+// ensures the row exists even when the first message derives no title
+// (a message whose only text part is empty): every later writer of that
+// turn — the usage cache, the settings documents, the archive — assumes
+// the row is there, and creating it is the start's job precisely so a
+// turn that fails before archiving cannot lose its accounting. The row
 // intentionally has zero archived turns until the turn commits, so List
-// must keep it visible. The first archive replaces this provisional
-// title with the archive's own first-user-message fallback (subsequent
-// archives preserve it), and the LLM auto-title stays free to overlay
-// conversation_state["title"] afterwards.
+// must keep it visible once it carries a title or usage. The first
+// archive replaces this provisional title with the archive's own
+// first-user-message fallback (subsequent archives preserve it), and the
+// LLM auto-title stays free to overlay conversation_state["title"]
+// afterwards.
 func (s *Store) SeedStartTitle(
 	ctx context.Context, id string, msgs []message.Message,
 ) error {
 	if err := requireID(id); err != nil {
 		return err
 	}
-	archived := filterArchive(msgs)
-	title := firstArchiveTitle(archived)
-	if title == "" {
-		return nil
-	}
 	return s.db.EnsureConversation(ctx, state.Conversation{
 		ID:    id,
-		Title: title,
+		Title: firstArchiveTitle(filterArchive(msgs)),
 	})
 }
 
@@ -950,58 +952,78 @@ func (s *Store) LoadUsage(ctx context.Context, id string) (Usage, error) {
 // RecordUsage persists the cumulative token usage for a session. The
 // number lives on the conversations row as a cache beside the archive
 // (state.Conversation documents the ownership): it answers "how much
-// did this chat cost" for the UI without summing the transcript.
+// did this chat cost" for the UI without summing the transcript. It
+// writes the totals verbatim, replacing whatever was there; the writers
+// production uses are AddUsage (a turn's delta) and RecordUsageIfEmpty
+// (an import's source-recorded total), so this one is the store's
+// "these are the totals" form for tests and tools rather than a third
+// accounting rule.
+//
+// The write never creates the row it writes to — see writeUsage.
 func (s *Store) RecordUsage(ctx context.Context, id string, usage Usage) error {
 	if err := requireID(id); err != nil {
 		return err
 	}
 	usage.Model = NormalizeModelName(usage.Model)
-	c, err := s.db.Conversation(ctx, id)
-	if err == state.ErrNotFound {
-		c = state.Conversation{ID: id, CreatedAt: time.Now().UTC()}
-		if err := s.db.EnsureConversation(ctx, c); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
 	raw, err := json.Marshal(usage)
 	if err != nil {
 		return err
 	}
-	c.UsageJSON = raw
-	c.UpdatedAt = time.Now().UTC()
-	return s.db.UpsertConversation(ctx, c)
+	_, err = s.writeUsage(ctx, id, raw)
+	return err
 }
 
+// UsageWrite names what a guarded cumulative-usage write did. "Nothing
+// was written" has three different meanings here, and the import path
+// has to tell them apart before it forwards a bundle's tokens to the
+// user-level tables: already accounted for (forwarding would double
+// count) is not gone (nothing left to write to, but the tokens were
+// spent).
+type UsageWrite int
+
+const (
+	// UsageNotWritten is the zero value: the caller had no totals to
+	// store, so there was no write to make.
+	UsageNotWritten UsageWrite = iota
+	// UsageWritten: the write landed; the conversation's totals now
+	// include the caller's delta.
+	UsageWritten
+	// UsageAlreadyRecorded: the conversation already carried totals, so
+	// the delta was skipped rather than counted twice.
+	UsageAlreadyRecorded
+	// UsageGone: the conversation row does not exist (it was deleted),
+	// so there was nothing to write to.
+	UsageGone
+)
+
 // RecordUsageIfEmpty persists cumulative usage for a session only when
-// it has no recorded totals yet, returning whether the write happened.
-// The read-if-empty-and-set check runs under the store mutex, so
-// concurrent imports of the same source cannot double count imported
-// token totals.
+// it has no recorded totals yet, reporting which of those cases the
+// call was. The read-if-empty-and-set check runs under the store mutex,
+// so concurrent imports of the same source cannot double count imported
+// token totals. The write never creates the row it writes to (see
+// writeUsage), which is why a deleted conversation answers UsageGone
+// instead of rebuilding itself.
 func (s *Store) RecordUsageIfEmpty(
 	ctx context.Context,
 	id string,
 	usage Usage,
-) (bool, error) {
+) (UsageWrite, error) {
 	if err := requireID(id); err != nil {
-		return false, err
+		return UsageNotWritten, err
 	}
 	if usage.TotalTokens <= 0 {
-		return false, nil
+		return UsageNotWritten, nil
 	}
 	usage.Model = NormalizeModelName(usage.Model)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	c, err := s.db.Conversation(ctx, id)
-	if err == state.ErrNotFound {
-		c = state.Conversation{ID: id, CreatedAt: time.Now().UTC()}
-		if err := s.db.EnsureConversation(ctx, c); err != nil {
-			return false, err
-		}
-	} else if err != nil {
-		return false, err
+	if errors.Is(err, state.ErrNotFound) {
+		return UsageGone, skippedUsageWrite(ctx, id)
+	}
+	if err != nil {
+		return UsageNotWritten, err
 	}
 	if len(c.UsageJSON) > 0 {
 		var existing Usage
@@ -1009,16 +1031,23 @@ func (s *Store) RecordUsageIfEmpty(
 			telemetry.WarnErr(ctx, "sessions: decode usage before empty-seed failed", err,
 				otellog.String("conversation.id", id))
 		} else if existing.TotalTokens > 0 {
-			return false, nil
+			return UsageAlreadyRecorded, nil
 		}
 	}
 	raw, err := json.Marshal(usage)
 	if err != nil {
-		return false, err
+		return UsageNotWritten, err
 	}
-	c.UsageJSON = raw
-	c.UpdatedAt = time.Now().UTC()
-	return true, s.db.UpsertConversation(ctx, c)
+	written, err := s.writeUsage(ctx, id, raw)
+	if err != nil {
+		return UsageNotWritten, err
+	}
+	if !written {
+		// The row vanished between the read above and the write: the
+		// delete won. That is "gone", not "already accounted for".
+		return UsageGone, nil
+	}
+	return UsageWritten, nil
 }
 
 // AddUsage accumulates one usage delta onto the cumulative usage
@@ -1038,12 +1067,10 @@ func (s *Store) AddUsage(ctx context.Context, id string, delta Usage) error {
 	defer s.mu.Unlock()
 
 	c, err := s.db.Conversation(ctx, id)
-	if err == state.ErrNotFound {
-		c = state.Conversation{ID: id, CreatedAt: time.Now().UTC()}
-		if err := s.db.EnsureConversation(ctx, c); err != nil {
-			return err
-		}
-	} else if err != nil {
+	if errors.Is(err, state.ErrNotFound) {
+		return skippedUsageWrite(ctx, id)
+	}
+	if err != nil {
 		return err
 	}
 	var usage Usage
@@ -1071,9 +1098,37 @@ func (s *Store) AddUsage(ctx context.Context, id string, delta Usage) error {
 	if err != nil {
 		return err
 	}
-	c.UsageJSON = raw
-	c.UpdatedAt = time.Now().UTC()
-	return s.db.UpsertConversation(ctx, c)
+	_, err = s.writeUsage(ctx, id, raw)
+	return err
+}
+
+// writeUsage persists one conversation's cached usage block through the
+// store's UPDATE-only path, reporting whether the row was there to
+// update. A conversation that disappeared while the write was in flight
+// is not an error: the user deleted it, its usage went with it, and
+// there is nothing left to update. Recreating the row instead — which is
+// what this used to do — brought a deleted conversation back as an empty
+// "(empty)" entry in the sidebar, and the frontend's delete tombstone
+// then made that entry impossible to open.
+func (s *Store) writeUsage(ctx context.Context, id string, raw []byte) (bool, error) {
+	err := s.db.UpdateConversationUsage(ctx, id, raw, time.Now().UTC())
+	if errors.Is(err, state.ErrNotFound) {
+		return false, skippedUsageWrite(ctx, id)
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// skippedUsageWrite reports a usage write that found no conversation.
+// That is a normal outcome of a delete racing a background call (a
+// detached review, an auto-title), not a failure: log it at info level
+// so a session whose totals stopped moving stays explainable.
+func skippedUsageWrite(ctx context.Context, id string) error {
+	telemetry.Info(ctx, "sessions: usage write skipped; conversation is gone",
+		otellog.String("conversation.id", id))
+	return nil
 }
 
 // Remove removes one conversation and its on-disk directory.

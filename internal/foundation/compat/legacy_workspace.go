@@ -3,6 +3,7 @@ package compat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -119,6 +120,16 @@ func importLegacyConversation(
 	if err := importer.SetState(
 		ctx, id, legacyMigratingKey, []byte("1"),
 	); err != nil {
+		if errors.Is(err, ErrConversationRetired) {
+			// The user deleted this conversation after it was
+			// adopted, and the store refuses documents for it. The
+			// marker only exists to resume an interrupted import, and
+			// there is nothing to import into a deleted conversation.
+			telemetry.Info(ctx,
+				"compat: legacy session skipped; its conversation was deleted",
+				otellog.String("session", id))
+			return nil
+		}
 		return err
 	}
 
@@ -214,6 +225,14 @@ func importLegacyConversation(
 	}
 	payload.State = docs
 	if err := importer.ImportConversation(ctx, payload); err != nil {
+		if errors.Is(err, ErrConversationRetired) {
+			// The delete landed between the marker above and this
+			// write: the same skip, one race later.
+			telemetry.Info(ctx,
+				"compat: legacy session skipped; its conversation was deleted",
+				otellog.String("session", id))
+			return nil
+		}
 		return err
 	}
 	if err := markLegacyMigrated(ctx, importer, id); err != nil {
@@ -237,7 +256,13 @@ func importLegacyConversation(
 func markLegacyMigrated(
 	ctx context.Context, importer WorkspaceImporter, id string,
 ) error {
-	return importer.SetState(ctx, id, legacyMigratedKey, []byte("1"))
+	err := importer.SetState(ctx, id, legacyMigratedKey, []byte("1"))
+	if errors.Is(err, ErrConversationRetired) {
+		// The conversation was deleted since this directory was last
+		// read; there is nothing left to mark as migrated.
+		return nil
+	}
+	return err
 }
 
 func readLegacyMeta(dir string) (legacyWorkspaceMeta, error) {

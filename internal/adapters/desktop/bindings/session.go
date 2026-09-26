@@ -312,7 +312,10 @@ func (b *Session) Rename(id, title string) error {
 // atomically mints its replacement. Removing a conversation with a
 // live turn cancels the run and waits for its terminal persistence
 // before the rows go away, so the delete never races a running
-// session's final writes.
+// session's final writes. Deleting an id this Host already deleted
+// purges whatever came back under it and still reports success: "this
+// conversation is gone" is the request, and the second call is the same
+// request, not a new one.
 func (b *Session) Delete(id string) (SessionDeleteResult, error) {
 	ctx := b.core.Shell.Context()
 	workDir := b.core.ActiveWorkDir()

@@ -46,6 +46,32 @@ func writeFakeConfig(t *testing.T, configDir, baseURL string) {
 	}
 }
 
+// acquireHostFixture builds the standard Host test fixture: a fake
+// provider configured under a throwaway data dir, a manager, and one
+// acquired Host that the test closes with itself. It returns the host
+// and the workspace directory the runs work in.
+func acquireHostFixture(
+	t *testing.T, provider *fakeprovider.Server,
+) (*host.Host, string) {
+	t.Helper()
+	workDir := t.TempDir()
+	dataDir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dataDir, "home"))
+	configDir := filepath.Join(dataDir, "config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeConfig(t, configDir, provider.URL())
+
+	mgr := host.NewManagerAt(dataDir, configDir)
+	h, err := mgr.Acquire(context.Background(), workDir, interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire host: %v", err)
+	}
+	t.Cleanup(func() { _ = h.Close() })
+	return h, workDir
+}
+
 func TestHostRunWritesFileEndToEnd(t *testing.T) {
 	provider := fakeprovider.New(t,
 		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{

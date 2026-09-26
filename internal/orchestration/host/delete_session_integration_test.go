@@ -2,16 +2,14 @@ package host_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
-	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
@@ -24,23 +22,8 @@ func TestHostDeleteConversationCancelsLiveRun(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
 	gate := provider.HoldNext()
 	defer gate.Release()
-
-	workDir := t.TempDir()
-	dataDir := t.TempDir()
-	t.Setenv("HOME", filepath.Join(dataDir, "home"))
-	configDir := filepath.Join(dataDir, "config")
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeFakeConfig(t, configDir, provider.URL())
-
-	mgr := host.NewManagerAt(dataDir, configDir)
+	h, _ := acquireHostFixture(t, provider)
 	ctx := context.Background()
-	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
-	if err != nil {
-		t.Fatalf("acquire host: %v", err)
-	}
-	defer func() { _ = h.Close() }()
 
 	run, err := h.StartRun(ctx, host.RunOptions{
 		Message: message.NewTextMessage(message.RoleUser, "blocked run"),
@@ -99,28 +82,106 @@ func TestHostDeleteConversationCancelsLiveRun(t *testing.T) {
 	}
 }
 
+// TestHostDeleteConversationRemovesRowsThatCameBack pins the repeat
+// delete path. The tombstone stops the id from being minted again, but
+// the rows are what the sidebar lists: an entry that reappears under a
+// tombstoned id (a late write from an older build, a store restored out
+// of band) must still be deletable — otherwise it stays on screen for
+// the rest of the Host's life as an entry that can neither be opened nor
+// deleted again, because the frontend has the id tombstoned too. The
+// repeat call also stays a success, and its purge takes the checkpoint a
+// resurrected id could otherwise be recovered from.
+func TestHostDeleteConversationRemovesRowsThatCameBack(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	h, _ := acquireHostFixture(t, provider)
+	ctx := context.Background()
+
+	id, err := h.Sessions().Create()
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if err := h.DeleteConversation(ctx, id); err != nil {
+		t.Fatalf("DeleteConversation: %v", err)
+	}
+	// The row is back, the way a late usage write from an older build
+	// (or a store restored from a backup) put it there: a build that
+	// does not know about deleted_conversations upserts the row
+	// directly, carrying the usage totals the write was about. The
+	// fixture writes it the same way, behind every guarded writer the
+	// store owns, because that is the only way the row can come back.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := h.Sessions().State().Handle().SQLDB().ExecContext(ctx, `
+		INSERT INTO conversations(
+			id, title, created_at, updated_at, turn_count, message_count,
+			usage_json, import_source, import_ready
+		) VALUES (?, '', ?, ?, 0, 0, ?, '', 0)
+		ON CONFLICT(id) DO UPDATE SET usage_json = excluded.usage_json`,
+		id, now, now, `{"total_tokens":42}`); err != nil {
+		t.Fatalf("recreate conversation row: %v", err)
+	}
+	// A crash-recovery checkpoint for the id, which the purge has to
+	// take with the rows.
+	if err := h.Sessions().Save(ctx, agent.Checkpoint{
+		ExecID:    ids.RunPrefix + "came-back",
+		Steps:     []string{"world"},
+		Iteration: 1,
+		Board:     &agent.BoardSnapshot{Vars: map[string]any{}},
+		Attributes: map[string]string{
+			"oc.conversation_id": id,
+		},
+		Timestamp: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed run checkpoint: %v", err)
+	}
+
+	// The resurrected entry is what the sidebar reads, so the fixture
+	// asserts the symptom the repeat delete exists for.
+	listed := func() bool {
+		t.Helper()
+		metas, err := h.Sessions().List()
+		if err != nil {
+			t.Fatalf("list conversations: %v", err)
+		}
+		for _, meta := range metas {
+			if meta.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !listed() {
+		t.Fatal("setup: the resurrected conversation is not listed")
+	}
+
+	if err := h.DeleteConversation(ctx, id); err != nil {
+		t.Fatalf("second DeleteConversation: %v", err)
+	}
+	if h.Sessions().Exists(id) {
+		t.Fatal("conversation still exists after the repeat delete")
+	}
+	if listed() {
+		t.Fatal("conversation still listed after the repeat delete")
+	}
+	if runs := runCheckpointIDs(t, h); len(runs) != 0 {
+		t.Fatalf("run checkpoints after the repeat delete = %v, want none", runs)
+	}
+	// The tombstone outlives both deletes and the purge: a stale start
+	// is refused for the same reason it was refused the first time.
+	if _, err := h.StartRun(ctx, host.RunOptions{
+		Message:   message.NewTextMessage(message.RoleUser, "again"),
+		ContextID: id,
+	}); err == nil {
+		t.Fatal("StartRun on a repeatedly deleted session succeeded, want refusal")
+	}
+}
+
 // TestHostDeleteConversationRemovesIdleConversation pins the no-run
 // path: an idle conversation's settings rows disappear with the
 // delete, and deleting an unknown id stays a no-op.
 func TestHostDeleteConversationRemovesIdleConversation(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
-
-	workDir := t.TempDir()
-	dataDir := t.TempDir()
-	t.Setenv("HOME", filepath.Join(dataDir, "home"))
-	configDir := filepath.Join(dataDir, "config")
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeFakeConfig(t, configDir, provider.URL())
-
-	mgr := host.NewManagerAt(dataDir, configDir)
+	h, _ := acquireHostFixture(t, provider)
 	ctx := context.Background()
-	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
-	if err != nil {
-		t.Fatalf("acquire host: %v", err)
-	}
-	defer func() { _ = h.Close() }()
 
 	id := ids.NewSession()
 	if err := h.Sessions().SetModel(ctx, id, "fake-model"); err != nil {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -475,7 +476,7 @@ func TestUsageModelKeysNormalizeLegacyProviderPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !recorded {
+	if recorded != UsageWritten {
 		t.Fatal("first empty-seed write was skipped")
 	}
 	got, err := store.LoadUsage(ctx, id)
@@ -663,6 +664,159 @@ func TestRemoveRejectsTraversalID(t *testing.T) {
 	}
 }
 
+// TestLateUsageWritesNeverResurrectDeletedConversation pins the write
+// rule usage shares with the archive: usage_json is a cache on the
+// conversations row, and only the transcript writers create that row. A
+// writer that arrives after the user deleted the conversation — a
+// detached review that outlives its turn, a turn end that raced the
+// delete — used to recreate the row, which put the conversation back in
+// the sidebar as a zero-turn "(empty)" entry (List keeps rows that carry
+// usage) that the frontend's delete tombstone then made impossible to
+// open.
+func TestLateUsageWritesNeverResurrectDeletedConversation(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	ctx := context.Background()
+
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(ctx, id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "this chat is going away"),
+	}); err != nil {
+		t.Fatalf("AppendTurn: %v", err)
+	}
+	if err := store.Remove(ctx, id); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	// Every usage writer a background call can still reach afterwards.
+	late := Usage{Model: "deepseek-flash", InputTokens: 906, TotalTokens: 911}
+	if err := store.AddUsage(ctx, id, late); err != nil {
+		t.Fatalf("AddUsage after delete: %v", err)
+	}
+	if err := store.RecordUsage(ctx, id, late); err != nil {
+		t.Fatalf("RecordUsage after delete: %v", err)
+	}
+	recorded, err := store.RecordUsageIfEmpty(ctx, id, late)
+	if err != nil {
+		t.Fatalf("RecordUsageIfEmpty after delete: %v", err)
+	}
+	if recorded != UsageGone {
+		t.Fatalf("RecordUsageIfEmpty after delete = %v, want UsageGone", recorded)
+	}
+
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("list after late usage writes = %+v, want empty", list)
+	}
+	if usage, err := store.LoadUsage(ctx, id); err != nil || usage != (Usage{}) {
+		t.Fatalf("LoadUsage after delete = %+v, %v; want zero", usage, err)
+	}
+	if store.Exists(id) {
+		t.Fatal("conversation came back after a late usage write")
+	}
+}
+
+// TestLateUsageWriteLosesToADeleteThatLandsMidWrite pins the
+// interleaved ordering, not only the sequential one: the delete lands
+// between the writer's read and its UPDATE. Two handles on one database
+// model what the store's own mutex cannot serialize — the second
+// process the workspace allows (a headless run beside the desktop)
+// deleting the conversation the other one is writing about — and the
+// write has to lose without rebuilding the row it was writing to. Run
+// with -race, the hammer also covers the state the invalidated read
+// leaves behind.
+func TestLateUsageWriteLosesToADeleteThatLandsMidWrite(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions")
+	writer, err := newMigratedStore(root, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = writer.CloseDB() }()
+	deleter, err := newMigratedStore(root, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = deleter.CloseDB() }()
+	ctx := context.Background()
+
+	// Bounded: enough interleavings for the race to land, few enough to
+	// stay a unit test.
+	const rounds = 40
+	for i := 0; i < rounds; i++ {
+		id, err := writer.Create()
+		if err != nil {
+			t.Fatalf("round %d: create conversation: %v", i, err)
+		}
+		if err := writer.AppendTurn(ctx, id, []message.Message{
+			message.NewTextMessage(message.RoleUser, "going away"),
+		}); err != nil {
+			t.Fatalf("round %d: append turn: %v", i, err)
+		}
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for _, write := range []func() error{
+			func() error {
+				return writer.AddUsage(ctx, id, Usage{TotalTokens: 1})
+			},
+			func() error {
+				outcome, err := writer.RecordUsageIfEmpty(ctx, id,
+					Usage{TotalTokens: 2})
+				if err != nil {
+					return err
+				}
+				// Reading the row and losing it to the delete is the
+				// ordering under test; being told the row was already
+				// gone is its sequential twin.
+				if outcome != UsageGone && outcome != UsageWritten &&
+					outcome != UsageAlreadyRecorded {
+					return fmt.Errorf("outcome = %v", outcome)
+				}
+				return nil
+			},
+			func() error {
+				return deleter.Remove(ctx, id)
+			},
+		} {
+			wg.Add(1)
+			go func(write func() error) {
+				defer wg.Done()
+				<-start
+				if err := write(); err != nil {
+					t.Errorf("round %d: %v", i, err)
+				}
+			}(write)
+		}
+		close(start)
+		wg.Wait()
+
+		// Whatever the order, the conversation is gone and stays gone:
+		// a write that read the row before the delete must not put it
+		// back, and a zero-turn row with usage is exactly the "(empty)"
+		// entry the sidebar lists.
+		list, err := deleter.List()
+		if err != nil {
+			t.Fatalf("round %d: list: %v", i, err)
+		}
+		if len(list) != 0 {
+			t.Fatalf("round %d: list after the delete = %+v, want empty", i, list)
+		}
+		if usage, err := writer.LoadUsage(ctx, id); err != nil || usage != (Usage{}) {
+			t.Fatalf("round %d: usage after the delete = %+v, %v; want zero",
+				i, usage, err)
+		}
+	}
+}
+
 func TestListMeta(t *testing.T) {
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
@@ -754,7 +908,7 @@ func TestRecordUsageIfEmptySeedsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !recorded {
+	if recorded != UsageWritten {
 		t.Fatal("first empty-seed write was skipped")
 	}
 	got, err := store.LoadUsage(ctx, id)
@@ -770,7 +924,7 @@ func TestRecordUsageIfEmptySeedsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recorded {
+	if recorded != UsageAlreadyRecorded {
 		t.Fatal("second empty-seed write was not skipped")
 	}
 	got, err = store.LoadUsage(ctx, id)
@@ -789,7 +943,7 @@ func TestRecordUsageIfEmptySeedsOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recorded {
+	if recorded != UsageNotWritten {
 		t.Fatal("zero-token seed was recorded")
 	}
 }

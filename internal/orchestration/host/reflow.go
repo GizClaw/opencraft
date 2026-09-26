@@ -132,7 +132,10 @@ func (h *Host) reflowLoop(ctx context.Context, events <-chan event.Envelope) {
 // subagent conversations never receive notes, and the note's run key
 // is checked first so a redelivered event — a restart re-reading the
 // board, a backend publishing the terminal transition twice — cannot
-// append the same result a second time.
+// append the same result a second time. A conversation the user
+// deleted while the delegation was still running is dropped too: the
+// note has no conversation to land in, and writing it anyway is how a
+// finished subagent used to resurrect the parent it was reporting to.
 func (h *Host) reflowDelegation(ctx context.Context, result subagents.Result) {
 	store := h.SessionsStore()
 	if store == nil {
@@ -140,6 +143,12 @@ func (h *Host) reflowDelegation(ctx context.Context, result subagents.Result) {
 	}
 	conversationID := result.ConversationID
 	if ids.IsContext(conversationID) {
+		return
+	}
+	if h.conversationGone(ConversationID(conversationID)) {
+		telemetry.Info(ctx, "host: drop delegation reflow for a deleted conversation",
+			otellog.String("conversation.id", conversationID),
+			otellog.String("card.id", result.CardID))
 		return
 	}
 	if !store.Exists(conversationID) {
@@ -177,6 +186,16 @@ func (h *Host) reflowDelegation(ctx context.Context, result subagents.Result) {
 	if err := store.AppendTurnWithOriginAndRunID(
 		ctx, conversationID, runKey, origin, []message.Message{note},
 	); err != nil {
+		if errors.Is(err, state.ErrRetired) {
+			// The delete landed between the guard above and the
+			// append: the id is retired, so the append was refused
+			// and there is nothing to write to. Same outcome as the
+			// guard, one race later.
+			telemetry.Info(ctx, "host: drop delegation reflow for a deleted conversation",
+				otellog.String("conversation.id", conversationID),
+				otellog.String("card.id", result.CardID))
+			return
+		}
 		telemetry.WarnErr(ctx, "host: append delegation reflow note failed", err,
 			otellog.String("conversation.id", conversationID),
 			otellog.String("card.id", result.CardID))

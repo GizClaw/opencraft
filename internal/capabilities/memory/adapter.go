@@ -189,6 +189,14 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 	return desc, nil
 }
 
+// UpsertSummaryNode writes one fold node, unless its conversation is
+// gone: the insert is conditioned on the id still being that
+// conversation's (a summary describes a transcript, and a transcript
+// the user deleted has nothing left to describe). The condensation
+// that produces a node runs detached from the turn, so it can land
+// after a delete; without the condition it would rebuild a node that
+// DeleteConversationRows had just removed, and the next assembly would
+// pack a summary of deleted content into the model window.
 func (a *sqliteTurnStore) UpsertSummaryNode(
 	ctx context.Context, node summary.SummaryNode,
 ) error {
@@ -208,11 +216,17 @@ func (a *sqliteTurnStore) UpsertSummaryNode(
 	if err != nil {
 		return fmt.Errorf("memory: marshal summary content: %w", err)
 	}
-	_, err = a.db.SQLDB().ExecContext(ctx, `
+	res, err := a.db.SQLDB().ExecContext(ctx, `
 		INSERT INTO summary_nodes(
 			id, thread_id, level, parent_ids, source_ids, summary,
 			created_at, updated_at, metadata
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE EXISTS (
+			SELECT 1 FROM conversations WHERE id = ?
+		) AND NOT EXISTS (
+			SELECT 1 FROM deleted_conversations WHERE id = ?
+		)
 		ON CONFLICT(id) DO UPDATE SET
 			parent_ids = excluded.parent_ids,
 			source_ids = excluded.source_ids,
@@ -224,10 +238,25 @@ func (a *sqliteTurnStore) UpsertSummaryNode(
 		string(parents), string(sources), string(content),
 		node.CreatedAt.UTC().Format(time.RFC3339Nano),
 		node.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		string(metadata),
+		string(metadata), node.ThreadID, node.ThreadID,
 	)
 	if err != nil {
 		return fmt.Errorf("memory: upsert summary node: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("memory: upsert summary node: %w", err)
+	}
+	if affected == 0 {
+		// The conversation is gone: deleted while the fold (or its
+		// detached condensation) was in flight, or a thread id this
+		// store keeps no row for. Nothing to write to, and the node
+		// must not appear: report success, the way the usage writers
+		// treat a write that arrives after the delete.
+		telemetry.Info(ctx,
+			"memory: summary write skipped; conversation is gone",
+			otellog.String("conversation.id", node.ThreadID),
+			otellog.String("node.id", node.ID))
 	}
 	return nil
 }

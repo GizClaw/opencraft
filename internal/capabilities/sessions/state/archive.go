@@ -137,7 +137,10 @@ func scanArchiveTurn(row rowScanner) (ArchiveTurn, error) {
 	return t, nil
 }
 
-// EnsureConversation inserts a conversation row when missing.
+// EnsureConversation inserts a conversation row when missing. A retired
+// id is refused instead: the caller's write would recreate a
+// conversation the user deleted, so the whole insert is conditioned on
+// the id not being recorded in deleted_conversations (see ErrRetired).
 func (s *Store) EnsureConversation(ctx context.Context, c Conversation) error {
 	if strings.TrimSpace(c.ID) == "" {
 		return fmt.Errorf("state: conversation id is required")
@@ -152,25 +155,48 @@ func (s *Store) EnsureConversation(ctx context.Context, c Conversation) error {
 	if len(c.UsageJSON) == 0 {
 		c.UsageJSON = []byte("{}")
 	}
-	_, err := s.db.SQLDB().ExecContext(ctx, `
+	res, err := s.db.SQLDB().ExecContext(ctx, `
 		INSERT INTO conversations(
 			id, title, created_at, updated_at, turn_count, message_count,
 			usage_json, import_source, import_ready
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE NOT EXISTS (
+			SELECT 1 FROM deleted_conversations WHERE id = ?
+		)
 		ON CONFLICT(id) DO NOTHING`,
 		c.ID, c.Title,
 		c.CreatedAt.UTC().Format(time.RFC3339Nano),
 		c.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		c.TurnCount, c.MessageCount, string(c.UsageJSON),
-		c.ImportSource, boolInt(c.ImportReady),
+		c.ImportSource, boolInt(c.ImportReady), c.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("state: ensure conversation: %w", err)
 	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("state: ensure conversation: %w", err)
+	}
+	if affected == 0 {
+		// Either the row was already there (the common case) or the id
+		// is retired. The read below only classifies the refusal — the
+		// guarded INSERT above is what makes it atomic.
+		retired, err := s.Retired(ctx, c.ID)
+		if err != nil {
+			return err
+		}
+		if retired {
+			return ErrRetired
+		}
+	}
 	return nil
 }
 
-// UpsertConversation overwrites mutable conversation metadata.
+// UpsertConversation overwrites mutable conversation metadata. A
+// retired id is refused like EnsureConversation's: metadata written
+// after the user deleted the conversation would bring the row back
+// without the transcript that explained it.
 func (s *Store) UpsertConversation(ctx context.Context, c Conversation) error {
 	if strings.TrimSpace(c.ID) == "" {
 		return fmt.Errorf("state: conversation id is required")
@@ -181,11 +207,15 @@ func (s *Store) UpsertConversation(ctx context.Context, c Conversation) error {
 	if c.UpdatedAt.IsZero() {
 		c.UpdatedAt = time.Now().UTC()
 	}
-	_, err := s.db.SQLDB().ExecContext(ctx, `
+	res, err := s.db.SQLDB().ExecContext(ctx, `
 		INSERT INTO conversations(
 			id, title, created_at, updated_at, turn_count, message_count,
 			usage_json, import_source, import_ready
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE NOT EXISTS (
+			SELECT 1 FROM deleted_conversations WHERE id = ?
+		)
 		ON CONFLICT(id) DO UPDATE SET
 			title = excluded.title,
 			updated_at = excluded.updated_at,
@@ -198,10 +228,62 @@ func (s *Store) UpsertConversation(ctx context.Context, c Conversation) error {
 		c.CreatedAt.UTC().Format(time.RFC3339Nano),
 		c.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		c.TurnCount, c.MessageCount, string(c.UsageJSON),
-		c.ImportSource, boolInt(c.ImportReady),
+		c.ImportSource, boolInt(c.ImportReady), c.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("state: upsert conversation: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("state: upsert conversation: %w", err)
+	}
+	if affected == 0 {
+		// A row that exists is updated (rows affected counts the
+		// update), so zero means the guarded insert matched nothing:
+		// the id is retired.
+		retired, err := s.Retired(ctx, c.ID)
+		if err != nil {
+			return err
+		}
+		if retired {
+			return ErrRetired
+		}
+	}
+	return nil
+}
+
+// UpdateConversationUsage overwrites one conversation's cached usage
+// block. It is an UPDATE and never an insert: usage_json sums up turns
+// the transcript already owns, so a missing row means the conversation
+// was deleted while the writer was in flight. Recreating the row here
+// would resurrect the conversation as a zero-turn entry in the sidebar
+// (List keeps rows that carry usage), so the writer gets ErrNotFound
+// instead and drops its delta.
+func (s *Store) UpdateConversationUsage(
+	ctx context.Context, id string, usage []byte, updatedAt time.Time,
+) error {
+	if strings.TrimSpace(id) == "" {
+		return fmt.Errorf("state: conversation id is required")
+	}
+	if len(usage) == 0 {
+		usage = []byte("{}")
+	}
+	if updatedAt.IsZero() {
+		updatedAt = time.Now().UTC()
+	}
+	res, err := s.db.SQLDB().ExecContext(ctx, `
+		UPDATE conversations SET usage_json = ?, updated_at = ?
+		WHERE id = ?`,
+		string(usage), updatedAt.UTC().Format(time.RFC3339Nano), id)
+	if err != nil {
+		return fmt.Errorf("state: update conversation usage: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("state: update conversation usage: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
@@ -339,24 +421,40 @@ func (s *Store) GetConversationState(
 	return []byte(raw), nil
 }
 
-// SetConversationState writes one per-conversation JSON document.
+// SetConversationState writes one per-conversation JSON document. A
+// retired id is refused: a document for a deleted conversation would be
+// the half of it that outlived the delete (see ErrRetired). The write
+// deliberately does not require a conversation row — settings belong to
+// a draft the user is composing, whose first turn has not seeded one
+// yet — only that the id was not deleted.
 func (s *Store) SetConversationState(
 	ctx context.Context, conversationID, name string, value []byte,
 ) error {
 	if strings.TrimSpace(conversationID) == "" || strings.TrimSpace(name) == "" {
 		return fmt.Errorf("state: conversation state key is required")
 	}
-	_, err := s.db.SQLDB().ExecContext(ctx, `
+	res, err := s.db.SQLDB().ExecContext(ctx, `
 		INSERT INTO conversation_state(
 			conversation_id, name, value_json, updated_at
-		) VALUES (?, ?, ?, ?)
+		)
+		SELECT ?, ?, ?, ?
+		WHERE NOT EXISTS (
+			SELECT 1 FROM deleted_conversations WHERE id = ?
+		)
 		ON CONFLICT(conversation_id, name) DO UPDATE SET
 			value_json = excluded.value_json,
 			updated_at = excluded.updated_at`,
 		conversationID, name, string(value),
-		time.Now().UTC().Format(time.RFC3339Nano))
+		time.Now().UTC().Format(time.RFC3339Nano), conversationID)
 	if err != nil {
 		return fmt.Errorf("state: write conversation state: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("state: write conversation state: %w", err)
+	}
+	if affected == 0 {
+		return ErrRetired
 	}
 	return nil
 }
@@ -848,6 +946,12 @@ func (s *Store) ArchiveTurnArtifacts(
 // a conversation deletion never leaves orphaned memory context
 // behind. A store that has not run the workspace migrations yet has no
 // such tables, and the cleanup is skipped for them.
+//
+// The same transaction retires the id (deleted_conversations, migration
+// 021). The tombstone cannot be removed without a new migration, and
+// every writer that would recreate the conversation refuses a retired
+// id: that is what turns "the rows are gone" into "the conversation is
+// gone", across restarts and across writers this process never sees.
 func (s *Store) DeleteConversationRows(ctx context.Context, id string) error {
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("state: conversation id is required")
@@ -861,6 +965,13 @@ func (s *Store) DeleteConversationRows(ctx context.Context, id string) error {
 			telemetry.WarnErr(ctx, "state: rollback delete conversation failed", err)
 		}
 	}()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO deleted_conversations(id, deleted_at)
+		VALUES (?, ?)
+		ON CONFLICT(id) DO NOTHING`,
+		id, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("state: retire conversation %s: %w", id, err)
+	}
 	for _, stmt := range []string{
 		`DELETE FROM archive_messages WHERE conversation_id = ?`,
 		`DELETE FROM archive_turns WHERE conversation_id = ?`,

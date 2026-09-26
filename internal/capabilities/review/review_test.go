@@ -758,6 +758,14 @@ func TestReportUsageAttributesTheParentConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	o.sessions = store
+	// The reviewed turn is already committed when a review reports its
+	// own call, so its conversation exists; the usage write updates that
+	// row and never creates one (a late write must not resurrect a
+	// deleted conversation).
+	if err := store.SeedStartTitle(context.Background(), "s-1",
+		[]message.Message{message.NewTextMessage(message.RoleUser, "turn")}); err != nil {
+		t.Fatal(err)
+	}
 
 	o.reportUsage(context.Background(), agent.Identity{ConversationID: "s-1"},
 		inference.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15})
@@ -780,6 +788,52 @@ func TestReportUsageAttributesTheParentConversation(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("conversation s-1 missing from %+v", metas)
+	}
+}
+
+// TestReportUsageAfterDeleteLeavesNoConversation pins the late-write
+// rule at the layer that actually produces late writes: a detached
+// review finishes after the user deleted the conversation it reviewed,
+// reports its own model call, and must not bring the conversation back.
+// The call is still metered — the model spent those tokens — but the
+// session store stays empty.
+func TestReportUsageAfterDeleteLeavesNoConversation(t *testing.T) {
+	o, _, _, usage := newObserver(t, enabledCfg())
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.sessions = store
+	ctx := context.Background()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(ctx, id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "the reviewed turn"),
+	}); err != nil {
+		t.Fatalf("append reviewed turn: %v", err)
+	}
+	if err := store.Remove(ctx, id); err != nil {
+		t.Fatalf("delete reviewed conversation: %v", err)
+	}
+
+	o.reportUsage(ctx, agent.Identity{ConversationID: id},
+		inference.Usage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15})
+
+	if usage.count() != 1 {
+		t.Fatalf("usage observer reports = %d, want the review's call metered",
+			usage.count())
+	}
+	metas, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 0 {
+		t.Fatalf("list after the review's usage call = %+v, want empty", metas)
+	}
+	if got, err := store.LoadUsage(ctx, id); err != nil || got.TotalTokens != 0 {
+		t.Fatalf("usage after the review's call = %+v, %v; want zero", got, err)
 	}
 }
 
