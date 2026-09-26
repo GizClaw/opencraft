@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build/docker/Dockerfile.cross`, a file this repo never carried, so it could
   only ever fail; the per-platform `build:docker` cross tasks stay and now say
   where the image has to come from.
+- `build:server`, `run:server`, `build:docker` and `run:docker` are gone too.
+  `server` is a real Wails v3 build tag — it swaps the native shell for an HTTP
+  server and browser windows — but this repo never wired it up: no
+  `ServerOptions` (no port or bind address to configure), no CI job, no docs,
+  and the desktop shell (tray, pet window, native notifications) has never been
+  run that way. `build:docker` additionally required a
+  `build/docker/Dockerfile.server` that has never existed, and pointed at
+  `wails3 update build-assets`, which overwrites the whole `build/` tree. The
+  per-platform cross-compile `build:docker` (the `wails-cross` image) is
+  untouched.
 
 ### Fixed
 
