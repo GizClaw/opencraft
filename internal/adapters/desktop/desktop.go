@@ -671,6 +671,7 @@ func (d *Desktop) RegisterServices(app *application.App) {
 	reg(application.NewService(bindings.NewAgentBinding(d.core)))
 	files := bindings.NewFileBinding(d.core)
 	files.SetMediaURL(d.mediaURL)
+	files.SetMediaAbsURL(d.mediaAbsURL)
 	reg(application.NewService(files))
 	reg(application.NewService(bindings.NewGitBinding(d.core)))
 	reg(application.NewService(bindings.NewPullRequestsBinding(d.core)))
@@ -693,4 +694,14 @@ func (d *Desktop) mediaURL(rel string) (string, error) {
 		return "", errors.New("desktop: media streaming is unavailable")
 	}
 	return d.media.URL(rel)
+}
+
+// mediaAbsURL builds the loopback stream URL for one local file outside
+// the workspace that the viewer opened, or reports why streaming is
+// unavailable.
+func (d *Desktop) mediaAbsURL(abs string) (string, error) {
+	if d.media == nil {
+		return "", errors.New("desktop: media streaming is unavailable")
+	}
+	return d.media.AbsoluteURL(abs)
 }
