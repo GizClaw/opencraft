@@ -4,7 +4,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
-	"github.com/GizClaw/opencraft/internal/foundation/sysfont"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/sysfont"
 )
 
 // Lifecycle exposes native window/tray lifecycle methods.

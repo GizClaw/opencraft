@@ -1,8 +1,13 @@
+// Crash recovery: claiming a workspace after an unclean shutdown
+// (workspace lock, one-shot claim, the recorded report) and the
+// recovery pass that brings the interrupted runs back.
 package host
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -12,7 +17,9 @@ import (
 
 	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
 )
 
 // hostProcessStart is the moment this process began, used to tell a
@@ -309,4 +316,116 @@ func (h *Host) RecoveryReport() (RecoveryReport, bool) {
 		return RecoveryReport{}, false
 	}
 	return h.recovery, true
+}
+
+// claimRecovery reports whether this process still owes a crash-recovery
+// pass to one workspace, together with the summary to report instead
+// when it does not (the pass this process already ran, or the live
+// process that owns the workspace). The pass is idempotent; claiming
+// keeps a runtime reload from re-scanning a store that was already
+// scanned, and the workspace lease keeps a second process from reading a
+// live sibling's checkpoints as crash leftovers (see wslock for why the
+// timestamp heuristic alone cannot).
+func (m *Manager) claimRecovery(
+	ctx context.Context, layout config.WorkspaceLayout,
+) (RecoveryReport, bool) {
+	root := layout.SessionsDir
+	if m == nil || root == "" {
+		return RecoveryReport{}, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.recovered == nil {
+		m.recovered = make(map[string]RecoveryReport)
+	}
+	if report, ok := m.recovered[root]; ok {
+		return report, false
+	}
+	if report, owed := m.claimWorkspaceLock(ctx, layout); !owed {
+		m.recovered[root] = report
+		return report, false
+	}
+	// Claim the root before the pass runs: a second assembly that
+	// overtakes it would otherwise scan the same store twice.
+	m.recovered[root] = RecoveryReport{}
+	return RecoveryReport{}, true
+}
+
+// claimWorkspaceLock takes (or reuses) this process's advisory lock on
+// one workspace state root, and reports whether this process may run the
+// recovery pass:
+//
+//   - the lock is ours (now, or since an earlier assembly): yes;
+//   - another live process holds it: no. That process's own pass already
+//     ran, and every checkpoint still visible here is either its live
+//     work or a leftover it deliberately left, so this process reports
+//     the holder and touches nothing; the checkpoints wait for the next
+//     start that finds no other live process;
+//   - the lock cannot be taken at all (an exotic filesystem, a
+//     permission problem): yes, with a warning. Failing closed here
+//     would let a broken lock disable crash recovery silently.
+func (m *Manager) claimWorkspaceLock(
+	ctx context.Context, layout config.WorkspaceLayout,
+) (RecoveryReport, bool) {
+	if m.leases == nil {
+		m.leases = make(map[string]*wslock.Handle)
+	}
+	if handle, ok := m.leases[layout.Root]; ok && handle != nil {
+		return RecoveryReport{}, true
+	}
+	path := filepath.Join(layout.Root, wslock.FileName)
+	acquire := m.acquireLease
+	if acquire == nil {
+		acquire = wslock.Acquire
+	}
+	kind := m.leaseKind
+	if kind == "" {
+		kind = "host"
+	}
+	handle, err := acquire(ctx, path, kind)
+	if err == nil {
+		m.leases[layout.Root] = handle
+		return RecoveryReport{}, true
+	}
+	if holder, held := wslock.IsHeld(err); held {
+		telemetry.Info(ctx, "host: workspace held by another live process",
+			otellog.String("workspace", layout.WorkDir),
+			otellog.String("lock", path),
+			otellog.Int("pid", holder.PID),
+			otellog.String("kind", holder.Kind),
+			otellog.String("since", holder.Started))
+		return RecoveryReport{
+			At:              time.Now().UTC(),
+			WorkspaceHolder: formatHolder(holder),
+		}, false
+	}
+	telemetry.WarnErr(ctx, "host: workspace lock unavailable; "+
+		"recovering without it", err, otellog.String("lock", path))
+	return RecoveryReport{}, true
+}
+
+// formatHolder renders a lock holder for the diagnostics report.
+func formatHolder(info wslock.Info) string {
+	switch {
+	case info.PID == 0:
+		return "another live process"
+	case info.Kind == "":
+		return fmt.Sprintf("pid %d", info.PID)
+	default:
+		return fmt.Sprintf("pid %d (%s)", info.PID, info.Kind)
+	}
+}
+
+// recordRecovery stores the summary of a finished pass so the Hosts
+// this Manager assembles later can report it.
+func (m *Manager) recordRecovery(root string, report RecoveryReport) {
+	if m == nil || root == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.recovered == nil {
+		m.recovered = make(map[string]RecoveryReport)
+	}
+	m.recovered[root] = report
 }

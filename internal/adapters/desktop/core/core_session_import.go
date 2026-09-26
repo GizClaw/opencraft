@@ -91,9 +91,9 @@ func (c *Core) handlePluginSessionImport(
 		c.Shell.Emit(EventSessionUpdated, map[string]string{"id": id})
 	}
 	return pluginruntime.SessionImportResult{
-		SessionID: id,
-		Messages:  messages,
-		Turns:     turns,
+		ConversationID: id,
+		Messages:       messages,
+		Turns:          turns,
 	}, nil
 }
 

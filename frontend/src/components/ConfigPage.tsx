@@ -2941,6 +2941,11 @@ export function ConfigPage() {
                         {diag.sandbox_backend}
                         {diag.sandbox_available ? ' ✓' : ' ✗'}
                       </p>
+                      {diag.sandbox_available_reason && (
+                        <p className="text-xs text-dim">
+                          {diag.sandbox_available_reason}
+                        </p>
+                      )}
                     </div>
                     <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
                       <span className="text-xs text-dim">

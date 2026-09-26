@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -28,7 +29,13 @@ func buildOpencraft(t *testing.T) string {
 			opencraftBinErr = err
 			return
 		}
-		opencraftBin = filepath.Join(dir, "opencraft")
+		// `go build -o opencraft` appends .exe on Windows, so the path
+		// the tests exec has to carry the same suffix.
+		name := "opencraft"
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		opencraftBin = filepath.Join(dir, name)
 		root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 		if err != nil {
 			opencraftBinErr = err
@@ -48,6 +55,7 @@ func buildOpencraft(t *testing.T) string {
 }
 
 func TestLaunchBindExecAndStop(t *testing.T) {
+	requirePOSIXChild(t)
 	bin := buildOpencraft(t)
 	ctx := context.Background()
 	client, stop, err := LaunchExe(ctx, bin)
@@ -91,6 +99,7 @@ func TestLaunchBindExecAndStop(t *testing.T) {
 }
 
 func TestStopKillsChildProcessGroups(t *testing.T) {
+	requirePOSIXChild(t)
 	bin := buildOpencraft(t)
 	ctx := context.Background()
 	client, stop, err := LaunchExe(ctx, bin)
@@ -122,6 +131,7 @@ func TestStopKillsChildProcessGroups(t *testing.T) {
 }
 
 func TestLaunchReportsChildStderr(t *testing.T) {
+	requirePOSIXChild(t)
 	// /bin/sh cannot execute the child's argv ("execd"), so it dies
 	// immediately with a diagnostic on stderr. Launch must surface it
 	// instead of only reporting a closed connection.

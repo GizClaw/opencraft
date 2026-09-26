@@ -81,17 +81,17 @@ func TestPluginSessionImportWiresHostWritePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handlePluginSessionImport: %v", err)
 	}
-	if !strings.HasPrefix(res.SessionID, "s-") {
-		t.Fatalf("session id = %q, want s- prefix", res.SessionID)
+	if !strings.HasPrefix(res.ConversationID, "s-") {
+		t.Fatalf("session id = %q, want s- prefix", res.ConversationID)
 	}
 	if res.Turns != 1 || res.Messages != 2 {
 		t.Fatalf("result = %+v, want 1 turn / 2 messages", res)
 	}
-	ready, err := h.Sessions().ImportReady(ctx, res.SessionID)
+	ready, err := h.Sessions().ImportReady(ctx, res.ConversationID)
 	if err != nil || !ready {
-		t.Fatalf("ImportReady(%q) = %v, %v", res.SessionID, ready, err)
+		t.Fatalf("ImportReady(%q) = %v, %v", res.ConversationID, ready, err)
 	}
-	turns, err := h.Sessions().Turns(ctx, res.SessionID)
+	turns, err := h.Sessions().Turns(ctx, res.ConversationID)
 	if err != nil {
 		t.Fatalf("imported turns: %v", err)
 	}
@@ -103,12 +103,12 @@ func TestPluginSessionImportWiresHostWritePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("duplicate import: %v", err)
 	}
-	if again.SessionID != res.SessionID {
+	if again.ConversationID != res.ConversationID {
 		t.Fatalf("duplicate import = %q, want %q",
-			again.SessionID, res.SessionID)
+			again.ConversationID, res.ConversationID)
 	}
 	// The duplicate returns the existing session and appends nothing.
-	turnsAgain, err := h.Sessions().Turns(ctx, res.SessionID)
+	turnsAgain, err := h.Sessions().Turns(ctx, res.ConversationID)
 	if err != nil {
 		t.Fatalf("turns after duplicate import: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestPluginSessionImportedSourcesReportsExisting(t *testing.T) {
 		if err != nil {
 			t.Fatalf("import %s: %v", source, err)
 		}
-		return res.SessionID
+		return res.ConversationID
 	}
 	id1 := importRes(t, "codex:conv-1")
 	id2 := importRes(t, "codex:conv-2")

@@ -12,7 +12,9 @@ import (
 // when constructed with write confinement, but then rejects TTY starts
 // at runtime; opencraft disables interactive sessions on Windows
 // (issue #38), so the wrapper keeps the advertised surface honest and
-// rejects TTY requests before they reach the backend.
+// rejects TTY requests before they reach the backend. It is applied by
+// withPlatformCapabilities from the platform row (backend.go), so the
+// enforcement and the value InteractiveSessions reports cannot drift.
 type noTTYRunner struct{ inner coresandbox.Runner }
 
 func (r noTTYRunner) Start(

@@ -3,7 +3,7 @@ package core
 import (
 	"sync"
 
-	"github.com/GizClaw/opencraft/internal/foundation/utils/envpath"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/envpath"
 )
 
 // pathReport holds the last PATH resolution this process performed. The

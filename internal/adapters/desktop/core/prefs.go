@@ -15,6 +15,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/fsatomic"
 )
 
 const prefsFile = "desktop.json"
@@ -45,7 +46,7 @@ type DesktopPrefs struct {
 	// Telemetry carries the plugin telemetry-export switch.
 	Telemetry TelemetryPrefs `json:"telemetry,omitempty"`
 	// Path carries the user's PATH override (Settings > Diagnostics),
-	// applied once at startup by foundation/utils/envpath.
+	// applied once at startup by foundation/platform/envpath.
 	Path PathPrefs `json:"path,omitempty"`
 	// Exec carries the exec supervisor pool knobs (Settings >
 	// Diagnostics). Saving applies to future leases; existing children
@@ -229,24 +230,10 @@ func SavePrefs(userDir string, prefs DesktopPrefs) error {
 		return err
 	}
 	path := filepath.Join(userDir, prefsFile)
-	tmp, err := os.CreateTemp(userDir, ".desktop-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-			telemetry.WarnErr(context.Background(),
-				"desktop prefs: remove prefs temp failed", err)
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		telemetry.WarnErr(context.Background(),
-			"desktop prefs: close prefs temp after write failure", tmp.Close())
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	// The prefs file is user-private (0600 temp default) and the
+	// directory is created by the caller; both are historical
+	// behaviour, not a choice fsatomic makes.
+	return fsatomic.Write(path, data, fsatomic.Options{
+		TempPrefix: ".desktop-*.tmp",
+	})
 }

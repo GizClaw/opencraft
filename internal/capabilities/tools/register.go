@@ -7,7 +7,6 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	goruntime "runtime"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/sandbox"
-	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/agents"
@@ -43,8 +41,8 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/viewimage"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/webfetch"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/websearch"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/shelldetect"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/shelldetect"
 )
 
 // Register adds every opencraft tool.Source factory to r.
@@ -171,7 +169,7 @@ func execToolList(
 		exec.WithEscalator(escalator),
 		exec.WithShell(shelldetect.Detect(goos)),
 	)}
-	if goos != "windows" {
+	if ocsandbox.InteractiveSessions(goos) {
 		tools = append(tools, exec.MustNewSession(runner))
 	}
 	return tools
@@ -629,28 +627,4 @@ func (agentlifecycleSourceFactory) New(_ context.Context, in resource.Input) (an
 		return nil, err
 	}
 	return toolList(agents.MustNew(lifecycle).Tools()), nil
-}
-
-// toolList adapts a fixed []tool.Tool to tool.Source.
-type toolList []tool.Tool
-
-func (l toolList) Tools() []tool.Tool { return l }
-
-func (toolList) LazyTools() []tool.LazyTool { return nil }
-
-var _ tool.Source = toolList(nil)
-
-// sourceEnabled reads the optional enabled switch from a source's
-// settings. Absent means enabled.
-func sourceEnabled(in resource.Input) bool {
-	if len(in.Settings) == 0 {
-		return true
-	}
-	var s struct {
-		Enabled *bool `json:"enabled"`
-	}
-	if err := json.Unmarshal(in.Settings, &s); err != nil || s.Enabled == nil {
-		return true
-	}
-	return *s.Enabled
 }

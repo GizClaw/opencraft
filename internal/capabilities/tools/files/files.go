@@ -22,8 +22,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/fshidden"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/fshidden"
 )
 
 const (

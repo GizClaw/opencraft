@@ -293,7 +293,7 @@ export interface SessionMeta {
 }
 
 export interface SessionImportDTO {
-  session_id: string;
+  conversation_id: string;
   messages: number;
   turns: number;
 }
@@ -426,7 +426,7 @@ export interface TurnStart {
 }
 
 export interface SessionSnapshot {
-  session_id: string;
+  conversation_id: string;
   mode: string;
   think: string;
   model: string;
@@ -1236,6 +1236,8 @@ export interface DiagnosticsReport {
   active_runs: number;
   sandbox_backend: string;
   sandbox_available: boolean;
+  /** Why the verdict is what it is (missing binary, built-in backend). */
+  sandbox_available_reason?: string;
   /** Shell exec_command spawns through (e.g. "/bin/sh -c"). */
   exec_shell: string;
   usage_total_tokens: number;

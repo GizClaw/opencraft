@@ -111,10 +111,11 @@ type DelegationNoteDTO struct {
 // returns the fresh session so the UI can switch to it without a
 // second request.
 type SessionDeleteResult struct {
-	SessionID string `json:"session_id,omitempty"`
-	Mode      string `json:"mode,omitempty"`
-	Think     string `json:"think,omitempty"`
-	Model     string `json:"model,omitempty"`
+	// ConversationID is the replacement conversation's id.
+	ConversationID string `json:"conversation_id,omitempty"`
+	Mode           string `json:"mode,omitempty"`
+	Think          string `json:"think,omitempty"`
+	Model          string `json:"model,omitempty"`
 }
 
 func toSessionTurnDTO(
@@ -347,10 +348,10 @@ func (b *Session) Delete(id string) (SessionDeleteResult, error) {
 				return nil
 			}
 			result = SessionDeleteResult{
-				SessionID: fresh,
-				Mode:      string(b.core.Conversation.Mode(workDir)),
-				Think:     b.core.Conversation.Think(workDir),
-				Model:     b.core.Conversation.Model(workDir),
+				ConversationID: fresh,
+				Mode:           string(b.core.Conversation.Mode(workDir)),
+				Think:          b.core.Conversation.Think(workDir),
+				Model:          b.core.Conversation.Model(workDir),
 			}
 			return nil
 		},
@@ -559,9 +560,10 @@ func (b *Session) ExportBundle(
 
 // SessionImportDTO reports a completed bundle import to the UI.
 type SessionImportDTO struct {
-	SessionID string `json:"session_id"`
-	Messages  int    `json:"messages"`
-	Turns     int    `json:"turns"`
+	// ConversationID is the imported conversation's id.
+	ConversationID string `json:"conversation_id"`
+	Messages       int    `json:"messages"`
+	Turns          int    `json:"turns"`
 }
 
 // ImportBundle imports a neutral session bundle into the current
@@ -596,9 +598,9 @@ func (b *Session) ImportBundle(
 		messages += len(turn.Messages)
 	}
 	return SessionImportDTO{
-		SessionID: id,
-		Messages:  messages,
-		Turns:     len(req.Turns),
+		ConversationID: id,
+		Messages:       messages,
+		Turns:          len(req.Turns),
 	}, nil
 }
 

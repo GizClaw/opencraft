@@ -32,11 +32,23 @@ func writeRepoFile(t *testing.T, path, content string) {
 	}
 }
 
+// setRepoIdentity gives dir the identity these tests commit with. It is
+// per repository on purpose: git's fallback when no identity is
+// configured is an auto-detected `user@hostname`, which needs the
+// machine's hostname to resolve — a runner where it does not fails the
+// commit with "Author identity unknown", which is how the peer clone in
+// TestPullPushAndForce went red once. A clone inherits no
+// repository-local config, so it has to be given its own.
+func setRepoIdentity(t *testing.T, dir string) {
+	t.Helper()
+	repoGit(t, dir, "config", "user.email", "test@example.com")
+	repoGit(t, dir, "config", "user.name", "test")
+}
+
 func initRepoPackage(t *testing.T, root string) {
 	t.Helper()
 	repoGit(t, root, "init", "-q", "-b", "main")
-	repoGit(t, root, "config", "user.email", "test@example.com")
-	repoGit(t, root, "config", "user.name", "test")
+	setRepoIdentity(t, root)
 	writeRepoFile(t, filepath.Join(root, "keep.txt"), "keep\n")
 	repoGit(t, root, "add", "keep.txt")
 	repoGit(t, root, "commit", "-qm", "init")
@@ -156,6 +168,7 @@ func TestPullPushAndForce(t *testing.T) {
 	// A second clone pushes a change the first repo pulls back.
 	peer := t.TempDir()
 	repoGit(t, root, "clone", "-q", "-b", "main", bare, peer)
+	setRepoIdentity(t, peer)
 	writeRepoFile(t, filepath.Join(peer, "peer.txt"), "peer\n")
 	repoGit(t, peer, "add", "peer.txt")
 	repoGit(t, peer, "commit", "-qm", "peer change")

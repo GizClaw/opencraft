@@ -1,7 +1,6 @@
-// Package config owns opencraft's user-facing configuration: discovery,
-// seeding, layered loading (embedded base -> user), and the
-// app-level execution document. The deploy layering itself is
-// flowcraft core's deploy.LoadLayers.
+// The user-facing configuration manager: discovery, seeding, layered
+// loading (embedded base -> user), and the app-level execution
+// document. The package as a whole is described in doc.go.
 package config
 
 import (

@@ -11,7 +11,7 @@ import { Popover } from './ui/Popover';
 import { ICON } from './ui/icon';
 
 // FontPicker is the Settings > Interface font control: the built-in presets
-// plus the families the host reports (internal/foundation/sysfont), in one
+// plus the families the host reports (internal/foundation/platform/sysfont), in one
 // searchable menu whose rows are drawn in their own face.
 //
 // The menu is the shared <Popover>: portaled to the body so the settings

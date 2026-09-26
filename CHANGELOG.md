@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The desktop and plugin wire calls the conversation id `conversation_id`
+  everywhere: in `NewChat`'s result, in the session-delete and bundle-import
+  DTOs, and in the plugin `session.import` result, which mirrors the desktop
+  wire. Until now those four hand-written DTOs spelled it `session_id` while
+  the store, the graph and the archive called it a conversation — one rename,
+  landed in one step (the two-release window the plan called for never got
+  released, so there is no alias to carry: a plugin written against an older
+  SDK and reading the id out of `session.import` has to read
+  `conversation_id`; the plugin templates in this repo never read that field).
+  The retired name is recorded in `foundation/wirevocab`, whose scan fails the
+  build when a hand-written struct tag uses it again. Three things are
+  deliberately out of its scope, each said where it lives: the generated
+  protobuf of the `execd` channel (process-to-process, not UI wire), the
+  `model_usage.session_id` SQL column (a migration, not a rename) and the
+  `session_id` argument websearch sends to Parallel's API (their vocabulary).
 - The desktop shell is on Wails v3.0.0-beta.26, from beta.17 — the bump lands
   in the three places that pin it (go.mod, `@wailsio/runtime`, the CI and
   release `wails3` installs). What it buys: `wails3 dev` now waits for the vite
@@ -22,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-tags private_mac_apis`, which is required for the pet window to be
   transparent — without it the window silently stays opaque — at the cost of
   reading one undocumented WebKit property.
+- Resource kinds are inventoried once (`foundation/resourcekind`) with a
+  spelling rule: a new kind is either `opencraft.`-prefixed lower_snake or
+  flowcraft's `<domain>.<Role>` — the `hook.prepare` / `hook.commit` /
+  `hook.observe` slots are their own style — and it has to be listed with an
+  owner and a note. Scans fail the build when a declaration and the list
+  disagree, when an embedded deployment document writes a kind that is
+  neither inventoried nor spellable, or when a spelling that follows neither
+  style joins `memory` (the one legacy entry, on a budget of one).
 
 ### Removed
 
@@ -76,6 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gone", and the rows were already gone the first time. A listing that
   raced the delete is filtered by the same tombstone, so the sidebar
   cannot show an entry that every path into it refuses. (#218)
+- The diagnostics panel reports the sandbox backend the child actually
+  runs. On Windows it said `local` — "no OS sandbox on this platform;
+  commands run unconfined" — while confined commands ran under the
+  job-object backend; the panel, the parent-side runner and the execd child
+  now read one table (`capabilities/sandbox/backend.go`), so the name, the
+  availability note and the runner itself cannot disagree.
 
 ## [0.6.0] - 2026-09-25
 

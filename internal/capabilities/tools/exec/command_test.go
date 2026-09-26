@@ -10,7 +10,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/sandbox"
 
-	"github.com/GizClaw/opencraft/internal/foundation/utils/shelldetect"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/shelldetect"
 )
 
 type cmdRunner struct {

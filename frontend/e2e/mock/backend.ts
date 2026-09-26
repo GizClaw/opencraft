@@ -358,9 +358,11 @@ export function mockBackend(cfg?: MockConfig) {
         const id =
           queued ?? (newChatSeq === 1 ? 's-new' : `s-new-${newChatSeq}`);
         // Mirrors the NewChatResult binding: the id plus the effective
-        // session defaults applied at mint time.
+        // session defaults applied at mint time. The id field is
+        // conversation_id — the rename from session_id landed in one
+        // step, with no alias released (W5.3).
         return {
-          session_id: id,
+          conversation_id: id,
           mode: 'workspace',
           think: 'medium',
           model: '',
@@ -433,6 +435,7 @@ export function mockBackend(cfg?: MockConfig) {
         active_runs: 1,
         sandbox_backend: 'seatbelt',
         sandbox_available: true,
+        sandbox_available_reason: 'sandbox-exec is on PATH',
         exec_shell: '/bin/zsh -c',
         usage_total_tokens: 128400,
       }),

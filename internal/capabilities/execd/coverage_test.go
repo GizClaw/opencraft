@@ -57,6 +57,7 @@ type modeKey struct{}
 // unconfined backend serves that request, and the child runs it with an
 // empty env policy (the escalation contract).
 func TestUnconfinedRoutingPicksTheUnconfinedBackend(t *testing.T) {
+	requirePOSIXChild(t)
 	confined := &recordingRunner{Runner: localRunnerFor(t)}
 	unconfined := &recordingRunner{Runner: localRunnerFor(t)}
 	client, _ := testPairWithFactory(t, func(
@@ -132,6 +133,10 @@ func TestChildExitsWhenParentChannelCloses(t *testing.T) {
 // childTerminated reports whether pid is gone or a zombie. The test
 // deliberately delays cmd.Wait (the deferred stop), so the exited child
 // would otherwise still answer kill(pid, 0).
+//
+// Zombies and ps(1) are unix-only: on Windows there is no reaped-but-not
+// -waited state and no ps to ask, so processAlive is the whole answer
+// (the ps probe fails and the helper reports "terminated").
 func childTerminated(pid int) bool {
 	if !processAlive(pid) {
 		return true
@@ -177,6 +182,7 @@ func journalChildPID(t *testing.T) int {
 // (writable roots, env allow/inject) survives the wire and reaches the
 // backend that runs the command.
 func TestBindPassesTheSandboxPolicyThrough(t *testing.T) {
+	requirePOSIXChild(t)
 	var (
 		mu       sync.Mutex
 		recorded *SandboxPolicy
@@ -259,6 +265,7 @@ func readUntilEOF(t *testing.T, client *Client, id string) string {
 // and a signal that arrives while the child is still pre-exec stays
 // pending until it execs and then kills it.
 func TestSessionSignalInterrupts(t *testing.T) {
+	requirePOSIXChild(t)
 	runner := testRunner(t)
 	ctx := context.Background()
 	session, err := runner.Start(ctx, sandbox.SessionSpec{
@@ -317,6 +324,7 @@ func processSnapshot(pid int) string {
 
 // TestSessionResizeOnTTY pins the resize RPC on a real pty session.
 func TestSessionResizeOnTTY(t *testing.T) {
+	requirePOSIXChild(t)
 	runner := testRunner(t)
 	ctx := context.Background()
 	session, err := runner.Start(ctx, sandbox.SessionSpec{
@@ -340,6 +348,7 @@ func TestSessionResizeOnTTY(t *testing.T) {
 // TestReadRespectsMaxBytes pins the per-response cap the client relies on
 // to bound one ReadOk frame.
 func TestReadRespectsMaxBytes(t *testing.T) {
+	requirePOSIXChild(t)
 	client, _ := testPair(t)
 	ctx := context.Background()
 	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {
@@ -374,6 +383,7 @@ func TestReadRespectsMaxBytes(t *testing.T) {
 // protocol keeps for a future streaming consumer: output, exit and close
 // arrive in order with growing cursors.
 func TestEventNotificationsReachTheClient(t *testing.T) {
+	requirePOSIXChild(t)
 	client, _ := testPair(t)
 	ctx := context.Background()
 	events := make(chan *Notification, 64)

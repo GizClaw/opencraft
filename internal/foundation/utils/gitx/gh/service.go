@@ -61,7 +61,7 @@ func ghAuthToken(
 // directories below.
 //
 // PATH is the primary answer because the process PATH is resolved at
-// startup (foundation/utils/envpath): a GUI launch gets the standard
+// startup (foundation/platform/envpath): a GUI launch gets the standard
 // Homebrew and user-local prefixes appended even though launchd hands it
 // a minimal PATH.
 func ghExecutable(lookPath func(string) (string, error)) (string, error) {

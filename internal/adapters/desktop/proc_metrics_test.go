@@ -3,7 +3,7 @@ package desktop
 import (
 	"testing"
 
-	"github.com/GizClaw/opencraft/internal/foundation/procmem"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/procmem"
 )
 
 func TestFamilySamplesSplitByRole(t *testing.T) {

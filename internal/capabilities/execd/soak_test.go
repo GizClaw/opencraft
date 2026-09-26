@@ -14,6 +14,7 @@ import (
 // TestSoakSessionsBounded starts and stops many local sandbox sessions
 // and asserts the goroutine count stays bounded (no session leaks).
 func TestSoakSessionsBounded(t *testing.T) {
+	requirePOSIXChild(t)
 	ctx := context.Background()
 	runner := local.New(t.TempDir())
 	defer func() { _ = runner.Close() }()

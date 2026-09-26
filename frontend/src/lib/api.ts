@@ -252,7 +252,7 @@ export const api = {
     // from the backend state.
     const minted = await Conversation.NewChat();
     return {
-      session_id: minted.session_id,
+      conversation_id: minted.conversation_id,
       mode: minted.mode,
       think: minted.think,
       model: minted.model,
@@ -274,7 +274,7 @@ export const api = {
   resumeSession: async (id: string) => {
     await Conversation.ResumeSession(id);
     return {
-      session_id: id,
+      conversation_id: id,
       mode: await Conversation.SessionMode(),
       think: await Settings.GetThink(),
       model: await Settings.GetModel(),
@@ -407,7 +407,7 @@ export const api = {
   deleteSession: async (id: string) => {
     const res = await Session.Delete(id);
     return {
-      session_id: res.session_id ?? '',
+      conversation_id: res.conversation_id ?? '',
       mode: res.mode ?? '',
       think: res.think ?? '',
       model: res.model ?? '',

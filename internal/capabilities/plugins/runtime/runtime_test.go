@@ -576,9 +576,9 @@ func TestSessionImportPrimitive(t *testing.T) {
 			gotPlugin = pluginID
 			gotReq = req
 			return SessionImportResult{
-				SessionID: "s-imported",
-				Messages:  3,
-				Turns:     1,
+				ConversationID: "s-imported",
+				Messages:       3,
+				Turns:          1,
 			}, nil
 		},
 	})
@@ -599,7 +599,7 @@ func TestSessionImportPrimitive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"session_id":"s-imported"`) {
+	if !strings.Contains(string(data), `"conversation_id":"s-imported"`) {
 		t.Fatalf("unexpected result: %s", data)
 	}
 }

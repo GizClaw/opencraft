@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
-	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
 )
@@ -83,46 +82,6 @@ const ResourceImpl = "local"
 // (env-expanded).
 type Settings struct {
 	Path string `json:"path"`
-}
-
-// Factory builds the opencraft.hooks resource.
-type Factory struct{}
-
-var _ resource.Factory = Factory{}
-
-// pluginHooksProvider is implemented by the shared plugin host
-// (internal/capabilities/plugins/agent) and contributes plugin hook files.
-type pluginHooksProvider interface {
-	PluginHooks() []ExtraSource
-}
-
-// Spec implements resource.Factory.
-func (Factory) Spec() resource.Spec {
-	return resource.Spec{
-		Kind: ResourceKind,
-		Impl: ResourceImpl,
-		Deps: []resource.DepSpec{
-			{Name: "plugin.host", Type: "opencraft.plugins", Required: false},
-		},
-	}
-}
-
-// New implements resource.Factory. A missing hooks.json yields an empty
-// (no-op) manager, not an error.
-func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
-	settings, err := resource.DecodeTyped[Settings](
-		ctx, in.Settings)
-	if err != nil {
-		return nil, errdefs.Validationf(
-			"opencraft hooks: decode settings: %v", err)
-	}
-	var extra []ExtraSource
-	if dep, ok := in.Dep("plugin.host"); ok {
-		if p, ok := dep.(pluginHooksProvider); ok && p != nil {
-			extra = append(extra, p.PluginHooks()...)
-		}
-	}
-	return LoadWithSources(ctx, settings.Path, extra)
 }
 
 // Manager owns the loaded hook groups.

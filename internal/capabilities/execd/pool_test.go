@@ -32,6 +32,7 @@ func testChild(t *testing.T) (*Client, func(), error) {
 }
 
 func TestPoolLeasesAndReusesChild(t *testing.T) {
+	requirePOSIXChild(t)
 	settings := DefaultPoolSettings()
 	settings.Prewarm = 0
 	pool := NewPool(settings)
@@ -241,6 +242,7 @@ func TestPoolSetSettingsTrimsIdleChildren(t *testing.T) {
 // killed every pre-warmed child: the pool cancels its background launch
 // context as soon as the fork returns, and the child must outlive it.
 func TestPoolPrewarmedChildSurvivesLaunchContext(t *testing.T) {
+	requirePOSIXChild(t)
 	bin := buildOpencraft(t)
 	pool := NewPool(DefaultPoolSettings()) // Prewarm 1
 	defer pool.Close()
