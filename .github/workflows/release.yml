@@ -49,7 +49,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Wails3 CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26
 
       - name: Generate bindings and build frontend
         env:
@@ -244,7 +244,7 @@ jobs:
           sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
       - name: Install Wails3 CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26
 
       - name: Generate bindings and build frontend
         run: |
@@ -301,7 +301,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Wails3 CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26
 
       - name: Install NSIS
         run: |

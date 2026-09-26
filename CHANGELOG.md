@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The desktop shell is on Wails v3.0.0-beta.26, from beta.17 — the bump lands
+  in the three places that pin it (go.mod, `@wailsio/runtime`, the CI and
+  release `wails3` installs). What it buys: `wails3 dev` now waits for the vite
+  server to answer HTTP 200 before starting the app, so the first paint no
+  longer races the dev server, and it stops the frontend when the app exits
+  instead of leaving an orphan holding the port; SIGINT/SIGTERM reach the
+  app's shutdown hooks instead of being a bare kill that skips them; Windows
+  recovers from a WebView2 process failure by rebuilding the controller
+  instead of leaving a permanently blank window, and no longer ships the
+  bundled WebView2Loader DLL; on Linux a closing window stops its in-flight
+  loads and single-instance handling is stricter. The darwin build now passes
+  `-tags private_mac_apis`, which is required for the pet window to be
+  transparent — without it the window silently stays opaque — at the cost of
+  reading one undocumented WebKit property.
+
 ### Fixed
 
 - A deleted conversation stays deleted. Deleting one retires its id in
