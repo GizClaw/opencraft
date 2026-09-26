@@ -8,21 +8,26 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 )
 
-// TestBackendTable pins the platform table every consumer reads. The
-// values are the ones §4 of docs/architecture-plan.md documents; the
-// table and the construction live in the same entry (backend.go), so
-// changing one without the other is not expressible.
+// TestBackendTable pins the platform table every consumer reads: the
+// backend name, the probe program and whether TTY sessions are served.
+// The values are the ones §4 of docs/architecture-plan.md documents;
+// the table and the construction live in the same entry (backend.go),
+// so changing one without the other is not expressible, and
+// InteractiveSessions is the one value behind both the advertised
+// exec_session tool and the noTTYRunner enforcement: Windows does not
+// combine write confinement with ConPTY (flowcraft issue #38).
 func TestBackendTable(t *testing.T) {
 	cases := []struct {
 		goos    string
 		backend string
 		probe   string
+		tty     bool
 	}{
-		{"darwin", "seatbelt", "sandbox-exec"},
-		{"linux", "bwrap", "bwrap"},
-		{"windows", "jobobject", ""},
-		{"freebsd", "local", ""},
-		{"", "local", ""},
+		{"darwin", "seatbelt", "sandbox-exec", true},
+		{"linux", "bwrap", "bwrap", true},
+		{"windows", "jobobject", "", false},
+		{"freebsd", "local", "", true},
+		{"", "local", "", true},
 	}
 	for _, tc := range cases {
 		if got := Backend(tc.goos); got != tc.backend {
@@ -31,21 +36,9 @@ func TestBackendTable(t *testing.T) {
 		if got := BackendProbe(tc.goos); got != tc.probe {
 			t.Errorf("BackendProbe(%q) = %q, want %q", tc.goos, got, tc.probe)
 		}
-	}
-}
-
-// TestInteractiveSessions is the one value behind both the advertised
-// exec_session tool and the noTTYRunner enforcement: Windows does not
-// combine write confinement with ConPTY (flowcraft issue #38).
-func TestInteractiveSessions(t *testing.T) {
-	for goos, want := range map[string]bool{
-		"darwin":  true,
-		"linux":   true,
-		"windows": false,
-		"freebsd": true,
-	} {
-		if got := InteractiveSessions(goos); got != want {
-			t.Errorf("InteractiveSessions(%q) = %v, want %v", goos, got, want)
+		if got := InteractiveSessions(tc.goos); got != tc.tty {
+			t.Errorf("InteractiveSessions(%q) = %v, want %v",
+				tc.goos, got, tc.tty)
 		}
 	}
 }

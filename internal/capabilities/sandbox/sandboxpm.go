@@ -151,7 +151,8 @@ func SandboxRunnerWithCache(
 // the host with the full environment (no OS-level sandbox), used by the
 // execd child for YOLO-mode start requests.
 func UnconfinedRunner(workDir string) (coresandbox.Runner, error) {
-	if goruntime.GOOS == "windows" {
+	goos := goruntime.GOOS
+	if goos == "windows" {
 		// Same job-object backend as the confined runner, but without
 		// write confinement (YOLO keeps its full-host-access
 		// contract). Interactive sessions stay disabled on Windows.
@@ -159,7 +160,7 @@ func UnconfinedRunner(workDir string) (coresandbox.Runner, error) {
 		if err != nil {
 			return nil, fmt.Errorf("opencraft sandbox: windows (unconfined): %w", err)
 		}
-		return noTTYRunner{runner}, nil
+		return withPlatformCapabilities(goos, runner), nil
 	}
 	return sandboxlocal.New(workDir), nil
 }

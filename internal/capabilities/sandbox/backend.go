@@ -39,6 +39,14 @@ type backend struct {
 	// keep errdefs classification (NotAvailable on the wrong
 	// platform, validation on bad settings).
 	build func(root string, writable []string) (coresandbox.Runner, error)
+	// tty is whether the backend serves interactive (TTY) sessions on
+	// this platform. Windows says no: flowcraft's job-object backend
+	// advertises TTY and then rejects the start, because write
+	// confinement and ConPTY are not combined there (flowcraft issue
+	// #38). The row is the single answer — InteractiveSessions reads
+	// it, and withPlatformCapabilities makes the runner it hands out
+	// agree with it.
+	tty bool
 }
 
 // backendFor returns the platform row for goos. Anything that is not
@@ -50,6 +58,7 @@ func backendFor(goos string) backend {
 		return backend{
 			name:  "seatbelt",
 			probe: "sandbox-exec",
+			tty:   true,
 			build: func(root string, writable []string) (coresandbox.Runner, error) {
 				return seatbelt.New(root, seatbelt.WithWritablePaths(writable...))
 			},
@@ -58,6 +67,7 @@ func backendFor(goos string) backend {
 		return backend{
 			name:  "bwrap",
 			probe: "bwrap",
+			tty:   true,
 			build: func(root string, writable []string) (coresandbox.Runner, error) {
 				return bwrap.New(root, bwrap.WithWritablePaths(writable...))
 			},
@@ -68,23 +78,21 @@ func backendFor(goos string) backend {
 			// Built into the OS layer: a restricted token plus a job
 			// object, nothing to install and nothing to probe.
 			probe: "",
+			tty:   false, // issue #38
 			build: func(root string, writable []string) (coresandbox.Runner, error) {
 				// WithWriteConfinement is the difference from the
 				// unconfined (YOLO) path, which uses the same backend
 				// without it (see UnconfinedRunner).
-				runner, err := sbwindows.New(root,
+				return sbwindows.New(root,
 					sbwindows.WithWriteConfinement(),
 					sbwindows.WithWritablePaths(writable...))
-				if err != nil {
-					return nil, err
-				}
-				return noTTYRunner{runner}, nil
 			},
 		}
 	default:
 		return backend{
 			name:  "local",
 			probe: "",
+			tty:   true,
 			build: func(root string, _ []string) (coresandbox.Runner, error) {
 				return sandboxlocal.New(root), nil
 			},
@@ -106,12 +114,14 @@ func Backend(goos string) string { return backendFor(goos).name }
 func BackendProbe(goos string) string { return backendFor(goos).probe }
 
 // InteractiveSessions reports whether the confined backend serves TTY
-// sessions on goos. Windows cannot today: the job-object backend does
+// sessions on goos. It is the table's tty column, so the answer the
+// diagnostics page prints and the runner that validates a TTY start
+// cannot disagree. Windows cannot today: the job-object backend does
 // not combine write confinement with ConPTY (flowcraft issue #38), so
 // opencraft neither advertises the session tool nor accepts a TTY
 // start there. Both readers — the exec tool list and noTTYRunner — go
 // through this value.
-func InteractiveSessions(goos string) bool { return goos != "windows" }
+func InteractiveSessions(goos string) bool { return backendFor(goos).tty }
 
 // newConfinedRunner builds the confined backend for goos over root.
 // The parent-side factory (HostSandboxFactory) and the execd child
@@ -125,7 +135,20 @@ func newConfinedRunner(
 	if err != nil {
 		return nil, fmt.Errorf("opencraft sandbox: %s: %w", spec.name, err)
 	}
-	return runner, nil
+	return withPlatformCapabilities(goos, runner), nil
+}
+
+// withPlatformCapabilities decorates runner so what it advertises
+// matches its platform row: a row without TTY support must not hand out
+// a runner that says it has it. Every construction path goes through it
+// — the confined runner above and the unconfined (YOLO) runner in
+// sandboxpm.go — so "no sessions on this platform" cannot be true in
+// one path and not the other.
+func withPlatformCapabilities(goos string, runner coresandbox.Runner) coresandbox.Runner {
+	if backendFor(goos).tty {
+		return runner
+	}
+	return noTTYRunner{runner}
 }
 
 // hostBackend builds the confined runner for the platform this binary
