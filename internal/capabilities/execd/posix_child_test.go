@@ -19,6 +19,12 @@ import (
 // is deliberately explicit rather than a `-short` switch, so a renamed
 // or newly added case fails the lane loudly instead of being silently
 // excluded from it.
+//
+// The count the lane reports is one less than the number of call sites
+// below: soak_test.go is behind `//go:build soak`, so its guard never
+// fires in the lane's build. 26 of the 44 cases skip on Windows (the
+// 2026-09-26 windows run is where that number comes from, not from
+// reading this file).
 func requirePOSIXChild(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {

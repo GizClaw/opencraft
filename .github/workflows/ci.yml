@@ -292,17 +292,18 @@ jobs:
       # The channel this package exists for is the one a POSIX run never
       # reaches: a named pipe with an SDDL, plus the job-object child.
       # The scenario tests drive the child through /bin/sh (or plain
-      # POSIX signal/process-group semantics), so 27 of the 44 cases call
+      # POSIX signal/process-group semantics), so 26 of the 44 cases call
       # requirePOSIXChild and report as skips -- see
       # internal/capabilities/execd/posix_child_test.go. What runs here is
-      # the 17 shell-free cases: the wire protocol, the frame writer, the
+      # the 18 shell-free cases: the wire protocol, the frame writer, the
       # orphan journal, the pool's bookkeeping, the fuzz seeds, and the
       # real child that LaunchExe starts over the pipe (the one step that
       # compiles the app binary, via buildOpencraft).
       # These are skips, not deletions: a renamed or added case fails this
       # lane loudly instead of being silently excluded from it.
       # -v prints a line per case, which is where the counts above are
-      # read from after a run.
+      # read from after a run; they were checked against the 2026-09-26
+      # windows run (44 = 18 pass + 26 skip).
       - name: execd protocol + named-pipe launch (windows)
         run: go test -v -count=1 ./internal/capabilities/execd
         shell: pwsh
