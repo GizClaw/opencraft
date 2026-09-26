@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/envpath"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/envpath"
 )
 
 // TestPathEnvironmentWireShapeUsesLists is the regression test for the

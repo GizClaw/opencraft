@@ -9,16 +9,12 @@ package sandbox
 import (
 	"context"
 	"errors"
-	goruntime "runtime"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
-	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
 	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
-	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
-	sbwindows "github.com/GizClaw/flowcraft/core/sandbox/windows"
 	corenet "github.com/GizClaw/flowcraft/core/utils/net"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
@@ -364,27 +360,9 @@ func (HostSandboxFactory) New(
 		})
 		backend = remote
 	} else {
-		switch goruntime.GOOS {
-		case "darwin":
-			backend, err = seatbelt.New(s.Root,
-				seatbelt.WithWritablePaths(s.WritablePaths...))
-		case "linux":
-			backend, err = bwrap.New(s.Root,
-				bwrap.WithWritablePaths(s.WritablePaths...))
-		case "windows":
-			// flowcraft v0.2.2 Windows backend with OS-level write
-			// confinement; interactive sessions are disabled on
-			// Windows (issue #38) and the capability surface is kept
-			// honest.
-			var wb coresandbox.Runner
-			if wb, err = sbwindows.New(s.Root,
-				sbwindows.WithWriteConfinement(),
-				sbwindows.WithWritablePaths(s.WritablePaths...)); err == nil {
-				backend = noTTYRunner{wb}
-			}
-		default:
-			backend = sandboxlocal.New(s.Root)
-		}
+		// One construction site for every platform: backend.go owns
+		// which backend this is and how it is built.
+		backend, err = hostBackend(s.Root, s.WritablePaths)
 		if err != nil {
 			return nil, err
 		}

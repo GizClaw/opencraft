@@ -53,6 +53,9 @@ func TestDiagnosticsReportSandboxBackend(t *testing.T) {
 	if rep.SandboxBackend == "" {
 		t.Fatal("sandbox_backend must not be empty")
 	}
+	if rep.SandboxAvailableReason == "" {
+		t.Fatal("sandbox_available_reason must explain the verdict")
+	}
 	switch rep.SandboxBackend {
 	case "seatbelt":
 		if !rep.SandboxAvailable {
@@ -61,9 +64,50 @@ func TestDiagnosticsReportSandboxBackend(t *testing.T) {
 	case "bwrap":
 		// Availability depends on whether bwrap is installed; the
 		// field itself is what the UI needs to render a verdict.
+	case "jobobject":
+		if !rep.SandboxAvailable {
+			t.Fatal("the windows job-object backend is built in")
+		}
 	default:
 		if !rep.SandboxAvailable {
 			t.Fatal("local fallback sandbox must be available")
+		}
+	}
+}
+
+// TestSandboxBackendFor covers every platform branch on any host: the
+// verdict the diagnostics page shows must follow the sandbox
+// capability, not a second copy of the platform switch (the Windows
+// row used to be reported as "local", and the reason field is what
+// distinguishes "nothing to install" from "missing binary").
+func TestSandboxBackendFor(t *testing.T) {
+	cases := []struct {
+		goos       string
+		probeFound bool
+		name       string
+		available  bool
+		reasonPart string
+	}{
+		{"darwin", true, "seatbelt", true, "sandbox-exec is on PATH"},
+		{"darwin", false, "seatbelt", false, "sandbox-exec is not on PATH"},
+		{"linux", true, "bwrap", true, "bwrap is on PATH"},
+		{"linux", false, "bwrap", false, "bwrap is not on PATH"},
+		{"windows", false, "jobobject", true, "built into the OS backend"},
+		{"freebsd", false, "local", true, "no OS sandbox"},
+	}
+	for _, tc := range cases {
+		name, available, reason := sandboxBackendFor(tc.goos, tc.probeFound)
+		if name != tc.name {
+			t.Errorf("%s/%v: name = %q, want %q",
+				tc.goos, tc.probeFound, name, tc.name)
+		}
+		if available != tc.available {
+			t.Errorf("%s/%v: available = %v, want %v",
+				tc.goos, tc.probeFound, available, tc.available)
+		}
+		if !strings.Contains(reason, tc.reasonPart) {
+			t.Errorf("%s/%v: reason = %q, want it to mention %q",
+				tc.goos, tc.probeFound, reason, tc.reasonPart)
 		}
 	}
 }

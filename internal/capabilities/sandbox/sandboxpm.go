@@ -9,9 +9,7 @@ import (
 	"strings"
 
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
-	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
 	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
-	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
 	sbwindows "github.com/GizClaw/flowcraft/core/sandbox/windows"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -139,40 +137,14 @@ func SandboxRunnerWithCache(
 	}
 	writable := append([]string{cacheDir}, pol.WritablePaths...)
 	writable = dedupeStrings(writable)
-	switch goruntime.GOOS {
-	case "darwin":
-		runner, err := seatbelt.New(workDir, seatbelt.WithWritablePaths(writable...))
-		if err != nil {
-			return nil, coresandbox.EnvPolicy{}, fmt.Errorf(
-				"opencraft sandbox: seatbelt: %w", err)
-		}
-		return runner, policy, nil
-	case "linux":
-		runner, err := bwrap.New(workDir, bwrap.WithWritablePaths(writable...))
-		if err != nil {
-			return nil, coresandbox.EnvPolicy{}, fmt.Errorf(
-				"opencraft sandbox: bwrap: %w", err)
-		}
-		return runner, policy, nil
-	case "windows":
-		// flowcraft v0.2.2 Windows backend with OS-level write
-		// confinement: the child runs under a restricted Low-integrity
-		// token and can only write inside the workspace/root and the
-		// configured writable paths. The backend does not combine
-		// confinement with ConPTY TTY sessions yet, so interactive
-		// sessions stay disabled on Windows and the advertised
-		// capability surface is kept honest (issue #38).
-		runner, err := sbwindows.New(workDir,
-			sbwindows.WithWriteConfinement(),
-			sbwindows.WithWritablePaths(writable...))
-		if err != nil {
-			return nil, coresandbox.EnvPolicy{}, fmt.Errorf(
-				"opencraft sandbox: windows: %w", err)
-		}
-		return noTTYRunner{runner}, policy, nil
-	default:
-		return sandboxlocal.New(workDir), policy, nil
+	// Same construction site as the parent-side factory (backend.go):
+	// the child's backend must be the one the parent's diagnostics
+	// page reports.
+	runner, err := hostBackend(workDir, writable)
+	if err != nil {
+		return nil, coresandbox.EnvPolicy{}, err
 	}
+	return runner, policy, nil
 }
 
 // UnconfinedRunner returns a runner that executes commands directly on

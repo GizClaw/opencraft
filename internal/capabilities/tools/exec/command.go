@@ -21,7 +21,7 @@ import (
 
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/shelldetect"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/shelldetect"
 )
 
 // CommandName is the canonical exec_command tool name.

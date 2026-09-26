@@ -19,8 +19,8 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/fshidden"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/fshidden"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
@@ -580,14 +580,7 @@ func (b *File) OpenExternal(rawURL string) error {
 		!strings.HasPrefix(rawURL, "http://") {
 		return fmt.Errorf("open external: only http(s) URLs are allowed")
 	}
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", rawURL).Start()
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL).Start()
-	default:
-		return exec.Command("xdg-open", rawURL).Start()
-	}
+	return openWith(b.core.Shell.Context(), runtime.GOOS, openDefault, rawURL)
 }
 
 // OpenPath opens a file or directory with the system default app. It
@@ -599,21 +592,7 @@ func (b *File) OpenPath(path string) error {
 	if err != nil {
 		return err
 	}
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", full)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", full)
-	default:
-		cmd = exec.Command("xdg-open", full)
-	}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	telemetry.WarnErr(b.core.Shell.Context(),
-		"file: release open command failed", cmd.Process.Release())
-	return nil
+	return openWith(b.core.Shell.Context(), runtime.GOOS, openDefault, full)
 }
 
 // Reveal highlights any local path in the platform file manager.
@@ -622,21 +601,7 @@ func (b *File) Reveal(path string) error {
 	if err != nil {
 		return err
 	}
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", "-R", full)
-	case "windows":
-		cmd = exec.Command("explorer", "/select,", full)
-	default:
-		cmd = exec.Command("xdg-open", filepath.Dir(full))
-	}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	telemetry.WarnErr(b.core.Shell.Context(),
-		"file: release reveal command failed", cmd.Process.Release())
-	return nil
+	return openWith(b.core.Shell.Context(), runtime.GOOS, reveal, full)
 }
 
 // Diff returns the git diff for one workspace path.
@@ -947,22 +912,7 @@ func (b *File) OpenArtifactWith(path string) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("%s is not a regular file", full)
 	}
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", full).Start()
-	case "windows":
-		cmd := exec.Command("rundll32", "shell32.dll,OpenAs_RunDLL", full)
-		if err := cmd.Start(); err != nil {
-			return err
-		}
-		return cmd.Process.Release()
-	default:
-		cmd := exec.Command("xdg-open", full)
-		if err := cmd.Start(); err != nil {
-			return err
-		}
-		return cmd.Process.Release()
-	}
+	return openWith(b.core.Shell.Context(), runtime.GOOS, openAs, full)
 }
 
 // PickFolder opens a native directory picker.

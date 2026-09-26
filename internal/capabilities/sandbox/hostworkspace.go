@@ -465,6 +465,12 @@ func (w *hostWorkspace) Stat(
 var _ workspace.Workspace = (*hostWorkspace)(nil)
 var _ workspace.LimitedReader = (*hostWorkspace)(nil)
 
+// HostWorkspaceResourceKind is the deploy kind of the mode-aware
+// workspace. Declared here (not spelled inline in Spec) so the kind
+// inventory in foundation/resourcekind sees it; the tool requirement
+// lists that name it in Type are references to this value.
+const HostWorkspaceResourceKind = "opencraft.hostworkspace"
+
 // HostWorkspaceSettings configures the workspace-mode view of the
 // HostWorkspace resource. The confined root is derived from the
 // workspace dependency (ws).
@@ -483,7 +489,7 @@ var _ resource.Factory = HostWorkspaceFactory{}
 
 func (HostWorkspaceFactory) Spec() resource.Spec {
 	return resource.Spec{
-		Kind: "opencraft.hostworkspace",
+		Kind: HostWorkspaceResourceKind,
 		Impl: "local",
 		Deps: []resource.DepSpec{
 			{Name: "sessions", Type: sessions.ResourceKind, Required: true},

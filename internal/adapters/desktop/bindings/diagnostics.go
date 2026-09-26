@@ -26,9 +26,9 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/envpath"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/envpath"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/shelldetect"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/gitx"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/shelldetect"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
@@ -554,8 +554,12 @@ type Report struct {
 	ActiveRuns          int    `json:"active_runs"`
 	SandboxBackend      string `json:"sandbox_backend"`
 	SandboxAvailable    bool   `json:"sandbox_available"`
-	ExecShell           string `json:"exec_shell"`
-	UsageTotalTokens    int64  `json:"usage_total_tokens"`
+	// SandboxAvailableReason explains the verdict: the backend's own
+	// name is not enough to tell "nothing to install" (Windows) from
+	// "bwrap is missing" from a deliberate local fallback.
+	SandboxAvailableReason string `json:"sandbox_available_reason,omitempty"`
+	ExecShell              string `json:"exec_shell"`
+	UsageTotalTokens       int64  `json:"usage_total_tokens"`
 }
 
 // RecoveryDTO is the diagnostics view of crash recovery: what the last
@@ -694,7 +698,8 @@ func (b *Diagnostics) Diagnostics() Report {
 			}
 		}
 	}
-	rep.SandboxBackend, rep.SandboxAvailable = sandboxBackend()
+	rep.SandboxBackend, rep.SandboxAvailable,
+		rep.SandboxAvailableReason = sandboxBackend()
 	// The shell exec_command actually spawns through: the settings page
 	// must not disagree with the tool description the model reads.
 	rep.ExecShell = shelldetect.Detect(goruntime.GOOS).CommandLine()
@@ -714,17 +719,40 @@ func (b *Diagnostics) Diagnostics() Report {
 	return rep
 }
 
-// sandboxBackend reports the OS isolation layer for this platform.
-func sandboxBackend() (string, bool) {
-	switch goruntime.GOOS {
-	case "darwin":
-		_, err := exec.LookPath("sandbox-exec")
-		return "seatbelt", err == nil
-	case "linux":
-		_, err := exec.LookPath("bwrap")
-		return "bwrap", err == nil
+// sandboxBackend reports the OS isolation layer confined exec uses on
+// this platform, whether it can run here, and why not when it cannot.
+//
+// The name comes from the sandbox capability — the same value the
+// parent-side runner and the execd child construct their backend
+// from — so the settings page cannot disagree with what executes. It
+// used to answer "local" on Windows, where the child actually runs
+// the job-object backend, and it reported availability with no reason.
+func sandboxBackend() (string, bool, string) {
+	goos := goruntime.GOOS
+	probe := ocsandbox.BackendProbe(goos)
+	if probe == "" {
+		return sandboxBackendFor(goos, false)
+	}
+	_, err := exec.LookPath(probe)
+	return sandboxBackendFor(goos, err == nil)
+}
+
+// sandboxBackendFor answers the same question for one goos and one
+// probe outcome, so every platform branch is assertable on any host.
+func sandboxBackendFor(goos string, probeFound bool) (string, bool, string) {
+	name := ocsandbox.Backend(goos)
+	probe := ocsandbox.BackendProbe(goos)
+	switch {
+	case probe == "" && name == "local":
+		return name, true,
+			"no OS sandbox on this platform; commands run unconfined"
+	case probe == "":
+		return name, true,
+			"built into the OS backend; no external binary to install"
+	case probeFound:
+		return name, true, probe + " is on PATH"
 	default:
-		return "local", true
+		return name, false, probe + " is not on PATH"
 	}
 }
 
