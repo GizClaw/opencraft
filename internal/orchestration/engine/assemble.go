@@ -26,6 +26,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
 	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
 	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
+	sbwindows "github.com/GizClaw/flowcraft/core/sandbox/windows"
 	"github.com/GizClaw/flowcraft/core/secret"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
@@ -335,86 +336,9 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		resource.WithEmbed(config.FS()),
 	)
 	reg := resource.NewRegistry()
-	registers := []func(*resource.Registry) error{
-		event.Register,
-		graphresource.Register,
-		workspace.Register,
-		tool.Register,
-		middleware.Register,
-		mcp.Register,
-		secret.Register,
-		inference.Register,
-		route.Register,
-		scriptrt.Register,
-		sandboxlocal.Register,
-		bwrap.Register,
-		seatbelt.Register,
-		anthropic.Register,
-		bytedance.Register,
-		minimax.Register,
-		openai.Register,
-		func(r *resource.Registry) error {
-			return opmemory.RegisterWithObserver(r, o.usageObserver)
-		},
-		func(r *resource.Registry) error {
-			if o.SessionStore == nil {
-				return fmt.Errorf(
-					"engine: session store requires WithSessionStore " +
-						"(schema migration is centralized in internal/foundation/compat)")
-			}
-			return r.Register(ocsessions.Factory{StoreFor: o.SessionStore})
-		},
-		opmedia.Register,
-		skills.Register,
-		opentools.Register,
-		sandbox.Register,
-		secrets.Register,
-		worldstate.Register,
-		func(r *resource.Registry) error {
-			return r.Register(agents.Factory{})
-		},
-		delegationkanban.Register,
-		sdkdelegation.RegisterDirectory,
-		sdkdelegation.RegisterSessionProvider,
-		func(r *resource.Registry) error {
-			// The stream resolver/exporter are app-owned behavior the
-			// document cannot express: they describe a live sink as a
-			// durable destination (exporter) and turn that
-			// destination back into a sink (resolver), so an async
-			// delegation's stream survives losing its in-process
-			// escrow. A deployment that injects neither keeps the
-			// escrow-only behavior.
-			var opts []sdkdelegation.Option
-			if o.DelegationStreamResolver != nil {
-				opts = append(opts,
-					sdkdelegation.WithStreamTargetResolver(o.DelegationStreamResolver))
-			}
-			if o.DelegationStreamExporter != nil {
-				opts = append(opts,
-					sdkdelegation.WithStreamTargetExporter(o.DelegationStreamExporter))
-			}
-			return r.Register(sdkdelegation.NewServiceFactory(opts...))
-		},
-		func(r *resource.Registry) error {
-			return r.Register(tooldelegation.NewSourceFactory())
-		},
-		execpolicy.Register,
+	if err := registerResources(reg, &o); err != nil {
+		return nil, err
 	}
-	for _, register := range registers {
-		if err := register(reg); err != nil {
-			return nil, err
-		}
-	}
-	reg.MustRegister(hooks.Factory{})
-	reg.MustRegister(hooks.ObserverFactory{})
-	// User-level state bindings: each pairs the caller-owned store the
-	// host attached to user.db with that feature's document settings,
-	// so consumers read one dependency instead of two.
-	reg.MustRegister(userstore.Factory{})
-	reg.MustRegister(skillusage.Factory{})
-	reg.MustRegister(reviewstore.Factory{})
-	reg.MustRegister(review.Factory{})
-	reg.MustRegister(subagents.PolicyFactory{})
 
 	builder := runtimecore.NewBuilder(reg)
 	if err := builder.WithLoader(loader); err != nil {
@@ -566,3 +490,102 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 // agentsResourceName is the deploy-document resource id of the
 // persistent subagent registry.
 const agentsResourceName = "agentlifecycle"
+
+// registerResources installs every resource factory this build ships:
+// flowcraft's own kinds, the OS backends, the inference drivers,
+// opencraft's capabilities, and the user-level store bindings. It is
+// the one registry the embedded deploy assets are validated against
+// (TestEmbeddedAssetsResolveAgainstRegistry): every (kind, impl) an
+// asset names must resolve here. A missing registration — the windows
+// sandbox backend was one — only fails at deploy time, and only for
+// the asset that names it, so the scan is what keeps the list honest.
+func registerResources(reg *resource.Registry, o *Options) error {
+	registers := []func(*resource.Registry) error{
+		event.Register,
+		graphresource.Register,
+		workspace.Register,
+		tool.Register,
+		middleware.Register,
+		mcp.Register,
+		secret.Register,
+		inference.Register,
+		route.Register,
+		scriptrt.Register,
+		sandboxlocal.Register,
+		bwrap.Register,
+		seatbelt.Register,
+		// The windows backend must be registered even though no embedded
+		// asset deploys it: a user layer that picks impl: windows would
+		// otherwise fail assembly with "no factory", and the flowcraft
+		// backend exists precisely for that choice (the opencraft impl
+		// stays the default because hostsandbox.go owns the env policy
+		// and approval chain around it).
+		sbwindows.Register,
+		anthropic.Register,
+		bytedance.Register,
+		minimax.Register,
+		openai.Register,
+		func(r *resource.Registry) error {
+			return opmemory.RegisterWithObserver(r, o.usageObserver)
+		},
+		func(r *resource.Registry) error {
+			if o.SessionStore == nil {
+				return fmt.Errorf(
+					"engine: session store requires WithSessionStore " +
+						"(schema migration is centralized in internal/foundation/compat)")
+			}
+			return r.Register(ocsessions.Factory{StoreFor: o.SessionStore})
+		},
+		opmedia.Register,
+		skills.Register,
+		opentools.Register,
+		sandbox.Register,
+		secrets.Register,
+		worldstate.Register,
+		func(r *resource.Registry) error {
+			return r.Register(agents.Factory{})
+		},
+		delegationkanban.Register,
+		sdkdelegation.RegisterDirectory,
+		sdkdelegation.RegisterSessionProvider,
+		func(r *resource.Registry) error {
+			// The stream resolver/exporter are app-owned behavior the
+			// document cannot express: they describe a live sink as a
+			// durable destination (exporter) and turn that
+			// destination back into a sink (resolver), so an async
+			// delegation's stream survives losing its in-process
+			// escrow. A deployment that injects neither keeps the
+			// escrow-only behavior.
+			var opts []sdkdelegation.Option
+			if o.DelegationStreamResolver != nil {
+				opts = append(opts,
+					sdkdelegation.WithStreamTargetResolver(o.DelegationStreamResolver))
+			}
+			if o.DelegationStreamExporter != nil {
+				opts = append(opts,
+					sdkdelegation.WithStreamTargetExporter(o.DelegationStreamExporter))
+			}
+			return r.Register(sdkdelegation.NewServiceFactory(opts...))
+		},
+		func(r *resource.Registry) error {
+			return r.Register(tooldelegation.NewSourceFactory())
+		},
+		execpolicy.Register,
+	}
+	for _, register := range registers {
+		if err := register(reg); err != nil {
+			return err
+		}
+	}
+	reg.MustRegister(hooks.Factory{})
+	reg.MustRegister(hooks.ObserverFactory{})
+	// User-level state bindings: each pairs the caller-owned store the
+	// host attached to user.db with that feature's document settings,
+	// so consumers read one dependency instead of two.
+	reg.MustRegister(userstore.Factory{})
+	reg.MustRegister(skillusage.Factory{})
+	reg.MustRegister(reviewstore.Factory{})
+	reg.MustRegister(review.Factory{})
+	reg.MustRegister(subagents.PolicyFactory{})
+	return nil
+}

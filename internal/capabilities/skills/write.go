@@ -10,6 +10,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
+	"github.com/GizClaw/opencraft/internal/foundation/utils/fsatomic"
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 
@@ -56,42 +57,14 @@ func validRelPath(rel string) (string, error) {
 }
 
 // writeFileAtomic writes data to path via a temp file in the same
-// directory followed by rename.
+// directory followed by rename (mechanics in fsatomic). The caller has
+// already created the directory.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".skill-*.tmp")
-	if err != nil {
-		return fmt.Errorf("skills: create temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-			telemetry.WarnErr(context.Background(),
-				"skills: remove skill temp file failed", err)
-		}
-	}() // no-op after a successful rename
-	if err := tmp.Chmod(perm); err != nil {
-		telemetry.WarnErr(context.Background(),
-			"skills: close skill temp after chmod failure", tmp.Close())
-		return fmt.Errorf("skills: chmod temp file: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		telemetry.WarnErr(context.Background(),
-			"skills: close skill temp after write failure", tmp.Close())
-		return fmt.Errorf("skills: write temp file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		telemetry.WarnErr(context.Background(),
-			"skills: close skill temp after sync failure", tmp.Close())
-		return fmt.Errorf("skills: sync temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("skills: close temp file: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("skills: rename temp file: %w", err)
-	}
-	return nil
+	return fsatomic.Write(path, data, fsatomic.Options{
+		Perm:       perm,
+		TempPrefix: ".skill-*.tmp",
+		Sync:       true,
+	})
 }
 
 // patchRename is split out so tests can inject a rename failure

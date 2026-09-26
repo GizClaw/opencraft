@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/fsatomic"
 )
 
 // ResourceKind is the deployable resource kind of the persistent
@@ -799,40 +800,12 @@ func (l *Lifecycle) writeSpec(spec AgentSpec) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".agent-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		telemetry.WarnErr(context.Background(),
-			"agents: close agent spec temp after write failure", tmp.Close())
-		telemetry.WarnErr(context.Background(),
-			"agents: remove agent spec temp after write failure",
-			os.Remove(tmpName))
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		telemetry.WarnErr(context.Background(),
-			"agents: close agent spec temp after sync failure", tmp.Close())
-		telemetry.WarnErr(context.Background(),
-			"agents: remove agent spec temp after sync failure",
-			os.Remove(tmpName))
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		telemetry.WarnErr(context.Background(),
-			"agents: remove agent spec temp after close failure",
-			os.Remove(tmpName))
-		return err
-	}
-	if err := os.Rename(tmpName, filepath.Join(dir, specFile)); err != nil {
-		telemetry.WarnErr(context.Background(),
-			"agents: remove agent spec temp after rename failure",
-			os.Remove(tmpName))
-		return err
-	}
-	return nil
+	// The spec file keeps os.CreateTemp's 0600: agent declarations are
+	// user-private like the rest of ~/.opencraft.
+	return fsatomic.Write(filepath.Join(dir, specFile), data, fsatomic.Options{
+		TempPrefix: ".agent-*.tmp",
+		Sync:       true,
+	})
 }
 
 func (l *Lifecycle) readSpec(dir string) (AgentSpec, error) {

@@ -16,7 +16,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
-	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"sigs.k8s.io/yaml"
@@ -26,6 +25,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/permissions"
 	"github.com/GizClaw/opencraft/internal/capabilities/worldstate"
 	"github.com/GizClaw/opencraft/internal/foundation/interact"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/fsatomic"
 )
 
 // approvalsFile is the on-disk shape of the workspace-owned
@@ -52,6 +52,12 @@ type escalationsFile struct {
 
 // approvalsVersion is the current approvals file schema version.
 const approvalsVersion = "v1"
+
+// ResourceKind is the deploy kind of the policy manager. It is declared
+// here (not spelled inline in Spec) so the kind inventory in
+// foundation/resourcekind can see it: the value is a wire contract, and
+// the tool requirement lists that name it in Type only reference it.
+const ResourceKind = "opencraft.execpolicy"
 
 // Manager owns the dynamic command allowlist and its workspace-backed
 // approvals file. It is safe for concurrent use while Exec calls are
@@ -618,104 +624,20 @@ func (m *Manager) writeEscalations(file escalationsFile) error {
 
 // writeYAML atomically replaces path with the marshalled document: the
 // temp file lives in the same directory so the rename stays on one
-// filesystem, matching the approvals file's original behaviour.
+// filesystem, matching the approvals file's original behaviour. The
+// file has always been published 0644 and without an fsync; fsatomic
+// keeps both, the file is shareable on purpose (the worldstate
+// permissions view reads it).
 func writeYAML(path string, doc any) error {
 	data, err := yaml.Marshal(doc)
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".opencraft-policy-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
-			telemetry.WarnErr(context.Background(),
-				"opencraft execpolicy: remove policy temp file failed", err)
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		telemetry.WarnErr(context.Background(),
-			"opencraft execpolicy: close policy temp after write failure",
-			tmp.Close())
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
-}
-
-// ---------------------------------------------------------------------------
-// Deploy resource: the execpolicy resource owns the policy manager.
-// ---------------------------------------------------------------------------
-
-// execPolicySettings is the deploy-document shape of the execpolicy
-// resource: the static command rules plus the path of the project
-// approvals file whose path is injected by the Host.
-// An empty approvals_path keeps the policy in-memory only.
-type execPolicySettings struct {
-	AllowedCommands []string `json:"allowed_commands,omitempty"`
-	ApprovalsPath   string   `json:"approvals_path"`
-	// AuditDir receives escalations.jsonl (escalation decisions).
-	// Empty disables the trail.
-	AuditDir string `json:"audit_dir,omitempty"`
-}
-
-// execPolicyResource is the opencraft.execpolicy deploy resource. It
-// owns the sandbox exec policy: static rules plus the project
-// approvals file merge into one allowlist, and every consumer (the
-// sandbox runner, the worldstate permissions section, and the
-// request_permissions tool) depends on this resource instead of
-// building its own manager.
-type execPolicyResource struct{}
-
-// Register adds the opencraft.execpolicy deploy resource factory.
-func Register(r *resource.Registry) error {
-	return r.Register(execPolicyResource{})
-}
-
-var _ resource.Factory = execPolicyResource{}
-
-func (execPolicyResource) Spec() resource.Spec {
-	return resource.Spec{
-		Kind: "opencraft.execpolicy",
-		Impl: "manager",
-		Deps: []resource.DepSpec{{
-			Name: "hooks", Type: hooks.ResourceKind, Required: false,
-		}},
-	}
-}
-
-func (execPolicyResource) New(
-	ctx context.Context,
-	in resource.Input,
-) (any, error) {
-	settings, err := resource.DecodeTyped[execPolicySettings](
-		ctx, in.Settings)
-	if err != nil {
-		return nil, errdefs.Validationf(
-			"opencraft execpolicy: decode settings: %v", err)
-	}
-	mgr, err := NewWithAudit(
-		settings.AllowedCommands, settings.ApprovalsPath, settings.AuditDir)
-	if err != nil {
-		return nil, err
-	}
-	if dep, ok := in.Dep("hooks"); ok {
-		if hookMgr, ok := dep.(*hooks.Manager); ok {
-			mgr.SetHooks(hookMgr)
-		}
-	}
-	return mgr, nil
+	return fsatomic.Write(path, data, fsatomic.Options{
+		Perm:       0o644,
+		MkdirPerm:  0o755,
+		TempPrefix: ".opencraft-policy-*",
+	})
 }
 
 var _ permissions.Policy = (*Manager)(nil)
