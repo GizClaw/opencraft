@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/wslock"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
 )
 
 func TestStorePoolSharesPerRoot(t *testing.T) {
