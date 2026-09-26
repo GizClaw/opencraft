@@ -47,7 +47,7 @@ jobs:
 
       - name: Generate Wails bindings
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26
           export PATH="$PATH:$(go env GOPATH)/bin"
           mkdir -p frontend/dist
           touch frontend/dist/.gitkeep
@@ -172,7 +172,7 @@ jobs:
 
       - name: Generate Wails bindings
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26
           export PATH="$PATH:$(go env GOPATH)/bin"
           mkdir -p frontend/dist
           touch frontend/dist/.gitkeep
@@ -206,7 +206,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Generate Wails bindings
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26
           export PATH="$PATH:$(go env GOPATH)/bin"
           mkdir -p frontend/dist
           touch frontend/dist/.gitkeep
@@ -232,7 +232,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Generate Wails bindings
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26
           $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
           New-Item -ItemType Directory -Force frontend/dist | Out-Null
           New-Item -ItemType File -Force frontend/dist/.gitkeep | Out-Null
@@ -302,7 +302,7 @@ jobs:
 
       - name: Generate Wails bindings
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26
           export PATH="$PATH:$(go env GOPATH)/bin"
           mkdir -p frontend/dist
           touch frontend/dist/.gitkeep
@@ -335,7 +335,7 @@ jobs:
 
       - name: Generate Wails bindings
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26
           export PATH="$PATH:$(go env GOPATH)/bin"
           mkdir -p frontend/dist
           touch frontend/dist/.gitkeep
@@ -368,7 +368,7 @@ jobs:
 
       - name: Generate Wails bindings
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.26
           $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
           New-Item -ItemType Directory -Force frontend/dist | Out-Null
           New-Item -ItemType File -Force frontend/dist/.gitkeep | Out-Null

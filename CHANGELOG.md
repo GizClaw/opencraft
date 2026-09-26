@@ -6,6 +6,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The desktop shell is on Wails v3.0.0-beta.26, from beta.17 — the bump lands
+  in the three places that pin it (go.mod, `@wailsio/runtime`, the CI and
+  release `wails3` installs). What it buys: `wails3 dev` now waits for the vite
+  server to answer HTTP 200 before starting the app, so the first paint no
+  longer races the dev server, and it stops the frontend when the app exits
+  instead of leaving an orphan holding the port; SIGINT/SIGTERM reach the
+  app's shutdown hooks instead of being a bare kill that skips them; Windows
+  recovers from a WebView2 process failure by rebuilding the controller
+  instead of leaving a permanently blank window, and no longer ships the
+  bundled WebView2Loader DLL; on Linux a closing window stops its in-flight
+  loads and single-instance handling is stricter. The darwin build now passes
+  `-tags private_mac_apis`, which is required for the pet window to be
+  transparent — without it the window silently stays opaque — at the cost of
+  reading one undocumented WebKit property.
+
+### Removed
+
+- The `setup:docker` task is gone. It built the `wails-cross` image from
+  `build/docker/Dockerfile.cross`, a file this repo never carried, so it could
+  only ever fail; the per-platform `build:docker` cross tasks stay and now say
+  where the image has to come from.
+- `build:server`, `run:server`, `build:docker` and `run:docker` are gone too.
+  `server` is a real Wails v3 build tag — it swaps the native shell for an HTTP
+  server and browser windows — but this repo never wired it up: no
+  `ServerOptions` (no port or bind address to configure), no CI job, no docs,
+  and the desktop shell (tray, pet window, native notifications) has never been
+  run that way. `build:docker` additionally required a
+  `build/docker/Dockerfile.server` that has never existed, and pointed at
+  `wails3 update build-assets`, which overwrites the whole `build/` tree. The
+  per-platform cross-compile `build:docker` (the `wails-cross` image) is
+  untouched.
+
 ### Fixed
 
 - A deleted conversation stays deleted. Deleting one retires its id in
