@@ -8,12 +8,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/GizClaw/opencraft/internal/foundation/utils/wslock"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
 )
+
+// requireUnixSocketEndpoint skips a case that asserts about the shape of
+// the endpoint on disk. The unix endpoint is a socket file under the
+// state root, so its stale-file cleanup and the socket path-length
+// fallback are both observable; the Windows endpoint is a kernel pipe
+// name with no file behind it, and neither scenario exists there. The
+// pipe mechanism itself is covered by the rest of this file, which runs
+// on both platforms.
+func requireUnixSocketEndpoint(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("asserts the on-disk unix socket: " +
+			"the Windows endpoint is a named pipe")
+	}
+}
 
 const (
 	helperEnv      = "GUILOCK_TEST_HELPER"
@@ -279,6 +295,7 @@ func TestServeOnSharedHandleIsNoOp(t *testing.T) {
 }
 
 func TestServeReplacesStaleEndpoint(t *testing.T) {
+	requireUnixSocketEndpoint(t)
 	root := t.TempDir()
 	endpoint := endpointName(root, testIdentity(t))
 	// A holder that dies without cleanup leaves the socket path behind.
@@ -315,6 +332,7 @@ func TestServeReplacesStaleEndpoint(t *testing.T) {
 }
 
 func TestLongRootFallsBackToTempEndpoint(t *testing.T) {
+	requireUnixSocketEndpoint(t)
 	// A state root deep enough that <root>/gui.sock cannot fit a unix
 	// socket address still keeps the lock and moves only the raise
 	// endpoint.

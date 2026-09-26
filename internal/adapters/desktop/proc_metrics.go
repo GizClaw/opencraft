@@ -8,7 +8,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	metricstore "github.com/GizClaw/opencraft/internal/capabilities/telemetry/metric"
-	"github.com/GizClaw/opencraft/internal/foundation/procmem"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/procmem"
 )
 
 // The process-family series. Go memory says what the heap in this process

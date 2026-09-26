@@ -7,7 +7,7 @@
 // language cache uses — and the store reconciles the two after init.
 //
 // A font is a preset id plus, for "custom", a family name picked from the
-// host font catalogue (internal/foundation/sysfont) or typed by hand. Turning
+// host font catalogue (internal/foundation/platform/sysfont) or typed by hand. Turning
 // that family into a CSS stack — quoting it and appending the platform
 // fallback — is this module's job, so the desktop document never carries CSS.
 // The preset ids — fonts, accents — are a contract with

@@ -7,7 +7,7 @@ import (
 )
 
 // PathPrefs is the persisted PATH override. The precedence rules and the
-// startup install live in foundation/utils/envpath; this document only
+// startup install live in foundation/platform/envpath; this document only
 // stores what the user configured.
 type PathPrefs struct {
 	// Prepend lists absolute directories placed in front of the process

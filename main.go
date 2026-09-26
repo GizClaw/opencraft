@@ -19,7 +19,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/adapters/desktop"
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/guilock"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/guilock"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"

@@ -28,7 +28,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/envpath"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/envpath"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 
@@ -196,7 +196,7 @@ func New(opts Options) (*Desktop, error) {
 	// Finder/Dock launch inherits launchd's minimal PATH, so without this
 	// the MCP servers, the commands agents run and the app's own gh/git
 	// lookups cannot see Homebrew or other user-local installs. The merge
-	// rules live in foundation/utils/envpath.
+	// rules live in foundation/platform/envpath.
 	resolveProcessPath(c)
 	d := &Desktop{
 		core:    c,

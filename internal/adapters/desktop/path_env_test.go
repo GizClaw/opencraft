@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GizClaw/opencraft/internal/foundation/utils/envpath"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/envpath"
 )
 
 // TestNewResolvesProcessPath covers the launch the module exists for: a

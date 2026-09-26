@@ -50,7 +50,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
 
-	"github.com/GizClaw/opencraft/internal/foundation/utils/wslock"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
 )
 
 // LockName is the lock file inside the state root.

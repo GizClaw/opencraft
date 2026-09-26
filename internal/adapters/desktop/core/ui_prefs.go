@@ -13,7 +13,7 @@ import (
 //
 // A font is stored as a preset id plus, for the "custom" preset, the family
 // name to render with. The catalogue of names comes from the host
-// (internal/foundation/sysfont), while the renderer owns how a family becomes
+// (internal/foundation/platform/sysfont), while the renderer owns how a family becomes
 // a CSS stack with the platform fallback appended — so only the preset ids
 // are a contract with frontend/src/lib/appearance.ts. Keep both sides in
 // sync.
