@@ -215,6 +215,19 @@ jobs:
         run: npm ci --prefix frontend && npm run build --prefix frontend
       - name: Platform tests (sandbox/execd/desktop/sessions)
         run: go test -count=1 ./internal/capabilities/sandbox ./internal/capabilities/execd ./internal/adapters/desktop ./internal/capabilities/sessions
+      # The platform primitives have a macOS-specific half that a linux
+      # run never touches: sysfont reads CoreText, procmem reads mach
+      # task info, guilock binds the unix socket endpoint and wslock
+      # takes flock. All 34 cases in the packages below run here (0 skips
+      # on this lane: procmem's "no process probe" and sysfont's "no
+      # font catalogue" skips belong to other platforms).
+      - name: Platform primitives (macos)
+        run: go test -count=1 ./internal/foundation/platform/sysfont ./internal/foundation/platform/procmem ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock ./internal/foundation/platform/wslock
+      # The pet window's own half: geometry/hover/mind/pack are pure, so
+      # the whole package runs (45 cases) and the darwin cursor + DPI
+      # build is exercised on the platform it is written for.
+      - name: Pet window (macos)
+        run: go test -count=1 ./internal/adapters/desktop/pet
 
   test-windows:
     name: test (windows)
@@ -254,7 +267,7 @@ jobs:
       # Windows) and the Windows bare-word rules, which is exactly what
       # a Linux-only run cannot see.
       - name: Exec tools (windows)
-        run: go test -count=1 ./internal/capabilities/tools/exec ./internal/foundation/utils/shelldetect
+        run: go test -count=1 ./internal/capabilities/tools/exec ./internal/foundation/platform/shelldetect
         shell: pwsh
       # Workspace paths are slash-separated on every platform, and this is
       # the lane where getting that wrong shows: list_dir's depth
@@ -273,6 +286,31 @@ jobs:
       # that can run the assertions.
       - name: Patch engine (windows)
         run: go test -count=1 ./internal/foundation/utils/patch
+        shell: pwsh
+      # The channel this package exists for is the one a POSIX run never
+      # reaches: a named pipe with an SDDL, plus the job-object child.
+      # The scenario tests drive the child through /bin/sh (or plain
+      # POSIX signal/process-group semantics), so 27 of the 44 cases call
+      # requirePOSIXChild and report as skips -- see
+      # internal/capabilities/execd/posix_child_test.go. What runs here is
+      # the 17 shell-free cases: the wire protocol, the frame writer, the
+      # orphan journal, the pool's bookkeeping, the fuzz seeds, and the
+      # real child that LaunchExe starts over the pipe (the one step that
+      # compiles the app binary, via buildOpencraft).
+      # These are skips, not deletions: a renamed or added case fails this
+      # lane loudly instead of being silently excluded from it.
+      - name: execd protocol + named-pipe launch (windows)
+        run: go test -count=1 ./internal/capabilities/execd
+        shell: pwsh
+      # The primitives whose Windows half is behind a build tag: the
+      # FILE_ATTRIBUTE_HIDDEN branch of fshidden (its only test file is
+      # //go:build windows, so this lane is the only place it can run),
+      # guilock's named-pipe endpoint over its named-mutex lock, and
+      # wslock's LockFileEx. 17 cases run, 2 skip: guilock's stale-socket
+      # cleanup and socket path-length fallback assert the on-disk unix
+      # socket and call requireUnixSocketEndpoint.
+      - name: Platform primitives (windows)
+        run: go test -count=1 ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock ./internal/foundation/platform/wslock
         shell: pwsh
       - name: Compile check (sandbox/desktop/sessions/secrets)
         run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktop ./internal/capabilities/sessions ./internal/capabilities/secrets

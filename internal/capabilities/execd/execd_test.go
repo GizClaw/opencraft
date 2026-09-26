@@ -147,6 +147,7 @@ func TestBindRequiredBeforeProcessCalls(t *testing.T) {
 }
 
 func TestStartReadWaitRelease(t *testing.T) {
+	requirePOSIXChild(t)
 	client, _ := testPair(t)
 	ctx := context.Background()
 	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {
@@ -204,6 +205,7 @@ func TestStartReadWaitRelease(t *testing.T) {
 // TestQuietReadDoesNotBlockOtherRequests pins the regression that made
 // a quiet command wedge the whole connection.
 func TestQuietReadDoesNotBlockOtherRequests(t *testing.T) {
+	requirePOSIXChild(t)
 	client, _ := testPair(t)
 	ctx := context.Background()
 	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {
@@ -247,6 +249,7 @@ func TestQuietReadDoesNotBlockOtherRequests(t *testing.T) {
 // TestRemoteExecCancelKillsProcessGroup is the user-visible regression:
 // cancelling the tool context must return promptly and kill the group.
 func TestRemoteExecCancelKillsProcessGroup(t *testing.T) {
+	requirePOSIXChild(t)
 	runner := testRunner(t)
 	marker := "sleep 41.75"
 	ctx, cancel := context.WithCancel(context.Background())
@@ -279,6 +282,7 @@ func TestRemoteExecCancelKillsProcessGroup(t *testing.T) {
 // TestRemoteExecsDoNotSerialize pins the two-session report: one exec
 // sleeping must not delay another exec in the same workspace.
 func TestRemoteExecsDoNotSerialize(t *testing.T) {
+	requirePOSIXChild(t)
 	runner := testRunner(t)
 	sleepCtx, cancelSleep := context.WithCancel(context.Background())
 	defer cancelSleep()
@@ -315,6 +319,7 @@ func TestRemoteExecsDoNotSerialize(t *testing.T) {
 }
 
 func TestRequestDeadlineIsBounded(t *testing.T) {
+	requirePOSIXChild(t)
 	client, _ := testPair(t)
 	ctx := context.Background()
 	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {
@@ -346,6 +351,7 @@ func TestRequestDeadlineIsBounded(t *testing.T) {
 // child is detected by the ping watchdog, and the next call rebinds the
 // workspace on a fresh child.
 func TestRemoteRunnerWatchdogRelaunches(t *testing.T) {
+	requirePOSIXChild(t)
 	client1, _ := testPair(t)
 	workdir := t.TempDir()
 	runner, err := NewRemoteRunner(
@@ -384,6 +390,7 @@ func TestRemoteRunnerWatchdogRelaunches(t *testing.T) {
 }
 
 func TestReleaseThenReap(t *testing.T) {
+	requirePOSIXChild(t)
 	client, srv := testPairConfigured(t, func(s *Server) {
 		s.reapAfter = 20 * time.Millisecond
 		s.reapInterval = 10 * time.Millisecond
@@ -414,6 +421,7 @@ func TestReleaseThenReap(t *testing.T) {
 }
 
 func TestWriteIdempotentAndCloseInput(t *testing.T) {
+	requirePOSIXChild(t)
 	client, _ := testPair(t)
 	ctx := context.Background()
 	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {
@@ -660,6 +668,7 @@ func waitActorIdle(t *testing.T, srv *Server, processID string) {
 // waits for the actor to go idle first, so the read it cancels is a real
 // long poll instead of a peek (see waitActorIdle).
 func TestCancelNotificationBeatsHandlerStart(t *testing.T) {
+	requirePOSIXChild(t)
 	client, srv := testPair(t)
 	ctx := context.Background()
 	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {
@@ -705,6 +714,7 @@ func TestCancelNotificationBeatsHandlerStart(t *testing.T) {
 // TestEmptyWriteIDIsNotDeduped pins that an empty write id means "no
 // retry key" instead of deduplicating every write that omits one.
 func TestEmptyWriteIDIsNotDeduped(t *testing.T) {
+	requirePOSIXChild(t)
 	client, _ := testPair(t)
 	ctx := context.Background()
 	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {
@@ -759,6 +769,7 @@ func TestEmptyWriteIDIsNotDeduped(t *testing.T) {
 // local backend produces, not a hard error it would treat as a dead
 // session and stop reading from.
 func TestSessionReadReportsWindowExpiryAsATimeout(t *testing.T) {
+	requirePOSIXChild(t)
 	runner := testRunner(t)
 	ctx := context.Background()
 	sess, err := runner.Start(ctx, sandbox.SessionSpec{
@@ -781,6 +792,7 @@ func TestSessionReadReportsWindowExpiryAsATimeout(t *testing.T) {
 }
 
 func TestQuietReadReturnsEmptySuccess(t *testing.T) {
+	requirePOSIXChild(t)
 	client, _ := testPair(t)
 	ctx := context.Background()
 	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {
@@ -804,6 +816,7 @@ func TestQuietReadReturnsEmptySuccess(t *testing.T) {
 // TestSessionCloseAfterReapIsIdempotent pins that closing a session the
 // reaper already dropped succeeds instead of surfacing not_found.
 func TestSessionCloseAfterReapIsIdempotent(t *testing.T) {
+	requirePOSIXChild(t)
 	client, srv := testPairConfigured(t, func(s *Server) {
 		s.reapAfter = 20 * time.Millisecond
 		s.reapInterval = 10 * time.Millisecond
@@ -859,6 +872,7 @@ func TestBindAdvertisesBackendCapabilities(t *testing.T) {
 // outstanding wait, and interrupting that wait reports a cancellation
 // rather than a server fault.
 func TestInterruptedWaitIsCanceledAndReadsPeek(t *testing.T) {
+	requirePOSIXChild(t)
 	client, _ := testPair(t)
 	ctx := context.Background()
 	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {

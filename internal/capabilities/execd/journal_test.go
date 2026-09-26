@@ -16,6 +16,7 @@ import (
 // child whose recorded parent is gone is killed (tree included) and its
 // journal file is removed, while a live parent keeps its child.
 func TestSweepOrphansReapsDeadParentChildren(t *testing.T) {
+	requirePOSIXChild(t)
 	SetJournalRoot(t.TempDir())
 	nonce := "orphan-test-nonce"
 	marker := "sleep 37.25"
