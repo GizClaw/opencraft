@@ -196,7 +196,14 @@ function heavyTurns(count: number, patchesPerTurn: number): unknown[] {
   });
 }
 
+// TURNS is the session the walk below expands: twelve turns of eight
+// 200-line patches each.
+const TURNS = 12;
+
 test('expanding a long turn stays bounded', async ({ page }) => {
+  // The walk navigates with the ruler, which is drawn from the md
+  // breakpoint up: pin the viewport so the walk's affordance is there.
+  await page.setViewportSize({ width: 1200, height: 800 });
   await page.addInitScript(mockBackend as never, {
     listSessions: [
       {
@@ -208,7 +215,7 @@ test('expanding a long turn stays bounded', async ({ page }) => {
         total_tokens: 0,
       },
     ],
-    sessionTurns: heavyTurns(12, 8),
+    sessionTurns: heavyTurns(TURNS, 8),
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'Heavy session' }).click();
@@ -217,29 +224,40 @@ test('expanding a long turn stays bounded', async ({ page }) => {
   const nodes = () =>
     page.evaluate(() => document.getElementsByTagName('*').length);
   const before = await nodes();
-  const scroller = page.getByTestId('chat-scroll');
-  // Page the whole session in first: a turn is only in the DOM while the
-  // reader is at it, so the walk below can only open the folds it can
-  // reach, and the archive hands out the older turns a page at a time.
+  // Page the whole session in first: the archive hands the older turns
+  // over a page at a time, and a turn the archive has not handed over has
+  // no ruler tick to ask for.
   await loadAllHistory(page);
-  // Read back up the session, opening every fold as it comes into reach.
-  const closedFolds = page.getByRole('button', {
-    name: /Worked for/,
-    expanded: false,
-  });
+  // Open every turn's fold, newest first, walking back up the session.
+  //
+  // The walk asks the ruler for each turn instead of hunting the DOM for
+  // folds: the transcript is windowed, so a fold exists only while the
+  // reader is near it, and a walk that clicks "whatever is mounted" is a
+  // walk whose progress depends on the list dragging the reader along as
+  // it re-measures. That dependency is what made this test flaky — it was
+  // not the app moving the reader but Playwright's own click scrolling a
+  // target into view, and whenever the drag stopped early (the fold in
+  // reach was already on screen, or a re-render replaced the row under the
+  // click) the walk broke at the top with turns still folded, or sat on a
+  // locator that never resolved until the test timed out. A jump is a
+  // reader's own way to reach a turn, and the fold at its head is right
+  // there once it lands.
   const started = Date.now();
   let opened = 0;
-  for (let step = 0; step < 80; step += 1) {
-    if ((await closedFolds.count()) > 0) {
-      await closedFolds.last().click();
-      opened += 1;
-      continue;
-    }
-    const top = await scroller.evaluate((el) => el.scrollTop);
-    if (top <= 0) break;
-    await scroller.evaluate((el) => {
-      el.scrollTop = Math.max(0, el.scrollTop - el.clientHeight);
-    });
+  for (let turn = TURNS - 1; turn >= 0; turn -= 1) {
+    // The compact ruler draws a tick per turn; twelve turns is well under
+    // the dense-ruler threshold, so every turn has one.
+    await page.locator(`[data-peek-index="${turn}"]`).click();
+    const fold = page
+      .locator(`[data-turn-index="${turn}"]`)
+      .getByRole('button', { name: /Worked for/ });
+    // The click has to land on this turn's fold, and the fold has to be
+    // the one that changes state: a jump that missed would otherwise look
+    // like a turn that had nothing to open.
+    await expect(fold).toHaveAttribute('aria-expanded', 'false');
+    await fold.click();
+    await expect(fold).toHaveAttribute('aria-expanded', 'true');
+    opened += 1;
   }
   const elapsed = Date.now() - started;
   const after = await nodes();
@@ -248,9 +266,9 @@ test('expanding a long turn stays bounded', async ({ page }) => {
   );
 
   // All twelve turns were opened, and the walk is bounded by the number
-  // of turns rather than by the patch lines behind them. The budget is
-  // generous: the walk itself is a few dozen round trips.
-  expect(opened).toBe(12);
+  // of turns rather than by the patch lines behind them: one jump and one
+  // click per turn, not a step for every row the folds uncovered.
+  expect(opened).toBe(TURNS);
   expect(elapsed).toBeLessThan(15_000);
   expect(after).toBeLessThan(20_000);
   // Expanding twelve turns of eight 200-line patches must add hundreds of
