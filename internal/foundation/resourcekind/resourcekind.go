@@ -101,7 +101,9 @@ const legacyBudget = 1
 
 // Kinds is every resource kind this repo declares, in the order the
 // packages appear under internal/. Keep it alphabetical by Value: the
-// test compares sets, but a sorted list is what makes a diff readable.
+// scans compare sets and cannot police the order, so
+// TestInventoryEntriesAreSorted is what holds this sentence, and a
+// sorted list is what makes a diff readable.
 var Kinds = []Kind{
 	{
 		Value: "memory",

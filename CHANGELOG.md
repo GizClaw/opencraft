@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-tags private_mac_apis`, which is required for the pet window to be
   transparent — without it the window silently stays opaque — at the cost of
   reading one undocumented WebKit property.
+- Resource kinds are inventoried once (`foundation/resourcekind`) with a
+  spelling rule: a new kind is either `opencraft.`-prefixed lower_snake or
+  flowcraft's `<domain>.<Role>` — the `hook.prepare` / `hook.commit` /
+  `hook.observe` slots are their own style — and it has to be listed with an
+  owner and a note. Scans fail the build when a declaration and the list
+  disagree, when an embedded deployment document writes a kind that is
+  neither inventoried nor spellable, or when a spelling that follows neither
+  style joins `memory` (the one legacy entry, on a budget of one).
 
 ### Removed
 
@@ -91,6 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gone", and the rows were already gone the first time. A listing that
   raced the delete is filtered by the same tombstone, so the sidebar
   cannot show an entry that every path into it refuses. (#218)
+- The diagnostics panel reports the sandbox backend the child actually
+  runs. On Windows it said `local` — "no OS sandbox on this platform;
+  commands run unconfined" — while confined commands ran under the
+  job-object backend; the panel, the parent-side runner and the execd child
+  now read one table (`capabilities/sandbox/backend.go`), so the name, the
+  availability note and the runner itself cannot disagree.
 
 ## [0.6.0] - 2026-09-25
 

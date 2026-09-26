@@ -80,6 +80,26 @@ func TestInventoryEntriesAreDocumented(t *testing.T) {
 	}
 }
 
+// TestInventoryEntriesAreSorted makes the order a rule instead of a
+// habit: the scans compare sets, so an entry appended out of order
+// would pass them, while Kinds' doc asks for alphabetical order by
+// Value — an entry then lands where a reviewer looks for it, and a
+// duplicate is a copy that will drift.
+func TestInventoryEntriesAreSorted(t *testing.T) {
+	for i := 1; i < len(Kinds); i++ {
+		if Kinds[i-1].Value >= Kinds[i].Value {
+			t.Errorf("Kinds is not sorted by Value: %q before %q",
+				Kinds[i-1].Value, Kinds[i].Value)
+		}
+	}
+	for i := 1; i < len(Impls); i++ {
+		if Impls[i-1] >= Impls[i] {
+			t.Errorf("Impls is not sorted: %q before %q",
+				Impls[i-1], Impls[i])
+		}
+	}
+}
+
 // TestLegacySpellingsStayWithinBudget is the gate the rule cannot be:
 // the spellings that follow neither style are counted, so a new one has
 // to be argued for (raise the budget and say why) instead of quietly
