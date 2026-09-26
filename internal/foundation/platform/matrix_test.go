@@ -1,7 +1,8 @@
 // Package platform_test carries the executable half of the platform
 // capability matrix (docs/architecture-plan.md §4): each platform's
 // confined backend, whether interactive sessions exist, the
-// single-instance endpoint mechanism, and how a file is marked hidden.
+// single-instance endpoint mechanism, how a file is marked hidden, and
+// the process lock a state root takes.
 //
 // The values that are computed from a goos parameter — backend name,
 // probe program, interactive sessions, default shell — are asserted
@@ -11,6 +12,11 @@
 // the host the test runs on: the table names the implementation each
 // row pins, and the assertion runs on that platform's lane (W6), so a
 // change to the implementation without the table turns red there.
+//
+// One column is deliberately absent: the execd parent/child channel
+// (socketpair vs a named pipe with an SDDL) is asserted where it is
+// implemented — capabilities/execd, which runs on the macOS and Windows
+// lanes — rather than restated here.
 //
 // The one deliberate hole: Windows does not serve interactive sessions
 // (flowcraft issue #38 — the job-object backend does not combine write
@@ -50,9 +56,11 @@ type row struct {
 	// (fshidden): the leading-dot convention, or the Windows attributes
 	// Explorer honours.
 	hidden string
-	// execd is the private parent/child channel (execd): socketpair on
-	// unix, a named pipe with an SDDL on Windows.
-	execd string
+	// lock is the mechanism wslock takes on a workspace's state root:
+	// flock on unix (advisory, so another process reading the file
+	// stays legal), a range lock on Windows (mandatory, which is why
+	// the range sits clear of the holder record).
+	lock string
 }
 
 func matrix() map[string]row {
@@ -64,7 +72,7 @@ func matrix() map[string]row {
 			shell:    "/bin/sh",
 			endpoint: "unix socket <state root>/gui.sock",
 			hidden:   "leading dot",
-			execd:    "socketpair",
+			lock:     "flock",
 		},
 		"linux": {
 			backend:  "bwrap",
@@ -73,7 +81,7 @@ func matrix() map[string]row {
 			shell:    "/bin/sh",
 			endpoint: "unix socket <state root>/gui.sock",
 			hidden:   "leading dot",
-			execd:    "socketpair",
+			lock:     "flock",
 		},
 		"windows": {
 			backend:  "jobobject",
@@ -82,7 +90,7 @@ func matrix() map[string]row {
 			shell:    "cmd.exe",
 			endpoint: `named pipe \\.\pipe\opencraft-gui-<identity>`,
 			hidden:   "leading dot or FILE_ATTRIBUTE_HIDDEN|SYSTEM",
-			execd:    "named pipe with SDDL",
+			lock:     "LockFileEx range",
 		},
 	}
 }
@@ -176,8 +184,9 @@ func TestHostEndpointMechanism(t *testing.T) {
 // TestHostProcessLock exercises the process lock the host row uses
 // (flock on unix, LockFileEx on Windows) through its portable API: the
 // lock file appears, the holder records itself, and releasing hands
-// the root over. Contention across processes is covered by wslock's
-// own tests.
+// the root over — so a row whose lock mechanism did not work would fail
+// on its own platform. Contention across processes is covered by
+// wslock's own tests.
 func TestHostProcessLock(t *testing.T) {
 	host := hostRow(t)
 	root := t.TempDir()
@@ -194,7 +203,7 @@ func TestHostProcessLock(t *testing.T) {
 		t.Errorf("holder pid = %d, want %d", info.PID, os.Getpid())
 	}
 	if _, err := os.Stat(path); err != nil {
-		t.Errorf("lock file %s (%s): %v", path, host.execd, err)
+		t.Errorf("lock file %s (%s): %v", path, host.lock, err)
 	}
 	if err := handle.Release(); err != nil {
 		t.Fatalf("Release: %v", err)

@@ -193,7 +193,11 @@ func sum(counts map[string]int) int {
 //
 // Comment mentions do not count: the package whose whole job is to
 // answer per OS documents itself that way, and a documentation
-// reference is not a platform branch.
+// reference is not a platform branch. The code part is everything
+// before the first `//` on a line, which is what implements that — and
+// it also sets the scan's horizon: a read that only appears after a
+// `//` inside a string literal on the same line is out of its sight, so
+// keep one statement per line.
 func scanGOOSReads(t *testing.T, root string) map[string]int {
 	t.Helper()
 	out := map[string]int{}

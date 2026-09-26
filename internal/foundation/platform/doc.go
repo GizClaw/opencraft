@@ -30,6 +30,13 @@
 //     typed error or a zero value plus a comment - never a silent
 //     empty answer.
 //
+// The one deliberate exception to the decision rule is matrix_test.go:
+// it asserts the decisions other groups own - which confined backend
+// runs and whether TTY sessions exist (capabilities/sandbox) - beside
+// the facts this package owns, because "what is true on this OS" is one
+// table a reader should find in one place. The decisions still live
+// where they are made; this package only reads them, in a test.
+//
 // "Platform" here means the host operating system. The app platform
 // (user-installable applications and the capability surface they may
 // declare) is a different concept: see docs/app-platform-plan.md.

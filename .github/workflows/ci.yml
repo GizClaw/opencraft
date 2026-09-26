@@ -225,6 +225,12 @@ jobs:
       # from a reading of the case list: every case prints its own line.
       - name: Platform primitives (macos)
         run: go test -v -count=1 ./internal/foundation/platform/sysfont ./internal/foundation/platform/procmem ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock ./internal/foundation/platform/wslock
+      # The capability matrix file itself: the goos-parameterised rows for
+      # all three platforms (a macOS run still pins the Windows row), plus
+      # the host row -- the endpoint mechanism, the hidden marking and the
+      # process lock -- on the platform it is written for. 6 cases, 0 skips.
+      - name: Platform capability matrix (macos)
+        run: go test -v -count=1 ./internal/foundation/platform
       # The pet window's own half: geometry/hover/mind/pack are pure, so
       # the whole package runs (45 cases) and the darwin cursor + DPI
       # build is exercised on the platform it is written for.
@@ -318,6 +324,13 @@ jobs:
       # from after a run.
       - name: Platform primitives (windows)
         run: go test -v -count=1 ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock ./internal/foundation/platform/wslock
+        shell: pwsh
+      # The same matrix file on the row whose implementation is chosen by
+      # build tags: the named-pipe endpoint, the LockFileEx range lock and
+      # the FILE_ATTRIBUTE_HIDDEN branch are asserted here, on the
+      # platform that compiles them. 6 cases, 0 skips.
+      - name: Platform capability matrix (windows)
+        run: go test -v -count=1 ./internal/foundation/platform
         shell: pwsh
       - name: Compile check (sandbox/desktop/sessions/secrets)
         run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktop ./internal/capabilities/sessions ./internal/capabilities/secrets
