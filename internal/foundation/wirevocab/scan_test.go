@@ -69,6 +69,12 @@ func TestRetiredNamesAreUnused(t *testing.T) {
 //     an older version wrote still loads, the field is gone from the
 //     answer);
 //   - `*.pb.go` — generated protobuf, per the package comment.
+//
+// The scan reads lines, not an AST: everything from the first `//` on a
+// line is dropped (which is how a doc comment may name the old
+// spelling), so a `//` inside a string literal ends the considered line
+// too and a tag behind one is invisible here — another reason to keep
+// one field per line.
 func scanJSONTags(t *testing.T, root string, tag *regexp.Regexp) []string {
 	t.Helper()
 	var out []string

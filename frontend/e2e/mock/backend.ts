@@ -359,8 +359,8 @@ export function mockBackend(cfg?: MockConfig) {
           queued ?? (newChatSeq === 1 ? 's-new' : `s-new-${newChatSeq}`);
         // Mirrors the NewChatResult binding: the id plus the effective
         // session defaults applied at mint time. The id field is
-        // conversation_id — the session_id alias the binding carried for
-        // one release was deleted (W5.3 step 2).
+        // conversation_id — the rename from session_id landed in one
+        // step, with no alias released (W5.3).
         return {
           conversation_id: id,
           mode: 'workspace',

@@ -138,9 +138,10 @@ type SessionImportRequest struct {
 }
 
 // SessionImportResult is returned after history and memory are seeded.
-// Its id field is conversation_id: the plugin wire mirrors the desktop
-// one, and the deprecated session_id alias went away with it (W5.3
-// step 2 — see foundation/wirevocab).
+// Its id field is conversation_id — the spelling the desktop bindings,
+// the store and the archive use. The rename from session_id landed in
+// one step and no alias was ever released, so this is the only spelling
+// a plugin will read (W5.3 — see foundation/wirevocab).
 type SessionImportResult struct {
 	// ConversationID is the imported conversation's id.
 	ConversationID string `json:"conversation_id"`

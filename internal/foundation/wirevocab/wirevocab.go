@@ -23,6 +23,12 @@
 //   - the `session_id` argument `capabilities/tools/websearch` sends to
 //     Parallel's API: that is their vocabulary, not ours.
 //
+// The scan reads one line at a time and treats the first `//` on a line
+// as the start of a comment. That is what lets the doc comments above
+// name the retired spelling; it also sets the scan's horizon, since a
+// tag that appears only after a `//` inside a string literal on the
+// same line is not seen. One field per line keeps a struct in view.
+//
 // The names are recorded, not owned: nothing here may change without
 // checking the writers and readers of the wire it names.
 package wirevocab
