@@ -1,12 +1,12 @@
 package plugins
 
 // This file is the plugin permission vocabulary: the closed set of
-// grants a manifest may declare, plus the two compatibility layers
-// every parsed manifest passes through — the spellings that were
-// renamed (PermissionRenames) and the names that were retired
-// (RetiredPermissions). The narrative tables live in charter.go;
-// charter_test.go checks the two files against each other and against
-// the code that spends the grants.
+// grants a manifest may declare, plus the compatibility layers every
+// parsed manifest passes through — the spellings that were renamed
+// (PermissionRenames), the names that were retired (RetiredPermissions),
+// and the once-per-process warnings those paths share (warnOnce). The
+// narrative tables live in charter.go; charter_test.go checks the two
+// files against each other and against the code that spends the grants.
 
 import (
 	"context"
@@ -24,7 +24,6 @@ import (
 var AllowedPermissions = map[string]bool{
 	"secrets:auth":    true,
 	"storage:kv":      true,
-	"pets:contribute": true,
 	"tools:provide":   true,
 	"sessions:import": true,
 	"skills:provide":  true,
@@ -102,6 +101,12 @@ var RetiredPermissions = []RetiredPermission{
 		Note: "the status-bar registrar is provided to every plugin, for " +
 			"the same reason as commands:register.",
 	},
+	{
+		Name: "pets:contribute",
+		Note: "it gated only the manifest copy of pet packs, deleted once " +
+			"packs became registrations; packs arrive through ctx.pets, " +
+			"and that path checks no permission.",
+	},
 }
 
 // canonicalPermissions rewrites a manifest's permission list into the
@@ -151,17 +156,37 @@ func retiredPermission(name string) bool {
 	return false
 }
 
-// retiredWarned dedupes the retired-permission warning across parses.
-var retiredWarned sync.Map
+// warnedInputs dedupes the compatibility warnings across parses:
+// Store.List() and the agent host re-parse manifests on every scan, and
+// one stale manifest must not become a flood.
+var warnedInputs sync.Map
 
-func warnRetiredPermission(id, name string) {
-	key := id + "\x00" + name
-	if _, loaded := retiredWarned.LoadOrStore(key, struct{}{}); loaded {
+// warnOnce logs one compatibility warning per (plugin, input) pair.
+func warnOnce(key, msg string, attrs ...otellog.KeyValue) {
+	if _, loaded := warnedInputs.LoadOrStore(key, struct{}{}); loaded {
 		return
 	}
-	telemetry.Warn(context.Background(),
+	telemetry.Warn(context.Background(), msg, attrs...)
+}
+
+func warnRetiredPermission(id, name string) {
+	warnOnce(id+"\x00permission\x00"+name,
 		"plugins: manifest declares a retired permission; ignoring it",
 		otellog.String("plugin", id),
 		otellog.String("permission", name),
+	)
+}
+
+// warnLegacyContributes logs a stale contributes segment once per
+// plugin. Nothing validates or reports the segment any more, so the log
+// line is the only breadcrumb an author gets for the panel that never
+// renders: UI contributions register from the bundle
+// (ctx.settingsPanels.add, ctx.sidebarEntries.add, ctx.pets.add).
+func warnLegacyContributes(id string) {
+	warnOnce(id+"\x00contributes",
+		"plugins: manifest declares a contributes segment, which the host "+
+			"no longer reads; register panels, sidebar entries and pet "+
+			"packs from the bundle",
+		otellog.String("plugin", id),
 	)
 }

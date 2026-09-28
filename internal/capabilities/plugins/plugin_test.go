@@ -35,11 +35,6 @@ func TestStoreListScansAndValidates(t *testing.T) {
 	writePlugin(t, root, "hello", map[string]any{
 		"id": "hello", "name": "Hello", "version": "0.1.0",
 		"entry": "dist/index.js", "permissions": []string{},
-		"contributes": map[string]any{
-			"settingsPanels": []any{
-				map[string]any{"id": "hello-panel", "title": "Hello", "order": 10},
-			},
-		},
 	}, "console.log('hi')")
 	writePlugin(t, root, "bad-perm", map[string]any{
 		"id": "bad-perm", "name": "Bad", "version": "0.1.0",
@@ -65,7 +60,7 @@ func TestStoreListScansAndValidates(t *testing.T) {
 	for _, p := range list {
 		byID[p.ID] = p
 	}
-	if h := byID["hello"]; !h.Enabled || h.Error != "" || len(h.Panels) != 1 || h.Panels[0] != "hello-panel" {
+	if h := byID["hello"]; !h.Enabled || h.Error != "" {
 		t.Fatalf("hello summary = %+v", h)
 	}
 	if b := byID["bad-perm"]; b.Error == "" {
@@ -73,6 +68,41 @@ func TestStoreListScansAndValidates(t *testing.T) {
 	}
 	if b := byID["bad-id"]; b.Error == "" {
 		t.Fatal("bad-id should be rejected")
+	}
+}
+
+// TestManifestIgnoresContributesSegment pins the manifest cleanup: the
+// UI half registers from the bundle, so a contributes segment written
+// against an older build is accepted and dropped — including duplicate
+// panel ids and a pet list, both of which used to reject the manifest
+// (pets through the retired pets:contribute gate).
+func TestManifestIgnoresContributesSegment(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "legacy-ui", map[string]any{
+		"id": "legacy-ui", "name": "Legacy UI", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{},
+		"contributes": map[string]any{
+			"settingsPanels": []any{
+				map[string]any{"id": "panel", "title": "P", "order": 1},
+				map[string]any{"id": "panel", "title": "P again", "order": 2},
+			},
+			"sidebarEntries": []any{
+				map[string]any{"id": "", "title": "no id", "order": 1},
+			},
+			"pets": []any{map[string]any{"id": "cat"}},
+		},
+	}, "console.log('legacy')")
+	s := NewStore(root)
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Error != "" || !list[0].Enabled {
+		t.Fatalf("a manifest with a retired contributes segment must "+
+			"load: %+v", list)
+	}
+	if _, err := s.Bundle("legacy-ui"); err != nil {
+		t.Fatalf("Bundle: %v", err)
 	}
 }
 
@@ -155,11 +185,6 @@ func TestStoreInstallCopiesAndValidates(t *testing.T) {
 	writePlugin(t, srcRoot, "installed", map[string]any{
 		"id": "installed", "name": "Installed", "version": "0.2.0",
 		"entry": "dist/index.js", "permissions": []string{},
-		"contributes": map[string]any{
-			"sidebarEntries": []any{
-				map[string]any{"id": "inst-entry", "title": "Inst", "order": 1},
-			},
-		},
 	}, "console.log('installed')")
 	src := filepath.Join(srcRoot, "unrelated-dir-name")
 	if err := os.Rename(filepath.Join(srcRoot, "installed"), src); err != nil {
@@ -170,7 +195,7 @@ func TestStoreInstallCopiesAndValidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if sum.ID != "installed" || !sum.Enabled || len(sum.Entries) != 1 {
+	if sum.ID != "installed" || !sum.Enabled {
 		t.Fatalf("installed summary = %+v", sum)
 	}
 	if _, err := s.Bundle("installed"); err != nil {

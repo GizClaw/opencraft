@@ -62,7 +62,6 @@ func testManifest(id, version string) map[string]any {
 	return map[string]any{
 		"id": id, "name": id, "version": version,
 		"entry": "dist/index.js", "permissions": []string{},
-		"contributes": map[string]any{},
 	}
 }
 
@@ -290,7 +289,6 @@ func TestBuiltinKraftBinaryFallsBack(t *testing.T) {
 		"kraft": map[string]any{
 			"binary": "bin/demo-helper", "protocol": 1,
 		},
-		"contributes": map[string]any{},
 	}, "bundle", "bin/demo-helper")
 
 	s := NewStore(t.TempDir())
@@ -327,7 +325,6 @@ func TestShadowKraftBinaryDoesNotFallBack(t *testing.T) {
 		"kraft": map[string]any{
 			"binary": "bin/demo-helper", "protocol": 1,
 		},
-		"contributes": map[string]any{},
 	}, "bundle", "bin/demo-helper")
 
 	root := t.TempDir()
@@ -339,7 +336,6 @@ func TestShadowKraftBinaryDoesNotFallBack(t *testing.T) {
 		"kraft": map[string]any{
 			"binary": "bin/demo-helper", "protocol": 1,
 		},
-		"contributes": map[string]any{},
 	}, "bundle")
 
 	s := NewStore(root)

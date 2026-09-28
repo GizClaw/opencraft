@@ -1,8 +1,9 @@
 # Hello Plugin
 
-The reference plugin for the OpenCraft plugin host (Phase 0). It
-contributes one settings panel, one sidebar entry, one command and one
-status-bar item; clicking the sidebar entry flashes a greeting.
+The reference plugin for the OpenCraft plugin host (Phase 0). Its bundle
+registers one settings panel, one sidebar entry, one command and one
+status-bar item — the manifest carries no UI contributions; clicking
+the sidebar entry flashes a greeting.
 
 ## Install
 

@@ -54,8 +54,6 @@ export interface PluginSummary {
   /** Version of the shadowed builtin, when known. */
   builtinVersion?: string;
   error?: string;
-  panels?: string[];
-  entries?: string[];
   /** Agent-facing capability flags contributed by the plugin. */
   hasSkills?: boolean;
   hasMcp?: boolean;

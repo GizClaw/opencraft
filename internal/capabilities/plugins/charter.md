@@ -20,9 +20,10 @@ The declaration line is drawn per consumer, not per taste. The agent runtime
 (and, later, the app platform) must enumerate a plugin's half *without executing
 it*, so their contributions are declared in `plugin.json`; a UI contribution *is
 code*, so its only source is the registration the bundle performs while it
-runs. A **shadow** is a manifest segment that is still parsed, validated and
-reported while nothing consumes it — the drift the registration rule exists to
-prevent, kept visible until it is deleted.
+runs. The manifest carried a copy of the UI half once —
+`contributes.settingsPanels`, `contributes.sidebarEntries`, `contributes.pets` — parsed and
+rendered by nothing; the cleanup deleted the segments, and a manifest that
+still writes one keeps loading.
 
 `charter_test.go` enforces the tables in both directions: every permission,
 manifest field, service and kraft primitive the code has must be claimed by a row,
@@ -47,11 +48,9 @@ carry the note that says what has to change for them to leave.
 - **`ui.panel`** — a settings panel
   - comes alive when: the plugin bundle loads and apply() calls ctx.settingsPanels.add
   - removed by: the registration's disposer, which runs when the plugin scope ends: disable, update, unload or app teardown
-  - shadow: `contributes.settingsPanels` — parsed, validated and reported in the plugin summary, but no surface renders it — the UI draws registered panels only. P3 of the framework plan deletes the segment.
 - **`ui.entry`** — a sidebar entry
   - comes alive when: the plugin bundle loads and apply() calls ctx.sidebarEntries.add
   - removed by: the registration's disposer (disable, update, unload, app teardown)
-  - shadow: `contributes.sidebarEntries` — the same shape as contributes.settingsPanels: validated, reported, rendered by nothing. P3 deletes it.
 - **`ui.command`** — a command in the command palette
   - comes alive when: the plugin bundle loads and apply() calls ctx.commands.add
   - removed by: the registration's disposer (disable, update, unload, app teardown)
@@ -63,8 +62,7 @@ carry the note that says what has to change for them to leave.
 - **`ui.pet`** — a declarative pet pack (Rive specs) for the pet window
   - comes alive when: the bundle loads and calls ctx.pets.add; the Go registry validates the pack before any pet window mounts it
   - removed by: the disposer unregisters the pack and restores the builtin it overrode
-  - shadow: `contributes.pets` — validated (and gated by pets:contribute in its manifest gate) but read by no one — packs arrive through the registrar. P3 deletes the segment.
-  - note: the live path is not permission-gated; pets:contribute guards only the shadow segment, and stays in the sunset list until P3 deletes the segment and the grant with it — the one contribution grant that does not spell itself :provide.
+  - note: pets:contribute was retired with the manifest copy of the segment it guarded; packs arrive through the registrar, and that path checks no permission.
 - **`agent.skill`** — a directory of agent skills, mounted as a skill root
   - comes alive when: the next runtime assembly after the plugin is enabled; assembly reads enabled plugins' manifests
   - removed by: the next assembly after disable or update drops the root; a turn already running keeps the skills it assembled
@@ -122,11 +120,11 @@ carry the note that says what has to change for them to leave.
 
 ## Grants
 
-Every permission in `plugins.AllowedPermissions` is either spent by a row above,
-or listed here as accepted-and-unspent. Contribution grants are spelled
-`kind:provide` — a plugin provides a contribution. `CheckPermissions` is
-fail-closed, so a name leaves the set only together with the manifests that
-declare it; retirement is the other exit, and it keeps old manifests loading.
+Every permission in `plugins.AllowedPermissions` is spent by a row above.
+Contribution grants are spelled `kind:provide` — a plugin provides a
+contribution. `CheckPermissions` is fail-closed, so a name leaves the set only
+by retirement (`RetiredPermissions`): the parser drops it on the way in and
+logs once, which keeps every already-installed manifest loading.
 
 - `skills:provide` — spent by `agent.skill`
 - `hooks:provide` — spent by `agent.hook`
@@ -137,16 +135,13 @@ declare it; retirement is the other exit, and it keeps old manifests loading.
 - `sessions:import` — spent by `session.import`
 - `telemetry:export` — spent by `telemetry.*`
 
-Accepted, spent by nothing:
-
-- `pets:contribute` (legacy) — read by manifest validation, and only to gate the inert contributes.pets segment; the live registrar path checks no permission. P3 deletes the segment, and the grant goes with it.
-
 Retired and ignored — a manifest that still declares one loads, the name is
 dropped and logged once:
 
 - `events:subscribe` — the Cordis event bus is always available (ctx.on); no gate was ever wired to the name.
 - `commands:register` — the commands registrar is provided to every plugin; the name has been checked by nothing since the Cordis port.
 - `statusbar:contribute` — the status-bar registrar is provided to every plugin, for the same reason as commands:register.
+- `pets:contribute` — it gated only the manifest copy of pet packs, deleted once packs became registrations; packs arrive through ctx.pets, and that path checks no permission.
 
 ## Legacy manifest inputs
 
@@ -154,18 +149,20 @@ Older spellings a manifest may still carry, and what the host does with each:
 `translate` loads under the new name, `ignore` accepts the manifest and drops
 the name, `reject` refuses two spellings where one belongs.
 
-| input                                  | action    | becomes          | why                                                                                                                                             |
-|----------------------------------------|-----------|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------|
-| `capability`                           | translate | `kraft`          | the subprocess section was renamed; the host reads the old key so installed plugins keep loading without an edit.                               |
-| `capability + kraft`                   | reject    | —                | two spellings of one manifest section is ambiguity, not compatibility: the manifest is refused and both names are named in the error.           |
-| `skills:contribute`                    | translate | `skills:provide` | the vocabulary sweep spells contribution grants kind:provide; the old spelling is translated silently.                                          |
-| `hooks:register`                       | translate | `hooks:provide`  | the vocabulary sweep spells contribution grants kind:provide; the old spelling is translated silently.                                          |
-| `mcp:contribute`                       | translate | `mcp:provide`    | the vocabulary sweep spells contribution grants kind:provide; the old spelling is translated silently.                                          |
-| `tools:expose`                         | translate | `tools:provide`  | the vocabulary sweep spells contribution grants kind:provide; the old spelling is translated silently.                                          |
-| `old + new spelling of one permission` | reject    | —                | declaring both spellings of one grant is ambiguity, not compatibility: the manifest is refused and both names are named in the error.           |
-| `events:subscribe`                     | ignore    | —                | the Cordis event bus is always available (ctx.on); the name gates nothing, so the manifest is accepted and the name is dropped and logged once. |
-| `commands:register`                    | ignore    | —                | the commands registrar is provided to every plugin, so the manifest is accepted and the name is dropped and logged once.                        |
-| `statusbar:contribute`                 | ignore    | —                | the status-bar registrar is provided to every plugin, so the manifest is accepted and the name is dropped and logged once.                      |
+| input                                  | action    | becomes          | why                                                                                                                                                                                                                           |
+|----------------------------------------|-----------|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `capability`                           | translate | `kraft`          | the subprocess section was renamed; the host reads the old key so installed plugins keep loading without an edit.                                                                                                             |
+| `capability + kraft`                   | reject    | —                | two spellings of one manifest section is ambiguity, not compatibility: the manifest is refused and both names are named in the error.                                                                                         |
+| `skills:contribute`                    | translate | `skills:provide` | the vocabulary sweep spells contribution grants kind:provide; the old spelling is translated silently.                                                                                                                        |
+| `hooks:register`                       | translate | `hooks:provide`  | the vocabulary sweep spells contribution grants kind:provide; the old spelling is translated silently.                                                                                                                        |
+| `mcp:contribute`                       | translate | `mcp:provide`    | the vocabulary sweep spells contribution grants kind:provide; the old spelling is translated silently.                                                                                                                        |
+| `tools:expose`                         | translate | `tools:provide`  | the vocabulary sweep spells contribution grants kind:provide; the old spelling is translated silently.                                                                                                                        |
+| `old + new spelling of one permission` | reject    | —                | declaring both spellings of one grant is ambiguity, not compatibility: the manifest is refused and both names are named in the error.                                                                                         |
+| `events:subscribe`                     | ignore    | —                | the Cordis event bus is always available (ctx.on); the name gates nothing, so the manifest is accepted and the name is dropped and logged once.                                                                               |
+| `commands:register`                    | ignore    | —                | the commands registrar is provided to every plugin, so the manifest is accepted and the name is dropped and logged once.                                                                                                      |
+| `statusbar:contribute`                 | ignore    | —                | the status-bar registrar is provided to every plugin, so the manifest is accepted and the name is dropped and logged once.                                                                                                    |
+| `pets:contribute`                      | ignore    | —                | it gated only the contributes.pets manifest copy, which nothing rendered and the cleanup deleted; packs register from the bundle, so the name is dropped and logged once.                                                     |
+| `contributes`                          | ignore    | —                | the manifest copy of the UI half. Panels, sidebar entries and pet packs register from the bundle (ctx.settingsPanels.add / ctx.sidebarEntries.add / ctx.pets.add), so the segment is dropped; a non-empty one is logged once. |
 
 ## Manifest fields
 
@@ -173,21 +170,18 @@ Every JSON path the `Manifest` struct carries. A **contribution** path is an
 anchor of the row named; a **skeleton** path is identity or runtime plumbing and
 is listed here with what consumes it.
 
-| path                         | kind         | owner                                                                                                                                                                          |
-|------------------------------|--------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `contributes.pets`           | shadow       | `ui.pet`                                                                                                                                                                       |
-| `contributes.settingsPanels` | shadow       | `ui.panel`                                                                                                                                                                     |
-| `contributes.sidebarEntries` | shadow       | `ui.entry`                                                                                                                                                                     |
-| `entry`                      | skeleton     | the ES module the shell loads; the file is the entry, the contributions are registrations                                                                                      |
-| `hooks`                      | contribution | `agent.hook`                                                                                                                                                                   |
-| `id`                         | skeleton     | identity, and the namespace of everything the plugin owns: KV entries, secrets, pet packs                                                                                      |
-| `kraft`                      | skeleton     | the subprocess runtime the machine-half contributions run in: binary, protocol, and the open.url allowlist                                                                     |
-| `mcpServers`                 | contribution | `agent.mcp`                                                                                                                                                                    |
-| `minHostVersion`             | skeleton     | the release gate the host checks before loading                                                                                                                                |
-| `name`                       | skeleton     | display name                                                                                                                                                                   |
-| `permissions`                | skeleton     | the grants the plugin asks for; the closed set is AllowedPermissions plus the retired names canonicalPermissions drops, with older spellings translated (LegacyManifestInputs) |
-| `skills`                     | contribution | `agent.skill`                                                                                                                                                                  |
-| `tools`                      | contribution | `agent.tool`                                                                                                                                                                   |
-| `update`                     | skeleton     | where the host looks for a newer version                                                                                                                                       |
-| `version`                    | skeleton     | release identity, and what an update compares against                                                                                                                          |
+| path             | kind         | owner                                                                                                                                                                          |
+|------------------|--------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `entry`          | skeleton     | the ES module the shell loads; the file is the entry, the contributions are registrations                                                                                      |
+| `hooks`          | contribution | `agent.hook`                                                                                                                                                                   |
+| `id`             | skeleton     | identity, and the namespace of everything the plugin owns: KV entries, secrets, pet packs                                                                                      |
+| `kraft`          | skeleton     | the subprocess runtime the machine-half contributions run in: binary, protocol, and the open.url allowlist                                                                     |
+| `mcpServers`     | contribution | `agent.mcp`                                                                                                                                                                    |
+| `minHostVersion` | skeleton     | the release gate the host checks before loading                                                                                                                                |
+| `name`           | skeleton     | display name                                                                                                                                                                   |
+| `permissions`    | skeleton     | the grants the plugin asks for; the closed set is AllowedPermissions plus the retired names canonicalPermissions drops, with older spellings translated (LegacyManifestInputs) |
+| `skills`         | contribution | `agent.skill`                                                                                                                                                                  |
+| `tools`          | contribution | `agent.tool`                                                                                                                                                                   |
+| `update`         | skeleton     | where the host looks for a newer version                                                                                                                                       |
+| `version`        | skeleton     | release identity, and what an update compares against                                                                                                                          |
 

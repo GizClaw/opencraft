@@ -18,13 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   primitive dispatch) and fails in both directions, so a new
   permission, manifest field, service or primitive cannot land without
   a row, and a row cannot outlive what it names. `charter.md` beside it
-  is the generated view. Nothing changes for installed plugins: the
-  tables describe today's framework, including the place where code
-  and comment disagree — `contributes.{settingsPanels,sidebarEntries,pets}`
-  are parsed and validated but consumed by nothing. (The other
-  disagreement the charter first recorded — the kraft `secret.*`
-  primitives claiming a `secrets:auth` gate nothing checked — was
-  resolved by the vocabulary sweep below.)
+  is the generated view. Nothing changes for installed plugins. The
+  charter's first job was to name the places where code and comment
+  disagreed — the kraft `secret.*` primitives claiming a `secrets:auth`
+  gate nothing checked, and the manifest `contributes.*` segments that
+  were parsed and displayed by nothing — and both were settled in this
+  same release, below.
 
 ### Changed
 
@@ -104,9 +103,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest over a name that gates nothing would kill the plugin's
   working half; the parser drops the name and logs it once instead.
   `plugins/hello` no longer declares any of them (nor the old
-  `skills:contribute`). `pets:contribute` stays accepted for now: it
-  gates only the inert `contributes.pets` segment and leaves with it
-  in the manifest cleanup.
+  `skills:contribute`). `pets:contribute` was still read then — it
+  gated only the inert `contributes.pets` segment — and was retired
+  with that segment in the manifest cleanup below.
+- The plugin manifest carries no UI contributions any more:
+  `contributes.settingsPanels`, `contributes.sidebarEntries` and
+  `contributes.pets` were parsed, validated and reported in the plugin
+  summary while nothing consumed them. Panels, sidebar entries and pet
+  packs register from the bundle (`ctx.settingsPanels.add`,
+  `ctx.sidebarEntries.add`, `ctx.pets.add`), the only source that
+  cannot drift from what renders. The `Manifest` field, the summary's
+  `panels` / `entries` wire fields and the pet count bound are gone; a
+  manifest that still writes the segment keeps loading, with the
+  segment dropped and one log line for a non-empty one. With its last
+  reader gone, `pets:contribute` was retired like the other dead names
+  — accepted, dropped, logged once — and the charter's sunset list,
+  which held it while it was still read, had no members left and went
+  with it. `plugins/hello` and the plugin-creator skill follow.
 - The `setup:docker` task is gone. It built the `wails-cross` image from
   `build/docker/Dockerfile.cross`, a file this repo never carried, so it could
   only ever fail; the per-platform `build:docker` cross tasks stay and now say

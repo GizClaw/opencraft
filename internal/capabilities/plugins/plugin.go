@@ -46,7 +46,6 @@ const (
 	maxPluginHookCount        = 16
 	maxPluginMCPServerCount   = 16
 	maxPluginToolCount        = 64
-	maxPluginPetCount         = 8
 	maxPluginPathLen          = 256
 	maxPluginDescriptionChars = 1024
 	maxPluginInputSchemaBytes = 32 << 10 // 32 KiB
@@ -76,10 +75,8 @@ type PluginSummary struct {
 	Permissions []string `json:"permissions"`
 	Enabled     bool     `json:"enabled"`
 	// Builtin marks an app-bundled read-only plugin (see Store).
-	Builtin bool     `json:"builtin,omitempty"`
-	Error   string   `json:"error,omitempty"`
-	Panels  []string `json:"panels,omitempty"`
-	Entries []string `json:"entries,omitempty"`
+	Builtin bool   `json:"builtin,omitempty"`
+	Error   string `json:"error,omitempty"`
 	// ShadowsBuiltin marks a user plugin that overrides an app-bundled
 	// builtin with the same id. BuiltinVersion reports the version of
 	// the shadowed builtin so the UI can compare it with the user
@@ -152,21 +149,6 @@ type Manifest struct {
 	MinHostVersion string   `json:"minHostVersion,omitempty"`
 	Entry          string   `json:"entry"`
 	Permissions    []string `json:"permissions"`
-	Contributes    struct {
-		SettingsPanels []struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-			Order int    `json:"order"`
-		} `json:"settingsPanels"`
-		SidebarEntries []struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-			Order int    `json:"order"`
-		} `json:"sidebarEntries"`
-		Pets []struct {
-			ID string `json:"id"`
-		} `json:"pets"`
-	} `json:"contributes"`
 	// Kraft declares an optional subprocess runtime for the plugin
 	// (see internal/capabilities/plugins/kraft).
 	Kraft *kraft.Kraft `json:"kraft,omitempty"`
@@ -291,12 +273,6 @@ func (s *Store) scanDir(
 				sum.ShadowsBuiltin = true
 				sum.BuiltinVersion = v
 			}
-		}
-		for _, p := range m.Contributes.SettingsPanels {
-			sum.Panels = append(sum.Panels, p.ID)
-		}
-		for _, e := range m.Contributes.SidebarEntries {
-			sum.Entries = append(sum.Entries, e.ID)
 		}
 		out = append(out, sum)
 		seen[id] = true
@@ -556,12 +532,6 @@ func summaryFromManifest(m *Manifest, dir string, canRollback bool) PluginSummar
 	if !sum.HasSkills && manifestHasPermission(m, "skills:provide") &&
 		dirExists(filepath.Join(dir, "skills")) {
 		sum.HasSkills = true
-	}
-	for _, p := range m.Contributes.SettingsPanels {
-		sum.Panels = append(sum.Panels, p.ID)
-	}
-	for _, e := range m.Contributes.SidebarEntries {
-		sum.Entries = append(sum.Entries, e.ID)
 	}
 	return sum
 }
@@ -1196,44 +1166,16 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 	if err := CheckPermissions(m.Permissions); err != nil {
 		return nil, err
 	}
-	seenPanels := map[string]bool{}
-	for _, p := range m.Contributes.SettingsPanels {
-		if p.ID == "" || seenPanels[p.ID] {
-			return nil, fmt.Errorf(
-				"plugins: duplicate or empty settings panel id %q", p.ID)
-		}
-		seenPanels[p.ID] = true
-	}
-	seenEntries := map[string]bool{}
-	for _, e := range m.Contributes.SidebarEntries {
-		if e.ID == "" || seenEntries[e.ID] {
-			return nil, fmt.Errorf(
-				"plugins: duplicate or empty sidebar entry id %q", e.ID)
-		}
-		seenEntries[e.ID] = true
-	}
-	if len(m.Contributes.Pets) > maxPluginPetCount {
-		return nil, fmt.Errorf(
-			"plugins: pets exceed %d entries", maxPluginPetCount)
-	}
-	if len(m.Contributes.Pets) > 0 {
-		if err := requirePermission(&m, "pets:contribute", "pets"); err != nil {
-			return nil, err
-		}
-		seenPets := map[string]bool{}
-		for _, p := range m.Contributes.Pets {
-			if p.ID == "" || seenPets[p.ID] {
-				return nil, fmt.Errorf(
-					"plugins: duplicate or empty pet id %q", p.ID)
-			}
-			seenPets[p.ID] = true
-		}
-	}
-	// Earlier builds wrote the kraft section as "capability". Keep
-	// reading that key so already-installed plugins survive the rename,
-	// but reject a manifest that declares both spellings.
+	// Earlier builds wrote the kraft section as "capability", and let a
+	// manifest declare the UI half under "contributes". Both keys are
+	// still read far enough to keep installed plugins loading: the kraft
+	// section is translated, the contributes segment — which nothing
+	// consumes, because panels, sidebar entries and pet packs register
+	// from the bundle — is accepted, dropped and logged once. A manifest
+	// that declares both kraft spellings is rejected.
 	var legacy struct {
-		Capability *kraft.Kraft `json:"capability"`
+		Capability  *kraft.Kraft    `json:"capability"`
+		Contributes json.RawMessage `json:"contributes"`
 	}
 	if err := json.Unmarshal(raw, &legacy); err != nil {
 		return nil, fmt.Errorf("plugins: decode manifest: %w", err)
@@ -1244,6 +1186,10 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 				"plugins: manifest declares both kraft and legacy capability keys")
 		}
 		m.Kraft = legacy.Capability
+	}
+	if v := strings.TrimSpace(string(legacy.Contributes)); v != "" &&
+		v != "null" && v != "{}" {
+		warnLegacyContributes(m.ID)
 	}
 	if err := validateKraft(m.Kraft); err != nil {
 		return nil, fmt.Errorf("plugins: %w", err)

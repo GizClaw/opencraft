@@ -38,11 +38,7 @@ the user what is about to run and reload the running runtime.
   "version": "0.1.0",
   "minHostVersion": "0.5.0",
   "entry": "dist/index.js",
-  "permissions": ["storage:kv"],
-  "contributes": {
-    "settingsPanels": [{ "id": "my-panel", "title": "My", "order": 10 }],
-    "sidebarEntries": [{ "id": "my-entry", "title": "My", "order": 10 }]
-  }
+  "permissions": ["storage:kv"]
 }
 ```
 
@@ -56,13 +52,15 @@ the user what is about to run and reload the running runtime.
   (older spellings of the four — `skills:contribute`, `mcp:contribute`,
   `hooks:register`, `tools:expose` — are translated for old manifests,
   so write the current spelling). Retired names (`events:subscribe`,
-  `commands:register`, `statusbar:contribute`) are accepted and ignored
-  with a log, and `pets:contribute` gates only the inert
-  `contributes.pets` segment — declaring any of those does nothing.
-  Declare only what you use — the settings page shows the list to the
-  user, and the agent capabilities below are refused without them.
-- `contributes.settingsPanels` / `contributes.sidebarEntries` declare
-  the ids the bundle registers; the detail drawer lists them.
+  `commands:register`, `statusbar:contribute`, `pets:contribute`) are
+  accepted, dropped and logged once — declaring any of those does
+  nothing. Declare only what you use — the settings page shows the list
+  to the user, and the agent capabilities below are refused without
+  them.
+- The manifest carries no UI contributions. Panels, sidebar entries and
+  pet packs register from the bundle (`ctx.settingsPanels.add` and
+  friends), and an old `contributes` segment is ignored; the detail
+  drawer lists what the running bundle registered.
 
 ## UI bundle (`entry`)
 
@@ -111,8 +109,8 @@ Each group requires its manifest permission and is ignored without it:
   (`tools:provide`) — requires a `kraft` binary; the agent sees each
   one as `<plugin_id>__<name>`.
 
-Bounds: at most 64 tools, 32 skills, 16 hooks, 16 MCP servers, 8 pets;
-tool descriptions up to 1024 characters, input schemas up to 32 KiB,
+Bounds: at most 64 tools, 32 skills, 16 hooks, 16 MCP servers; tool
+descriptions up to 1024 characters, input schemas up to 32 KiB,
 manifest up to 1 MiB.
 
 ## Kraft subprocess

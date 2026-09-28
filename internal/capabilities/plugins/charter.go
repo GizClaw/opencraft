@@ -15,17 +15,20 @@ package plugins
 // consume — is declared in the manifest, because those consumers must
 // enumerate it without executing plugin code. The UI half is registered
 // at runtime, because a UI contribution *is* code: a manifest copy of it
-// could only drift, and that is exactly what the shadow rows below
-// document.
+// could only drift. The three copies the manifest used to carry
+// (contributes.settingsPanels, contributes.sidebarEntries,
+// contributes.pets) were parsed and rendered by nothing, and the P3
+// cleanup deleted them: a manifest that still writes the segment keeps
+// loading, the segment is ignored (LegacyManifestInputs).
 //
 // The tables are not prose. charter_test.go scans the code each row
 // points at — the Manifest struct, AllowedPermissions, the frontend's
 // service list, the kraft primitive dispatch — and fails in both
 // directions: a permission, manifest field, service or primitive that no
 // row claims, and a row that names something which no longer exists.
-// There is no third state except the two this file names: a row with
-// StatusLegacy or StatusReserved says in its Note what has to change for
-// it to leave, and the scan keeps it honest until it does.
+// There is no third state except the two this file names: a row that is
+// not current is legacy or reserved, and says in its Note what has to
+// change for it to leave; the scan keeps it honest until it does.
 //
 // The rendered view of these tables is charter.md beside this file; it
 // is generated (go test -run TestCharterDocument -update) and checked
@@ -113,12 +116,7 @@ type ContributionKind struct {
 	// ManifestPaths are the manifest JSON prefixes that declare the kind
 	// (manifest kinds only). A path covers everything under it.
 	ManifestPaths []string
-	// ShadowPaths are manifest JSON prefixes that are still parsed,
-	// validated and reported for this kind even though nothing consumes
-	// them. ShadowWhy says so at the row.
-	ShadowPaths []string
-	ShadowWhy   string
-	Status      CharterStatus
+	Status        CharterStatus
 	// Note carries what a reader needs beyond the columns: why a
 	// non-current row is still here, or where the implementation and
 	// the promise disagree today.
@@ -175,12 +173,8 @@ var ContributionKinds = []ContributionKind{
 			"ctx.settingsPanels.add",
 		Teardown: "the registration's disposer, which runs when the plugin " +
 			"scope ends: disable, update, unload or app teardown",
-		Services:    []string{"settingsPanels"},
-		ShadowPaths: []string{"contributes.settingsPanels"},
-		ShadowWhy: "parsed, validated and reported in the plugin summary, " +
-			"but no surface renders it — the UI draws registered panels " +
-			"only. P3 of the framework plan deletes the segment.",
-		Status: StatusCurrent,
+		Services: []string{"settingsPanels"},
+		Status:   StatusCurrent,
 	},
 	{
 		ID:          "ui.entry",
@@ -192,11 +186,8 @@ var ContributionKinds = []ContributionKind{
 			"ctx.sidebarEntries.add",
 		Teardown: "the registration's disposer (disable, update, unload, " +
 			"app teardown)",
-		Services:    []string{"sidebarEntries"},
-		ShadowPaths: []string{"contributes.sidebarEntries"},
-		ShadowWhy: "the same shape as contributes.settingsPanels: " +
-			"validated, reported, rendered by nothing. P3 deletes it.",
-		Status: StatusCurrent,
+		Services: []string{"sidebarEntries"},
+		Status:   StatusCurrent,
 	},
 	{
 		ID:          "ui.command",
@@ -240,16 +231,10 @@ var ContributionKinds = []ContributionKind{
 			"registry validates the pack before any pet window mounts it",
 		Teardown: "the disposer unregisters the pack and restores the " +
 			"builtin it overrode",
-		Services:    []string{"pets"},
-		ShadowPaths: []string{"contributes.pets"},
-		ShadowWhy: "validated (and gated by pets:contribute in its " +
-			"manifest gate) but read by no one — packs arrive through the " +
-			"registrar. P3 deletes the segment.",
-		Note: "the live path is not permission-gated; pets:contribute " +
-			"guards only the shadow segment, and stays in the sunset " +
-			"list until P3 deletes the segment and the grant with it — " +
-			"the one contribution grant that does not spell itself " +
-			":provide.",
+		Services: []string{"pets"},
+		Note: "pets:contribute was retired with the manifest copy of the " +
+			"segment it guarded; packs arrive through the registrar, and " +
+			"that path checks no permission.",
 		Status: StatusCurrent,
 	},
 	{
@@ -463,31 +448,6 @@ var HostInterfaces = []HostInterface{
 	},
 }
 
-// SunsetGrant is a permission that is still accepted but no
-// contribution or interface spends.
-type SunsetGrant struct {
-	Grant  string
-	Status CharterStatus
-	// Note says why it is still accepted and what removes it.
-	Note string
-}
-
-// SunsetGrants is the part of AllowedPermissions that buys nothing any
-// more. Accepting them is deliberate: CheckPermissions is fail-closed,
-// so dropping a name rejects every already-installed manifest that
-// declares it (the vocabulary's other exit, retirement, keeps the
-// manifest loading too — see LegacyManifestInputs).
-var SunsetGrants = []SunsetGrant{
-	{
-		Grant:  "pets:contribute",
-		Status: StatusLegacy,
-		Note: "read by manifest validation, and only to gate the inert " +
-			"contributes.pets segment; the live registrar path checks no " +
-			"permission. P3 deletes the segment, and the grant goes with " +
-			"it.",
-	},
-}
-
 // LegacyAction is what the host does with a manifest input written
 // against an older vocabulary.
 type LegacyAction string
@@ -596,6 +556,22 @@ var LegacyManifestInputs = []LegacyManifestInput{
 		Note: "the status-bar registrar is provided to every plugin, so " +
 			"the manifest is accepted and the name is dropped and " +
 			"logged once.",
+	},
+	{
+		Name:   "pets:contribute",
+		Action: LegacyIgnore,
+		Note: "it gated only the contributes.pets manifest copy, which " +
+			"nothing rendered and the cleanup deleted; packs register " +
+			"from the bundle, so the name is dropped and logged once.",
+	},
+	{
+		Name:   "contributes",
+		Action: LegacyIgnore,
+		Note: "the manifest copy of the UI half. Panels, sidebar entries " +
+			"and pet packs register from the bundle " +
+			"(ctx.settingsPanels.add / ctx.sidebarEntries.add / " +
+			"ctx.pets.add), so the segment is dropped; a non-empty one " +
+			"is logged once.",
 	},
 }
 

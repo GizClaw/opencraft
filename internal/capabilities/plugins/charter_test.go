@@ -90,12 +90,6 @@ func TestCharterRowsAreWellFormed(t *testing.T) {
 		if !hasAnchor && k.Status != StatusReserved {
 			t.Errorf("%s: no service and no manifest path", k.ID)
 		}
-		if len(k.ShadowPaths) > 0 && len(k.ShadowWhy) < 40 {
-			t.Errorf("%s: shadow paths need a reason of their own", k.ID)
-		}
-		if len(k.ShadowPaths) == 0 && k.ShadowWhy != "" {
-			t.Errorf("%s: a shadow reason with no shadow path", k.ID)
-		}
 		switch k.Declaration {
 		case DeclaredByRegistration:
 			if len(k.ManifestPaths) > 0 {
@@ -114,9 +108,6 @@ func TestCharterRowsAreWellFormed(t *testing.T) {
 			claim(services, "service", s, k.ID)
 		}
 		for _, p := range k.ManifestPaths {
-			claim(paths, "manifest path", p, k.ID)
-		}
-		for _, p := range k.ShadowPaths {
 			claim(paths, "manifest path", p, k.ID)
 		}
 	}
@@ -170,8 +161,11 @@ func TestCharterRowsAreWellFormed(t *testing.T) {
 // TestCharterSpendsEveryGrant is half of the mirror the header promises:
 // no permission without a row that spends it, and no row spending a
 // permission that no longer exists. A permission nothing spends has to
-// be in SunsetGrants, with the note that says what removes it — that is
-// how a rusted permission is found instead of remembered.
+// be retired instead: CheckPermissions is fail-closed, but the parser
+// drops a retired name before that check, so every installed manifest
+// keeps loading while the vocabulary stays free of grants that buy
+// nothing — that is how a rusted permission is found instead of
+// remembered.
 func TestCharterSpendsEveryGrant(t *testing.T) {
 	spenders := map[string][]string{}
 	for _, k := range ContributionKinds {
@@ -185,39 +179,15 @@ func TestCharterSpendsEveryGrant(t *testing.T) {
 		}
 	}
 
-	sunset := map[string]SunsetGrant{}
-	for _, s := range SunsetGrants {
-		if _, ok := sunset[s.Grant]; ok {
-			t.Errorf("%q is in the sunset list twice", s.Grant)
-		}
-		if !AllowedPermissions[s.Grant] {
-			t.Errorf("%q is in the sunset list but not a permission",
-				s.Grant)
-		}
-		if s.Status != StatusLegacy && s.Status != StatusReserved {
-			t.Errorf("%q: a sunset entry is %q; sunset means accepted and "+
-				"spent by nothing", s.Grant, s.Status)
-		}
-		if len(s.Note) < 40 {
-			t.Errorf("%q: the sunset note is too short to judge", s.Grant)
-		}
-		sunset[s.Grant] = s
-	}
-
 	for grant := range AllowedPermissions {
 		rows := spenders[grant]
 		if len(rows) > 0 {
-			if _, ok := sunset[grant]; ok {
-				t.Errorf("%q is spent by %s and also in the sunset list",
-					grant, strings.Join(rows, ", "))
-			}
 			continue
 		}
-		if _, ok := sunset[grant]; !ok {
-			t.Errorf("%q is in AllowedPermissions and no row spends it: "+
-				"add the row that consumes it, or list it in "+
-				"SunsetGrants with the exit", grant)
-		}
+		t.Errorf("%q is in AllowedPermissions and no row spends it: "+
+			"add the row that consumes it, or retire it "+
+			"(RetiredPermissions, with a row in LegacyManifestInputs)",
+			grant)
 	}
 }
 
@@ -257,12 +227,6 @@ func TestCharterLegacyInputsAreBackedByCode(t *testing.T) {
 			t.Errorf("%q: the retirement note is too short to judge", r.Name)
 		}
 	}
-	for _, s := range SunsetGrants {
-		if retired[s.Grant] {
-			t.Errorf("%q is in both the sunset and the retired list", s.Grant)
-		}
-	}
-
 	actions := map[LegacyAction]bool{
 		LegacyTranslate: true, LegacyIgnore: true, LegacyReject: true,
 	}
@@ -323,8 +287,7 @@ func TestCharterCoversEveryManifestField(t *testing.T) {
 
 	claimed := map[string]string{}
 	for _, k := range ContributionKinds {
-		for _, p := range append(append([]string{}, k.ManifestPaths...),
-			k.ShadowPaths...) {
+		for _, p := range k.ManifestPaths {
 			claimed[p] = k.ID
 		}
 	}
@@ -723,10 +686,11 @@ func renderCharter() string {
 		"runtime\n(and, later, the app platform) must enumerate a plugin's half " +
 		"*without executing\nit*, so their contributions are declared in " +
 		"`plugin.json`; a UI contribution *is\ncode*, so its only source is the " +
-		"registration the bundle performs while it\nruns. A **shadow** is a " +
-		"manifest segment that is still parsed, validated and\nreported while " +
-		"nothing consumes it — the drift the registration rule exists to\n" +
-		"prevent, kept visible until it is deleted.\n\n")
+		"registration the bundle performs while it\nruns. The manifest carried a " +
+		"copy of the UI half once —\n`contributes.settingsPanels`, " +
+		"`contributes.sidebarEntries`, `contributes.pets` — parsed and\n" +
+		"rendered by nothing; the cleanup deleted the segments, and a manifest " +
+		"that\nstill writes one keeps loading.\n\n")
 	b.WriteString("`charter_test.go` enforces the tables in both directions: every " +
 		"permission,\nmanifest field, service and kraft primitive the code has must " +
 		"be claimed by a row,\nand every row must name something that exists. " +
@@ -751,9 +715,6 @@ func renderCharter() string {
 		fmt.Fprintf(&b, "  - removed by: %s\n", k.Teardown)
 		if status := k.Status; status != StatusCurrent {
 			fmt.Fprintf(&b, "  - status: %s\n", status)
-		}
-		for _, p := range k.ShadowPaths {
-			fmt.Fprintf(&b, "  - shadow: `%s` — %s\n", p, k.ShadowWhy)
 		}
 		if k.Note != "" {
 			fmt.Fprintf(&b, "  - note: %s\n", k.Note)
@@ -785,12 +746,12 @@ func renderCharter() string {
 	b.WriteString("\n")
 
 	b.WriteString("## Grants\n\n")
-	b.WriteString("Every permission in `plugins.AllowedPermissions` is either spent by " +
-		"a row above,\nor listed here as accepted-and-unspent. Contribution grants " +
-		"are spelled\n`kind:provide` — a plugin provides a contribution. " +
-		"`CheckPermissions` is\nfail-closed, so a name leaves the set only together " +
-		"with the manifests that\ndeclare it; retirement is the other exit, and it " +
-		"keeps old manifests loading.\n\n")
+	b.WriteString("Every permission in `plugins.AllowedPermissions` is spent by a " +
+		"row above.\nContribution grants are spelled `kind:provide` — a plugin " +
+		"provides a\ncontribution. `CheckPermissions` is fail-closed, so a name " +
+		"leaves the set only\nby retirement (`RetiredPermissions`): the parser " +
+		"drops it on the way in and\nlogs once, which keeps every " +
+		"already-installed manifest loading.\n\n")
 	spenders := map[string][]string{}
 	var grantOrder []string
 	addSpender := func(grant, row string) {
@@ -812,10 +773,6 @@ func renderCharter() string {
 	for _, grant := range grantOrder {
 		fmt.Fprintf(&b, "- `%s` — spent by %s\n",
 			grant, strings.Join(spenders[grant], ", "))
-	}
-	b.WriteString("\nAccepted, spent by nothing:\n\n")
-	for _, s := range SunsetGrants {
-		fmt.Fprintf(&b, "- `%s` (%s) — %s\n", s.Grant, s.Status, s.Note)
 	}
 	b.WriteString("\nRetired and ignored — a manifest that still declares one " +
 		"loads, the name is\ndropped and logged once:\n\n")
@@ -847,9 +804,6 @@ func renderCharter() string {
 	for _, k := range ContributionKinds {
 		for _, p := range k.ManifestPaths {
 			table = append(table, disposition{p, "contribution", "`" + k.ID + "`"})
-		}
-		for _, p := range k.ShadowPaths {
-			table = append(table, disposition{p, "shadow", "`" + k.ID + "`"})
 		}
 	}
 	for p, why := range ManifestSkeleton {

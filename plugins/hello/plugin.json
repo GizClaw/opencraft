@@ -8,13 +8,5 @@
     "storage:kv",
     "skills:provide"
   ],
-  "skills": ["skills"],
-  "contributes": {
-    "settingsPanels": [
-      { "id": "hello-panel", "title": "Hello", "order": 10 }
-    ],
-    "sidebarEntries": [
-      { "id": "hello-entry", "title": "Hello", "order": 10 }
-    ]
-  }
+  "skills": ["skills"]
 }

@@ -119,8 +119,6 @@ function pluginSummaryOf(p: genPlugin.PluginSummary): PluginSummary {
   return {
     ...p,
     permissions: p.permissions ?? [],
-    panels: p.panels ?? [],
-    entries: p.entries ?? [],
   };
 }
 
