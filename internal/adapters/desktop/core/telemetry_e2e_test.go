@@ -11,6 +11,7 @@ import (
 	"time"
 
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
+	"github.com/GizClaw/opencraft/internal/testing/kraftfixture"
 )
 
 // TestPluginTelemetryE2E drives the whole path a real plugin kraft
@@ -23,7 +24,7 @@ func TestPluginTelemetryE2E(t *testing.T) {
 		// the subprocess plumbing and keeps the fast local loop fast.
 		t.Skip("skipping plugin subprocess end-to-end test in short mode")
 	}
-	binary := buildTelemetryPlugin(t)
+	binary := kraftfixture.Build(t, kraftfixture.TelemetryPlugin)
 	warmPlugin(t, binary)
 
 	t.Run("granted", func(t *testing.T) {
@@ -215,16 +216,4 @@ func copyExecutable(t *testing.T, src, dst string) {
 	if err := os.WriteFile(dst, data, 0o700); err != nil {
 		t.Fatalf("write plugin binary: %v", err)
 	}
-}
-
-// buildTelemetryPlugin compiles the kraft fixture once per
-// test binary run.
-func buildTelemetryPlugin(t *testing.T) string {
-	t.Helper()
-	binary := filepath.Join(t.TempDir(), "telemetryplugin")
-	build := exec.Command("go", "build", "-o", binary, "./testdata/telemetryplugin")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build telemetry plugin: %v\n%s", err, out)
-	}
-	return binary
 }

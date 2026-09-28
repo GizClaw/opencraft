@@ -3,11 +3,11 @@ package core
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GizClaw/opencraft/internal/testing/kraftfixture"
 )
 
 // TestPluginSecretE2E drives the path a real plugin kraft takes to the
@@ -22,7 +22,7 @@ func TestPluginSecretE2E(t *testing.T) {
 		// plumbing and keeps the fast local loop fast.
 		t.Skip("skipping plugin subprocess end-to-end test in short mode")
 	}
-	binary := buildSecretPlugin(t)
+	binary := kraftfixture.Build(t, kraftfixture.SecretPlugin)
 	warmPlugin(t, binary)
 
 	t.Run("granted", func(t *testing.T) {
@@ -75,15 +75,4 @@ func probeSecret(t *testing.T, c *Core) map[string]any {
 		t.Fatalf("decode plugin result %s: %v", raw, err)
 	}
 	return result
-}
-
-// buildSecretPlugin compiles the kraft fixture once per test binary run.
-func buildSecretPlugin(t *testing.T) string {
-	t.Helper()
-	binary := filepath.Join(t.TempDir(), "secretplugin")
-	build := exec.Command("go", "build", "-o", binary, "./testdata/secretplugin")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build secret plugin: %v\n%s", err, out)
-	}
-	return binary
 }

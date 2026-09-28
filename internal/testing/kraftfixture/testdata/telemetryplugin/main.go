@@ -58,6 +58,17 @@ func main() {
 		if err := json.Unmarshal(in.Bytes(), &req); err != nil {
 			continue
 		}
+		// fixture.pid reports this process's pid; the lifecycle tests
+		// use it to tell a restarted plugin from the one that was
+		// stopped by the mutation before it.
+		if req.Method == "fixture.pid" {
+			write(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      json.RawMessage(req.ID),
+				"result":  map[string]any{"pid": os.Getpid()},
+			})
+			continue
+		}
 		if req.Method != "telemetry.probe" {
 			continue
 		}

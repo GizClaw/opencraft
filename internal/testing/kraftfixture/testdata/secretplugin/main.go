@@ -1,7 +1,9 @@
 // Command secretplugin is a kraft fixture for the desktop tests. It
 // speaks the subprocess protocol, and on a "secret.probe" call it
 // writes its token through the secret.set primitive, reads it back with
-// secret.get, and reports what the host answered.
+// secret.get, and reports what the host answered. It also answers
+// "fixture.pid" with its own process id, which is how a test sees that a
+// registry mutation stopped the process it was talking to.
 package main
 
 import (
@@ -88,6 +90,17 @@ func main() {
 	for in.Scan() {
 		var req request
 		if err := json.Unmarshal(in.Bytes(), &req); err != nil {
+			continue
+		}
+		// fixture.pid reports this process's pid. A test uses it to tell
+		// one process from the next: a mutation that stops the kraft
+		// makes the following call start a new one.
+		if req.Method == "fixture.pid" {
+			write(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      json.RawMessage(req.ID),
+				"result":  map[string]any{"pid": os.Getpid()},
+			})
 			continue
 		}
 		if req.Method != "secret.probe" {

@@ -95,3 +95,79 @@ func TestStoreRevisionMovesOnMutations(t *testing.T) {
 		t.Fatalf("revision after failed mutation = %d, want 6", got)
 	}
 }
+
+// TestStoreRevisionIgnoresRefusedMutations is the other half of the same
+// clock: a mutation the registry refuses before it touches anything —
+// a re-install of an installed id, an update that is not newer, a
+// rollback with no snapshot, uninstalling a builtin — leaves the
+// revision where it was, so no face rebuilds for it. The zip entry
+// points move it exactly once, like their directory twins.
+func TestStoreRevisionIgnoresRefusedMutations(t *testing.T) {
+	oldSrc := t.TempDir()
+	writePlugin(t, oldSrc, "p", testManifest("p", "0.1.0"), "old")
+	sameSrc := t.TempDir()
+	writePlugin(t, sameSrc, "p", testManifest("p", "0.1.0"), "same")
+	newSrc := t.TempDir()
+	writePlugin(t, newSrc, "p", testManifest("p", "0.2.0"), "new")
+	newZip := writeTestZip(t, map[string]string{
+		"p/plugin.json":   `{"id":"p","name":"p","version":"0.3.0","entry":"dist/index.js"}`,
+		"p/dist/index.js": "bundle",
+	})
+	freshZip := writeTestZip(t, map[string]string{
+		"zip-plugin/plugin.json":   `{"id":"zip-plugin","name":"Zip","version":"1.0.0","entry":"dist/index.js"}`,
+		"zip-plugin/dist/index.js": "bundle",
+	})
+	builtin := builtinDir(t)
+	writeBuiltinPlugin(t, builtin, "bundled", testManifest("bundled", "1.0.0"), "bundle", "")
+
+	s := NewStore(t.TempDir())
+	rev := func() uint64 { return s.Revision() }
+	if _, err := s.Install(filepath.Join(oldSrc, "p")); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	base := rev()
+
+	if _, err := s.Install(filepath.Join(oldSrc, "p")); err == nil {
+		t.Fatal("re-installing an installed id must fail")
+	}
+	if got := rev(); got != base {
+		t.Fatalf("revision after refused re-install = %d, want %d", got, base)
+	}
+
+	// No update has run yet, so there is no snapshot to roll back to.
+	if _, err := s.Rollback("p"); err == nil {
+		t.Fatal("rollback without a snapshot must fail")
+	}
+	if got := rev(); got != base {
+		t.Fatalf("revision after refused rollback = %d, want %d", got, base)
+	}
+
+	if _, err := s.Update("p", filepath.Join(sameSrc, "p")); err == nil {
+		t.Fatal("update to a version that is not newer must fail")
+	}
+	if got := rev(); got != base {
+		t.Fatalf("revision after refused update = %d, want %d", got, base)
+	}
+
+	if err := s.Uninstall("bundled"); err == nil {
+		t.Fatal("uninstalling a builtin plugin must fail")
+	}
+	if got := rev(); got != base {
+		t.Fatalf("revision after refused builtin uninstall = %d, want %d", got, base)
+	}
+
+	if _, err := s.InstallZip(freshZip); err != nil {
+		t.Fatalf("InstallZip: %v", err)
+	}
+	base++
+	if got := rev(); got != base {
+		t.Fatalf("revision after zip install = %d, want %d", got, base)
+	}
+	if _, err := s.UpdateZip("p", newZip); err != nil {
+		t.Fatalf("UpdateZip: %v", err)
+	}
+	base++
+	if got := rev(); got != base {
+		t.Fatalf("revision after zip update = %d, want %d", got, base)
+	}
+}

@@ -36,7 +36,7 @@ func TestCharterRowsAreWellFormed(t *testing.T) {
 		RuntimeSubprocess: true, RuntimeData: true,
 	}
 	statuses := map[CharterStatus]bool{
-		StatusCurrent: true, StatusLegacy: true, StatusReserved: true,
+		StatusCurrent: true, StatusReserved: true,
 	}
 	surfaces := map[CharterSurface]bool{
 		SurfaceWebview: true, SurfaceKraft: true,
@@ -74,6 +74,14 @@ func TestCharterRowsAreWellFormed(t *testing.T) {
 			t.Errorf("%s: no activation", k.ID)
 		case strings.TrimSpace(k.Teardown) == "":
 			t.Errorf("%s: no teardown", k.ID)
+		// A kind the manifest declares reaches the model (or the tool
+		// registry) through a host-enforced limit; a row that names the
+		// declaration without its bound reads as if the size were
+		// unconstrained, which is the question #15 asked.
+		case k.Declaration == DeclaredInManifest && len(k.ManifestPaths) > 0 &&
+			strings.TrimSpace(k.Bound) == "":
+			t.Errorf("%s: a manifest kind must state its per-plugin bound",
+				k.ID)
 		case k.Status != StatusCurrent && len(k.Note) < 40:
 			t.Errorf("%s: a %s row needs a note that says why it is still "+
 				"here and how it leaves", k.ID, k.Status)
@@ -143,6 +151,21 @@ func TestCharterRowsAreWellFormed(t *testing.T) {
 	for c := range consumersUsed {
 		if !clock[string(c)] {
 			t.Errorf("consumer %q has no clock row in FaceRefreshes", c)
+		}
+	}
+
+	// A row that leans on another one says so by name; a name that is
+	// not a row is a dangling dependency nobody can follow.
+	interfaceIDs := map[string]bool{}
+	for _, in := range HostInterfaces {
+		interfaceIDs[in.ID] = true
+	}
+	for _, in := range HostInterfaces {
+		for _, dep := range in.Requires {
+			if !interfaceIDs[dep] {
+				t.Errorf("%s requires %q, which is not an interface row",
+					in.ID, dep)
+			}
 		}
 	}
 
@@ -268,6 +291,15 @@ func TestCharterLegacyInputsAreBackedByCode(t *testing.T) {
 	for _, in := range LegacyManifestInputs {
 		if !actions[in.Action] {
 			t.Errorf("%q: unknown legacy action %q", in.Name, in.Action)
+		}
+		if in.Authoring != "" && !actions[in.Authoring] {
+			t.Errorf("%q: unknown authoring action %q", in.Name, in.Authoring)
+		}
+		// A row that splits the two audiences has to say so: the same
+		// action on both sides belongs in Action alone.
+		if in.Authoring == in.Action {
+			t.Errorf("%q: the authoring action repeats the installed one",
+				in.Name)
 		}
 		if len(in.Note) < 40 {
 			t.Errorf("%q: the disposition note is too short to judge", in.Name)
@@ -517,6 +549,116 @@ func TestCharterCoversEveryKraftPrimitive(t *testing.T) {
 	}
 }
 
+// goFuncBody returns the declaration of the named Go function in src,
+// signature and body, ending before the next top-level func. The name is
+// matched as the identifier after the receiver, so callers pass
+// "handleSecret" or "handlePluginSessionImport" without the receiver.
+// An empty result means the function is not in this file, which the
+// callers report as a stale row.
+func goFuncBody(t *testing.T, src, name string) string {
+	t.Helper()
+	start := strings.Index(src, ") "+name+"(")
+	if start < 0 {
+		return ""
+	}
+	open := strings.LastIndex(src[:start], "\nfunc ")
+	if open < 0 {
+		return ""
+	}
+	rest := src[open+1:]
+	if end := strings.Index(rest, "\nfunc "); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}
+
+// TestCharterGrantsAreSpent is the scan the secret.* row's near-miss
+// asked for. The primitive scan reads the dispatch's case labels, so a
+// row's grant could be wrong in either direction while the suite stayed
+// green — the kraft secret.* primitives claimed a secrets:auth gate that
+// nothing checked for as long as they existed. Every row that declares a
+// grant names where it is spent, every named check has to exist and
+// check exactly that grant, and every requirePermission call in the
+// kraft runtime has to belong to a row.
+func TestCharterGrantsAreSpent(t *testing.T) {
+	src := charterRead(t, "internal/capabilities/plugins/kraft/kraft.go")
+	funcNameRe := regexp.MustCompile(`^\([^)]*\) (\w+)\(`)
+	grantRe := regexp.MustCompile(`requirePermission\(p\.id, "([^"]+)"\)`)
+	sites := map[string]string{}
+	for _, chunk := range strings.Split(src, "\nfunc ") {
+		m := funcNameRe.FindStringSubmatch(chunk)
+		if m == nil {
+			continue
+		}
+		for _, g := range grantRe.FindAllStringSubmatch(chunk, -1) {
+			sites[m[1]] = g[1]
+		}
+	}
+	if len(sites) == 0 {
+		t.Fatal("kraft.go: no permission check found any more; the scan " +
+			"needs a new anchor")
+	}
+
+	claimed := map[string]bool{}
+	for _, in := range HostInterfaces {
+		if in.Surface != SurfaceKraft || in.Grant == "" {
+			continue
+		}
+		if len(in.Checks) == 0 {
+			t.Errorf("%s declares grant %q and names no check: say where "+
+				"the grant is spent", in.ID, in.Grant)
+			continue
+		}
+		for _, check := range in.Checks {
+			switch {
+			case check.Empty():
+				t.Errorf("%s: a check names neither a handler nor a host func",
+					in.ID)
+			case check.Handler != "" && check.Func != "":
+				t.Errorf("%s: %s is both a kraft handler and a host func",
+					in.ID, check.Describe())
+			case check.Handler != "":
+				got, ok := sites[check.Handler]
+				if !ok {
+					t.Errorf("%s: kraft.go:%s does not call "+
+						"requirePermission", in.ID, check.Handler)
+					continue
+				}
+				if got != in.Grant {
+					t.Errorf("%s: kraft.go:%s checks %q, the row declares "+
+						"%q", in.ID, check.Handler, got, in.Grant)
+				}
+				claimed[check.Handler] = true
+			default:
+				if check.File == "" {
+					t.Errorf("%s: a host check names no file", in.ID)
+					continue
+				}
+				body := goFuncBody(t, charterRead(t, check.File), check.Func)
+				if body == "" {
+					t.Errorf("%s: %s has no function %s",
+						in.ID, check.File, check.Func)
+					continue
+				}
+				want := `pluginHasPermission(pluginID, "` + in.Grant + `")`
+				if !strings.Contains(body, want) {
+					t.Errorf("%s: %s does not check %q",
+						in.ID, check.Func, in.Grant)
+				}
+			}
+		}
+	}
+
+	// The other direction: a grant spent inside the kraft runtime that
+	// no row admits to is a gate the table does not explain.
+	for fn, grant := range sites {
+		if !claimed[fn] {
+			t.Errorf("kraft.go:%s checks %q and no charter row claims it",
+				fn, grant)
+		}
+	}
+}
+
 // TestCharterDocument is the generated view: charter.md beside this
 // file. It is checked in because a reviewer reads a diff; the test is
 // what keeps it from drifting.
@@ -737,16 +879,32 @@ func renderCharter() string {
 		kindRows = append(kindRows, []string{
 			"`" + k.ID + "`", string(k.Consumer), string(k.Declaration),
 			string(k.Runtime), grantCell(k.Grant), anchorCell(k),
+			boundCell(k.Bound),
 		})
 	}
 	b.WriteString(mdTable([]string{
 		"kind", "consumer", "declared by", "runs in", "grant", "anchor",
+		"bound (per plugin)",
 	}, kindRows))
 	b.WriteString("\n")
+	b.WriteString("Most bounds are per plugin. The agent source adds one " +
+		"aggregate cap\nabove them — the whole registry is bounded at 256 " +
+		"tools and 512 KiB of\ndefinitions, with one warning naming what " +
+		"was dropped — because the number\nof installed plugins is not " +
+		"bounded anywhere. What the model actually\nsees per round is the " +
+		"deployment's budget: opencraft's `tools.yaml` pins the\nvisible " +
+		"set to 64 definitions / 48 KiB and the discovery pool to 48 / " +
+		"32 KiB,\nand core skips an oversized definition rather than " +
+		"starving the smaller ones\nbehind it. A registry of many plugins " +
+		"therefore costs `tool_search` results,\nnot context — and the " +
+		"aggregate cap is what keeps even those finite.\n\n")
 	for _, k := range ContributionKinds {
 		fmt.Fprintf(&b, "- **`%s`** — %s\n", k.ID, k.Summary)
 		fmt.Fprintf(&b, "  - comes alive when: %s\n", k.Activation)
 		fmt.Fprintf(&b, "  - removed by: %s\n", k.Teardown)
+		if k.Bound != "" {
+			fmt.Fprintf(&b, "  - bound: %s\n", k.Bound)
+		}
 		if status := k.Status; status != StatusCurrent {
 			fmt.Fprintf(&b, "  - status: %s\n", status)
 		}
@@ -772,6 +930,16 @@ func renderCharter() string {
 		fmt.Fprintf(&b, "- **`%s`** — %s\n", in.ID, in.Summary)
 		if in.Status != StatusCurrent {
 			fmt.Fprintf(&b, "  - status: %s\n", in.Status)
+		}
+		if len(in.Checks) > 0 {
+			var parts []string
+			for _, check := range in.Checks {
+				parts = append(parts, check.Describe())
+			}
+			fmt.Fprintf(&b, "  - checked by: %s\n", strings.Join(parts, ", "))
+		}
+		if len(in.Requires) > 0 {
+			fmt.Fprintf(&b, "  - needs too: %s\n", strings.Join(in.Requires, ", "))
 		}
 		if in.Note != "" {
 			fmt.Fprintf(&b, "  - note: %s\n", in.Note)
@@ -833,14 +1001,18 @@ func renderCharter() string {
 	b.WriteString("Older spellings a manifest may still carry, and what the host " +
 		"does with each:\n`translate` loads under the new name, `ignore` accepts " +
 		"the manifest and drops\nthe name, `reject` refuses two spellings where one " +
-		"belongs.\n\n")
+		"belongs. The two columns\nsplit by audience: `installed` is a plugin the " +
+		"registry is serving, `offered`\nis a source handed to Inspect, Install, " +
+		"Update or Rollback.\n\n")
 	legacyRows := make([][]string, 0, len(LegacyManifestInputs))
 	for _, in := range LegacyManifestInputs {
 		legacyRows = append(legacyRows, []string{
-			"`" + in.Name + "`", string(in.Action), grantCell(in.Target), in.Note,
+			"`" + in.Name + "`", string(in.Action), string(in.AtAuthoring()),
+			grantCell(in.Target), in.Note,
 		})
 	}
-	b.WriteString(mdTable([]string{"input", "action", "becomes", "why"}, legacyRows))
+	b.WriteString(mdTable(
+		[]string{"input", "installed", "offered", "becomes", "why"}, legacyRows))
 	b.WriteString("\n")
 
 	b.WriteString("## Manifest fields\n\n")
@@ -872,6 +1044,13 @@ func grantCell(grant string) string {
 		return "—"
 	}
 	return "`" + grant + "`"
+}
+
+func boundCell(bound string) string {
+	if bound == "" {
+		return "—"
+	}
+	return bound
 }
 
 func anchorCell(v any) string {

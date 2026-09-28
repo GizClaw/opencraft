@@ -91,9 +91,6 @@ type CharterStatus string
 const (
 	// StatusCurrent is the framework as it stands.
 	StatusCurrent CharterStatus = "current"
-	// StatusLegacy is accepted for manifests and plugins written against
-	// older builds, spent by nothing. The Note names the exit.
-	StatusLegacy CharterStatus = "legacy"
 	// StatusReserved is wired to nothing on purpose: the name is kept so
 	// the eventual implementation lands as a row plus an adapter rather
 	// than as a new special case.
@@ -123,7 +120,13 @@ type ContributionKind struct {
 	// ManifestPaths are the manifest JSON prefixes that declare the kind
 	// (manifest kinds only). A path covers everything under it.
 	ManifestPaths []string
-	Status        CharterStatus
+	// Bound is the per-plugin size the host enforces on this kind's
+	// declaration, empty for a kind the manifest does not declare. The
+	// limits are per plugin: nothing bounds how many plugins are
+	// installed, and what reaches the model is bounded per round by the
+	// deployment instead (see the generated document's introduction).
+	Bound  string
+	Status CharterStatus
 	// Note carries what a reader needs beyond the columns: why a
 	// non-current row is still here, or where the implementation and
 	// the promise disagree today.
@@ -150,10 +153,53 @@ type HostInterface struct {
 	// Grant is the permission the manifest must declare to use it, ""
 	// when the call is free.
 	Grant string
+	// Checks name where that grant is actually spent. A row that
+	// declares a grant without naming its check fails the scan, which
+	// is the failure this table exists to prevent: a row that claims a
+	// gate nothing enforces reads exactly like one that is enforced.
+	// One check per gated primitive family when a row covers several.
+	Checks []GrantCheck
+	// Requires names the other rows a caller must be able to use for
+	// this one to work at all — inference.upsert stores the row's
+	// credential through secret.*, so a plugin that wants that flow
+	// declares both grants. The scan resolves every name to a row.
+	Requires []string
 	// Scope is what the call can touch once it is allowed.
 	Scope  string
 	Status CharterStatus
 	Note   string
+}
+
+// GrantCheck is one place a grant is spent: either a handler in the
+// kraft runtime, or the host-side function a primitive delegates to.
+// Exactly one of the two shapes is filled.
+type GrantCheck struct {
+	// Handler is the kraft.go function that calls requirePermission
+	// for the row's grant.
+	Handler string
+	// File and Func name the host-side check: File is read and Func
+	// must call pluginHasPermission with the row's grant. The
+	// primitives that delegate (session.import, telemetry.configure)
+	// gate inside the desktop core handler they call.
+	File string
+	Func string
+}
+
+// Empty reports whether the check names nothing, which a row that
+// declares a grant may not do.
+func (g GrantCheck) Empty() bool {
+	return g.Handler == "" && g.Func == ""
+}
+
+// Describe renders the check for the generated document.
+func (g GrantCheck) Describe() string {
+	switch {
+	case g.Handler != "":
+		return "`kraft.go:" + g.Handler + "`"
+	case g.Func != "":
+		return "`" + g.File + ":" + g.Func + "`"
+	}
+	return "—"
 }
 
 // CharterSurface is where a host interface is reachable.
@@ -194,8 +240,11 @@ var FaceRefreshes = []FaceRefresh{
 		Face: string(ConsumerAgent),
 		What: "re-scans — the agent host caches its plugin scan against " +
 			"the revision and re-reads it on the next call after it " +
-			"moves; sources that snapshot at assembly (skills, hooks, " +
-			"MCP) still pick a change up at the next assembly",
+			"moves; the tool source subscribes instead (Host.Watch) and " +
+			"republishes its kraft set into the live registry, so a tool " +
+			"gained or lost mid-turn reaches the next round; the sources " +
+			"that only snapshot at assembly (skills, hooks, MCP) still " +
+			"pick a change up at the next assembly",
 	},
 	{
 		Face: "kraft",
@@ -300,7 +349,9 @@ var ContributionKinds = []ContributionKind{
 			"root; a turn already running keeps the skills it assembled",
 		Grant:         "skills:provide",
 		ManifestPaths: []string{"skills"},
-		Status:        StatusCurrent,
+		Bound: "32 entries per plugin, 256-byte paths; a plugin that " +
+			"declares none contributes its default skills/ directory",
+		Status: StatusCurrent,
 	},
 	{
 		ID:          "agent.hook",
@@ -314,6 +365,7 @@ var ContributionKinds = []ContributionKind{
 			"the turn in flight",
 		Grant:         "hooks:provide",
 		ManifestPaths: []string{"hooks"},
+		Bound:         "16 entries per plugin, 256-byte paths",
 		Status:        StatusCurrent,
 	},
 	{
@@ -329,7 +381,9 @@ var ContributionKinds = []ContributionKind{
 			"manifest; a rebuilt runtime closes the connection",
 		Grant:         "mcp:provide",
 		ManifestPaths: []string{"mcpServers"},
-		Status:        StatusCurrent,
+		Bound: "16 servers per plugin; 1024-byte command, 2048-byte " +
+			"url, 32 env entries per server",
+		Status: StatusCurrent,
 	},
 	{
 		ID:          "agent.tool",
@@ -337,13 +391,36 @@ var ContributionKinds = []ContributionKind{
 		Consumer:    ConsumerAgent,
 		Declaration: DeclaredInManifest,
 		Runtime:     RuntimeKraft,
-		Activation: "the next runtime assembly lists the tool; the kraft " +
-			"process itself starts lazily on the first call",
-		Teardown: "the next assembly drops the spec; the process is " +
+		Activation: "the assembly that scans the manifest lists the tool, " +
+			"and the tool source republishes on the registry's own signal " +
+			"after every mutation, so a plugin installed, updated or " +
+			"disabled mid-turn is callable — or not — from that turn's " +
+			"next round; the kraft process itself starts lazily on the " +
+			"first call",
+		Teardown: "the next republish drops the spec; the process is " +
 			"stopped when the plugin is disabled, updated or unloaded",
 		Grant:         "tools:provide",
 		ManifestPaths: []string{"tools"},
-		Status:        StatusCurrent,
+		Bound: "64 tools per plugin; 1024-character description, 32 KiB " +
+			"input schema, 128-byte method per tool. The sum is bounded " +
+			"too: the agent source caps the whole registry at 256 tools " +
+			"and 512 KiB of definitions " +
+			"(capabilities/tools/pluginagent/source.go: maxKraftTools, " +
+			"maxKraftDefinitionBytes), keeps what fits in registry order " +
+			"and logs one line naming what it dropped. Below that, what " +
+			"the model sees per round is the deployment's visible and " +
+			"discovery budgets (core's visibleCandidates / " +
+			"fitDiscoveryPool), which skip an oversized definition " +
+			"instead of starving the ones behind it. A result comes back " +
+			"verbatim: the ceilings on it are the deployment's tool " +
+			"middleware (truncate, redact, audit)",
+		Note: "the result is a plugin's own text, and the framework's " +
+			"<opencraft-context> delimiter is not escaped in it: a plugin " +
+			"that echoes one writes something the model reads as injected " +
+			"context. Every tool result shares this, so the exit is one " +
+			"rule in the tool-result middleware (like redact or " +
+			"truncate), not a special case here.",
+		Status: StatusCurrent,
 	},
 	{
 		ID:          "platform.node",
@@ -431,6 +508,9 @@ var HostInterfaces = []HostInterface{
 		Surface: SurfaceKraft,
 		Methods: []string{"secret.get", "secret.set", "secret.delete"},
 		Grant:   "secrets:auth",
+		Checks: []GrantCheck{
+			{Handler: "handleSecret"},
+		},
 		Scope: "auth/<plugin>/... and inference/<plugin>/... only; the " +
 			"namespace prefix narrows what the grant already allows",
 		Status: StatusCurrent,
@@ -449,13 +529,15 @@ var HostInterfaces = []HostInterface{
 		Status: StatusCurrent,
 	},
 	{
-		ID:      "inference.*",
-		Summary: "registers or removes a provider profile",
-		Surface: SurfaceKraft,
-		Methods: []string{"inference.upsert", "inference.remove"},
+		ID:       "inference.*",
+		Summary:  "registers or removes a provider profile",
+		Surface:  SurfaceKraft,
+		Methods:  []string{"inference.upsert", "inference.remove"},
+		Requires: []string{"secret.*"},
 		Scope: "rows whose credential lives in the plugin's own secret " +
-			"namespace; the user-owned enabled flag is not the plugin's " +
-			"to set",
+			"namespace (see secret.*: storing that credential needs " +
+			"secrets:auth as well); the user-owned enabled flag is not " +
+			"the plugin's to set",
 		Status: StatusCurrent,
 	},
 	{
@@ -464,8 +546,18 @@ var HostInterfaces = []HostInterface{
 		Surface: SurfaceKraft,
 		Methods: []string{"session.import", "session.imported_sources"},
 		Grant:   "sessions:import",
+		Checks: []GrantCheck{
+			{File: "internal/adapters/desktop/core/core_session_import.go",
+				Func: "handlePluginSessionImport"},
+			{File: "internal/adapters/desktop/core/core_session_import.go",
+				Func: "handlePluginSessionImportedSources"},
+		},
 		Scope: "writes a conversation the host then owns; repeated " +
-			"bundles dedupe by source",
+			"bundles dedupe by source. The import itself is bounded by " +
+			"the caller (one bundle, 128 MiB); what the imported " +
+			"conversation then costs a turn's context is bounded by " +
+			"nothing here — the host writes it, the deployment's budgets " +
+			"and the turn's own compaction decide what it costs",
 		Status: StatusCurrent,
 	},
 	{
@@ -482,6 +574,10 @@ var HostInterfaces = []HostInterface{
 		Surface: SurfaceKraft,
 		Methods: []string{"telemetry.configure", "telemetry.disable"},
 		Grant:   "telemetry:export",
+		Checks: []GrantCheck{
+			{File: "internal/adapters/desktop/core/telemetry.go",
+				Func: "handlePluginTelemetryConfigure"},
+		},
 		Scope: "one plugin sink at a time, dropped when the plugin is " +
 			"disabled or dies; header values stay in host memory",
 		Status: StatusCurrent,
@@ -525,18 +621,33 @@ const (
 type LegacyManifestInput struct {
 	// Name is the input, spelled the way a manifest writes it.
 	Name string
-	// Action is the disposition.
+	// Action is the disposition for an installed plugin: the registry
+	// load path, the agent host's scan, the kraft lookup.
 	Action LegacyAction
+	// Authoring is the disposition for the gates an author uses —
+	// Inspect, Install, Update, Rollback — where the manifest can be
+	// fixed instead of read. Empty means the same as Action.
+	Authoring LegacyAction
 	// Target is the current spelling for LegacyTranslate rows.
 	Target string
 	// Note says why this is the disposition.
 	Note string
 }
 
+// AtAuthoring returns the disposition the authoring gates apply.
+func (l LegacyManifestInput) AtAuthoring() LegacyAction {
+	if l.Authoring != "" {
+		return l.Authoring
+	}
+	return l.Action
+}
+
 // LegacyManifestInputs is the disposition table for older manifest
 // spellings: translate (the plugin keeps loading under the new name),
 // ignore (accepted, dropped, logged once) or reject (two spellings at
-// once is ambiguity, not compatibility).
+// once is ambiguity, not compatibility). The one input whose two
+// audiences differ is a manifest that writes the same thing twice: an
+// installed plugin keeps loading, an offered source is refused.
 var LegacyManifestInputs = []LegacyManifestInput{
 	{
 		Name:   "capability",
@@ -546,11 +657,21 @@ var LegacyManifestInputs = []LegacyManifestInput{
 			"old key so installed plugins keep loading without an edit.",
 	},
 	{
-		Name:   "capability + kraft",
+		Name:      "capability + kraft, same section",
+		Action:    LegacyTranslate,
+		Authoring: LegacyReject,
+		Target:    "kraft",
+		Note: "a manifest written to load on hosts of both vintages. " +
+			"Installed, the kraft key is read and the redundant old one " +
+			"is logged once; offered to Inspect/Install/Update, the pair " +
+			"is refused so the author deletes one.",
+	},
+	{
+		Name:   "capability + kraft, different sections",
 		Action: LegacyReject,
-		Note: "two spellings of one manifest section is ambiguity, not " +
-			"compatibility: the manifest is refused and both names are " +
-			"named in the error.",
+		Note: "two spellings that name different binaries is a manifest " +
+			"bug rather than a spelling, so both audiences refuse it and " +
+			"the error names both keys.",
 	},
 	{
 		Name:   "skills:contribute",
@@ -581,11 +702,14 @@ var LegacyManifestInputs = []LegacyManifestInput{
 			"kind:provide; the old spelling is translated silently.",
 	},
 	{
-		Name:   "old + new spelling of one permission",
-		Action: LegacyReject,
-		Note: "declaring both spellings of one grant is ambiguity, not " +
-			"compatibility: the manifest is refused and both names are " +
-			"named in the error.",
+		Name:      "old + new spelling of one permission",
+		Action:    LegacyTranslate,
+		Authoring: LegacyReject,
+		Target:    "the replacement spelling",
+		Note: "the two spellings grant identical authority, so an " +
+			"installed plugin is read as the canonical name and the " +
+			"redundant one is logged once; offered to Inspect/Install/" +
+			"Update, the pair is refused so the author deletes one.",
 	},
 	{
 		Name:   "events:subscribe",
