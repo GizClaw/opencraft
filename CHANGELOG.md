@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The plugin framework has a charter. `capabilities/plugins/charter.go`
+  holds two tables — what a plugin gives the host, and what it may call
+  on it — and every row answers the same five questions: who consumes
+  it, where its code runs, how the host learns it exists, which grant
+  authorizes it, when it comes alive and what removes it.
+  `charter_test.go` scans the code the rows point at (the `Manifest`
+  struct, `AllowedPermissions`, the frontend's service list, the kraft
+  primitive dispatch) and fails in both directions, so a new
+  permission, manifest field, service or primitive cannot land without
+  a row, and a row cannot outlive what it names. `charter.md` beside it
+  is the generated view. Nothing changes for installed plugins: the
+  tables describe today's framework, including the two places where
+  code and comment disagree — the kraft `secret.*` primitives are
+  gated by their namespace prefix, not by `secrets:auth` as the package
+  comment says, and `contributes.{settingsPanels,sidebarEntries,pets}`
+  are parsed and validated but consumed by nothing.
+
 ### Changed
 
 - The plugin manifest's subprocess section is called `kraft` now, not
