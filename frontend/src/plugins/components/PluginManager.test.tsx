@@ -18,7 +18,7 @@ const toolPlugin: PluginSummary = {
   name: 'Tool Plugin',
   version: '1.0.0',
   entry: 'dist/index.js',
-  permissions: ['tools:expose', 'telemetry:export'],
+  permissions: ['tools:provide', 'telemetry:export'],
   enabled: true,
   hasTools: true,
 };
@@ -69,7 +69,7 @@ describe('PluginManager tools visibility', () => {
 
     await user.click(screen.getByRole('button', { name: /Tool Plugin/ }));
     expect(await screen.findByText('Permissions')).toBeInTheDocument();
-    expect(screen.getByText('tools:expose')).toBeInTheDocument();
+    expect(screen.getByText('tools:provide')).toBeInTheDocument();
     expect(screen.getByText('telemetry:export')).toBeInTheDocument();
   });
 });

@@ -19,14 +19,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   permission, manifest field, service or primitive cannot land without
   a row, and a row cannot outlive what it names. `charter.md` beside it
   is the generated view. Nothing changes for installed plugins: the
-  tables describe today's framework, including the two places where
-  code and comment disagree — the kraft `secret.*` primitives are
-  gated by their namespace prefix, not by `secrets:auth` as the package
-  comment says, and `contributes.{settingsPanels,sidebarEntries,pets}`
-  are parsed and validated but consumed by nothing.
+  tables describe today's framework, including the place where code
+  and comment disagree — `contributes.{settingsPanels,sidebarEntries,pets}`
+  are parsed and validated but consumed by nothing. (The other
+  disagreement the charter first recorded — the kraft `secret.*`
+  primitives claiming a `secrets:auth` gate nothing checked — was
+  resolved by the vocabulary sweep below.)
 
 ### Changed
 
+- The plugin permission vocabulary has one shape now: a contribution
+  grant is spelled `kind:provide`, so `tools:expose`,
+  `skills:contribute`, `mcp:contribute` and `hooks:register` became
+  `tools:provide`, `skills:provide`, `mcp:provide` and `hooks:provide`.
+  A manifest that still writes an old spelling keeps loading — the
+  parser translates it — and a manifest that declares both spellings of
+  one grant is rejected. Every reader (validation, the plugin summary,
+  the agent host, the kraft gate) sees the canonical names, and the
+  charter's new legacy-inputs table records each old spelling's fate.
+- The kraft `secret.*` primitives are gated by `secrets:auth` now.
+  The package comment had claimed the gate since the primitives
+  landed, but nothing checked it — only the namespace prefix stood
+  between a plugin and the keyring. `handleSecret` checks the manifest
+  declaration the way `session.import` and `telemetry.configure`
+  already did, so a kraft whose manifest never declares `secrets:auth`
+  can no longer touch its secret namespace (the webview `ctx.secrets`
+  surface required the grant all along).
 - The plugin manifest's subprocess section is called `kraft` now, not
   `capability`: `plugin.json` declares `"kraft": { "binary": … }`, the
   hosts package is `capabilities/plugins/kraft` (with `kraft.Kraft` /
@@ -78,6 +96,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Three plugin permissions are retired: `events:subscribe`,
+  `commands:register` and `statusbar:contribute` gated nothing any
+  more (the Cordis event bus and the commands/status-bar registrars are
+  always available to every plugin). A manifest that still declares
+  one keeps loading: `CheckPermissions` is fail-closed, and rejecting a
+  manifest over a name that gates nothing would kill the plugin's
+  working half; the parser drops the name and logs it once instead.
+  `plugins/hello` no longer declares any of them (nor the old
+  `skills:contribute`). `pets:contribute` stays accepted for now: it
+  gates only the inert `contributes.pets` segment and leaves with it
+  in the manifest cleanup.
 - The `setup:docker` task is gone. It built the `wails-cross` image from
   `build/docker/Dockerfile.cross`, a file this repo never carried, so it could
   only ever fail; the per-platform `build:docker` cross tasks stay and now say

@@ -24,10 +24,10 @@ func TestPluginTelemetryE2E(t *testing.T) {
 		t.Skip("skipping plugin subprocess end-to-end test in short mode")
 	}
 	binary := buildTelemetryPlugin(t)
-	warmTelemetryPlugin(t, binary)
+	warmPlugin(t, binary)
 
 	t.Run("granted", func(t *testing.T) {
-		c, dataDir := newTelemetryPluginCore(t, binary,
+		c, dataDir := newFixturePluginCore(t, binary, "Telemetry Plugin",
 			[]string{"telemetry:export"})
 		result := probeTelemetry(t, c, map[string]any{
 			"endpoint": "collector.example:4318",
@@ -51,7 +51,7 @@ func TestPluginTelemetryE2E(t *testing.T) {
 	})
 
 	t.Run("denied without permission", func(t *testing.T) {
-		c, dataDir := newTelemetryPluginCore(t, binary, []string{"storage:kv"})
+		c, dataDir := newFixturePluginCore(t, binary, "Telemetry Plugin", []string{"storage:kv"})
 		result := probeTelemetry(t, c, map[string]any{
 			"endpoint": "collector.example:4318",
 		})
@@ -74,7 +74,7 @@ func TestPluginTelemetryE2E(t *testing.T) {
 	// A plugin that dies on its own loses its sink: the host cannot ask
 	// it anything anymore, so it must not keep exporting on its behalf.
 	t.Run("crash drops the sink", func(t *testing.T) {
-		c, _ := newTelemetryPluginCore(t, binary, []string{"telemetry:export"})
+		c, _ := newFixturePluginCore(t, binary, "Telemetry Plugin", []string{"telemetry:export"})
 		if result := probeTelemetry(t, c, map[string]any{
 			"endpoint": "collector.example:4318",
 			"exit":     true,
@@ -98,7 +98,7 @@ func TestPluginTelemetryE2E(t *testing.T) {
 	// The user switch suspends and restores the sink without the plugin
 	// re-running its configure call.
 	t.Run("switch restores the sink", func(t *testing.T) {
-		c, _ := newTelemetryPluginCore(t, binary, []string{"telemetry:export"})
+		c, _ := newFixturePluginCore(t, binary, "Telemetry Plugin", []string{"telemetry:export"})
 		if result := probeTelemetry(t, c, map[string]any{
 			"endpoint": "collector.example:4318",
 			"headers":  map[string]string{"authorization": "Bearer plugin"},
@@ -144,24 +144,25 @@ func probeTelemetry(t *testing.T, c *Core, params map[string]any) map[string]any
 	return result
 }
 
-// warmTelemetryPlugin runs the fixture once with stdin closed: it
+// warmPlugin runs a fixture once with stdin closed: it
 // announces itself and exits on EOF. The exec validates the code
 // signature and warms the page cache, so the subtests below do not pay
 // that cost inside their handshake window.
-func warmTelemetryPlugin(t *testing.T, binary string) {
+func warmPlugin(t *testing.T, binary string) {
 	t.Helper()
 	cmd := exec.Command(binary)
 	cmd.Stdin = nil
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("warm telemetry plugin: %v\n%s", err, out)
+		t.Fatalf("warm plugin: %v\n%s", err, out)
 	}
 }
 
-// newTelemetryPluginCore installs the fixture plugin into a fresh data
-// dir and wires the desktop core to it.
-func newTelemetryPluginCore(
+// newFixturePluginCore installs a fixture plugin into a fresh data dir
+// and wires the desktop core to it.
+func newFixturePluginCore(
 	t *testing.T,
 	binary string,
+	name string,
 	permissions []string,
 ) (*Core, string) {
 	t.Helper()
@@ -176,7 +177,7 @@ func newTelemetryPluginCore(
 	}
 	manifest := `{
 		"id": "plug",
-		"name": "Telemetry Plugin",
+		"name": "` + name + `",
 		"version": "0.1.0",
 		"entry": "dist/index.js",
 		"permissions": ` + string(perms) + `,

@@ -249,7 +249,7 @@ func TestManifestValidatesAgentCapabilities(t *testing.T) {
 		"entry": "dist/index.js",
 		"kraft": map[string]any{"binary": "bin/agent", "protocol": 1},
 		"permissions": []string{
-			"skills:contribute", "mcp:contribute", "hooks:register", "tools:expose",
+			"skills:provide", "mcp:provide", "hooks:provide", "tools:provide",
 		},
 		"update":     map[string]any{"url": "https://example.com/plugin/latest.json"},
 		"skills":     []string{"skills"},
@@ -309,6 +309,93 @@ func TestManifestRejectsBothKraftSpellings(t *testing.T) {
 	}
 }
 
+func TestManifestTranslatesLegacyPermissions(t *testing.T) {
+	root := t.TempDir()
+	// The pre-sweep spellings: a manifest that still writes them keeps
+	// loading, and every read path sees the canonical names.
+	writePlugin(t, root, "legacy-perms", map[string]any{
+		"id": "legacy-perms", "name": "Legacy", "version": "0.1.0",
+		"entry": "dist/index.js",
+		"kraft": map[string]any{"binary": "bin/x", "protocol": 1},
+		"permissions": []string{
+			"skills:contribute", "hooks:register", "mcp:contribute", "tools:expose",
+		},
+		"skills":     []string{"skills"},
+		"hooks":      []string{"hooks/hooks.json"},
+		"mcpServers": []any{map[string]any{"name": "srv", "transport": "stdio", "command": "bin/srv"}},
+		"tools": []any{map[string]any{
+			"name": "ping", "description": "Ping", "method": "ping",
+			"inputSchema": map[string]any{"type": "object"},
+		}},
+	}, "")
+	want := "skills:provide,hooks:provide,mcp:provide,tools:provide"
+	s := NewStore(root)
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Error != "" {
+		t.Fatalf("List = %+v, want a valid plugin", list)
+	}
+	if got := strings.Join(list[0].Permissions, ","); got != want {
+		t.Fatalf("summary permissions = %q, want %q", got, want)
+	}
+	m, err := s.Manifest("legacy-perms")
+	if err != nil {
+		t.Fatalf("Manifest: %v", err)
+	}
+	if got := strings.Join(m.Permissions, ","); got != want {
+		t.Fatalf("manifest permissions = %q, want %q", got, want)
+	}
+}
+
+func TestManifestDropsRetiredPermissions(t *testing.T) {
+	root := t.TempDir()
+	// Retired names are accepted and dropped: rejecting the manifest
+	// would kill a plugin's working half over a name that gates
+	// nothing.
+	writePlugin(t, root, "retired-perms", map[string]any{
+		"id": "retired-perms", "name": "Retired", "version": "0.1.0",
+		"entry": "dist/index.js",
+		"permissions": []string{
+			"storage:kv", "commands:register", "statusbar:contribute",
+			"events:subscribe",
+		},
+	}, "")
+	s := NewStore(root)
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Error != "" {
+		t.Fatalf("List = %+v, want a valid plugin", list)
+	}
+	if got := strings.Join(list[0].Permissions, ","); got != "storage:kv" {
+		t.Fatalf("summary permissions = %q, want the retired names gone", got)
+	}
+}
+
+func TestManifestRejectsBothPermissionSpellings(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "both-perms", map[string]any{
+		"id": "both-perms", "name": "Both", "version": "0.1.0",
+		"entry": "dist/index.js",
+		"permissions": []string{
+			"tools:provide", "tools:expose",
+		},
+	}, "")
+	s := NewStore(root)
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 ||
+		!strings.Contains(list[0].Error, "tools:expose") ||
+		!strings.Contains(list[0].Error, "tools:provide") {
+		t.Fatalf("List = %+v, want a rejection naming both spellings", list)
+	}
+}
+
 func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -326,7 +413,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "tools without kraft",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"tools:expose"},
+				"permissions": []string{"tools:provide"},
 				"tools":       []any{map[string]any{"name": "t", "method": "m"}},
 			},
 		},
@@ -334,7 +421,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "mcp unknown transport",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"mcp:contribute"},
+				"permissions": []string{"mcp:provide"},
 				"mcpServers":  []any{map[string]any{"name": "s", "transport": "carrier"}},
 			},
 		},
@@ -342,7 +429,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "skill path escapes",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"skills:contribute"},
+				"permissions": []string{"skills:provide"},
 				"skills":      []string{"../skills"},
 			},
 		},
@@ -350,7 +437,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "tool schema not object",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"tools:expose"},
+				"permissions": []string{"tools:provide"},
 				"tools": []any{map[string]any{
 					"name": "t", "method": "m", "inputSchema": []string{"not", "object"},
 				}},
@@ -360,7 +447,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "mcp server name with separator",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"mcp:contribute"},
+				"permissions": []string{"mcp:provide"},
 				"mcpServers":  []any{map[string]any{"name": "bad:name", "transport": "stdio", "command": "bin/s"}},
 			},
 		},
@@ -369,7 +456,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
 				"kraft":       map[string]any{"binary": "bin/x", "protocol": 1},
-				"permissions": []string{"tools:expose"},
+				"permissions": []string{"tools:provide"},
 				"tools": []any{map[string]any{
 					"name": "tool.name", "method": "m",
 				}},
@@ -379,7 +466,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "mcp server name with dot",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"mcp:contribute"},
+				"permissions": []string{"mcp:provide"},
 				"mcpServers":  []any{map[string]any{"name": "bad.name", "transport": "stdio", "command": "bin/s"}},
 			},
 		},
@@ -388,7 +475,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
 				"kraft":       map[string]any{"binary": "bin/x", "protocol": 1},
-				"permissions": []string{"tools:expose"},
+				"permissions": []string{"tools:provide"},
 				"tools": []any{map[string]any{
 					"name": "t", "method": "m",
 					"description": strings.Repeat("x", 1025),
@@ -400,7 +487,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
 				"kraft":       map[string]any{"binary": "bin/x", "protocol": 1},
-				"permissions": []string{"tools:expose"},
+				"permissions": []string{"tools:provide"},
 				"tools": []any{map[string]any{
 					"name": "t", "method": "m",
 					"inputSchema": map[string]any{
@@ -455,7 +542,7 @@ func TestInstallRejectsMissingAgentResources(t *testing.T) {
 		"id": "broken", "name": "Broken", "version": "0.1.0",
 		"entry": "dist/index.js",
 		"permissions": []string{
-			"skills:contribute", "hooks:register", "mcp:contribute",
+			"skills:provide", "hooks:provide", "mcp:provide",
 		},
 		"skills":     []string{"skills"},
 		"hooks":      []string{"hooks/hooks.json"},
@@ -623,7 +710,7 @@ func TestRollbackRejectsTamperedBackup(t *testing.T) {
 	writePlugin(t, oldSrc, "p", map[string]any{
 		"id": "p", "name": "P", "version": "0.1.0",
 		"entry":       "dist/index.js",
-		"permissions": []string{"skills:contribute"},
+		"permissions": []string{"skills:provide"},
 		"skills":      []string{"skills"},
 	}, "")
 	if err := os.MkdirAll(filepath.Join(oldSrc, "p", "skills"), 0o700); err != nil {

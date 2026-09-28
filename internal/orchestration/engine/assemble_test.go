@@ -484,7 +484,7 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 		"entry": "dist/index.js",
 		"kraft": map[string]any{"binary": "bin/ping", "protocol": 1},
 		"permissions": []string{
-			"skills:contribute", "hooks:register", "tools:expose",
+			"skills:provide", "hooks:provide", "tools:provide",
 		},
 		"skills": []string{"skills"},
 		"hooks":  []string{"hooks/hooks.json"},

@@ -142,7 +142,7 @@ func summary() plugins.PluginSummary {
 		Version:     "0.1.0",
 		Entry:       "dist/index.js",
 		Kraft:       "bin/hello",
-		Permissions: []string{"storage:kv", "skills:contribute"},
+		Permissions: []string{"storage:kv", "skills:provide"},
 		Enabled:     true,
 		HasSkills:   true,
 	}

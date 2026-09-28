@@ -37,7 +37,7 @@ func TestHostExposesAgentCapabilities(t *testing.T) {
 		"entry": "dist/index.js",
 		"kraft": map[string]any{"binary": "bin/srv", "protocol": 1},
 		"permissions": []string{
-			"skills:contribute", "mcp:contribute", "hooks:register", "tools:expose",
+			"skills:provide", "mcp:provide", "hooks:provide", "tools:provide",
 		},
 		"skills":     []string{"skills"},
 		"mcpServers": []any{map[string]any{"name": "srv", "transport": "stdio", "command": "bin/srv"}},
@@ -89,7 +89,7 @@ func TestHostDefaultSkillRoot(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "skills-only", map[string]any{
 		"id": "skills-only", "name": "Skills", "version": "0.1.0",
-		"entry": "dist/index.js", "permissions": []string{"skills:contribute"},
+		"entry": "dist/index.js", "permissions": []string{"skills:provide"},
 	})
 	skillDir := filepath.Join(root, "skills-only", "skills")
 	if err := os.MkdirAll(skillDir, 0o700); err != nil {
@@ -123,7 +123,7 @@ func TestHostEntriesCacheFrozenUntilNewHost(t *testing.T) {
 
 	writePlugin(t, root, "late", map[string]any{
 		"id": "late", "name": "Late", "version": "0.1.0",
-		"entry": "dist/index.js", "permissions": []string{"skills:contribute"},
+		"entry": "dist/index.js", "permissions": []string{"skills:provide"},
 	})
 	skillDir := filepath.Join(root, "late", "skills")
 	if err := os.MkdirAll(skillDir, 0o700); err != nil {
@@ -150,7 +150,7 @@ func TestHostMCPCommandResolution(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "mcp", map[string]any{
 		"id": "mcp", "name": "MCP", "version": "0.1.0",
-		"entry": "dist/index.js", "permissions": []string{"mcp:contribute"},
+		"entry": "dist/index.js", "permissions": []string{"mcp:provide"},
 		"mcpServers": []any{
 			map[string]any{"name": "local", "transport": "stdio", "command": "bin/srv"},
 			map[string]any{"name": "path", "transport": "stdio", "command": "npx"},
@@ -174,7 +174,7 @@ func TestHostMCPServerPrefixSanitizesPluginID(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "my.plugin", map[string]any{
 		"id": "my.plugin", "name": "Dotted", "version": "0.1.0",
-		"entry": "dist/index.js", "permissions": []string{"mcp:contribute"},
+		"entry": "dist/index.js", "permissions": []string{"mcp:provide"},
 		"mcpServers": []any{map[string]any{
 			"name": "srv", "transport": "stdio", "command": "bin/srv",
 		}},

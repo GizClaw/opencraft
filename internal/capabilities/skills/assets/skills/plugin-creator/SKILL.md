@@ -38,7 +38,7 @@ the user what is about to run and reload the running runtime.
   "version": "0.1.0",
   "minHostVersion": "0.5.0",
   "entry": "dist/index.js",
-  "permissions": ["storage:kv", "commands:register", "statusbar:contribute"],
+  "permissions": ["storage:kv"],
   "contributes": {
     "settingsPanels": [{ "id": "my-panel", "title": "My", "order": 10 }],
     "sidebarEntries": [{ "id": "my-entry", "title": "My", "order": 10 }]
@@ -50,12 +50,17 @@ the user what is about to run and reload the running runtime.
   `entry` are required. Versions are dotted numerics with an optional
   `-prerelease` (`1.2.0`, `1.2.0-beta.1`).
 - `permissions` is a closed set; an unknown entry rejects the whole
-  plugin: `secrets:auth`, `storage:kv`, `events:subscribe`,
-  `commands:register`, `statusbar:contribute`, `pets:contribute`,
-  `tools:expose`, `sessions:import`, `skills:contribute`,
-  `mcp:contribute`, `hooks:register`, `telemetry:export`. Declare only
-  what you use — the settings page shows them to the user, and the
-  agent capabilities below are refused without them.
+  plugin. Grants that do something: `secrets:auth`, `storage:kv`,
+  `sessions:import`, `telemetry:export`, and the contribution grants
+  `skills:provide`, `mcp:provide`, `hooks:provide`, `tools:provide`
+  (older spellings of the four — `skills:contribute`, `mcp:contribute`,
+  `hooks:register`, `tools:expose` — are translated for old manifests,
+  so write the current spelling). Retired names (`events:subscribe`,
+  `commands:register`, `statusbar:contribute`) are accepted and ignored
+  with a log, and `pets:contribute` gates only the inert
+  `contributes.pets` segment — declaring any of those does nothing.
+  Declare only what you use — the settings page shows the list to the
+  user, and the agent capabilities below are refused without them.
 - `contributes.settingsPanels` / `contributes.sidebarEntries` declare
   the ids the bundle registers; the detail drawer lists them.
 
@@ -92,18 +97,18 @@ export function apply(ctx) {
 
 Each group requires its manifest permission and is ignored without it:
 
-- `"skills": ["skills"]` (`skills:contribute`) — skill roots added to
+- `"skills": ["skills"]` (`skills:provide`) — skill roots added to
   the shared skills registry (a plain `skills/` directory works too).
 - `"mcpServers": [{"name": "x", "transport": "stdio", "command": "bin/server", "args": [], "env": {}}]`
-  (`mcp:contribute`) — stdio (plugin-relative paths are resolved) or
+  (`mcp:provide`) — stdio (plugin-relative paths are resolved) or
   `{"transport": "http", "url": "https://…"}`; every tool arrives
   namespaced by plugin and server.
-- `"hooks": ["hooks/hooks.json"]` (`hooks:register`) — command hooks run
+- `"hooks": ["hooks/hooks.json"]` (`hooks:provide`) — command hooks run
   with the plugin directory as cwd; payload fields that carry content
   (prompts, tool input/results) are stripped first, because plugin
   hooks are an untrusted source.
 - `"tools": [{"name": "ping", "description": "…", "method": "ping", "inputSchema": {"type": "object"}}]`
-  (`tools:expose`) — requires a `kraft` binary; the agent sees each
+  (`tools:provide`) — requires a `kraft` binary; the agent sees each
   one as `<plugin_id>__<name>`.
 
 Bounds: at most 64 tools, 32 skills, 16 hooks, 16 MCP servers, 8 pets;
@@ -124,12 +129,13 @@ line-delimited JSON-RPC 2.0 on stdin/stdout. It must first send
 ```
 
 and then answer host→plugin method calls. It may call host primitives
-back, each gated by a manifest permission: `secret.get/set/delete`,
-`open.url` (only the hosts listed in `kraft.hosts`),
-`inference.upsert/remove`, `session.import` /
-`session.imported_sources`, `workspace.current`,
-`telemetry.configure/disable` (`emit.event` is reserved and currently
-a no-op).
+back, each gated by a manifest permission where one exists:
+`secret.get/set/delete` (`secrets:auth`; the call is also confined to
+`auth/<plugin>/…` and `inference/<plugin>/…`), `open.url` (only the
+hosts listed in `kraft.hosts`), `inference.upsert/remove`,
+`session.import` / `session.imported_sources` (`sessions:import`),
+`workspace.current`, `telemetry.configure/disable` (`telemetry:export`;
+`emit.event` is reserved and currently a no-op).
 The declared `kraft.protocol` must equal the host's protocol
 version (1), and the handshake re-checks it. Everything the child writes
 to stderr is forwarded to the app log — never log credentials. On macOS

@@ -209,10 +209,10 @@ var ContributionKinds = []ContributionKind{
 		Teardown: "the registration's disposer (disable, update, unload, " +
 			"app teardown)",
 		Services: []string{"commands"},
-		Note: "commands:register is in the sunset list: every plugin may " +
-			"register commands, and the permission has been checked by " +
-			"nothing since the Cordis port (plugins/hello still declares " +
-			"it).",
+		Note: "commands:register was retired by the vocabulary sweep: " +
+			"every plugin may register commands, and the name has gated " +
+			"nothing since the Cordis port. A manifest that still " +
+			"declares it is accepted and the name ignored.",
 		Status: StatusCurrent,
 	},
 	{
@@ -226,8 +226,8 @@ var ContributionKinds = []ContributionKind{
 		Teardown: "the registration's disposer (disable, update, unload, " +
 			"app teardown)",
 		Services: []string{"statusBar"},
-		Note: "statusbar:contribute is in the sunset list, for the same " +
-			"reason as commands:register.",
+		Note: "statusbar:contribute was retired by the vocabulary sweep, " +
+			"for the same reason as commands:register.",
 		Status: StatusCurrent,
 	},
 	{
@@ -246,7 +246,10 @@ var ContributionKinds = []ContributionKind{
 			"manifest gate) but read by no one — packs arrive through the " +
 			"registrar. P3 deletes the segment.",
 		Note: "the live path is not permission-gated; pets:contribute " +
-			"guards only the shadow segment.",
+			"guards only the shadow segment, and stays in the sunset " +
+			"list until P3 deletes the segment and the grant with it — " +
+			"the one contribution grant that does not spell itself " +
+			":provide.",
 		Status: StatusCurrent,
 	},
 	{
@@ -259,7 +262,7 @@ var ContributionKinds = []ContributionKind{
 			"enabled; assembly reads enabled plugins' manifests",
 		Teardown: "the next assembly after disable or update drops the " +
 			"root; a turn already running keeps the skills it assembled",
-		Grant:         "skills:contribute",
+		Grant:         "skills:provide",
 		ManifestPaths: []string{"skills"},
 		Status:        StatusCurrent,
 	},
@@ -273,7 +276,7 @@ var ContributionKinds = []ContributionKind{
 		Teardown: "the next assembly after disable or update drops the " +
 			"hooks; hooks the runtime already registered keep running for " +
 			"the turn in flight",
-		Grant:         "hooks:register",
+		Grant:         "hooks:provide",
 		ManifestPaths: []string{"hooks"},
 		Status:        StatusCurrent,
 	},
@@ -288,7 +291,7 @@ var ContributionKinds = []ContributionKind{
 			"the plugin directory",
 		Teardown: "the next assembly after disable or update re-reads the " +
 			"manifest; a rebuilt runtime closes the connection",
-		Grant:         "mcp:contribute",
+		Grant:         "mcp:provide",
 		ManifestPaths: []string{"mcpServers"},
 		Status:        StatusCurrent,
 	},
@@ -302,7 +305,7 @@ var ContributionKinds = []ContributionKind{
 			"process itself starts lazily on the first call",
 		Teardown: "the next assembly drops the spec; the process is " +
 			"stopped when the plugin is disabled, updated or unloaded",
-		Grant:         "tools:expose",
+		Grant:         "tools:provide",
 		ManifestPaths: []string{"tools"},
 		Status:        StatusCurrent,
 	},
@@ -391,14 +394,14 @@ var HostInterfaces = []HostInterface{
 		Summary: "read, write and delete the plugin's own secrets",
 		Surface: SurfaceKraft,
 		Methods: []string{"secret.get", "secret.set", "secret.delete"},
-		Scope: "auth/<plugin>/... and inference/<plugin>/... only — the " +
-			"namespace prefix is the gate",
+		Grant:   "secrets:auth",
+		Scope: "auth/<plugin>/... and inference/<plugin>/... only; the " +
+			"namespace prefix narrows what the grant already allows",
 		Status: StatusCurrent,
-		Note: "kraft.go's package comment says these primitives are gated " +
-			"by secrets:auth; no code checks that permission — the " +
-			"namespace prefix is what stops a plugin from touching " +
-			"another's secrets. P2 decides: enforce the grant or drop the " +
-			"claim.",
+		Note: "the grant is checked when the primitive runs, the same " +
+			"check the webview ctx.secrets surface passes; P2 wired it " +
+			"into handleSecret, so kraft.go's package comment no longer " +
+			"claims a gate that does not exist.",
 	},
 	{
 		ID:      "open.url",
@@ -472,27 +475,9 @@ type SunsetGrant struct {
 // SunsetGrants is the part of AllowedPermissions that buys nothing any
 // more. Accepting them is deliberate: CheckPermissions is fail-closed,
 // so dropping a name rejects every already-installed manifest that
-// declares it.
+// declares it (the vocabulary's other exit, retirement, keeps the
+// manifest loading too — see LegacyManifestInputs).
 var SunsetGrants = []SunsetGrant{
-	{
-		Grant:  "events:subscribe",
-		Status: StatusLegacy,
-		Note: "the Cordis event bus is always available (ctx.on); no gate " +
-			"was ever wired to the name. Accepted so installed manifests " +
-			"keep validating; P2 deletes it from the permission set.",
-	},
-	{
-		Grant:  "commands:register",
-		Status: StatusLegacy,
-		Note: "the commands registrar is provided to every plugin; " +
-			"plugins/hello still declares the permission. P2 deletes it.",
-	},
-	{
-		Grant:  "statusbar:contribute",
-		Status: StatusLegacy,
-		Note: "the status-bar registrar is provided to every plugin; " +
-			"plugins/hello still declares the permission. P2 deletes it.",
-	},
 	{
 		Grant:  "pets:contribute",
 		Status: StatusLegacy,
@@ -500,6 +485,117 @@ var SunsetGrants = []SunsetGrant{
 			"contributes.pets segment; the live registrar path checks no " +
 			"permission. P3 deletes the segment, and the grant goes with " +
 			"it.",
+	},
+}
+
+// LegacyAction is what the host does with a manifest input written
+// against an older vocabulary.
+type LegacyAction string
+
+const (
+	// LegacyTranslate rewrites the input to its current spelling; the
+	// plugin keeps loading either way.
+	LegacyTranslate LegacyAction = "translate"
+	// LegacyIgnore accepts the input and acts on nothing; the host
+	// logs it once per process.
+	LegacyIgnore LegacyAction = "ignore"
+	// LegacyReject refuses the manifest with a message that names the
+	// ambiguity.
+	LegacyReject LegacyAction = "reject"
+)
+
+// LegacyManifestInput is one older spelling a manifest may still carry,
+// and its disposition. The table is the framework's answer to "what
+// happens to my manifest after the vocabulary changed?": one row per
+// input, not a paragraph. Names that contain ":" are permission names
+// and are cross-checked against PermissionRenames and
+// RetiredPermissions by charter_test.go; key spellings and rejection
+// shapes are covered by the manifest's own tests.
+type LegacyManifestInput struct {
+	// Name is the input, spelled the way a manifest writes it.
+	Name string
+	// Action is the disposition.
+	Action LegacyAction
+	// Target is the current spelling for LegacyTranslate rows.
+	Target string
+	// Note says why this is the disposition.
+	Note string
+}
+
+// LegacyManifestInputs is the disposition table for older manifest
+// spellings: translate (the plugin keeps loading under the new name),
+// ignore (accepted, dropped, logged once) or reject (two spellings at
+// once is ambiguity, not compatibility).
+var LegacyManifestInputs = []LegacyManifestInput{
+	{
+		Name:   "capability",
+		Action: LegacyTranslate,
+		Target: "kraft",
+		Note: "the subprocess section was renamed; the host reads the " +
+			"old key so installed plugins keep loading without an edit.",
+	},
+	{
+		Name:   "capability + kraft",
+		Action: LegacyReject,
+		Note: "two spellings of one manifest section is ambiguity, not " +
+			"compatibility: the manifest is refused and both names are " +
+			"named in the error.",
+	},
+	{
+		Name:   "skills:contribute",
+		Action: LegacyTranslate,
+		Target: "skills:provide",
+		Note: "the vocabulary sweep spells contribution grants " +
+			"kind:provide; the old spelling is translated silently.",
+	},
+	{
+		Name:   "hooks:register",
+		Action: LegacyTranslate,
+		Target: "hooks:provide",
+		Note: "the vocabulary sweep spells contribution grants " +
+			"kind:provide; the old spelling is translated silently.",
+	},
+	{
+		Name:   "mcp:contribute",
+		Action: LegacyTranslate,
+		Target: "mcp:provide",
+		Note: "the vocabulary sweep spells contribution grants " +
+			"kind:provide; the old spelling is translated silently.",
+	},
+	{
+		Name:   "tools:expose",
+		Action: LegacyTranslate,
+		Target: "tools:provide",
+		Note: "the vocabulary sweep spells contribution grants " +
+			"kind:provide; the old spelling is translated silently.",
+	},
+	{
+		Name:   "old + new spelling of one permission",
+		Action: LegacyReject,
+		Note: "declaring both spellings of one grant is ambiguity, not " +
+			"compatibility: the manifest is refused and both names are " +
+			"named in the error.",
+	},
+	{
+		Name:   "events:subscribe",
+		Action: LegacyIgnore,
+		Note: "the Cordis event bus is always available (ctx.on); the " +
+			"name gates nothing, so the manifest is accepted and the " +
+			"name is dropped and logged once.",
+	},
+	{
+		Name:   "commands:register",
+		Action: LegacyIgnore,
+		Note: "the commands registrar is provided to every plugin, so " +
+			"the manifest is accepted and the name is dropped and " +
+			"logged once.",
+	},
+	{
+		Name:   "statusbar:contribute",
+		Action: LegacyIgnore,
+		Note: "the status-bar registrar is provided to every plugin, so " +
+			"the manifest is accepted and the name is dropped and " +
+			"logged once.",
 	},
 }
 
@@ -516,8 +612,9 @@ var ManifestSkeleton = map[string]string{
 	"minHostVersion": "the release gate the host checks before loading",
 	"entry": "the ES module the shell loads; the file is the entry, the " +
 		"contributions are registrations",
-	"permissions": "the grants the plugin asks for; AllowedPermissions, " +
-		"the two tables and SunsetGrants are the closed set",
+	"permissions": "the grants the plugin asks for; the closed set is " +
+		"AllowedPermissions plus the retired names canonicalPermissions " +
+		"drops, with older spellings translated (LegacyManifestInputs)",
 	"update": "where the host looks for a newer version",
 	"kraft": "the subprocess runtime the machine-half contributions run " +
 		"in: binary, protocol, and the open.url allowlist",

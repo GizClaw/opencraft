@@ -35,7 +35,8 @@ func NewPluginService(appHome, version string) *PluginService {
 			KraftFunc: func(id string) (kraft.Kraft, bool, error) {
 				return store.Kraft(id)
 			},
-			DirFunc: store.Dir,
+			DirFunc:         store.Dir,
+			PermissionsFunc: store.Permissions,
 		},
 		sec,
 	)

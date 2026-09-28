@@ -82,6 +82,10 @@ func TestCharterRowsAreWellFormed(t *testing.T) {
 			t.Errorf("%s: grant %q is not in AllowedPermissions",
 				k.ID, k.Grant)
 		}
+		if k.Grant != "" && !strings.HasSuffix(k.Grant, ":provide") {
+			t.Errorf("%s: grant %q does not spell itself kind:provide — "+
+				"a plugin provides a contribution", k.ID, k.Grant)
+		}
 		hasAnchor := len(k.Services) > 0 || len(k.ManifestPaths) > 0
 		if !hasAnchor && k.Status != StatusReserved {
 			t.Errorf("%s: no service and no manifest path", k.ID)
@@ -213,6 +217,98 @@ func TestCharterSpendsEveryGrant(t *testing.T) {
 			t.Errorf("%q is in AllowedPermissions and no row spends it: "+
 				"add the row that consumes it, or list it in "+
 				"SunsetGrants with the exit", grant)
+		}
+	}
+}
+
+// TestCharterLegacyInputsAreBackedByCode holds the disposition table
+// against the vocabulary machinery: every rename and every retirement
+// has a row that tells a manifest author what happens to it, and every
+// row that claims to translate or ignore one says so about something
+// the parser actually does. A retired name cannot creep back into
+// AllowedPermissions, and an old spelling cannot be both translated
+// and retired.
+func TestCharterLegacyInputsAreBackedByCode(t *testing.T) {
+	renames := map[string]string{}
+	for _, r := range PermissionRenames {
+		renames[r.From] = r.To
+		if !AllowedPermissions[r.To] {
+			t.Errorf("rename %q targets %q, which is not a permission",
+				r.From, r.To)
+		}
+		if AllowedPermissions[r.From] {
+			t.Errorf("rename source %q is still in AllowedPermissions",
+				r.From)
+		}
+	}
+	retired := map[string]bool{}
+	for _, r := range RetiredPermissions {
+		if retired[r.Name] {
+			t.Errorf("%q is retired twice", r.Name)
+		}
+		retired[r.Name] = true
+		if AllowedPermissions[r.Name] {
+			t.Errorf("retired %q is still in AllowedPermissions", r.Name)
+		}
+		if _, ok := renames[r.Name]; ok {
+			t.Errorf("%q is both renamed and retired", r.Name)
+		}
+		if len(r.Note) < 40 {
+			t.Errorf("%q: the retirement note is too short to judge", r.Name)
+		}
+	}
+	for _, s := range SunsetGrants {
+		if retired[s.Grant] {
+			t.Errorf("%q is in both the sunset and the retired list", s.Grant)
+		}
+	}
+
+	actions := map[LegacyAction]bool{
+		LegacyTranslate: true, LegacyIgnore: true, LegacyReject: true,
+	}
+	rows := map[string]LegacyManifestInput{}
+	for _, in := range LegacyManifestInputs {
+		if !actions[in.Action] {
+			t.Errorf("%q: unknown legacy action %q", in.Name, in.Action)
+		}
+		if len(in.Note) < 40 {
+			t.Errorf("%q: the disposition note is too short to judge", in.Name)
+		}
+		if in.Action == LegacyTranslate && in.Target == "" {
+			t.Errorf("%q: a translate row must name its target", in.Name)
+		}
+		if rows[in.Name].Name != "" {
+			t.Errorf("%q has two disposition rows", in.Name)
+		}
+		rows[in.Name] = in
+		// A permission name (namespaced with ":") may only be
+		// translated or ignored, and only in ways the tables agree
+		// with; key spellings and rejection shapes carry their own
+		// tests.
+		if !strings.Contains(in.Name, ":") || in.Action == LegacyReject {
+			continue
+		}
+		switch in.Action {
+		case LegacyTranslate:
+			if to, ok := renames[in.Name]; !ok || to != in.Target {
+				t.Errorf("%q says translate to %q, the rename table "+
+					"says %q", in.Name, in.Target, to)
+			}
+		case LegacyIgnore:
+			if !retired[in.Name] {
+				t.Errorf("%q says ignore, but it is not a retired "+
+					"permission", in.Name)
+			}
+		}
+	}
+	for from := range renames {
+		if rows[from].Name == "" {
+			t.Errorf("rename %q has no disposition row", from)
+		}
+	}
+	for name := range retired {
+		if rows[name].Name == "" {
+			t.Errorf("retired permission %q has no disposition row", name)
 		}
 	}
 }
@@ -690,23 +786,56 @@ func renderCharter() string {
 
 	b.WriteString("## Grants\n\n")
 	b.WriteString("Every permission in `plugins.AllowedPermissions` is either spent by " +
-		"a row above,\nor listed here as accepted-and-unspent. `CheckPermissions` " +
-		"is fail-closed, so a\nname leaves the set only together with the " +
-		"manifests that declare it.\n\n")
+		"a row above,\nor listed here as accepted-and-unspent. Contribution grants " +
+		"are spelled\n`kind:provide` — a plugin provides a contribution. " +
+		"`CheckPermissions` is\nfail-closed, so a name leaves the set only together " +
+		"with the manifests that\ndeclare it; retirement is the other exit, and it " +
+		"keeps old manifests loading.\n\n")
+	spenders := map[string][]string{}
+	var grantOrder []string
+	addSpender := func(grant, row string) {
+		if _, ok := spenders[grant]; !ok {
+			grantOrder = append(grantOrder, grant)
+		}
+		spenders[grant] = append(spenders[grant], "`"+row+"`")
+	}
 	for _, k := range ContributionKinds {
 		if k.Grant != "" {
-			fmt.Fprintf(&b, "- `%s` — spent by `%s`\n", k.Grant, k.ID)
+			addSpender(k.Grant, k.ID)
 		}
 	}
 	for _, in := range HostInterfaces {
 		if in.Grant != "" {
-			fmt.Fprintf(&b, "- `%s` — spent by `%s`\n", in.Grant, in.ID)
+			addSpender(in.Grant, in.ID)
 		}
+	}
+	for _, grant := range grantOrder {
+		fmt.Fprintf(&b, "- `%s` — spent by %s\n",
+			grant, strings.Join(spenders[grant], ", "))
 	}
 	b.WriteString("\nAccepted, spent by nothing:\n\n")
 	for _, s := range SunsetGrants {
 		fmt.Fprintf(&b, "- `%s` (%s) — %s\n", s.Grant, s.Status, s.Note)
 	}
+	b.WriteString("\nRetired and ignored — a manifest that still declares one " +
+		"loads, the name is\ndropped and logged once:\n\n")
+	for _, r := range RetiredPermissions {
+		fmt.Fprintf(&b, "- `%s` — %s\n", r.Name, r.Note)
+	}
+	b.WriteString("\n")
+
+	b.WriteString("## Legacy manifest inputs\n\n")
+	b.WriteString("Older spellings a manifest may still carry, and what the host " +
+		"does with each:\n`translate` loads under the new name, `ignore` accepts " +
+		"the manifest and drops\nthe name, `reject` refuses two spellings where one " +
+		"belongs.\n\n")
+	legacyRows := make([][]string, 0, len(LegacyManifestInputs))
+	for _, in := range LegacyManifestInputs {
+		legacyRows = append(legacyRows, []string{
+			"`" + in.Name + "`", string(in.Action), grantCell(in.Target), in.Note,
+		})
+	}
+	b.WriteString(mdTable([]string{"input", "action", "becomes", "why"}, legacyRows))
 	b.WriteString("\n")
 
 	b.WriteString("## Manifest fields\n\n")

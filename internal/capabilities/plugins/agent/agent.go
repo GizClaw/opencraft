@@ -98,7 +98,7 @@ func (h *Host) SkillRoots() []string {
 	var roots []string
 	seen := map[string]bool{}
 	for _, e := range h.entries() {
-		if !hasPerm(e.m, "skills:contribute") {
+		if !hasPerm(e.m, "skills:provide") {
 			continue
 		}
 		var candidates []string
@@ -130,7 +130,7 @@ func (h *Host) SkillRoots() []string {
 func (h *Host) PluginHooks() []hooks.ExtraSource {
 	var out []hooks.ExtraSource
 	for _, e := range h.entries() {
-		if !hasPerm(e.m, "hooks:register") {
+		if !hasPerm(e.m, "hooks:provide") {
 			continue
 		}
 		for _, rel := range e.m.Hooks {
@@ -151,7 +151,7 @@ func (h *Host) PluginHooks() []hooks.ExtraSource {
 func (h *Host) MCPServers() []MCPServer {
 	var out []MCPServer
 	for _, e := range h.entries() {
-		if !hasPerm(e.m, "mcp:contribute") {
+		if !hasPerm(e.m, "mcp:provide") {
 			continue
 		}
 		for _, srv := range e.m.McpServers {
@@ -184,7 +184,7 @@ func (h *Host) MCPServers() []MCPServer {
 func (h *Host) ToolSpecs() []ToolSpec {
 	var out []ToolSpec
 	for _, e := range h.entries() {
-		if !hasPerm(e.m, "tools:expose") {
+		if !hasPerm(e.m, "tools:provide") {
 			continue
 		}
 		for _, t := range e.m.Tools {

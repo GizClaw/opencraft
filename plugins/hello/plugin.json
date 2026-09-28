@@ -6,9 +6,7 @@
   "entry": "dist/index.js",
   "permissions": [
     "storage:kv",
-    "commands:register",
-    "statusbar:contribute",
-    "skills:contribute"
+    "skills:provide"
   ],
   "skills": ["skills"],
   "contributes": {

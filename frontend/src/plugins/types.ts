@@ -17,8 +17,9 @@
 // plugin's branch unless the manifest grants the matching permission,
 // so an unpermitted service resolves to undefined (fail-closed); the
 // inject list is validated against the manifest before loading.
-// ctx.on is a core Cordis primitive and is always available (the old
-// "events:subscribe" permission is no longer required).
+// ctx.on is a core Cordis primitive and is always available (the
+// "events:subscribe" permission was retired: a manifest that still
+// declares it is accepted and the name ignored).
 
 import type { ComponentType } from 'react';
 import type { Context } from '@cordisjs/core';

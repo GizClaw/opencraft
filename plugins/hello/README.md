@@ -45,21 +45,23 @@ all run in reverse order when the plugin is disabled or reloaded.
 
 Since the Phase 2 extension, a plugin may also contribute capabilities
 directly to the agent runtime. Each group requires its manifest
-permission and fails closed without it:
+permission and fails closed without it (grants are spelled
+`kind:provide`, and older manifests that still write `skills:contribute`,
+`mcp:contribute`, `hooks:register` or `tools:expose` are translated):
 
-- `skills:contribute` — `skills` paths (or a default `<root>/skills`
+- `skills:provide` — `skills` paths (or a default `<root>/skills`
   directory) are registered into the shared skills registry.
-- `mcp:contribute` — `mcpServers` are attached through the same MCP
+- `mcp:provide` — `mcpServers` are attached through the same MCP
   source the settings page uses; stdio commands resolve relative to the
   plugin directory when they contain a path separator (bare PATH
   commands like `npx` are left untouched), and every tool is
   namespaced by plugin + server.
-- `hooks:register` — `hooks` paths point at hooks.json files; commands
+- `hooks:provide` — `hooks` paths point at hooks.json files; commands
   run with the plugin directory as cwd. Plugin hooks are untrusted
   sources: content-bearing payload fields (`tool_input`, `tool_result`,
   `prompt`, `command`, errors and subagent messages) are stripped
   before the command runs.
-- `tools:expose` — `tools` declare kraft methods that become ordinary
+- `tools:provide` — `tools` declare kraft methods that become ordinary
   agent tools (`<plugin>__<tool>`); they require a `kraft` binary.
 
 The hello plugin demonstrates the skills side: `skills/hello/SKILL.md`

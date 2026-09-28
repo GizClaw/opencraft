@@ -22,7 +22,11 @@
 //	telemetry.configure / telemetry.disable   (telemetry:export)
 //	emit.event                                (reserved)
 //
-// Unknown methods are rejected. Arguments that carry structured payloads
+// The grant is checked before the namespace: a plugin whose manifest
+// does not declare secrets:auth cannot touch its own secret namespace
+// through the subprocess either, and the scoped check narrows the call
+// to auth/<plugin>/… and inference/<plugin>/… on top of that. Unknown
+// methods are rejected. Arguments that carry structured payloads
 // are decoded strictly, so a mistyped field fails the call instead of
 // silently configuring something else.
 //
@@ -213,12 +217,18 @@ type SecretStore interface {
 // search-provider keys, which only the settings page may write.
 var AllowedSecretScopes = map[string]bool{"auth": true, "inference": true}
 
-// Loader resolves a plugin's declared kraft and its binary path.
+// Loader resolves a plugin's declarations: the kraft it runs, that
+// binary's path, and the permissions its manifest grants.
 type Loader interface {
 	// Kraft returns the manifest-declared runtime for id.
 	Kraft(id string) (Kraft, bool, error)
 	// BinaryPath resolves and validates the executable path for id.
 	BinaryPath(id string, k Kraft) (string, error)
+	// Permissions returns the canonical manifest permissions of id.
+	// Primitives the manifest must declare (secrets:auth, ...) are
+	// checked against this list before they run, so the gate reads the
+	// same vocabulary the plugin summary shows.
+	Permissions(id string) ([]string, error)
 }
 
 // Manager owns the subprocess plugins. Processes are started lazily on
@@ -976,6 +986,9 @@ func (m *Manager) handleInferenceRemove(p *process, req rpcRequest) (any, error)
 }
 
 func (m *Manager) handleSecret(p *process, req rpcRequest) (any, error) {
+	if err := m.requirePermission(p.id, "secrets:auth"); err != nil {
+		return nil, err
+	}
 	var args struct {
 		Scope string `json:"scope"`
 		Name  string `json:"name"`
@@ -1017,6 +1030,24 @@ func (m *Manager) handleSecret(p *process, req rpcRequest) (any, error) {
 	return nil, errors.New("kraft: unreachable")
 }
 
+// requirePermission checks that plugin id's manifest declares perm.
+// The check is fail-closed in both directions: a loader that cannot
+// answer refuses the primitive, and a nil permission list grants
+// nothing.
+func (m *Manager) requirePermission(id, perm string) error {
+	perms, err := m.loader.Permissions(id)
+	if err != nil {
+		return fmt.Errorf(
+			"kraft: resolve %s permission of %q: %w", perm, id, err)
+	}
+	for _, p := range perms {
+		if p == perm {
+			return nil
+		}
+	}
+	return fmt.Errorf("kraft: plugin %q lacks %s permission", id, perm)
+}
+
 func (m *Manager) handleOpenURL(p *process, req rpcRequest) (any, error) {
 	var args struct {
 		URL string `json:"url"`
@@ -1055,6 +1086,10 @@ type DefaultLoader struct {
 	// back to a builtin binary for a user plugin that shadows a
 	// builtin (the manifests could disagree).
 	DirFunc func(id string) (dir string, builtin bool, err error)
+	// PermissionsFunc returns the canonical manifest permissions of
+	// id. Nil reports none: a primitive that needs a declaration then
+	// refuses (fail-closed).
+	PermissionsFunc func(id string) ([]string, error)
 	// Root is the plugin directory.
 	Root string
 }
@@ -1064,6 +1099,13 @@ func (l DefaultLoader) Kraft(id string) (Kraft, bool, error) {
 		return Kraft{}, false, nil
 	}
 	return l.KraftFunc(id)
+}
+
+func (l DefaultLoader) Permissions(id string) ([]string, error) {
+	if l.PermissionsFunc == nil {
+		return nil, nil
+	}
+	return l.PermissionsFunc(id)
 }
 
 func (l DefaultLoader) BinaryPath(id string, k Kraft) (string, error) {

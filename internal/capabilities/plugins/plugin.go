@@ -67,38 +67,6 @@ func ValidateID(id string) error {
 	return nil
 }
 
-// AllowedPermissions is the closed set of host capabilities a plugin
-// may declare. Unknown permissions reject the plugin (fail-closed).
-var AllowedPermissions = map[string]bool{
-	"secrets:auth":         true,
-	"storage:kv":           true,
-	"events:subscribe":     true,
-	"commands:register":    true,
-	"statusbar:contribute": true,
-	"pets:contribute":      true,
-	"tools:expose":         true,
-	"sessions:import":      true,
-	"skills:contribute":    true,
-	"mcp:contribute":       true,
-	"hooks:register":       true,
-	// telemetry:export lets a kraft plugin point OTLP export at
-	// its own collector over telemetry.configure. It ships the whole
-	// app log stream (prompts included) to that collector, so the host
-	// records the active sink and drops it when the plugin is
-	// disabled or uninstalled.
-	"telemetry:export": true,
-}
-
-// CheckPermissions validates a manifest permission list.
-func CheckPermissions(perms []string) error {
-	for _, p := range perms {
-		if !AllowedPermissions[p] {
-			return fmt.Errorf("plugins: unknown permission %q", p)
-		}
-	}
-	return nil
-}
-
 // PluginSummary is the frontend-facing view of one installed plugin.
 type PluginSummary struct {
 	ID          string   `json:"id"`
@@ -203,8 +171,8 @@ type Manifest struct {
 	// (see internal/capabilities/plugins/kraft).
 	Kraft *kraft.Kraft `json:"kraft,omitempty"`
 	// Agent-facing capabilities. Each group requires its matching
-	// permission (skills:contribute, mcp:contribute, hooks:register,
-	// tools:expose) and is ignored otherwise.
+	// permission (skills:provide, mcp:provide, hooks:provide,
+	// tools:provide) and is ignored otherwise.
 	Skills     []string          `json:"skills,omitempty"`
 	McpServers []PluginMCPServer `json:"mcpServers,omitempty"`
 	Hooks      []string          `json:"hooks,omitempty"`
@@ -309,7 +277,7 @@ func (s *Store) scanDir(
 		sum.Entry = m.Entry
 		sum.Permissions = m.Permissions
 		sum.HasSkills = len(m.Skills) > 0
-		if !sum.HasSkills && manifestHasPermission(m, "skills:contribute") &&
+		if !sum.HasSkills && manifestHasPermission(m, "skills:provide") &&
 			dirExists(filepath.Join(root, id, "skills")) {
 			sum.HasSkills = true
 		}
@@ -585,7 +553,7 @@ func summaryFromManifest(m *Manifest, dir string, canRollback bool) PluginSummar
 	if m.Kraft != nil {
 		sum.Kraft = m.Kraft.Binary
 	}
-	if !sum.HasSkills && manifestHasPermission(m, "skills:contribute") &&
+	if !sum.HasSkills && manifestHasPermission(m, "skills:provide") &&
 		dirExists(filepath.Join(dir, "skills")) {
 		sum.HasSkills = true
 	}
@@ -1143,6 +1111,18 @@ func (s *Store) Manifest(id string) (*Manifest, error) {
 	return s.readManifest(id)
 }
 
+// Permissions returns the canonical permission list of an installed
+// plugin. It is the gate for host write paths that check a declaration
+// themselves (kraft primitives such as secret.*), so they see exactly
+// the list the plugin summary shows.
+func (s *Store) Permissions(id string) ([]string, error) {
+	m, err := s.Manifest(id)
+	if err != nil {
+		return nil, err
+	}
+	return m.Permissions, nil
+}
+
 // Dir resolves the directory holding an installed plugin (user root
 // wins over the builtin root). builtin reports whether the plugin is
 // app-bundled and therefore read-only.
@@ -1208,6 +1188,11 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 	if strings.TrimSpace(m.Entry) == "" {
 		return nil, fmt.Errorf("plugins: manifest requires entry")
 	}
+	perms, err := canonicalPermissions(m.ID, m.Permissions)
+	if err != nil {
+		return nil, err
+	}
+	m.Permissions = perms
 	if err := CheckPermissions(m.Permissions); err != nil {
 		return nil, err
 	}
@@ -1275,7 +1260,7 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 // host contract.
 func validateAgentCapabilities(m *Manifest) error {
 	if len(m.Skills) > 0 {
-		if err := requirePermission(m, "skills:contribute", "skills"); err != nil {
+		if err := requirePermission(m, "skills:provide", "skills"); err != nil {
 			return err
 		}
 		if len(m.Skills) > maxPluginSkillCount {
@@ -1291,7 +1276,7 @@ func validateAgentCapabilities(m *Manifest) error {
 		}
 	}
 	if len(m.Hooks) > 0 {
-		if err := requirePermission(m, "hooks:register", "hooks"); err != nil {
+		if err := requirePermission(m, "hooks:provide", "hooks"); err != nil {
 			return err
 		}
 		if len(m.Hooks) > maxPluginHookCount {
@@ -1307,7 +1292,7 @@ func validateAgentCapabilities(m *Manifest) error {
 		}
 	}
 	if len(m.McpServers) > 0 {
-		if err := requirePermission(m, "mcp:contribute", "mcpServers"); err != nil {
+		if err := requirePermission(m, "mcp:provide", "mcpServers"); err != nil {
 			return err
 		}
 		if len(m.McpServers) > maxPluginMCPServerCount {
@@ -1363,7 +1348,7 @@ func validateAgentCapabilities(m *Manifest) error {
 		if m.Kraft == nil {
 			return fmt.Errorf("plugins: tools require a kraft subprocess")
 		}
-		if err := requirePermission(m, "tools:expose", "tools"); err != nil {
+		if err := requirePermission(m, "tools:provide", "tools"); err != nil {
 			return err
 		}
 		if len(m.Tools) > maxPluginToolCount {

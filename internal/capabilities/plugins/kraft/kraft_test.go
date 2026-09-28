@@ -134,6 +134,7 @@ func (s *memSecrets) Delete(_ context.Context, name string) error {
 type testLoader struct {
 	kraft Kraft
 	bin   string
+	perms []string
 }
 
 func (l testLoader) Kraft(string) (Kraft, bool, error) {
@@ -144,12 +145,21 @@ func (l testLoader) BinaryPath(string, Kraft) (string, error) {
 	return l.bin, nil
 }
 
+func (l testLoader) Permissions(string) ([]string, error) {
+	return l.perms, nil
+}
+
 func newTestManager(t *testing.T) (*Manager, *memSecrets) {
+	return newTestManagerWithPerms(t, []string{"secrets:auth"})
+}
+
+func newTestManagerWithPerms(t *testing.T, perms []string) (*Manager, *memSecrets) {
 	t.Helper()
 	sec := &memSecrets{m: map[string]string{}}
 	loader := testLoader{
 		kraft: Kraft{Binary: "helper", Protocol: 1},
 		bin:   os.Args[0],
+		perms: perms,
 	}
 	m := NewManager(t.TempDir(), loader, sec)
 	m.SetEnv([]string{"GO_WANT_HELPER_PROCESS=1"})
@@ -358,6 +368,24 @@ func TestSecretScopeGuard(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected namespace guard error")
+	}
+	if len(sec.m) != 0 {
+		t.Fatalf("secrets mutated: %v", sec.m)
+	}
+}
+
+func TestSecretRequiresAuthPermission(t *testing.T) {
+	// The manifest does not declare secrets:auth, so the primitive is
+	// refused before the namespace arithmetic — even for the plugin's
+	// own namespace. TestSecretScopeGuard covers the granted path,
+	// which falls through to the namespace guard.
+	m, sec := newTestManagerWithPerms(t, nil)
+	_, err := m.handleSecret(&process{id: "test-plugin"}, rpcRequest{
+		Method: "secret.set",
+		Params: json.RawMessage(`{"scope":"auth","name":"test-plugin/token","value":"x"}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "secrets:auth") {
+		t.Fatalf("expected a secrets:auth denial, got: %v", err)
 	}
 	if len(sec.m) != 0 {
 		t.Fatalf("secrets mutated: %v", sec.m)
