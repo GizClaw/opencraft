@@ -1,6 +1,6 @@
 // Package agent adapts the plugin registry to the agent runtime: it
 // exposes the skills roots, MCP servers, lifecycle hooks and
-// capability subprocess tools that enabled plugins contribute. The
+// kraft tools that enabled plugins contribute. The
 // host remains semantic-agnostic; it only translates plugin manifests
 // into the resource shapes the rest of the runtime consumes.
 package agent
@@ -21,8 +21,8 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
-// ToolSpec is one agent-callable tool backed by a plugin capability
-// subprocess method.
+// ToolSpec is one agent-callable tool backed by a method on a
+// plugin's kraft.
 type ToolSpec struct {
 	PluginID     string
 	Name         string
@@ -179,8 +179,8 @@ func (h *Host) MCPServers() []MCPServer {
 	return out
 }
 
-// ToolSpecs returns the capability subprocess tools declared by
-// enabled plugins. MutatesState defaults to true.
+// ToolSpecs returns the kraft tools declared by enabled plugins.
+// MutatesState defaults to true.
 func (h *Host) ToolSpecs() []ToolSpec {
 	var out []ToolSpec
 	for _, e := range h.entries() {
@@ -205,19 +205,19 @@ func (h *Host) ToolSpecs() []ToolSpec {
 	return out
 }
 
-// Invoke routes one agent tool call to a plugin capability
-// subprocess. Only methods declared in the manifest are accepted.
+// Invoke routes one agent tool call to a plugin's kraft. Only methods
+// declared in the manifest are accepted.
 func (h *Host) Invoke(
 	ctx context.Context,
 	pluginID, method string,
 	args json.RawMessage,
 ) (json.RawMessage, error) {
-	if h.cap == nil {
-		return nil, fmt.Errorf("plugins: capability runtime is unavailable")
+	if h.kraft == nil {
+		return nil, fmt.Errorf("plugins: kraft runtime is unavailable")
 	}
 	for _, spec := range h.ToolSpecs() {
 		if spec.PluginID == pluginID && spec.Method == method {
-			return h.cap.Invoke(ctx, pluginID, method, args)
+			return h.kraft.Invoke(ctx, pluginID, method, args)
 		}
 	}
 	return nil, fmt.Errorf(

@@ -23,7 +23,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
@@ -81,7 +81,7 @@ var AllowedPermissions = map[string]bool{
 	"skills:contribute":    true,
 	"mcp:contribute":       true,
 	"hooks:register":       true,
-	// telemetry:export lets a capability plugin point OTLP export at
+	// telemetry:export lets a kraft plugin point OTLP export at
 	// its own collector over telemetry.configure. It ships the whole
 	// app log stream (prompts included) to that collector, so the host
 	// records the active sink and drops it when the plugin is
@@ -128,16 +128,16 @@ type PluginSummary struct {
 	// CanRollback reports whether a rollback snapshot of the previous
 	// version is available (user plugins only).
 	CanRollback bool `json:"canRollback,omitempty"`
-	// Capability is the declared capability binary (a plugin-relative
-	// path) when the plugin ships one; empty for UI-only plugins. The
+	// Kraft is the plugin-relative path of the declared kraft binary,
+	// set when the plugin ships one; empty for UI-only plugins. The
 	// host runs that binary as a subprocess, so installers surface it
 	// before anything is copied into the registry.
-	Capability string `json:"capability,omitempty"`
+	Kraft string `json:"kraft,omitempty"`
 }
 
-// PluginTool is one agent-callable tool exposed by a capability
-// subprocess. The host only routes by method name; the plugin owns the
-// semantics of its tool methods.
+// PluginTool is one agent-callable tool exposed by a plugin's kraft.
+// The host only routes by method name; the plugin owns the semantics
+// of its tool methods.
 type PluginTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
@@ -199,9 +199,9 @@ type Manifest struct {
 			ID string `json:"id"`
 		} `json:"pets"`
 	} `json:"contributes"`
-	// Capability declares an optional subprocess runtime for the
-	// plugin (see internal/capabilities/plugins/runtime).
-	Capability *runtime.Capability `json:"capability,omitempty"`
+	// Kraft declares an optional subprocess runtime for the plugin
+	// (see internal/capabilities/plugins/kraft).
+	Kraft *kraft.Kraft `json:"kraft,omitempty"`
 	// Agent-facing capabilities. Each group requires its matching
 	// permission (skills:contribute, mcp:contribute, hooks:register,
 	// tools:expose) and is ignored otherwise.
@@ -219,7 +219,7 @@ const pluginStateFile = "state.json"
 
 // Store is the plugin registry: a writable user root (usually
 // <dataDir>/plugins) plus an optional read-only builtin root
-// (app-bundled plugins, see runtime.BuiltinPluginRoot). User plugins
+// (app-bundled plugins, see kraft.BuiltinPluginRoot). User plugins
 // shadow builtins with the same id; builtins are always present, can be
 // disabled but never uninstalled.
 type Store struct {
@@ -231,7 +231,7 @@ type Store struct {
 
 // NewStore returns a registry rooted at root.
 func NewStore(root string) *Store {
-	return &Store{root: root, builtin: runtime.BuiltinPluginRoot()}
+	return &Store{root: root, builtin: kraft.BuiltinPluginRoot()}
 }
 
 // SetHostVersion records the running host version for minHostVersion
@@ -386,19 +386,19 @@ func (s *Store) Asset(id, rel string) ([]byte, error) {
 	return data, nil
 }
 
-// Capability returns the declared subprocess runtime for an installed
+// Kraft returns the declared subprocess runtime for an installed
 // plugin, if any.
-func (s *Store) Capability(id string) (runtime.Capability, bool, error) {
+func (s *Store) Kraft(id string) (kraft.Kraft, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, err := s.readManifest(id)
 	if err != nil {
-		return runtime.Capability{}, false, err
+		return kraft.Kraft{}, false, err
 	}
-	if m.Capability == nil {
-		return runtime.Capability{}, false, nil
+	if m.Kraft == nil {
+		return kraft.Kraft{}, false, nil
 	}
-	return *m.Capability, true, nil
+	return *m.Kraft, true, nil
 }
 
 // SetEnabled toggles a plugin's enabled state. The plugin must be
@@ -582,8 +582,8 @@ func summaryFromManifest(m *Manifest, dir string, canRollback bool) PluginSummar
 		HasUpdate:   m.Update != nil,
 		CanRollback: canRollback,
 	}
-	if m.Capability != nil {
-		sum.Capability = m.Capability.Binary
+	if m.Kraft != nil {
+		sum.Kraft = m.Kraft.Binary
 	}
 	if !sum.HasSkills && manifestHasPermission(m, "skills:contribute") &&
 		dirExists(filepath.Join(dir, "skills")) {
@@ -1050,18 +1050,18 @@ func validateInstalledAgentResources(dst string, m *Manifest) error {
 }
 
 // preparePluginDir validates every declared agent resource and makes
-// the capability binary executable (ad-hoc signed on macOS). It is
-// the shared gate for install, update staging and rollback restore.
+// the kraft binary executable (ad-hoc signed on macOS). It is the
+// shared gate for install, update staging and rollback restore.
 func preparePluginDir(dir string, m *Manifest) error {
 	if err := validateInstalledAgentResources(dir, m); err != nil {
 		return err
 	}
-	if m.Capability == nil {
+	if m.Kraft == nil {
 		return nil
 	}
-	bin := filepath.Join(dir, m.Capability.Binary)
+	bin := filepath.Join(dir, m.Kraft.Binary)
 	if err := os.Chmod(bin, 0o755); err != nil {
-		return fmt.Errorf("plugins: make capability binary executable: %w", err)
+		return fmt.Errorf("plugins: make kraft binary executable: %w", err)
 	}
 	if err := signAdHoc(bin); err != nil {
 		return err
@@ -1069,7 +1069,7 @@ func preparePluginDir(dir string, m *Manifest) error {
 	return nil
 }
 
-// signAdHoc ad-hoc codesigns a capability binary on macOS. An unsigned
+// signAdHoc ad-hoc codesigns a kraft binary on macOS. An unsigned
 // Mach-O binary under ~/.opencraft is killed by the system's security
 // machinery (SIGKILL on exec); ad-hoc signing marks it as locally
 // trusted. No-op on other platforms.
@@ -1244,7 +1244,23 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 			seenPets[p.ID] = true
 		}
 	}
-	if err := validateCapability(m.Capability); err != nil {
+	// Earlier builds wrote the kraft section as "capability". Keep
+	// reading that key so already-installed plugins survive the rename,
+	// but reject a manifest that declares both spellings.
+	var legacy struct {
+		Capability *kraft.Kraft `json:"capability"`
+	}
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		return nil, fmt.Errorf("plugins: decode manifest: %w", err)
+	}
+	if legacy.Capability != nil {
+		if m.Kraft != nil {
+			return nil, fmt.Errorf(
+				"plugins: manifest declares both kraft and legacy capability keys")
+		}
+		m.Kraft = legacy.Capability
+	}
+	if err := validateKraft(m.Kraft); err != nil {
 		return nil, fmt.Errorf("plugins: %w", err)
 	}
 	if err := validateAgentCapabilities(&m); err != nil {
@@ -1344,8 +1360,8 @@ func validateAgentCapabilities(m *Manifest) error {
 		}
 	}
 	if len(m.Tools) > 0 {
-		if m.Capability == nil {
-			return fmt.Errorf("plugins: tools require a capability subprocess")
+		if m.Kraft == nil {
+			return fmt.Errorf("plugins: tools require a kraft subprocess")
 		}
 		if err := requirePermission(m, "tools:expose", "tools"); err != nil {
 			return err
@@ -1447,22 +1463,22 @@ func validateRelativePluginPath(p string) error {
 	return nil
 }
 
-// validateCapability checks a declared subprocess runtime: the binary
-// must be a relative path inside the plugin directory and the protocol
+// validateKraft checks a declared subprocess runtime: the binary must
+// be a relative path inside the plugin directory and the protocol
 // version must be positive.
-func validateCapability(cap *runtime.Capability) error {
-	if cap == nil {
+func validateKraft(k *kraft.Kraft) error {
+	if k == nil {
 		return nil
 	}
-	if cap.Binary == "" {
-		return fmt.Errorf("capability.binary is required")
+	if k.Binary == "" {
+		return fmt.Errorf("kraft.binary is required")
 	}
-	bin := filepath.Clean(cap.Binary)
+	bin := filepath.Clean(k.Binary)
 	if !pathsafe.RelRef(bin) {
-		return fmt.Errorf("capability.binary escapes plugin dir: %q", cap.Binary)
+		return fmt.Errorf("kraft.binary escapes plugin dir: %q", k.Binary)
 	}
-	if cap.Protocol <= 0 {
-		return fmt.Errorf("capability.protocol must be positive")
+	if k.Protocol <= 0 {
+		return fmt.Errorf("kraft.protocol must be positive")
 	}
 	return nil
 }

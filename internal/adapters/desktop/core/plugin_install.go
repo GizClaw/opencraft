@@ -60,7 +60,7 @@ func (p pluginInstaller) PluginInstall(
 }
 
 // PluginUpdate replaces an installed plugin with a newer source and
-// reloads the runtime, stopping the previous capability process first
+// reloads the runtime, stopping the previous kraft process first
 // (its binary is replaced on disk).
 func (p pluginInstaller) PluginUpdate(
 	ctx context.Context, id, src string,
@@ -78,7 +78,7 @@ func (p pluginInstaller) PluginUpdate(
 	if err != nil {
 		return plugins.PluginSummary{}, err
 	}
-	p.core.Plugin.Capability.Stop(id)
+	p.core.Plugin.Kraft.Stop(id)
 	return sum, p.reload(ctx)
 }
 

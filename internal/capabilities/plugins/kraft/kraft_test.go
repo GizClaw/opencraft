@@ -1,4 +1,4 @@
-package runtime
+package kraft
 
 import (
 	"bufio"
@@ -14,8 +14,8 @@ import (
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
-// helperPlugin simulates a capability plugin: it handshakes, then
-// answers auth.* calls and exercises the secret.set primitive.
+// helperPlugin simulates a kraft: it handshakes, then answers auth.*
+// calls and exercises the secret.set primitive.
 func helperPlugin() {
 	sc := bufio.NewScanner(os.Stdin)
 	out := bufio.NewWriter(os.Stdout)
@@ -82,7 +82,7 @@ func oversizedOutputPlugin() {
 }
 
 // crashingPlugin handshakes and then exits on its own, simulating a
-// capability process that died after announcing itself. It explains
+// kraft process that died after announcing itself. It explains
 // itself on stderr, which is the only channel a plugin has for that.
 func crashingPlugin() {
 	_, _ = fmt.Fprintln(os.Stdout,
@@ -132,15 +132,15 @@ func (s *memSecrets) Delete(_ context.Context, name string) error {
 }
 
 type testLoader struct {
-	cap Capability
-	bin string
+	kraft Kraft
+	bin   string
 }
 
-func (l testLoader) Capability(string) (Capability, bool, error) {
-	return l.cap, true, nil
+func (l testLoader) Kraft(string) (Kraft, bool, error) {
+	return l.kraft, true, nil
 }
 
-func (l testLoader) BinaryPath(string, Capability) (string, error) {
+func (l testLoader) BinaryPath(string, Kraft) (string, error) {
 	return l.bin, nil
 }
 
@@ -148,8 +148,8 @@ func newTestManager(t *testing.T) (*Manager, *memSecrets) {
 	t.Helper()
 	sec := &memSecrets{m: map[string]string{}}
 	loader := testLoader{
-		cap: Capability{Binary: "helper", Protocol: 1},
-		bin: os.Args[0],
+		kraft: Kraft{Binary: "helper", Protocol: 1},
+		bin:   os.Args[0],
 	}
 	m := NewManager(t.TempDir(), loader, sec)
 	m.SetEnv([]string{"GO_WANT_HELPER_PROCESS=1"})
@@ -161,8 +161,8 @@ func newTestManagerWithHelper(t *testing.T, mode string) (*Manager, *memSecrets)
 	t.Helper()
 	sec := &memSecrets{m: map[string]string{}}
 	loader := testLoader{
-		cap: Capability{Binary: "helper", Protocol: 1},
-		bin: os.Args[0],
+		kraft: Kraft{Binary: "helper", Protocol: 1},
+		bin:   os.Args[0],
 	}
 	m := NewManager(t.TempDir(), loader, sec)
 	m.SetEnv([]string{"GO_WANT_HELPER_PROCESS=" + mode})
@@ -251,7 +251,7 @@ func TestOversizedOutputStopsPlugin(t *testing.T) {
 	var seen bool
 	for _, record := range capture.Records() {
 		if record.Body().AsString() !=
-			"plugin runtime: read capability output failed" {
+			"plugin kraft: read output failed" {
 			continue
 		}
 		if got := logcapture.Attribute(record, "plugin.id"); got != "test-plugin" {
@@ -557,7 +557,7 @@ func TestInvokeAfterShutdownRefused(t *testing.T) {
 	m, _ := newTestManager(t)
 	m.Shutdown()
 	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.poll", nil); err == nil {
-		t.Fatal("Invoke after Shutdown started a capability process")
+		t.Fatal("Invoke after Shutdown started a kraft process")
 	}
 	m.mu.Lock()
 	n := len(m.procs)
@@ -751,7 +751,7 @@ func waitForPluginStderr(capture *logcapture.Recorder, want string) bool {
 }
 
 // stubWriter is a write-only sink capturing what the host sends to a
-// (simulated) capability process.
+// (simulated) kraft.
 type stubWriter struct {
 	buf bytes.Buffer
 }

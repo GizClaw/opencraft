@@ -59,9 +59,8 @@ permission and fails closed without it:
   sources: content-bearing payload fields (`tool_input`, `tool_result`,
   `prompt`, `command`, errors and subagent messages) are stripped
   before the command runs.
-- `tools:expose` — `tools` declare capability subprocess methods that
-  become ordinary agent tools (`<plugin>__<tool>`); they require a
-  `capability` binary.
+- `tools:expose` — `tools` declare kraft methods that become ordinary
+  agent tools (`<plugin>__<tool>`); they require a `kraft` binary.
 
 The hello plugin demonstrates the skills side: `skills/hello/SKILL.md`
 is discovered as a normal skill when the plugin is enabled.
@@ -141,7 +140,7 @@ the user first.
 - `plugin_install({ "path": ".opencraft-plugins/hello" })` — installs a
   directory containing `plugin.json` or a `.zip` package that the agent
   wrote in the workspace. The confirmation shows the id, version,
-  permissions, entry bundle and capability binary before anything is
+  permissions, entry bundle and kraft binary before anything is
   copied.
 - `plugin_update({ "id": "hello", "path": "…" })` — same-id, strictly
   newer version replacement with the usual rollback snapshot.

@@ -34,8 +34,8 @@ func TestHostExposesAgentCapabilities(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "cap", map[string]any{
 		"id": "cap", "name": "Cap", "version": "0.1.0",
-		"entry":      "dist/index.js",
-		"capability": map[string]any{"binary": "bin/srv", "protocol": 1},
+		"entry": "dist/index.js",
+		"kraft": map[string]any{"binary": "bin/srv", "protocol": 1},
 		"permissions": []string{
 			"skills:contribute", "mcp:contribute", "hooks:register", "tools:expose",
 		},
@@ -81,7 +81,7 @@ func TestHostExposesAgentCapabilities(t *testing.T) {
 		t.Fatalf("ToolSpecs = %+v", specs)
 	}
 	if _, err := host.Invoke(t.Context(), "cap", "ping", json.RawMessage(`{}`)); err == nil {
-		t.Fatal("Invoke without a capability runtime must fail")
+		t.Fatal("Invoke without a kraft runtime must fail")
 	}
 }
 

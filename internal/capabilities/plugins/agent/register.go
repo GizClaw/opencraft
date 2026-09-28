@@ -7,7 +7,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
-	"github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 )
 
 // ResourceKind is the deploy resource kind of the shared plugin host.
@@ -19,14 +19,14 @@ const ResourceKind = "opencraft.plugins"
 type Host struct {
 	ctx    context.Context
 	store  *plugins.Store
-	cap    *runtime.Manager
+	kraft  *kraft.Manager
 	once   sync.Once
 	cached []pluginEntry
 }
 
-// NewHost wraps an installed plugin store and its capability runtime.
-func NewHost(ctx context.Context, store *plugins.Store, cap *runtime.Manager) *Host {
-	return &Host{ctx: ctx, store: store, cap: cap}
+// NewHost wraps an installed plugin store and its kraft runtime.
+func NewHost(ctx context.Context, store *plugins.Store, kraft *kraft.Manager) *Host {
+	return &Host{ctx: ctx, store: store, kraft: kraft}
 }
 
 // NewEmpty returns a host with no plugins. It is used by runtimes

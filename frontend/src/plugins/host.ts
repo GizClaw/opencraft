@@ -213,7 +213,7 @@ function provideServices(ctx: Context, c: ContributionState) {
   ctx.provide('commands', makeRegistrar(c.commands), true);
   ctx.provide('statusBar', makeRegistrar(c.statusBar), true);
   ctx.provide('pets', makePetsRegistrar(c.petPacks), true);
-  // invoke routes to this plugin's capability subprocess. It is an
+  // invoke routes to this plugin's kraft subprocess. It is an
   // accessor so the calling plugin's id is captured on access.
   ctx.accessor('invoke', {
     get: function (this: Context) {

@@ -4,17 +4,17 @@ import (
 	"path/filepath"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
-	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	"github.com/GizClaw/opencraft/internal/capabilities/secrets"
 )
 
-// PluginService owns plugin registry, KV, capability subprocesses and
+// PluginService owns plugin registry, KV, kraft subprocesses and
 // the credential manager.
 type PluginService struct {
-	Store      *plugins.Store
-	KV         *plugins.KVStore
-	Capability *pluginruntime.Manager
-	Secrets    *secrets.Manager
+	Store   *plugins.Store
+	KV      *plugins.KVStore
+	Kraft   *kraft.Manager
+	Secrets *secrets.Manager
 }
 
 // NewPluginService creates the plugin service under appHome: the
@@ -28,29 +28,29 @@ func NewPluginService(appHome, version string) *PluginService {
 	store := plugins.NewStore(pluginDir)
 	store.SetHostVersion(version)
 	sec := secrets.NewManager(filepath.Join(appHome, "keyring"))
-	cap := pluginruntime.NewManager(
+	mgr := kraft.NewManager(
 		pluginDir,
-		pluginruntime.DefaultLoader{
+		kraft.DefaultLoader{
 			Root: pluginDir,
-			CapabilityFunc: func(id string) (pluginruntime.Capability, bool, error) {
-				return store.Capability(id)
+			KraftFunc: func(id string) (kraft.Kraft, bool, error) {
+				return store.Kraft(id)
 			},
 			DirFunc: store.Dir,
 		},
 		sec,
 	)
-	cap.SetHostVersion(version)
+	mgr.SetHostVersion(version)
 	return &PluginService{
-		Store:      store,
-		KV:         plugins.NewKVStore(pluginDir),
-		Capability: cap,
-		Secrets:    sec,
+		Store:   store,
+		KV:      plugins.NewKVStore(pluginDir),
+		Kraft:   mgr,
+		Secrets: sec,
 	}
 }
 
-// Close stops all capability subprocesses.
+// Close stops all kraft subprocesses.
 func (p *PluginService) Close() {
-	if p.Capability != nil {
-		p.Capability.Shutdown()
+	if p.Kraft != nil {
+		p.Kraft.Shutdown()
 	}
 }

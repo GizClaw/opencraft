@@ -1,9 +1,8 @@
-// Package pluginagent exposes plugin-contributed capabilities to the
-// agent: capability subprocess methods become ordinary tool.Tool
-// values, and plugin-declared MCP servers are attached through the
-// same flowcraft MCP source the settings page uses. Skills and hooks
-// are consumed by their own resources (opencraft.skills /
-// opencraft.hooks) through the shared plugin host.
+// Package pluginagent adapts plugin krafts to the agent: kraft methods
+// become ordinary tool.Tool values, and plugin-declared MCP servers
+// are attached through the same flowcraft MCP source the settings page
+// uses. Skills and hooks are consumed by their own resources
+// (opencraft.skills / opencraft.hooks) through the shared plugin host.
 package pluginagent
 
 import (
@@ -26,8 +25,8 @@ import (
 // ResourceImpl is the deploy impl id of the plugin agent source.
 const ResourceImpl = "opencraft/plugins"
 
-// CapabilityHost is the subset of the plugin host this source needs.
-type CapabilityHost interface {
+// PluginHost is the subset of the plugin host this source needs.
+type PluginHost interface {
 	ToolSpecs() []agent.ToolSpec
 	MCPServers() []agent.MCPServer
 	Invoke(
@@ -61,26 +60,26 @@ func (SourceFactory) New(ctx context.Context, in resource.Input) (any, error) {
 		return nil, errdefs.Validationf(
 			"plugin agent tools: plugins dependency is required")
 	}
-	host, ok := dep.(CapabilityHost)
+	host, ok := dep.(PluginHost)
 	if !ok || host == nil {
 		return nil, errdefs.Validationf(
-			"plugin agent tools: plugins dep is %T, want capability host", dep)
+			"plugin agent tools: plugins dep is %T, want plugin host", dep)
 	}
 	return newSource(ctx, host)
 }
 
-// Source aggregates capability tools and plugin MCP servers.
+// Source aggregates kraft tools and plugin MCP servers.
 type Source struct {
 	ctx        context.Context
-	host       CapabilityHost
-	capTools   []tool.Tool
+	host       PluginHost
+	kraftTools []tool.Tool
 	mcpSources []*mcp.Source
 }
 
-func newSource(ctx context.Context, host CapabilityHost) (*Source, error) {
+func newSource(ctx context.Context, host PluginHost) (*Source, error) {
 	s := &Source{ctx: ctx, host: host}
 	for _, spec := range host.ToolSpecs() {
-		s.capTools = append(s.capTools, &toolAdapter{host: host, spec: spec})
+		s.kraftTools = append(s.kraftTools, &toolAdapter{host: host, spec: spec})
 	}
 	for _, server := range host.MCPServers() {
 		src := mcp.NewSource()
@@ -126,7 +125,7 @@ func serverTransport(s agent.MCPServer) (mcpsdk.Transport, error) {
 }
 
 func (s *Source) Tools() []tool.Tool {
-	out := append([]tool.Tool(nil), s.capTools...)
+	out := append([]tool.Tool(nil), s.kraftTools...)
 	for _, src := range s.mcpSources {
 		out = append(out, src.Tools()...)
 	}
@@ -135,7 +134,7 @@ func (s *Source) Tools() []tool.Tool {
 
 func (s *Source) LazyTools() []tool.LazyTool { return nil }
 
-// Attach implements tool.RegistryAttacher. Capability tools are static
+// Attach implements tool.RegistryAttacher. Kraft tools are static
 // and already exposed through Tools(), so only MCP sources need the
 // registrar: their connections and tool projections arrive in the
 // background after the registry snapshot.
@@ -145,7 +144,7 @@ func (s *Source) Attach(r tool.Registrar) {
 	}
 }
 
-// Close releases the plugin MCP sources (capability subprocesses are
+// Close releases the plugin MCP sources (krafts are
 // owned by the plugin runtime manager and stop with the host).
 func (s *Source) Close() error {
 	var first error
@@ -157,9 +156,9 @@ func (s *Source) Close() error {
 	return first
 }
 
-// toolAdapter forwards one agent tool call to a capability method.
+// toolAdapter forwards one agent tool call to a kraft method.
 type toolAdapter struct {
-	host CapabilityHost
+	host PluginHost
 	spec agent.ToolSpec
 }
 

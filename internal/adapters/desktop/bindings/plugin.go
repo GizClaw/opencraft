@@ -19,7 +19,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
-// Plugin exposes plugin registry, KV and capability invocation.
+// Plugin exposes plugin registry, KV and kraft invocation.
 type Plugin struct {
 	core *core.Core
 }
@@ -49,7 +49,7 @@ func (b *Plugin) SetEnabled(id string, enabled bool) error {
 	}
 	var removeErr error
 	if !enabled {
-		b.core.Plugin.Capability.Stop(id)
+		b.core.Plugin.Kraft.Stop(id)
 		if err := b.core.RemovePluginTelemetry(id); err != nil {
 			removeErr = err
 		}
@@ -102,7 +102,7 @@ func (b *Plugin) Update(
 	if err != nil {
 		return plugins.PluginSummary{}, err
 	}
-	b.core.Plugin.Capability.Stop(id)
+	b.core.Plugin.Kraft.Stop(id)
 	return sum, b.refresh()
 }
 
@@ -114,7 +114,7 @@ func (b *Plugin) UpdateZip(
 	if err != nil {
 		return plugins.PluginSummary{}, err
 	}
-	b.core.Plugin.Capability.Stop(id)
+	b.core.Plugin.Kraft.Stop(id)
 	return sum, b.refresh()
 }
 
@@ -124,7 +124,7 @@ func (b *Plugin) Rollback(id string) (plugins.PluginSummary, error) {
 	if err != nil {
 		return plugins.PluginSummary{}, err
 	}
-	b.core.Plugin.Capability.Stop(id)
+	b.core.Plugin.Kraft.Stop(id)
 	return sum, b.refresh()
 }
 
@@ -323,7 +323,7 @@ func (b *Plugin) ApplyUpdate(
 	if err != nil {
 		return plugins.PluginSummary{}, err
 	}
-	b.core.Plugin.Capability.Stop(id)
+	b.core.Plugin.Kraft.Stop(id)
 	return sum, b.refresh()
 }
 
@@ -332,10 +332,10 @@ func (b *Plugin) ApplyUpdate(
 // not implement lifecycle.cleanup or whose process is not running),
 // scoped secrets, and KV data.
 func (b *Plugin) Uninstall(id string) error {
-	if b.core.Plugin.Capability != nil {
+	if b.core.Plugin.Kraft != nil {
 		telemetry.WarnErr(context.Background(),
-			"desktop plugin: capability cleanup failed",
-			b.core.Plugin.Capability.Cleanup(id))
+			"desktop plugin: kraft cleanup failed",
+			b.core.Plugin.Kraft.Cleanup(id))
 	}
 	if err := b.core.RemovePluginTelemetry(id); err != nil {
 		return err
@@ -355,8 +355,8 @@ func (b *Plugin) Uninstall(id string) error {
 		return err
 	}
 	b.core.Plugin.KV.RemoveAll(id)
-	if b.core.Plugin.Capability != nil {
-		b.core.Plugin.Capability.Stop(id)
+	if b.core.Plugin.Kraft != nil {
+		b.core.Plugin.Kraft.Stop(id)
 	}
 	if removed {
 		b.core.Shell.Emit(core.EventInferenceChanged, map[string]any{})
@@ -384,13 +384,13 @@ func (b *Plugin) KVDelete(pluginID, key string) error {
 	return b.core.Plugin.KV.Delete(pluginID, key)
 }
 
-// Invoke routes one method call to a capability plugin.
+// Invoke routes one method call to a plugin kraft.
 func (b *Plugin) Invoke(
 	pluginID, method, args string,
 ) (string, error) {
 	ctx := b.core.Shell.Context()
-	if b.core.Plugin.Capability == nil {
-		return "", errNotReady("plugin capability")
+	if b.core.Plugin.Kraft == nil {
+		return "", errNotReady("plugin kraft")
 	}
 	var params any
 	if strings.TrimSpace(args) != "" {
@@ -398,6 +398,6 @@ func (b *Plugin) Invoke(
 			return "", errNotReady("invalid args JSON")
 		}
 	}
-	raw, err := b.core.Plugin.Capability.Invoke(ctx, pluginID, method, params)
+	raw, err := b.core.Plugin.Kraft.Invoke(ctx, pluginID, method, params)
 	return string(raw), err
 }

@@ -1,13 +1,13 @@
 //go:build soak
 
-package runtime
+package kraft
 
 import (
 	"context"
 	"testing"
 )
 
-// TestSoakInvokeStop cycles the capability subprocess lifecycle and
+// TestSoakInvokeStop cycles the kraft subprocess lifecycle and
 // asserts the manager's process table returns to empty (no leaks).
 func TestSoakInvokeStop(t *testing.T) {
 	ctx := context.Background()

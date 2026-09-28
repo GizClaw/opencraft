@@ -211,12 +211,12 @@ func TestStoreUninstallRemoves(t *testing.T) {
 	}
 }
 
-func TestInstallMakesCapabilityExecutable(t *testing.T) {
+func TestInstallMakesKraftExecutable(t *testing.T) {
 	srcRoot := t.TempDir()
 	writePlugin(t, srcRoot, "cap", map[string]any{
 		"id": "cap", "name": "Cap", "version": "1.0.0",
-		"entry":      "dist/index.js",
-		"capability": map[string]any{"binary": "bin/auth", "protocol": 1},
+		"entry": "dist/index.js",
+		"kraft": map[string]any{"binary": "bin/auth", "protocol": 1},
 	}, "export function apply() {}")
 	bin := filepath.Join(srcRoot, "cap", "bin", "auth")
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
@@ -236,9 +236,9 @@ func TestInstallMakesCapabilityExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	// copyDir writes everything 0600; Install must restore the exec bit
-	// for the declared capability binary.
+	// for the declared kraft binary.
 	if info.Mode().Perm()&0o111 == 0 {
-		t.Fatalf("capability binary is not executable after install: %v", info.Mode())
+		t.Fatalf("kraft binary is not executable after install: %v", info.Mode())
 	}
 }
 
@@ -246,8 +246,8 @@ func TestManifestValidatesAgentCapabilities(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "agent", map[string]any{
 		"id": "agent", "name": "Agent", "version": "0.1.0",
-		"entry":      "dist/index.js",
-		"capability": map[string]any{"binary": "bin/agent", "protocol": 1},
+		"entry": "dist/index.js",
+		"kraft": map[string]any{"binary": "bin/agent", "protocol": 1},
 		"permissions": []string{
 			"skills:contribute", "mcp:contribute", "hooks:register", "tools:expose",
 		},
@@ -274,6 +274,41 @@ func TestManifestValidatesAgentCapabilities(t *testing.T) {
 	}
 }
 
+func TestManifestLegacyCapabilityKey(t *testing.T) {
+	root := t.TempDir()
+	// The pre-rename spelling: a manifest that still writes the kraft
+	// section as "capability" keeps resolving its binary, so plugins
+	// installed by older builds survive the rename.
+	writePlugin(t, root, "legacy", map[string]any{
+		"id": "legacy", "name": "Legacy", "version": "0.1.0",
+		"entry":      "dist/index.js",
+		"capability": map[string]any{"binary": "bin/old", "protocol": 1},
+	}, "")
+	s := NewStore(root)
+	kraft, ok, err := s.Kraft("legacy")
+	if err != nil || !ok || kraft.Binary != "bin/old" {
+		t.Fatalf("legacy manifest: Kraft = (%+v, %v, %v)", kraft, ok, err)
+	}
+}
+
+func TestManifestRejectsBothKraftSpellings(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "both", map[string]any{
+		"id": "both", "name": "Both", "version": "0.1.0",
+		"entry":      "dist/index.js",
+		"kraft":      map[string]any{"binary": "bin/new", "protocol": 1},
+		"capability": map[string]any{"binary": "bin/old", "protocol": 1},
+	}, "")
+	s := NewStore(root)
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || !strings.Contains(list[0].Error, "both kraft") {
+		t.Fatalf("List = %+v, want a rejection naming both keys", list)
+	}
+}
+
 func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -283,12 +318,12 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "tools without permission",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"capability": map[string]any{"binary": "bin/x", "protocol": 1},
-				"tools":      []any{map[string]any{"name": "t", "method": "m"}},
+				"kraft": map[string]any{"binary": "bin/x", "protocol": 1},
+				"tools": []any{map[string]any{"name": "t", "method": "m"}},
 			},
 		},
 		{
-			name: "tools without capability",
+			name: "tools without kraft",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
 				"permissions": []string{"tools:expose"},
@@ -333,7 +368,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "tool name with dot",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"capability":  map[string]any{"binary": "bin/x", "protocol": 1},
+				"kraft":       map[string]any{"binary": "bin/x", "protocol": 1},
 				"permissions": []string{"tools:expose"},
 				"tools": []any{map[string]any{
 					"name": "tool.name", "method": "m",
@@ -352,7 +387,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "tool description too long",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"capability":  map[string]any{"binary": "bin/x", "protocol": 1},
+				"kraft":       map[string]any{"binary": "bin/x", "protocol": 1},
 				"permissions": []string{"tools:expose"},
 				"tools": []any{map[string]any{
 					"name": "t", "method": "m",
@@ -364,7 +399,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "tool schema too large",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"capability":  map[string]any{"binary": "bin/x", "protocol": 1},
+				"kraft":       map[string]any{"binary": "bin/x", "protocol": 1},
 				"permissions": []string{"tools:expose"},
 				"tools": []any{map[string]any{
 					"name": "t", "method": "m",

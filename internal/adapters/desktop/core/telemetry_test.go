@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 )
 
@@ -112,7 +112,7 @@ func TestPluginTelemetryRequiresPermission(t *testing.T) {
 		"plug": {"storage:kv"},
 	})
 
-	err := c.handlePluginTelemetryConfigure("plug", pluginruntime.TelemetryExportRequest{
+	err := c.handlePluginTelemetryConfigure("plug", kraft.TelemetryExportRequest{
 		Endpoint: "collector.example:4318",
 	})
 	if err == nil || !strings.Contains(err.Error(), "lacks telemetry:export") {
@@ -136,7 +136,7 @@ func TestPluginTelemetryRespectsUserSwitch(t *testing.T) {
 		t.Fatalf("disable plugin telemetry: %v", err)
 	}
 
-	err := c.handlePluginTelemetryConfigure("plug", pluginruntime.TelemetryExportRequest{
+	err := c.handlePluginTelemetryConfigure("plug", kraft.TelemetryExportRequest{
 		Endpoint: "collector.example:4318",
 	})
 	if err == nil || !strings.Contains(err.Error(), "disabled in settings") {
@@ -160,7 +160,7 @@ func TestPluginTelemetrySinkLifecycle(t *testing.T) {
 	// An endpoint with credentials must be rejected without touching the
 	// pipeline.
 	if err := c.handlePluginTelemetryConfigure("plug-a",
-		pluginruntime.TelemetryExportRequest{
+		kraft.TelemetryExportRequest{
 			Endpoint: "user:pass@collector.example:4318",
 		}); err == nil ||
 		!strings.Contains(err.Error(), "credentials in headers") {
@@ -171,7 +171,7 @@ func TestPluginTelemetrySinkLifecycle(t *testing.T) {
 	}
 
 	if err := c.handlePluginTelemetryConfigure("plug-a",
-		pluginruntime.TelemetryExportRequest{
+		kraft.TelemetryExportRequest{
 			Endpoint: "collector.example:4318",
 			Headers:  map[string]string{"authorization": "Bearer a"},
 		}); err != nil {
@@ -195,7 +195,7 @@ func TestPluginTelemetrySinkLifecycle(t *testing.T) {
 	// A second plugin cannot take the sink over while the owner is
 	// running: the host keeps exactly one, and takeover is refused.
 	err := c.handlePluginTelemetryConfigure("plug-b",
-		pluginruntime.TelemetryExportRequest{Endpoint: "127.0.0.1:4318"})
+		kraft.TelemetryExportRequest{Endpoint: "127.0.0.1:4318"})
 	if err == nil || !strings.Contains(err.Error(), `owned by plugin "plug-a"`) {
 		t.Fatalf("takeover error = %v", err)
 	}
@@ -221,7 +221,7 @@ func TestPluginTelemetrySinkLifecycle(t *testing.T) {
 
 	// The freed sink can be claimed again.
 	if err := c.handlePluginTelemetryConfigure("plug-b",
-		pluginruntime.TelemetryExportRequest{Endpoint: "127.0.0.1:4318"}); err != nil {
+		kraft.TelemetryExportRequest{Endpoint: "127.0.0.1:4318"}); err != nil {
 		t.Fatalf("configure after crash: %v", err)
 	}
 	sink, owner = c.Telemetry.Sink()
@@ -267,7 +267,7 @@ func TestPluginTelemetryRejectsWhenAppSinkConfigured(t *testing.T) {
 		map[string][]string{"plug": {"telemetry:export"}},
 		newTestPipelineWithAppSink(t, "app-collector.example:4318"))
 
-	err := c.handlePluginTelemetryConfigure("plug", pluginruntime.TelemetryExportRequest{
+	err := c.handlePluginTelemetryConfigure("plug", kraft.TelemetryExportRequest{
 		Endpoint: "plugin-collector.example:4318",
 	})
 	if err == nil ||
@@ -292,7 +292,7 @@ func TestPluginTelemetrySwitchRestoresSink(t *testing.T) {
 		"plug": {"telemetry:export"},
 	})
 	if err := c.handlePluginTelemetryConfigure("plug",
-		pluginruntime.TelemetryExportRequest{
+		kraft.TelemetryExportRequest{
 			Endpoint: "collector.example:4318",
 			Headers:  map[string]string{"authorization": "Bearer plug"},
 		}); err != nil {
@@ -347,7 +347,7 @@ func TestPluginTelemetrySwitchSkipsRestoreAfterPluginExit(t *testing.T) {
 		"plug": {"telemetry:export"},
 	})
 	if err := c.handlePluginTelemetryConfigure("plug",
-		pluginruntime.TelemetryExportRequest{
+		kraft.TelemetryExportRequest{
 			Endpoint: "collector.example:4318",
 		}); err != nil {
 		t.Fatalf("configure: %v", err)
@@ -385,7 +385,7 @@ func TestPluginTelemetrySwitchRemembersBlockedRequest(t *testing.T) {
 	// request is refused, but re-enabling export must honour it: the
 	// plugin has no reason to ask again.
 	err := c.handlePluginTelemetryConfigure("plug",
-		pluginruntime.TelemetryExportRequest{
+		kraft.TelemetryExportRequest{
 			Endpoint: "collector.example:4318",
 			Headers:  map[string]string{"authorization": "Bearer blocked"},
 		})
@@ -399,7 +399,7 @@ func TestPluginTelemetrySwitchRemembersBlockedRequest(t *testing.T) {
 	// Another plugin cannot take the suspended slot over while the
 	// switch is off; its request is refused like any other.
 	err = c.handlePluginTelemetryConfigure("rival",
-		pluginruntime.TelemetryExportRequest{
+		kraft.TelemetryExportRequest{
 			Endpoint: "rival-collector.example:4318",
 		})
 	if err == nil || !strings.Contains(err.Error(), "disabled in settings") {

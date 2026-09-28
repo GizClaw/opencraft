@@ -61,7 +61,7 @@ var goosAllowlist = map[string]goosSite{
 			"package.",
 	},
 	// Plugin packaging is OS-shaped: bundle layout and codesigning.
-	"internal/capabilities/plugins/runtime/runtime.go": {
+	"internal/capabilities/plugins/kraft/kraft.go": {
 		max: 1,
 		reason: "BuiltinPluginRoot: a macOS .app keeps plugins under " +
 			"Contents/Resources/plugins, every other platform keeps " +

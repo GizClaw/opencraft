@@ -43,7 +43,7 @@ func (c *countingRegistrar) Add(tool.Tool) error {
 
 func (c *countingRegistrar) Remove(string) {}
 
-func capabilitySpec() agent.ToolSpec {
+func kraftSpec() agent.ToolSpec {
 	return agent.ToolSpec{
 		PluginID:    "hello",
 		Name:        "ping",
@@ -53,9 +53,9 @@ func capabilitySpec() agent.ToolSpec {
 	}
 }
 
-func TestSourceExposesCapabilityTools(t *testing.T) {
+func TestSourceExposesKraftTools(t *testing.T) {
 	host := &fakeHost{
-		specs: []agent.ToolSpec{capabilitySpec()},
+		specs: []agent.ToolSpec{kraftSpec()},
 		invokeFn: func(
 			_ context.Context, pluginID, method string, _ json.RawMessage,
 		) (json.RawMessage, error) {
@@ -90,9 +90,9 @@ func TestSourceExposesCapabilityTools(t *testing.T) {
 	}
 }
 
-func TestSourceAttachDoesNotReRegisterCapabilityTools(t *testing.T) {
+func TestSourceAttachDoesNotReRegisterKraftTools(t *testing.T) {
 	src, err := newSource(t.Context(), &fakeHost{
-		specs: []agent.ToolSpec{capabilitySpec()},
+		specs: []agent.ToolSpec{kraftSpec()},
 	})
 	if err != nil {
 		t.Fatalf("newSource: %v", err)
@@ -100,13 +100,13 @@ func TestSourceAttachDoesNotReRegisterCapabilityTools(t *testing.T) {
 	reg := &countingRegistrar{}
 	src.Attach(reg)
 	if reg.adds != 0 {
-		t.Fatalf("Attach registered %d capability tools, want 0", reg.adds)
+		t.Fatalf("Attach registered %d kraft tools, want 0", reg.adds)
 	}
 }
 
-func TestSourceAssemblyExposesCapabilityToolsOnce(t *testing.T) {
+func TestSourceAssemblyExposesKraftToolsOnce(t *testing.T) {
 	src, err := newSource(t.Context(), &fakeHost{
-		specs: []agent.ToolSpec{capabilitySpec()},
+		specs: []agent.ToolSpec{kraftSpec()},
 	})
 	if err != nil {
 		t.Fatalf("newSource: %v", err)

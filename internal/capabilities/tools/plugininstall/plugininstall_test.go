@@ -141,7 +141,7 @@ func summary() plugins.PluginSummary {
 		Name:        "Hello Plugin",
 		Version:     "0.1.0",
 		Entry:       "dist/index.js",
-		Capability:  "bin/hello",
+		Kraft:       "bin/hello",
 		Permissions: []string{"storage:kv", "skills:contribute"},
 		Enabled:     true,
 		HasSkills:   true,
@@ -149,7 +149,7 @@ func summary() plugins.PluginSummary {
 }
 
 // TestInstallConfirmsWithManifestFacts pins that the user sees what
-// would run: permissions, entry bundle and capability binary.
+// would run: permissions, entry bundle and kraft binary.
 func TestInstallConfirmsWithManifestFacts(t *testing.T) {
 	inst := &fakeInstaller{inspect: summary()}
 	tools := newTools(t, inst, fakeRoot{root: "/ws"})

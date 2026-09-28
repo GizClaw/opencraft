@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 )
 
 // builtinDir returns the builtin plugin directory next to the test
-// executable, mirroring runtime.BuiltinPluginRoot's platform layout.
+// executable, mirroring kraft.BuiltinPluginRoot's platform layout.
 // Tests build the bundled layout there so the production detection is
 // exercised without any environment override.
 func builtinDir(t *testing.T) string {
@@ -279,31 +279,31 @@ func TestBuiltinCannotUninstall(t *testing.T) {
 	}
 }
 
-// TestBuiltinCapabilityBinaryFallsBack verifies the subprocess runtime
-// resolves a builtin plugin's capability binary against the bundled
-// root when it is absent from the user root.
-func TestBuiltinCapabilityBinaryFallsBack(t *testing.T) {
+// TestBuiltinKraftBinaryFallsBack verifies the subprocess runtime
+// resolves a builtin plugin's kraft binary against the bundled root
+// when it is absent from the user root.
+func TestBuiltinKraftBinaryFallsBack(t *testing.T) {
 	dir := builtinDir(t)
 	writeBuiltinPlugin(t, dir, "demo", map[string]any{
 		"id": "demo", "name": "Demo", "version": "0.1.0",
 		"entry": "dist/index.js", "permissions": []string{},
-		"capability": map[string]any{
+		"kraft": map[string]any{
 			"binary": "bin/demo-helper", "protocol": 1,
 		},
 		"contributes": map[string]any{},
 	}, "bundle", "bin/demo-helper")
 
 	s := NewStore(t.TempDir())
-	cap, ok, err := s.Capability("demo")
+	decl, ok, err := s.Kraft("demo")
 	if err != nil || !ok {
-		t.Fatalf("Capability = %v, %v", ok, err)
+		t.Fatalf("Kraft = %v, %v", ok, err)
 	}
-	loader := runtime.DefaultLoader{
-		Root:           s.root,
-		CapabilityFunc: s.Capability,
-		DirFunc:        s.Dir,
+	loader := kraft.DefaultLoader{
+		Root:      s.root,
+		KraftFunc: s.Kraft,
+		DirFunc:   s.Dir,
 	}
-	bin, err := loader.BinaryPath("demo", cap)
+	bin, err := loader.BinaryPath("demo", decl)
 	if err != nil {
 		t.Fatalf("BinaryPath: %v", err)
 	}
@@ -316,43 +316,43 @@ func TestBuiltinCapabilityBinaryFallsBack(t *testing.T) {
 	}
 }
 
-// TestShadowCapabilityBinaryDoesNotFallBack verifies a user plugin
-// that shadows a builtin never runs the builtin's binary when its own
-// capability binary is missing.
-func TestShadowCapabilityBinaryDoesNotFallBack(t *testing.T) {
+// TestShadowKraftBinaryDoesNotFallBack verifies a user plugin that
+// shadows a builtin never runs the builtin's binary when its own kraft
+// binary is missing.
+func TestShadowKraftBinaryDoesNotFallBack(t *testing.T) {
 	dir := builtinDir(t)
 	writeBuiltinPlugin(t, dir, "demo", map[string]any{
 		"id": "demo", "name": "Demo", "version": "0.1.0",
 		"entry": "dist/index.js", "permissions": []string{},
-		"capability": map[string]any{
+		"kraft": map[string]any{
 			"binary": "bin/demo-helper", "protocol": 1,
 		},
 		"contributes": map[string]any{},
 	}, "bundle", "bin/demo-helper")
 
 	root := t.TempDir()
-	// A user copy with the same id declares a capability binary but
+	// A user copy with the same id declares a kraft binary but
 	// ships no file (e.g. a hand-edited install).
 	writePlugin(t, root, "demo", map[string]any{
 		"id": "demo", "name": "Demo", "version": "0.2.0",
 		"entry": "dist/index.js", "permissions": []string{},
-		"capability": map[string]any{
+		"kraft": map[string]any{
 			"binary": "bin/demo-helper", "protocol": 1,
 		},
 		"contributes": map[string]any{},
 	}, "bundle")
 
 	s := NewStore(root)
-	cap, ok, err := s.Capability("demo")
+	decl, ok, err := s.Kraft("demo")
 	if err != nil || !ok {
-		t.Fatalf("Capability = %v, %v", ok, err)
+		t.Fatalf("Kraft = %v, %v", ok, err)
 	}
-	loader := runtime.DefaultLoader{
-		Root:           root,
-		CapabilityFunc: s.Capability,
-		DirFunc:        s.Dir,
+	loader := kraft.DefaultLoader{
+		Root:      root,
+		KraftFunc: s.Kraft,
+		DirFunc:   s.Dir,
 	}
-	if _, err := loader.BinaryPath("demo", cap); err == nil ||
+	if _, err := loader.BinaryPath("demo", decl); err == nil ||
 		!strings.Contains(err.Error(), "missing from user plugin") {
 		t.Fatalf("shadow must not fall back to builtin binary, got %v", err)
 	}

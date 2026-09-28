@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The plugin manifest's subprocess section is called `kraft` now, not
+  `capability`: `plugin.json` declares `"kraft": { "binary": … }`, the
+  hosts package is `capabilities/plugins/kraft` (with `kraft.Kraft` /
+  `kraft.Manager`), the store exposes `Store.Kraft`, the desktop DTO
+  field is `kraft`, and the docs, the plugin-creator skill and
+  `plugins/hello` follow. The name is the machine half of a plugin —
+  the other half is the user-facing bundle — and it stops overloading
+  "capability", which in this repo already names host permissions and
+  agent-facing features. Manifests written by older builds keep
+  loading: the host still reads the old `capability` key, and a
+  manifest declaring both spellings is rejected.
 - The desktop and plugin wire calls the conversation id `conversation_id`
   everywhere: in `NewChat`'s result, in the session-delete and bundle-import
   DTOs, and in the plugin `session.import` result, which mirrors the desktop

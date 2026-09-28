@@ -255,7 +255,7 @@ func resolveProcessPath(c *core.Core) {
 
 // initTelemetry wires the OTel pipelines (rotating log file under
 // ~/.opencraft/logs plus optional OTLP export) and returns their owner.
-// The pipeline keeps the file sink active when a capability plugin
+// The pipeline keeps the file sink active when a kraft
 // swaps the export target at runtime.
 func initTelemetry(dataDir string) (*octelemetry.Pipeline, error) {
 	logPath := filepath.Join(dataDir, "logs", "opencraft.log")

@@ -13,7 +13,7 @@ var AllowedSecretScopes = map[string]bool{
 	"auth":      true,
 	// websearch holds the user's own search-provider keys, written by
 	// the settings page. Plugin capabilities cannot reach this scope:
-	// see the plugin-facing list in plugins/runtime.
+	// see the plugin-facing list in plugins/kraft.
 	"websearch": true,
 }
 

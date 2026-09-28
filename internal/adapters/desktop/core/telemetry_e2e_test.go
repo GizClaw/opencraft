@@ -13,13 +13,13 @@ import (
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 )
 
-// TestPluginTelemetryE2E drives the whole path a real capability plugin
+// TestPluginTelemetryE2E drives the whole path a real plugin kraft
 // takes: subprocess handshake → telemetry.configure primitive over
 // JSON-RPC → host permission check → pipeline swap → audit trail.
 func TestPluginTelemetryE2E(t *testing.T) {
 	if testing.Short() {
 		// This test compiles, copies and repeatedly spawns a
-		// capability-plugin fixture binary; `go test -short ./...` skips
+		// kraft fixture binary; `go test -short ./...` skips
 		// the subprocess plumbing and keeps the fast local loop fast.
 		t.Skip("skipping plugin subprocess end-to-end test in short mode")
 	}
@@ -133,7 +133,7 @@ func probeTelemetry(t *testing.T, c *Core, params map[string]any) map[string]any
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	// Starting a freshly written binary can exceed the handshake window
-	raw, err := c.Plugin.Capability.Invoke(ctx, "plug", "telemetry.probe", params)
+	raw, err := c.Plugin.Kraft.Invoke(ctx, "plug", "telemetry.probe", params)
 	if err != nil {
 		t.Fatalf("invoke telemetry.probe: %v", err)
 	}
@@ -180,7 +180,7 @@ func newTelemetryPluginCore(
 		"version": "0.1.0",
 		"entry": "dist/index.js",
 		"permissions": ` + string(perms) + `,
-		"capability": {"binary": "helper", "protocol": 1}
+		"kraft": {"binary": "helper", "protocol": 1}
 	}`
 	if err := os.WriteFile(
 		filepath.Join(pluginDir, "plugin.json"), []byte(manifest), 0o600,
@@ -200,7 +200,7 @@ func newTelemetryPluginCore(
 	// `go test ./...` oversubscribes the machine, and the default 5s
 	// handshake window turns that scheduling noise into a plugin
 	// failure. The fixtures are healthy; give them room.
-	c.Plugin.Capability.SetTimeouts(30*time.Second, 60*time.Second)
+	c.Plugin.Kraft.SetTimeouts(30*time.Second, 60*time.Second)
 	t.Cleanup(c.Plugin.Close)
 	return c, dataDir
 }
@@ -216,7 +216,7 @@ func copyExecutable(t *testing.T, src, dst string) {
 	}
 }
 
-// buildTelemetryPlugin compiles the capability-plugin fixture once per
+// buildTelemetryPlugin compiles the kraft fixture once per
 // test binary run.
 func buildTelemetryPlugin(t *testing.T) string {
 	t.Helper()

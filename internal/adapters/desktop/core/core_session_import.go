@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
@@ -19,29 +19,29 @@ import (
 // memory, so the host still needs an upper bound.
 const maxSessionImportBundleBytes = 128 << 20 // 128 MiB
 
-// wirePluginSessionImport routes the capability-plugin session.import
+// wirePluginSessionImport routes a plugin kraft's session.import
 // primitive into the shared Host. It is the desktop replacement for
 // the old App.handleSessionImport wiring and is permission-gated: a
-// capability plugin must declare sessions:import in its manifest.
+// kraft must declare sessions:import in its manifest.
 func (c *Core) wirePluginSessionImport() {
-	if c.Plugin == nil || c.Plugin.Capability == nil {
+	if c.Plugin == nil || c.Plugin.Kraft == nil {
 		return
 	}
-	c.Plugin.Capability.SetSessionImportHandler(pluginruntime.SessionImportHandler{
+	c.Plugin.Kraft.SetSessionImportHandler(kraft.SessionImportHandler{
 		Import:          c.handlePluginSessionImport,
 		ImportedSources: c.handlePluginSessionImportedSources,
 	})
 }
 
 // wirePluginWorkspace answers the workspace.current primitive with the
-// active workspace path. Capability subprocesses are long-lived and do
+// active workspace path. Kraft processes are long-lived and do
 // not observe environment-variable changes across workspace switches,
 // so the answer is read dynamically on every call.
 func (c *Core) wirePluginWorkspace() {
-	if c.Plugin == nil || c.Plugin.Capability == nil {
+	if c.Plugin == nil || c.Plugin.Kraft == nil {
 		return
 	}
-	c.Plugin.Capability.SetWorkspaceHandler(pluginruntime.WorkspaceHandler{
+	c.Plugin.Kraft.SetWorkspaceHandler(kraft.WorkspaceHandler{
 		Current: func() (string, error) {
 			return c.ActiveWorkDir(), nil
 		},
@@ -54,26 +54,26 @@ func (c *Core) wirePluginWorkspace() {
 // seeded by the shared Host so the imported session can be continued.
 func (c *Core) handlePluginSessionImport(
 	pluginID string,
-	req pluginruntime.SessionImportRequest,
-) (pluginruntime.SessionImportResult, error) {
+	req kraft.SessionImportRequest,
+) (kraft.SessionImportResult, error) {
 	if !c.pluginHasPermission(pluginID, "sessions:import") {
-		return pluginruntime.SessionImportResult{}, fmt.Errorf(
+		return kraft.SessionImportResult{}, fmt.Errorf(
 			"session.import: plugin %q lacks sessions:import permission",
 			pluginID)
 	}
 	ctx := c.Shell.Context()
 	workDir, err := c.pluginImportWorkDir(req.Workspace)
 	if err != nil {
-		return pluginruntime.SessionImportResult{}, err
+		return kraft.SessionImportResult{}, err
 	}
 	h, err := c.hostForPluginImport(ctx, workDir)
 	if err != nil {
-		return pluginruntime.SessionImportResult{}, err
+		return kraft.SessionImportResult{}, err
 	}
 
 	bundle, err := readSessionImportBundle(req.BundlePath)
 	if err != nil {
-		return pluginruntime.SessionImportResult{}, err
+		return kraft.SessionImportResult{}, err
 	}
 	if strings.TrimSpace(req.Source) != "" {
 		bundle.Source = strings.TrimSpace(req.Source)
@@ -85,12 +85,12 @@ func (c *Core) handlePluginSessionImport(
 
 	id, err := h.ImportSession(ctx, bundle)
 	if err != nil {
-		return pluginruntime.SessionImportResult{}, err
+		return kraft.SessionImportResult{}, err
 	}
 	if h == c.ActiveHost() {
 		c.Shell.Emit(EventSessionUpdated, map[string]string{"id": id})
 	}
-	return pluginruntime.SessionImportResult{
+	return kraft.SessionImportResult{
 		ConversationID: id,
 		Messages:       messages,
 		Turns:          turns,
@@ -104,7 +104,7 @@ func (c *Core) handlePluginSessionImport(
 // correct across rescans, restarts and session deletions.
 func (c *Core) handlePluginSessionImportedSources(
 	pluginID string,
-	req pluginruntime.SessionImportStatusRequest,
+	req kraft.SessionImportStatusRequest,
 ) (map[string]string, error) {
 	if !c.pluginHasPermission(pluginID, "sessions:import") {
 		return nil, fmt.Errorf(
@@ -177,7 +177,7 @@ func (c *Core) hostForPluginImport(
 }
 
 // pluginHasPermission reports whether one installed plugin's manifest
-// declares perm. Capability primitives are otherwise unauthenticated,
+// declares perm. Kraft primitives are otherwise unauthenticated,
 // so the host write path checks the declaring permission itself.
 func (c *Core) pluginHasPermission(pluginID, perm string) bool {
 	if c.Plugin == nil || c.Plugin.Store == nil ||

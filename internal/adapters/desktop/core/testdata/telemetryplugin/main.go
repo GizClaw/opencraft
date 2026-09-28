@@ -1,4 +1,4 @@
-// Command telemetryplugin is a capability-plugin fixture for the
+// Command telemetryplugin is a kraft fixture for the
 // desktop tests. It speaks the subprocess protocol, and on a
 // "telemetry.probe" call it asks the host to install an OTLP export
 // sink, then reports what the host answered.

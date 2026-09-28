@@ -251,7 +251,7 @@ func (installTool) Definition() message.ToolDefinition {
 			"reloads the runtime so its skills, tools, MCP servers and "+
 			"hooks go live from the next turn on. The plugin is enabled "+
 			"on install. The user reviews the manifest (id, version, "+
-			"permissions, entry, capability binary) and confirms before "+
+			"permissions, entry, kraft binary) and confirms before "+
 			"anything is copied; a denied install changes nothing. "+
 			"Returns JSON.",
 		message.ToolProperty("path", "string",
@@ -409,10 +409,10 @@ func installPrompt(
 	if sum.Entry != "" {
 		fmt.Fprintf(&b, "Entry bundle: %s\n", sum.Entry)
 	}
-	if sum.Capability != "" {
+	if sum.Kraft != "" {
 		fmt.Fprintf(&b,
-			"Capability binary: %s (a native process the app runs)\n",
-			sum.Capability)
+			"Kraft binary: %s (a native process the app runs)\n",
+			sum.Kraft)
 	}
 	if len(sum.Permissions) > 0 {
 		fmt.Fprintf(&b, "Permissions: %s\n",
@@ -484,7 +484,7 @@ type pluginRow struct {
 	ShadowsBuiltin bool     `json:"shadows_builtin,omitempty"`
 	Permissions    []string `json:"permissions,omitempty"`
 	Entry          string   `json:"entry,omitempty"`
-	Capability     string   `json:"capability,omitempty"`
+	Kraft          string   `json:"kraft,omitempty"`
 	HasSkills      bool     `json:"has_skills,omitempty"`
 	HasTools       bool     `json:"has_tools,omitempty"`
 	HasMCP         bool     `json:"has_mcp,omitempty"`
@@ -503,7 +503,7 @@ func rowFromSummary(sum plugins.PluginSummary) pluginRow {
 		ShadowsBuiltin: sum.ShadowsBuiltin,
 		Permissions:    sum.Permissions,
 		Entry:          sum.Entry,
-		Capability:     sum.Capability,
+		Kraft:          sum.Kraft,
 		HasSkills:      sum.HasSkills,
 		HasTools:       sum.HasTools,
 		HasMCP:         sum.HasMCP,

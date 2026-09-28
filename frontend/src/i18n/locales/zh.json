@@ -222,7 +222,7 @@
     "diagTelemetryActive": "当前导出到 {{endpoint}}（由 {{owner}} 配置）",
     "diagTelemetryApp": "应用配置",
     "diagTelemetryHeaders": "请求头：{{names}}",
-    "diagTelemetryHint": "应用把日志、追踪和指标发到哪里。声明 telemetry:export 的能力插件可以把这个出口指到它自己的 collector；凭据只存在宿主内存里，下方的本地日志文件始终保留。",
+    "diagTelemetryHint": "应用把日志、追踪和指标发到哪里。声明 telemetry:export 的插件可以把这个出口指到它自己的 collector；凭据只存在宿主内存里，下方的本地日志文件始终保留。",
     "diagTelemetryInsecure": "明文连接",
     "diagTelemetryOff": "禁止",
     "diagTelemetryOn": "允许",

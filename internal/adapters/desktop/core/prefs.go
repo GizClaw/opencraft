@@ -119,8 +119,8 @@ type PetPrefs struct {
 // TelemetryPrefs is the desktop telemetry section of the preference
 // document.
 type TelemetryPrefs struct {
-	// PluginExport allows capability plugins that declare
-	// telemetry:export to install their own OTLP export sink. On by
+	// PluginExport allows a plugin kraft that declares
+	// telemetry:export to install its own OTLP export sink. On by
 	// default, because installing such a plugin is already an explicit
 	// user decision; turning it off makes the host refuse every
 	// telemetry.configure call instead of trusting the manifest.

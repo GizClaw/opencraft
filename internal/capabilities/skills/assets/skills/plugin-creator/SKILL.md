@@ -1,6 +1,6 @@
 ---
 name: plugin-creator
-description: Build an OpenCraft plugin (plugin.json manifest plus a UI bundle, skills, MCP servers, hooks, or a capability subprocess) inside the workspace and install it into the running app with plugin_install; use when the user asks to extend OpenCraft itself with a panel, command, tool, skill, hook, or provider.
+description: Build an OpenCraft plugin (plugin.json manifest plus a UI bundle, skills, MCP servers, hooks, or a kraft subprocess) inside the workspace and install it into the running app with plugin_install; use when the user asks to extend OpenCraft itself with a panel, command, tool, skill, hook, or provider.
 ---
 
 # OpenCraft Plugin Creator
@@ -103,17 +103,17 @@ Each group requires its manifest permission and is ignored without it:
   (prompts, tool input/results) are stripped first, because plugin
   hooks are an untrusted source.
 - `"tools": [{"name": "ping", "description": "…", "method": "ping", "inputSchema": {"type": "object"}}]`
-  (`tools:expose`) — requires `capability`; the agent sees each one as
-  `<plugin_id>__<name>`.
+  (`tools:expose`) — requires a `kraft` binary; the agent sees each
+  one as `<plugin_id>__<name>`.
 
 Bounds: at most 64 tools, 32 skills, 16 hooks, 16 MCP servers, 8 pets;
 tool descriptions up to 1024 characters, input schemas up to 32 KiB,
 manifest up to 1 MiB.
 
-## Capability subprocess
+## Kraft subprocess
 
 ```json
-"capability": { "binary": "bin/my-plugin", "protocol": 1, "hosts": ["api.example.com"] }
+"kraft": { "binary": "bin/my-plugin", "protocol": 1, "hosts": ["api.example.com"] }
 ```
 
 is a native program the host runs per plugin id and drives over
@@ -125,12 +125,12 @@ line-delimited JSON-RPC 2.0 on stdin/stdout. It must first send
 
 and then answer host→plugin method calls. It may call host primitives
 back, each gated by a manifest permission: `secret.get/set/delete`,
-`open.url` (only the hosts listed in `capability.hosts`),
+`open.url` (only the hosts listed in `kraft.hosts`),
 `inference.upsert/remove`, `session.import` /
 `session.imported_sources`, `workspace.current`,
 `telemetry.configure/disable` (`emit.event` is reserved and currently
 a no-op).
-The declared `capability.protocol` must equal the host's protocol
+The declared `kraft.protocol` must equal the host's protocol
 version (1), and the handshake re-checks it. Everything the child writes
 to stderr is forwarded to the app log — never log credentials. On macOS
 the host ad-hoc signs the binary during install, so ship an unsigned
@@ -141,7 +141,7 @@ build.
 1. Write the files in the workspace (`apply_patch`, `write_file`, or
    `exec_command` for a build).
 2. `plugin_install({ "path": ".opencraft-plugins/my-plugin" })` — the
-   user sees the id, version, permissions, entry bundle and capability
+   user sees the id, version, permissions, entry bundle and kraft
    binary, then confirms. The plugin is enabled on install, and the
    runtime reloads once the current turn ends, so its skills, tools,
    MCP servers and hooks are live from the next turn on.

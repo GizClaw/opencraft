@@ -64,9 +64,9 @@ export interface PluginSummary {
   hasUpdate?: boolean;
   /** A rollback snapshot of the previous version is available. */
   canRollback?: boolean;
-  /** Declared capability binary (plugin-relative path), when the plugin
+  /** Declared kraft binary (plugin-relative path), when the plugin
       ships one the host runs as a subprocess. */
-  capability?: string;
+  kraft?: string;
 }
 
 /** UI view of one agent-callable tool declared by a plugin manifest. */
@@ -205,7 +205,7 @@ declare module '@cordisjs/core' {
     /** Declarative pet packs; data only, see src/pet/pack. */
     pets: Registrar<PetPack>;
     /**
-     * Invokes a method on this plugin's capability subprocess (if the
+     * Invokes a method on this plugin's kraft subprocess (if the
      * manifest declares one). params and the result are JSON; the host
      * only routes by method name and never interprets the semantics.
      */

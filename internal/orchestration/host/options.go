@@ -11,7 +11,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
-	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	reviewstore "github.com/GizClaw/opencraft/internal/capabilities/review/store"
 	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
 	automationtool "github.com/GizClaw/opencraft/internal/capabilities/tools/automation"
@@ -48,16 +48,16 @@ func (m *Manager) SetEngineOptionsFunc(fn func() []engine.Option) {
 }
 
 // SetAgentPlugins wires the plugin registry into every runtime
-// assembly: skills, MCP servers, hooks and capability tools
+// assembly: skills, MCP servers, hooks and kraft tools
 // contributed by enabled plugins become runtime resources. Adapters
 // do not need to import orchestration/engine for this.
 func (m *Manager) SetAgentPlugins(
 	store *plugins.Store,
-	cap *pluginruntime.Manager,
+	kraft *kraft.Manager,
 ) {
 	m.mu.Lock()
 	m.pluginStore = store
-	m.pluginCap = cap
+	m.pluginKraft = kraft
 	m.mu.Unlock()
 	m.refreshEngineOptions()
 }
@@ -107,9 +107,9 @@ func (m *Manager) refreshEngineOptions() {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		var opts []engine.Option
-		if m.pluginCap != nil {
+		if m.pluginKraft != nil {
 			opts = append(opts, engine.WithAgentPlugins(
-				pluginagent.NewHost(context.Background(), m.pluginStore, m.pluginCap),
+				pluginagent.NewHost(context.Background(), m.pluginStore, m.pluginKraft),
 			))
 		}
 		if m.automationHost != nil {
