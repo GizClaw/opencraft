@@ -18,7 +18,8 @@ const hostMock = vi.hoisted(() => ({
 vi.mock('../lib/api', () => ({ api: apiMock }));
 vi.mock('./host', () => ({
   ...hostMock,
-  sortByOrder: (a: { order: number }, b: { order: number }) => a.order - b.order,
+  sortByOrder: (a: { order: number }, b: { order: number }) =>
+    a.order - b.order,
 }));
 
 function plugin(over: Partial<PluginSummary> & { id: string }): PluginSummary {
@@ -75,10 +76,16 @@ describe('usePluginStore.load', () => {
     expect(apiMock.pluginBundle).toHaveBeenCalledTimes(1);
     expect(apiMock.pluginBundle).toHaveBeenCalledWith('one');
     expect(hostMock.activatePlugin).toHaveBeenCalledTimes(1);
-    expect(hostMock.activatePlugin).toHaveBeenCalledWith('one', expect.any(String), []);
+    expect(hostMock.activatePlugin).toHaveBeenCalledWith(
+      'one',
+      expect.any(String),
+      [],
+    );
     // A registry entry that failed to load is reported instead of
     // activated silently.
-    expect(usePluginStore.getState().errors).toEqual({ three: 'manifest invalid' });
+    expect(usePluginStore.getState().errors).toEqual({
+      three: 'manifest invalid',
+    });
     expect(usePluginStore.getState().plugins.map((p) => p.id)).toEqual([
       'one',
       'two',
@@ -134,12 +141,21 @@ describe('usePluginStore.load', () => {
 
     await usePluginStore.getState().load();
 
-    expect(usePluginStore.getState().panels.map((p) => p.id)).toEqual(['a', 'b']);
-    expect(usePluginStore.getState().commands.map((c) => c.id)).toEqual(['a', 'b']);
+    expect(usePluginStore.getState().panels.map((p) => p.id)).toEqual([
+      'a',
+      'b',
+    ]);
+    expect(usePluginStore.getState().commands.map((c) => c.id)).toEqual([
+      'a',
+      'b',
+    ]);
   });
 
   it('records a bundle that fails to load and keeps the others', async () => {
-    apiMock.pluginList.mockResolvedValue([plugin({ id: 'one' }), plugin({ id: 'two' })]);
+    apiMock.pluginList.mockResolvedValue([
+      plugin({ id: 'one' }),
+      plugin({ id: 'two' }),
+    ]);
     apiMock.pluginBundle.mockImplementation((id: string) =>
       id === 'one'
         ? Promise.reject(new Error('bundle missing'))
@@ -152,7 +168,11 @@ describe('usePluginStore.load', () => {
       one: expect.stringContaining('bundle missing'),
     });
     expect(hostMock.activatePlugin).toHaveBeenCalledTimes(1);
-    expect(hostMock.activatePlugin).toHaveBeenCalledWith('two', expect.any(String), []);
+    expect(hostMock.activatePlugin).toHaveBeenCalledWith(
+      'two',
+      expect.any(String),
+      [],
+    );
   });
 });
 
