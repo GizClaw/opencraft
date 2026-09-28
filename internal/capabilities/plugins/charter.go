@@ -10,6 +10,13 @@ package plugins
 //  4. What authorizes it?          Grant
 //  5. When does it live and die?   Activation, Teardown
 //
+// Those five answer what a contribution is. The register clock
+// (FaceRefreshes) answers the sixth question the columns cannot answer
+// on their own: when an answer has to be re-read. Every successful
+// registry mutation moves Store's revision; each consumer face watches
+// it, and the activation cells describe what the next read therefore
+// sees.
+//
 // The dividing line the tables draw is by consumer, not by taste. The
 // machine half — what the agent runtime and (one day) the app platform
 // consume — is declared in the manifest, because those consumers must
@@ -158,6 +165,50 @@ const (
 	// SurfaceKraft is a JSON-RPC primitive on the plugin's subprocess.
 	SurfaceKraft CharterSurface = "kraft"
 )
+
+// FaceRefresh is one row of the register clock: what one consumer face
+// does when it sees the registry revision behind the one it last read
+// from. The five questions answer what a contribution is; the clock
+// answers when the answer has to be re-read.
+type FaceRefresh struct {
+	// Face names the consumer — the ContributionKind consumers, plus
+	// the plugin subprocess, whose lifecycle the mutation itself ends.
+	Face string
+	// What is what the face re-reads, and by which mechanism.
+	What string
+}
+
+// FaceRefreshes is the clock table. Its honest limit: the revision is
+// per process, so it clocks the in-process consumers. A change made
+// outside Store (a directory dropped into the registry by hand) moves
+// nothing and is picked up by the next full rebuild, not by the clock.
+var FaceRefreshes = []FaceRefresh{
+	{
+		Face: string(ConsumerUI),
+		What: "reloads — the settings page re-runs its plugin load cycle " +
+			"after the mutation returns, and Core.RefreshPluginRuntime " +
+			"rebuilds the runtime once per revision, coalescing a burst " +
+			"into one rebuild",
+	},
+	{
+		Face: string(ConsumerAgent),
+		What: "re-scans — the agent host caches its plugin scan against " +
+			"the revision and re-reads it on the next call after it " +
+			"moves; sources that snapshot at assembly (skills, hooks, " +
+			"MCP) still pick a change up at the next assembly",
+	},
+	{
+		Face: "kraft",
+		What: "is killed — disable, update, rollback and uninstall stop " +
+			"the plugin's subprocess before anything re-reads the " +
+			"manifest it was started from",
+	},
+	{
+		Face: string(ConsumerPlatform),
+		What: "nothing yet — the face lands with the node row " +
+			"(platform.node) and watches the same revision",
+	},
+}
 
 // ContributionKinds is the contribution table. Adding a row is how the
 // framework grows a kind; charter_test.go refuses a kind the code does

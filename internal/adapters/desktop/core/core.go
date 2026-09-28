@@ -43,6 +43,12 @@ type Core struct {
 	// writes from a plugin kraft, so a plugin that re-submits an unchanged
 	// row set does not rebuild the runtime per row (see inference.go).
 	pluginWrites pluginInferenceWrite
+	// pluginRefreshMu and pluginRefreshRev gate RefreshPluginRuntime
+	// (see plugin_refresh.go): the plugin registry revision the pooled
+	// runtimes were last rebuilt at, and the lock that serializes the
+	// catch-up rebuilds so a burst moves the runtime once.
+	pluginRefreshMu  sync.Mutex
+	pluginRefreshRev uint64
 	// readyWorkDir is the workspace the last ready event named. The
 	// frontend switches its workspace on that event alone, so this —
 	// not WorkDir — is what the window is rendering: a switch updates

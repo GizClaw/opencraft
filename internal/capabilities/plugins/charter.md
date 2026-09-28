@@ -118,6 +118,19 @@ carry the note that says what has to change for them to leave.
   - status: reserved
   - note: accepted and discarded: the host event bus has no plugin-facing wiring. The row exists so the dispatch's case is claimed; wire it or delete it.
 
+## The register clock
+
+Every successful registry mutation moves the store's revision (`plugins.Store.Revision`).
+The contributions above say when a contribution comes alive; this is what each face
+does when it sees the revision behind the one it last read from.
+
+| face       | what it does when the revision moves                                                                                                                                                                                      |
+|------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ui`       | reloads — the settings page re-runs its plugin load cycle after the mutation returns, and Core.RefreshPluginRuntime rebuilds the runtime once per revision, coalescing a burst into one rebuild                           |
+| `agent`    | re-scans — the agent host caches its plugin scan against the revision and re-reads it on the next call after it moves; sources that snapshot at assembly (skills, hooks, MCP) still pick a change up at the next assembly |
+| `kraft`    | is killed — disable, update, rollback and uninstall stop the plugin's subprocess before anything re-reads the manifest it was started from                                                                                |
+| `platform` | nothing yet — the face lands with the node row (platform.node) and watches the same revision                                                                                                                              |
+
 ## Grants
 
 Every permission in `plugins.AllowedPermissions` is spent by a row above.

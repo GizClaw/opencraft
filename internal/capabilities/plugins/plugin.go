@@ -177,11 +177,27 @@ type Store struct {
 	builtin     string
 	hostVersion string
 	mu          sync.Mutex
+	// rev is the registry revision: it moves once per successful
+	// mutation (enable/disable, install, update, rollback, uninstall)
+	// and is the clock every consumer face watches — the agent host
+	// re-scans when it is behind, and the desktop rebuilds once per
+	// revision. See charter.go's FaceRefreshes.
+	rev uint64
 }
 
 // NewStore returns a registry rooted at root.
 func NewStore(root string) *Store {
 	return &Store{root: root, builtin: kraft.BuiltinPluginRoot()}
+}
+
+// Revision returns the registry revision. Reads never move it; every
+// successful mutation does. Faces cache what they derived from the
+// registry against it and refresh when they see it behind (see
+// charter.go's FaceRefreshes).
+func (s *Store) Revision() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rev
 }
 
 // SetHostVersion records the running host version for minHostVersion
@@ -346,7 +362,8 @@ func (s *Store) Kraft(id string) (kraft.Kraft, bool, error) {
 }
 
 // SetEnabled toggles a plugin's enabled state. The plugin must be
-// installed with a valid manifest.
+// installed with a valid manifest. A call that changes nothing does not
+// move the registry revision, so it cannot trigger a refresh.
 func (s *Store) SetEnabled(id string, enabled bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -357,8 +374,21 @@ func (s *Store) SetEnabled(id string, enabled bool) error {
 	if err != nil {
 		return err
 	}
+	// No state entry means enabled, so an explicit enable of a plugin
+	// that was never disabled is the same no-op as a repeat call.
+	cur := true
+	if v, ok := state[id]; ok {
+		cur = v
+	}
+	if cur == enabled {
+		return nil
+	}
 	state[id] = enabled
-	return s.writeState(state)
+	if err := s.writeState(state); err != nil {
+		return err
+	}
+	s.rev++
+	return nil
 }
 
 // Install copies a plugin folder (containing plugin.json) into the
@@ -426,6 +456,7 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 			"plugins: remove invalid install failed", os.RemoveAll(dst))
 		return PluginSummary{}, err
 	}
+	s.rev++
 	return s.withBuiltinInfo(summaryFromManifest(m, dst, false)), nil
 }
 
@@ -645,6 +676,10 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 		return PluginSummary{}, fmt.Errorf(
 			"plugins: replace %q: %w (restore: %v)", id, err, restoreErr)
 	}
+	// The new version is live from here on, even if the snapshot
+	// bookkeeping below fails: the revision is about the registry, not
+	// about the backup layout.
+	s.rev++
 	old := backup + ".old"
 	telemetry.WarnErr(context.Background(),
 		"plugins: clear previous rollback snapshot failed",
@@ -743,6 +778,9 @@ func (s *Store) Rollback(id string) (PluginSummary, error) {
 		return PluginSummary{}, fmt.Errorf(
 			"plugins: restore %q: %w (restore current: %v)", id, err, restoreErr)
 	}
+	// Same as Update: the rolled-back version is live before the
+	// discard step below can fail.
+	s.rev++
 	telemetry.WarnErr(context.Background(),
 		"plugins: remove discard snapshot failed", os.RemoveAll(pending))
 	sum := summaryFromManifest(m, dir, false)
@@ -1052,6 +1090,8 @@ func (s *Store) Uninstall(id string) error {
 	telemetry.WarnErr(context.Background(),
 		"plugins: remove plugin backups failed",
 		os.RemoveAll(filepath.Join(s.root, ".backups", id)))
+	// The registry changed even if the state write below fails.
+	s.rev++
 	state, err := s.readState()
 	if err != nil {
 		return err

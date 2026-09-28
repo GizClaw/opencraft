@@ -106,11 +106,12 @@ func TestHostDefaultSkillRoot(t *testing.T) {
 	}
 }
 
-// TestHostEntriesCacheFrozenUntilNewHost pins the M4 decision: a Host
-// caches its plugin scan on first use, so a plugin installed after the
-// runtime was assembled is invisible to the running runtime. Plugin
-// changes must therefore go through a full rebuild, which constructs a
-// fresh Host (SetAgentPlugins → engine.WithAgentPlugins).
+// TestHostEntriesCacheFrozenUntilNewHost pins the disk half of the
+// cache contract: the scan is keyed by the registry revision, and a
+// plugin that merely appears on disk (outside the Store API) moves
+// nothing — it stays invisible to a live Host, and only the rebuild
+// that constructs a fresh Host (SetAgentPlugins →
+// engine.WithAgentPlugins) picks it up.
 func TestHostEntriesCacheFrozenUntilNewHost(t *testing.T) {
 	root := t.TempDir()
 	store := plugins.NewStore(root)
@@ -143,6 +144,50 @@ func TestHostEntriesCacheFrozenUntilNewHost(t *testing.T) {
 	roots := fresh.SkillRoots()
 	if len(roots) != 1 || filepath.Clean(roots[0]) != filepath.Clean(skillDir) {
 		t.Fatalf("fresh Host SkillRoots = %v, want the late plugin skills dir", roots)
+	}
+}
+
+// TestHostRescansWhenRegistryRevisionMoves pins the other half: a
+// registry mutation moves Store's revision, and an already-live Host
+// re-scans on its next read instead of waiting for a new assembly. That
+// is what makes a change made mid-turn visible to the rest of the turn
+// (the agent's own plugin_install defers the runtime reload to the end
+// of the calling turn, and this Host keeps serving it).
+func TestHostRescansWhenRegistryRevisionMoves(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "rev", map[string]any{
+		"id": "rev", "name": "Rev", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{"skills:provide"},
+	})
+	skillDir := filepath.Join(root, "rev", "skills")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(skillDir, "SKILL.md"), []byte("x"), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	store := plugins.NewStore(root)
+	host := NewHost(context.Background(), store, nil)
+	if roots := host.SkillRoots(); len(roots) != 1 {
+		t.Fatalf("SkillRoots before disable = %v, want the plugin root", roots)
+	}
+
+	if err := store.SetEnabled("rev", false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if roots := host.SkillRoots(); len(roots) != 0 {
+		t.Fatalf("SkillRoots after disable = %v, want empty (same Host)", roots)
+	}
+
+	if err := store.SetEnabled("rev", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	roots := host.SkillRoots()
+	if len(roots) != 1 || filepath.Clean(roots[0]) != filepath.Clean(skillDir) {
+		t.Fatalf("SkillRoots after re-enable = %v, want %s", roots, skillDir)
 	}
 }
 

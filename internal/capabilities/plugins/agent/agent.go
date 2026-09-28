@@ -51,9 +51,25 @@ type pluginEntry struct {
 	m   *plugins.Manifest
 }
 
-// entries returns every enabled, validly installed plugin.
+// entries returns every enabled, validly installed plugin, re-scanning
+// whenever the registry revision moved since the last scan. An
+// unchanged revision keeps the cached scan, so the common path stays
+// one map lookup while a mid-flight registry change (for example an
+// agent-authored install whose runtime reload is deferred to the end
+// of the turn) reaches the next read.
 func (h *Host) entries() []pluginEntry {
-	h.once.Do(func() { h.cached = h.scanEntries() })
+	if h.store == nil {
+		return nil
+	}
+	rev := h.store.Revision()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.cachedSet && h.cachedRev == rev {
+		return h.cached
+	}
+	h.cached = h.scanEntries()
+	h.cachedRev = rev
+	h.cachedSet = true
 	return h.cached
 }
 

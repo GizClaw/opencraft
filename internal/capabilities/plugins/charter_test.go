@@ -112,6 +112,40 @@ func TestCharterRowsAreWellFormed(t *testing.T) {
 		}
 	}
 
+	// The register clock: every consumer face says what it does when
+	// the registry revision moves, and every consumer a contribution
+	// row uses has such a row — a new consumer cannot land without a
+	// refresh rule, and the activation cells stay enforceable.
+	clockFaces := map[string]bool{
+		string(ConsumerUI): true, string(ConsumerAgent): true,
+		"kraft": true, string(ConsumerPlatform): true,
+	}
+	clock := map[string]bool{}
+	for _, f := range FaceRefreshes {
+		switch {
+		case f.Face == "":
+			t.Error("a clock row has no face")
+			continue
+		case !clockFaces[f.Face]:
+			t.Errorf("clock row %q: unknown face", f.Face)
+		case clock[f.Face]:
+			t.Errorf("clock row %q is listed twice", f.Face)
+		case len(f.What) < 40:
+			t.Errorf("clock row %q: what happens is too short to judge",
+				f.Face)
+		}
+		clock[f.Face] = true
+	}
+	consumersUsed := map[CharterConsumer]bool{}
+	for _, k := range ContributionKinds {
+		consumersUsed[k.Consumer] = true
+	}
+	for c := range consumersUsed {
+		if !clock[string(c)] {
+			t.Errorf("consumer %q has no clock row in FaceRefreshes", c)
+		}
+	}
+
 	for _, in := range HostInterfaces {
 		switch {
 		case in.ID == "":
@@ -743,6 +777,20 @@ func renderCharter() string {
 			fmt.Fprintf(&b, "  - note: %s\n", in.Note)
 		}
 	}
+	b.WriteString("\n")
+
+	b.WriteString("## The register clock\n\n")
+	b.WriteString("Every successful registry mutation moves the store's revision " +
+		"(`plugins.Store.Revision`).\nThe contributions above say when a " +
+		"contribution comes alive; this is what each face\ndoes when it sees " +
+		"the revision behind the one it last read from.\n\n")
+	clockRows := make([][]string, 0, len(FaceRefreshes))
+	for _, f := range FaceRefreshes {
+		clockRows = append(clockRows, []string{"`" + f.Face + "`", f.What})
+	}
+	b.WriteString(mdTable([]string{
+		"face", "what it does when the revision moves",
+	}, clockRows))
 	b.WriteString("\n")
 
 	b.WriteString("## Grants\n\n")

@@ -17,11 +17,18 @@ const ResourceKind = "opencraft.plugins"
 // capabilities. A nil store yields an empty host (CLI / tests without
 // a desktop plugin root).
 type Host struct {
-	ctx    context.Context
-	store  *plugins.Store
-	kraft  *kraft.Manager
-	once   sync.Once
-	cached []pluginEntry
+	ctx   context.Context
+	store *plugins.Store
+	kraft *kraft.Manager
+	// The plugin scan is cached against the registry revision rather
+	// than filled once: a mutation that lands while this Host is alive
+	// (an agent-authored install whose runtime reload is deferred to
+	// the end of the calling turn) has to be visible to the next read,
+	// not only to the next assembly.
+	mu        sync.Mutex
+	cachedRev uint64
+	cachedSet bool
+	cached    []pluginEntry
 }
 
 // NewHost wraps an installed plugin store and its kraft runtime.

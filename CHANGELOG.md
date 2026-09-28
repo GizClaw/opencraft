@@ -24,9 +24,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gate nothing checked, and the manifest `contributes.*` segments that
   were parsed and displayed by nothing — and both were settled in this
   same release, below.
+- The plugin registry has a clock. `plugins.Store` moves a revision on
+  every successful mutation — enable/disable, install, update,
+  rollback, uninstall — and the charter's new clock table
+  (`FaceRefreshes`) writes down what each consumer does when it sees
+  the revision behind the one it last read from: the settings page
+  reloads and the desktop rebuilds the runtime once per revision,
+  coalescing a burst into one rebuild; the agent host re-scans on its
+  next read instead of waiting for a new assembly, so a change made
+  mid-turn — the agent's own install, whose runtime swap waits for the
+  drain — reaches the turn that made it; the mutation paths stop a
+  plugin's kraft before anything re-reads the manifest it was started
+  from; the platform face lands with the node row.
+  `charter_test.go` refuses a consumer without a clock row.
 
 ### Changed
 
+- Plugin registry mutations rebuild the runtime once per revision, not
+  once per call: `Core.RefreshPluginRuntime` measures the runtime
+  against the registry's revision, serializes the rebuilds, and folds
+  everything that landed while one ran into a single trailing rebuild
+  — the agent-authored install and the settings page now share that
+  path instead of stacking two. A mutation that changes nothing (say,
+  enabling an already-enabled plugin) no longer moves the revision, so
+  it cannot rebuild anything.
 - The plugin permission vocabulary has one shape now: a contribution
   grant is spelled `kind:provide`, so `tools:expose`,
   `skills:contribute`, `mcp:contribute` and `hooks:register` became
