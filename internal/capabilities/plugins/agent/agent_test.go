@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 )
 
 func writePlugin(t *testing.T, root, id string, m map[string]any) {
@@ -289,4 +292,178 @@ func TestResolveInside(t *testing.T) {
 				tc.rel, got, ok, tc.want)
 		}
 	}
+}
+
+// writeToolPlugin installs one plugin that exposes one kraft tool. The
+// declared binary is a stub that exits immediately: these tests are
+// about the gate, which sits in front of the kraft runtime.
+func writeToolPlugin(t *testing.T, root, id string) {
+	t.Helper()
+	writePlugin(t, root, id, map[string]any{
+		"id": id, "name": id, "version": "0.1.0",
+		"entry":       "dist/index.js",
+		"kraft":       map[string]any{"binary": "bin/srv", "protocol": 1},
+		"permissions": []string{"tools:provide"},
+		"tools": []any{map[string]any{
+			"name": "ping", "description": "Ping", "method": "ping",
+			"inputSchema": map[string]any{"type": "object"},
+		}},
+	})
+	if err := os.MkdirAll(filepath.Join(root, id, "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, id, "bin", "srv"), []byte("#!/bin/sh\nexit 1\n"), 0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// gateErr reports whether err is the gate refusing a method, as opposed
+// to the kraft runtime failing once the gate let the call through.
+func gateErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "does not expose tool method")
+}
+
+// TestHostInvokeGateFollowsTheLiveRegistry executes the gate both ways.
+// Nothing did before: the only direct Invoke caller built a host with a
+// nil kraft and returned at the nil check, so reverting the plugin scan
+// to a sync.Once, or deleting the gate loop, left the suite green. The
+// gate is the one part of the agent face that follows the registry
+// immediately — a method a stopped or disabled plugin declares must stop
+// being callable before the turn ends.
+func TestHostInvokeGateFollowsTheLiveRegistry(t *testing.T) {
+	root := t.TempDir()
+	writeToolPlugin(t, root, "cap")
+	store := plugins.NewStore(root)
+	mgr := kraft.NewManager(root, kraft.DefaultLoader{
+		Root:            root,
+		KraftFunc:       store.Kraft,
+		DirFunc:         store.Dir,
+		PermissionsFunc: store.Permissions,
+	}, nil)
+	defer mgr.Shutdown()
+	host := NewHost(t.Context(), store, mgr)
+	ctx := t.Context()
+
+	// A declared method gets past the gate and into the kraft runtime,
+	// whose stub binary cannot serve it.
+	if _, err := host.Invoke(ctx, "cap", "ping", json.RawMessage(`{}`)); gateErr(err) {
+		t.Fatalf("declared method was refused by the gate: %v", err)
+	}
+	// An undeclared method never reaches the runtime.
+	if _, err := host.Invoke(ctx, "cap", "nope", json.RawMessage(`{}`)); !gateErr(err) {
+		t.Fatalf("undeclared method error = %v, want the gate refusal", err)
+	}
+
+	// Disabling the plugin closes the gate without a new Host and
+	// without an assembly.
+	if err := store.SetEnabled("cap", false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, err := host.Invoke(ctx, "cap", "ping", json.RawMessage(`{}`)); !gateErr(err) {
+		t.Fatalf("gate after disable = %v, want the gate refusal", err)
+	}
+
+	// Re-enabling it reopens the gate.
+	if err := store.SetEnabled("cap", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if _, err := host.Invoke(ctx, "cap", "ping", json.RawMessage(`{}`)); gateErr(err) {
+		t.Fatalf("declared method after re-enable was refused: %v", err)
+	}
+
+	// An install that lands mid-turn is callable in the same turn: the
+	// runtime swap waits for the drain, the gate does not.
+	late := t.TempDir()
+	writeToolPlugin(t, late, "late")
+	if _, err := store.Install(filepath.Join(late, "late")); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if _, err := host.Invoke(ctx, "late", "ping", json.RawMessage(`{}`)); gateErr(err) {
+		t.Fatalf("freshly installed method was refused by the gate: %v", err)
+	}
+
+	// Uninstalling it closes the gate again.
+	if err := store.Uninstall("late"); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if _, err := host.Invoke(ctx, "late", "ping", json.RawMessage(`{}`)); !gateErr(err) {
+		t.Fatalf("gate after uninstall = %v, want the gate refusal", err)
+	}
+
+	// The gate keys on the method, not on the tool's name: a manifest
+	// may expose a tool called "ping" whose method is "system.ping", and
+	// only the method is callable. An index built from names would pass
+	// the second call and refuse the first.
+	aliased := t.TempDir()
+	writePlugin(t, aliased, "aliased", map[string]any{
+		"id": "aliased", "name": "aliased", "version": "0.1.0",
+		"entry":       "dist/index.js",
+		"kraft":       map[string]any{"binary": "bin/srv", "protocol": 1},
+		"permissions": []string{"tools:provide"},
+		"tools": []any{map[string]any{
+			"name": "ping", "description": "Ping", "method": "system.ping",
+			"inputSchema": map[string]any{"type": "object"},
+		}},
+	})
+	if err := os.MkdirAll(filepath.Join(aliased, "aliased", "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(aliased, "aliased", "bin", "srv"),
+		[]byte("#!/bin/sh\nexit 1\n"), 0o700,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Install(filepath.Join(aliased, "aliased")); err != nil {
+		t.Fatalf("install aliased: %v", err)
+	}
+	if _, err := host.Invoke(ctx, "aliased", "system.ping", json.RawMessage(`{}`)); gateErr(err) {
+		t.Fatalf("declared method was refused by the gate: %v", err)
+	}
+	if _, err := host.Invoke(ctx, "aliased", "ping", json.RawMessage(`{}`)); !gateErr(err) {
+		t.Fatalf("the tool name was callable as a method: %v", err)
+	}
+}
+
+// TestHostWatchFollowsRegistryMutations pins the push side of the clock
+// for the agent face: a subscriber wakes once per effective mutation and
+// stops when its cancel runs. A host without a registry stays
+// unconditional.
+func TestHostWatchFollowsRegistryMutations(t *testing.T) {
+	root := t.TempDir()
+	writeToolPlugin(t, root, "cap")
+	store := plugins.NewStore(root)
+	host := NewHost(t.Context(), store, nil)
+
+	var calls atomic.Int64
+	cancel := host.Watch(func() { calls.Add(1) })
+	if err := store.SetEnabled("cap", false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("watch calls after disable = %d, want 1", got)
+	}
+	if err := store.SetEnabled("cap", false); err != nil {
+		t.Fatalf("repeat disable: %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("watch calls after a no-op = %d, want 1", got)
+	}
+	cancel()
+	if err := store.SetEnabled("cap", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("watch calls after cancel = %d, want 1", got)
+	}
+
+	// NewEmpty has no registry; watching it must be a no-op, not a nil
+	// function the caller has to remember to check.
+	stop := NewEmpty().Watch(func() { t.Error("a host with no registry woke a watcher") })
+	if stop == nil {
+		t.Fatal("Watch must return a cancel even without a registry")
+	}
+	stop()
 }

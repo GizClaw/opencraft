@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
@@ -51,15 +50,39 @@ type pluginEntry struct {
 	m   *plugins.Manifest
 }
 
+// scan is one pass over the registry: the enabled plugins, plus the
+// tool methods they expose, indexed so the Invoke gate is a map lookup
+// rather than a rebuild of every tool definition. Both halves are cached
+// together against the registry revision (see entries), because they
+// come from the same manifests.
+type scan struct {
+	plugins []pluginEntry
+	methods map[string]map[string]bool
+}
+
+// Watch registers fn to run after every plugin registry mutation, and
+// returns a cancel that is safe to call more than once. It is the push
+// side of the registry clock (see the charter's FaceRefreshes): a
+// consumer that owns state it cannot rebuild on demand — the agent tool
+// source, publishing into a live registry — subscribes instead of
+// waiting for its next read. A host with no registry returns a no-op
+// cancel, so callers stay unconditional.
+func (h *Host) Watch(fn func()) (cancel func()) {
+	if h.store == nil {
+		return func() {}
+	}
+	return h.store.Subscribe(fn)
+}
+
 // entries returns every enabled, validly installed plugin, re-scanning
 // whenever the registry revision moved since the last scan. An
 // unchanged revision keeps the cached scan, so the common path stays
 // one map lookup while a mid-flight registry change (for example an
 // agent-authored install whose runtime reload is deferred to the end
 // of the turn) reaches the next read.
-func (h *Host) entries() []pluginEntry {
+func (h *Host) entries() scan {
 	if h.store == nil {
-		return nil
+		return scan{}
 	}
 	rev := h.store.Revision()
 	h.mu.Lock()
@@ -73,36 +96,34 @@ func (h *Host) entries() []pluginEntry {
 	return h.cached
 }
 
-func (h *Host) scanEntries() []pluginEntry {
+func (h *Host) scanEntries() scan {
 	if h.store == nil {
-		return nil
+		return scan{}
 	}
-	list, err := h.store.List()
+	// One scan: the store already parsed every manifest to build its
+	// summaries, so the entries hand over the directory and the manifest
+	// with them instead of this scan reading plugin.json again.
+	entries, err := h.store.Entries()
 	if err != nil {
 		telemetry.WarnErr(h.ctx,
 			"plugin agent: list plugins failed", err)
-		return nil
+		return scan{}
 	}
-	var out []pluginEntry
-	for _, p := range list {
-		if !p.Enabled || p.Error != "" {
+	out := scan{methods: map[string]map[string]bool{}}
+	for _, e := range entries {
+		if !e.Summary.Enabled || e.Summary.Error != "" || e.Manifest == nil {
 			continue
 		}
-		dir, _, err := h.store.Dir(p.ID)
-		if err != nil {
-			telemetry.WarnErr(h.ctx,
-				"plugin agent: resolve plugin dir failed", err,
-				otellog.String("plugin", p.ID))
-			continue
+		out.plugins = append(out.plugins, pluginEntry{
+			id: e.Summary.ID, dir: e.Dir, m: e.Manifest,
+		})
+		if hasPerm(e.Manifest, "tools:provide") {
+			methods := make(map[string]bool, len(e.Manifest.Tools))
+			for _, t := range e.Manifest.Tools {
+				methods[t.Method] = true
+			}
+			out.methods[e.Summary.ID] = methods
 		}
-		m, err := h.store.Manifest(p.ID)
-		if err != nil {
-			telemetry.WarnErr(h.ctx,
-				"plugin agent: read manifest failed", err,
-				otellog.String("plugin", p.ID))
-			continue
-		}
-		out = append(out, pluginEntry{id: p.ID, dir: dir, m: m})
 	}
 	return out
 }
@@ -113,7 +134,7 @@ func (h *Host) scanEntries() []pluginEntry {
 func (h *Host) SkillRoots() []string {
 	var roots []string
 	seen := map[string]bool{}
-	for _, e := range h.entries() {
+	for _, e := range h.entries().plugins {
 		if !hasPerm(e.m, "skills:provide") {
 			continue
 		}
@@ -145,7 +166,7 @@ func (h *Host) SkillRoots() []string {
 // plugins. Dir anchors relative hook commands to the plugin root.
 func (h *Host) PluginHooks() []hooks.ExtraSource {
 	var out []hooks.ExtraSource
-	for _, e := range h.entries() {
+	for _, e := range h.entries().plugins {
 		if !hasPerm(e.m, "hooks:provide") {
 			continue
 		}
@@ -166,7 +187,7 @@ func (h *Host) PluginHooks() []hooks.ExtraSource {
 // Relative stdio commands are resolved against the plugin directory.
 func (h *Host) MCPServers() []MCPServer {
 	var out []MCPServer
-	for _, e := range h.entries() {
+	for _, e := range h.entries().plugins {
 		if !hasPerm(e.m, "mcp:provide") {
 			continue
 		}
@@ -199,7 +220,7 @@ func (h *Host) MCPServers() []MCPServer {
 // MutatesState defaults to true.
 func (h *Host) ToolSpecs() []ToolSpec {
 	var out []ToolSpec
-	for _, e := range h.entries() {
+	for _, e := range h.entries().plugins {
 		if !hasPerm(e.m, "tools:provide") {
 			continue
 		}
@@ -231,13 +252,15 @@ func (h *Host) Invoke(
 	if h.kraft == nil {
 		return nil, fmt.Errorf("plugins: kraft runtime is unavailable")
 	}
-	for _, spec := range h.ToolSpecs() {
-		if spec.PluginID == pluginID && spec.Method == method {
-			return h.kraft.Invoke(ctx, pluginID, method, args)
-		}
+	// The gate reads the scan cached against the registry revision, so a
+	// plugin disabled, updated or uninstalled mid-turn cannot be called
+	// through a stale gate, and the common case costs one map lookup
+	// instead of rebuilding every tool definition.
+	if !h.entries().methods[pluginID][method] {
+		return nil, fmt.Errorf(
+			"plugins: plugin %q does not expose tool method %q", pluginID, method)
 	}
-	return nil, fmt.Errorf(
-		"plugins: plugin %q does not expose tool method %q", pluginID, method)
+	return h.kraft.Invoke(ctx, pluginID, method, args)
 }
 
 func hasPerm(m *plugins.Manifest, perm string) bool {

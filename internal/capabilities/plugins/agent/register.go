@@ -28,7 +28,7 @@ type Host struct {
 	mu        sync.Mutex
 	cachedRev uint64
 	cachedSet bool
-	cached    []pluginEntry
+	cached    scan
 }
 
 // NewHost wraps an installed plugin store and its kraft runtime.
