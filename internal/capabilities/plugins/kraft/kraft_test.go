@@ -378,17 +378,49 @@ func TestSecretRequiresAuthPermission(t *testing.T) {
 	// The manifest does not declare secrets:auth, so the primitive is
 	// refused before the namespace arithmetic — even for the plugin's
 	// own namespace. TestSecretScopeGuard covers the granted path,
-	// which falls through to the namespace guard.
+	// which falls through to the namespace guard. The refusal is also
+	// logged host-side, once per (plugin, permission) however many times
+	// the primitive is retried: the plugin's own error is the only other
+	// trace of a gate it never declared.
+	capture := logcapture.Install(t)
 	m, sec := newTestManagerWithPerms(t, nil)
-	_, err := m.handleSecret(&process{id: "test-plugin"}, rpcRequest{
-		Method: "secret.set",
-		Params: json.RawMessage(`{"scope":"auth","name":"test-plugin/token","value":"x"}`),
-	})
+	// A plugin id of its own: the dedupe map is process-wide, so a
+	// shared id would let another test's denial suppress this one.
+	const id = "denied-primitive-test-plugin"
+	probe := func() error {
+		_, err := m.handleSecret(&process{id: id}, rpcRequest{
+			Method: "secret.set",
+			Params: json.RawMessage(
+				`{"scope":"auth","name":"` + id + `/token","value":"x"}`),
+		})
+		return err
+	}
+	err := probe()
 	if err == nil || !strings.Contains(err.Error(), "secrets:auth") {
 		t.Fatalf("expected a secrets:auth denial, got: %v", err)
 	}
 	if len(sec.m) != 0 {
 		t.Fatalf("secrets mutated: %v", sec.m)
+	}
+	if err := probe(); err == nil {
+		t.Fatal("expected the retry to be refused too")
+	}
+	lines := 0
+	for _, record := range capture.Records() {
+		if !strings.Contains(record.Body().AsString(), "does not declare") {
+			continue
+		}
+		lines++
+		if got := logcapture.Attribute(record, "plugin"); got != id {
+			t.Errorf("denial log plugin = %q, want %q", got, id)
+		}
+		if got := logcapture.Attribute(record, "permission"); got != "secrets:auth" {
+			t.Errorf("denial log permission = %q, want secrets:auth", got)
+		}
+	}
+	if lines != 1 {
+		t.Errorf("denial logged %d times across two refusals, want 1: %v",
+			lines, capture.Bodies())
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -68,6 +69,65 @@ func TestStoreListScansAndValidates(t *testing.T) {
 	}
 	if b := byID["bad-id"]; b.Error == "" {
 		t.Fatal("bad-id should be rejected")
+	}
+}
+
+// TestStoreEntriesCarryTheParsedManifest pins the scan both List and the
+// agent host read: one pass parses every plugin.json, hands back the
+// directory and the manifest with the summary, and reports an entry that
+// does not parse as an error instead of a manifest. List is the same
+// scan's summaries, so the two can never disagree about a plugin.
+func TestStoreEntriesCarryTheParsedManifest(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "hello", map[string]any{
+		"id": "hello", "name": "Hello", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{},
+		"kraft": map[string]any{"binary": "bin/srv", "protocol": 1},
+	}, "console.log('hi')")
+	writePlugin(t, root, "bad-perm", map[string]any{
+		"id": "bad-perm", "name": "Bad", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{"unknown:perm"},
+	}, "")
+
+	s := NewStore(root)
+	entries, err := s.Entries()
+	if err != nil {
+		t.Fatalf("Entries: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("Entries returned %d plugins, want 2: %+v", len(entries), entries)
+	}
+	byID := map[string]Entry{}
+	for _, e := range entries {
+		byID[e.Summary.ID] = e
+	}
+	e, ok := byID["hello"]
+	if !ok {
+		t.Fatalf("hello is missing from %+v", entries)
+	}
+	if e.Manifest == nil || e.Manifest.Name != "Hello" ||
+		e.Manifest.Kraft == nil || e.Manifest.Kraft.Binary != "bin/srv" {
+		t.Fatalf("hello entry = %+v, want the parsed manifest", e)
+	}
+	if e.Dir != filepath.Join(root, "hello") {
+		t.Fatalf("hello entry dir = %q", e.Dir)
+	}
+	if bad := byID["bad-perm"]; bad.Summary.Error == "" || bad.Manifest != nil {
+		t.Fatalf("bad-perm entry = %+v, want an error and no manifest", bad)
+	}
+
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != len(entries) {
+		t.Fatalf("List returned %d summaries for %d entries", len(list), len(entries))
+	}
+	for i, sum := range list {
+		if !reflect.DeepEqual(sum, entries[i].Summary) {
+			t.Fatalf("List[%d] = %+v, want the scan's summary %+v",
+				i, sum, entries[i].Summary)
+		}
 	}
 }
 
@@ -316,16 +376,50 @@ func TestManifestLegacyCapabilityKey(t *testing.T) {
 	}
 }
 
-func TestManifestRejectsBothKraftSpellings(t *testing.T) {
+// TestManifestBothKraftSpellingsSplitByAudience is the section half of
+// the rule the charter's legacy table states: a manifest that carries
+// both spellings of one section is read by the registry (an installed
+// plugin keeps loading, on the new key) and refused by the authoring
+// gates, where the author can delete one. Two sections that disagree are
+// refused either way — that is a stale value, not a spelling.
+func TestManifestBothKraftSpellingsSplitByAudience(t *testing.T) {
+	agreed := map[string]any{
+		"id": "both", "name": "Both", "version": "0.1.0",
+		"entry":      "dist/index.js",
+		"kraft":      map[string]any{"binary": "bin/new", "protocol": 1},
+		"capability": map[string]any{"binary": "bin/new", "protocol": 1},
+	}
 	root := t.TempDir()
-	writePlugin(t, root, "both", map[string]any{
+	writePlugin(t, root, "both", agreed, "bundle")
+	s := NewStore(root)
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Error != "" {
+		t.Fatalf("List = %+v, want the installed plugin to keep loading", list)
+	}
+	k, ok, err := s.Kraft("both")
+	if err != nil || !ok || k.Binary != "bin/new" {
+		t.Fatalf("Kraft = (%+v, %v, %v), want the new key's binary", k, ok, err)
+	}
+
+	src := t.TempDir()
+	writePlugin(t, src, "both", agreed, "bundle")
+	if _, err := NewStore(t.TempDir()).Inspect(filepath.Join(src, "both")); err == nil ||
+		!strings.Contains(err.Error(), "both kraft") {
+		t.Fatalf("Inspect error = %v, want a refusal naming both keys", err)
+	}
+
+	disagreed := map[string]any{
 		"id": "both", "name": "Both", "version": "0.1.0",
 		"entry":      "dist/index.js",
 		"kraft":      map[string]any{"binary": "bin/new", "protocol": 1},
 		"capability": map[string]any{"binary": "bin/old", "protocol": 1},
-	}, "")
-	s := NewStore(root)
-	list, err := s.List()
+	}
+	root = t.TempDir()
+	writePlugin(t, root, "both", disagreed, "bundle")
+	list, err = NewStore(root).List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -400,24 +494,38 @@ func TestManifestDropsRetiredPermissions(t *testing.T) {
 	}
 }
 
-func TestManifestRejectsBothPermissionSpellings(t *testing.T) {
-	root := t.TempDir()
-	writePlugin(t, root, "both-perms", map[string]any{
+// TestManifestBothGrantSpellingsSplitByAudience is the grant half: the
+// two spellings grant identical authority, so an installed plugin is
+// read as the canonical one (and the list collapses to one entry), while
+// the authoring gates refuse the redundancy.
+func TestManifestBothGrantSpellingsSplitByAudience(t *testing.T) {
+	declared := map[string]any{
 		"id": "both-perms", "name": "Both", "version": "0.1.0",
 		"entry": "dist/index.js",
 		"permissions": []string{
 			"tools:provide", "tools:expose",
 		},
-	}, "")
-	s := NewStore(root)
-	list, err := s.List()
+	}
+	root := t.TempDir()
+	writePlugin(t, root, "both-perms", declared, "bundle")
+	list, err := NewStore(root).List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(list) != 1 ||
-		!strings.Contains(list[0].Error, "tools:expose") ||
-		!strings.Contains(list[0].Error, "tools:provide") {
-		t.Fatalf("List = %+v, want a rejection naming both spellings", list)
+	if len(list) != 1 || list[0].Error != "" {
+		t.Fatalf("List = %+v, want the installed plugin to keep loading", list)
+	}
+	if got := strings.Join(list[0].Permissions, ","); got != "tools:provide" {
+		t.Fatalf("permissions = %q, want the pair collapsed to one grant", got)
+	}
+
+	src := t.TempDir()
+	writePlugin(t, src, "both-perms", declared, "bundle")
+	_, err = NewStore(t.TempDir()).Inspect(filepath.Join(src, "both-perms"))
+	if err == nil ||
+		!strings.Contains(err.Error(), "tools:expose") ||
+		!strings.Contains(err.Error(), "tools:provide") {
+		t.Fatalf("Inspect error = %v, want a refusal naming both spellings", err)
 	}
 }
 
@@ -831,5 +939,10 @@ func TestConcurrentUpdateIsSerialized(t *testing.T) {
 	}
 	if success != 1 || failures != 1 {
 		t.Fatalf("concurrent updates: success=%d failures=%d, want 1/1", success, failures)
+	}
+	// The registry moved once for the update that landed and not for the
+	// one that lost the race.
+	if got := s.Revision(); got != 2 {
+		t.Fatalf("revision after concurrent updates = %d, want 2", got)
 	}
 }

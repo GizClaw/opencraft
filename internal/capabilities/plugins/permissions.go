@@ -10,7 +10,9 @@ package plugins
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -116,21 +118,33 @@ var RetiredPermissions = []RetiredPermission{
 // works either way); a retired name is dropped and logged once per
 // process, not once per parse: Store.List() and the agent host re-parse
 // on every scan, and one stale manifest must not become a flood.
-// Declaring an old and its replacement spelling together is refused —
-// two names for one grant is ambiguity, not compatibility.
-func canonicalPermissions(id string, perms []string) ([]string, error) {
+// Declaring an old and its replacement spelling together is the one
+// audience-dependent case: the authoring gates refuse it (two names for
+// one grant, and the author is present to fix it), while an installed
+// manifest is read as the grant it names either way — refusing it would
+// kill a plugin whose manifest was written to load on both the old and
+// the new host.
+func canonicalPermissions(
+	id string,
+	perms []string,
+	audience manifestAudience,
+) ([]string, error) {
 	declared := make(map[string]bool, len(perms))
 	for _, p := range perms {
 		declared[p] = true
 	}
 	for _, r := range PermissionRenames {
 		if declared[r.From] && declared[r.To] {
-			return nil, fmt.Errorf(
-				"plugins: permissions declare both %q and its replacement %q",
-				r.From, r.To)
+			if audience == manifestAuthored {
+				return nil, fmt.Errorf(
+					"plugins: permissions declare both %q and its replacement %q",
+					r.From, r.To)
+			}
+			warnLegacyGrantPair(id, r)
 		}
 	}
 	out := make([]string, 0, len(perms))
+	seen := make(map[string]bool, len(perms))
 	for _, p := range perms {
 		for _, r := range PermissionRenames {
 			if p == r.From {
@@ -142,6 +156,12 @@ func canonicalPermissions(id string, perms []string) ([]string, error) {
 			warnRetiredPermission(id, p)
 			continue
 		}
+		// Two spellings of one grant collapse into one: the list is a
+		// set of grants, and the caller renders it.
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
 		out = append(out, p)
 	}
 	return out, nil
@@ -177,16 +197,79 @@ func warnRetiredPermission(id, name string) {
 	)
 }
 
-// warnLegacyContributes logs a stale contributes segment once per
-// plugin. Nothing validates or reports the segment any more, so the log
-// line is the only breadcrumb an author gets for the panel that never
-// renders: UI contributions register from the bundle
-// (ctx.settingsPanels.add, ctx.sidebarEntries.add, ctx.pets.add).
-func warnLegacyContributes(id string) {
-	warnOnce(id+"\x00contributes",
-		"plugins: manifest declares a contributes segment, which the host "+
-			"no longer reads; register panels, sidebar entries and pet "+
-			"packs from the bundle",
+// warnLegacyGrantPair logs the redundant half of a manifest that writes
+// one grant under both its old and its new name. The plugin keeps
+// loading on the canonical name, which is what the log line has to say:
+// the pair reads as a deliberate "works on both hosts" manifest, not as
+// a mistake to refuse.
+func warnLegacyGrantPair(id string, r PermissionRename) {
+	warnOnce(id+"\x00permission-pair\x00"+r.From,
+		"plugins: manifest declares a grant and its replacement spelling; "+
+			"reading it as the replacement",
 		otellog.String("plugin", id),
+		otellog.String("declared", r.From),
+		otellog.String("canonical", r.To),
+	)
+}
+
+// warnLegacyKraftPair logs the redundant half of a manifest that writes
+// the kraft section under both spellings. The two agree (a pair that
+// disagrees is refused), so the new key is used and the old one is
+// named once.
+func warnLegacyKraftPair(id string) {
+	warnOnce(id+"\x00kraft-section-pair",
+		"plugins: manifest declares both kraft and its legacy capability "+
+			"key with the same value; reading the kraft key",
+		otellog.String("plugin", id),
+	)
+}
+
+// legacyContributeKeys are the manifest UI-contribution keys older
+// builds read. Nothing consumes them any more; the names survive so the
+// breadcrumb can say which declaration is being ignored instead of
+// crying wolf about a segment holding nothing.
+var legacyContributeKeys = []string{"settingsPanels", "sidebarEntries", "pets"}
+
+// legacyContributeKeysWritten returns the UI-contribution keys a
+// manifest still writes with something in them. An empty object, a
+// null, a list or an object without any of those keys was never read by
+// anything, and warning about it would train the author to ignore the
+// warning that matters.
+func legacyContributeKeysWritten(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var declared map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &declared); err != nil {
+		return nil
+	}
+	var out []string
+	for _, key := range legacyContributeKeys {
+		value, ok := declared[key]
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(string(value)) {
+		case "", "null", "[]", "{}":
+			continue
+		}
+		out = append(out, key)
+	}
+	return out
+}
+
+// warnLegacyContributes logs a stale contributes segment once per
+// plugin, naming the keys it still writes. Nothing validates or reports
+// the segment any more, so the log line is the only breadcrumb an
+// author gets for the panel that never renders: UI contributions
+// register from the bundle (ctx.settingsPanels.add,
+// ctx.sidebarEntries.add, ctx.pets.add).
+func warnLegacyContributes(id string, keys []string) {
+	warnOnce(id+"\x00contributes",
+		"plugins: manifest declares contributes."+strings.Join(keys, ", contributes.")+
+			", which the host no longer reads; register panels, sidebar "+
+			"entries and pet packs from the bundle",
+		otellog.String("plugin", id),
+		otellog.String("contributes", strings.Join(keys, ",")),
 	)
 }

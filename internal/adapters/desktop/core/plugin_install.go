@@ -58,9 +58,11 @@ func (p pluginInstaller) PluginInstall(
 	return sum, p.reload(ctx)
 }
 
-// PluginUpdate replaces an installed plugin with a newer source and
-// reloads the runtime, stopping the previous kraft process first
-// (its binary is replaced on disk).
+// PluginUpdate replaces an installed plugin with a newer source,
+// reloads the runtime, and stops the previous kraft process. The stop
+// comes after the swap on purpose: the process keeps running on the
+// inode it was started from, so an update that fails to land does not
+// kill a plugin the user is still using.
 func (p pluginInstaller) PluginUpdate(
 	ctx context.Context, id, src string,
 ) (plugins.PluginSummary, error) {

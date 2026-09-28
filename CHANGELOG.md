@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- A kraft that calls the `secret.*` primitives must declare
+  `secrets:auth` in its manifest. The gate was documented since those
+  primitives landed and never checked, so a plugin could reach its
+  secret namespace without it; now the call is refused. Because an
+  inference profile's credential lives in that namespace,
+  `inference.upsert` needs the grant too — the charter's `inference.*`
+  row names the dependency. The refusal goes to the plugin as a
+  primitive error and to the host log once per (plugin, permission),
+  naming the missing grant; a plugin that reports it as a missing
+  credential is reporting the symptom.
+
 ### Added
 
 - The plugin framework has a charter. `capabilities/plugins/charter.go`
@@ -18,8 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   primitive dispatch) and fails in both directions, so a new
   permission, manifest field, service or primitive cannot land without
   a row, and a row cannot outlive what it names. `charter.md` beside it
-  is the generated view. Nothing changes for installed plugins. The
-  charter's first job was to name the places where code and comment
+  is the generated view. The charter's first job was to name the
+  places where code and comment
   disagreed — the kraft `secret.*` primitives claiming a `secrets:auth`
   gate nothing checked, and the manifest `contributes.*` segments that
   were parsed and displayed by nothing — and both were settled in this
@@ -37,6 +50,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plugin's kraft before anything re-reads the manifest it was started
   from; the platform face lands with the node row.
   `charter_test.go` refuses a consumer without a clock row.
+- The agent's plugin tool source follows that clock instead of its
+  assembly: the kraft tools a registry describes are republished into
+  the live tool registry on every revision, so a plugin installed,
+  updated or disabled while a turn runs is callable — or refused — from
+  that turn's next round, even though the runtime swap waits for the
+  drain. Tool definitions were snapshotted once per assembly before,
+  which made the agent's own install invisible to the turn that asked
+  for it until the turn after.
+- The registry as a whole is bounded too. The per-plugin limits (64
+  tools, 32 KiB input schema each, …) never bounded their sum, so the
+  model-facing tool budget was the only thing standing between a large
+  registry and the discovery pool: the agent source now publishes at
+  most 256 kraft tools and 512 KiB of definitions per assembly, keeps
+  what fits in registry order, and logs one line naming how many it
+  dropped. The charter's `agent.tool` bound records both.
 
 ### Changed
 
@@ -47,16 +75,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — the agent-authored install and the settings page now share that
   path instead of stacking two. A mutation that changes nothing (say,
   enabling an already-enabled plugin) no longer moves the revision, so
-  it cannot rebuild anything.
+  it cannot rebuild anything. The trailing pass is bounded at two, so a
+  stream of mutations cannot turn one rebuild into a rebuild per
+  mutation — the next caller picks up whatever is left.
+- `PluginSummary.kraft` is filled on every read path, so `Plugin.List`
+  (the settings page) and the agent's `plugin_list` report a plugin's
+  declared kraft binary the way `Inspect`/`Install`/`Update` already
+  did.
 - The plugin permission vocabulary has one shape now: a contribution
   grant is spelled `kind:provide`, so `tools:expose`,
   `skills:contribute`, `mcp:contribute` and `hooks:register` became
   `tools:provide`, `skills:provide`, `mcp:provide` and `hooks:provide`.
   A manifest that still writes an old spelling keeps loading — the
-  parser translates it — and a manifest that declares both spellings of
-  one grant is rejected. Every reader (validation, the plugin summary,
-  the agent host, the kraft gate) sees the canonical names, and the
-  charter's new legacy-inputs table records each old spelling's fate.
+  parser translates it — and each legacy input's fate, including the
+  two that depend on who is reading, is recorded in the charter's new
+  legacy-inputs table. Every reader (validation, the plugin summary,
+  the agent host, the kraft gate) sees the canonical names.
 - The kraft `secret.*` primitives are gated by `secrets:auth` now.
   The package comment had claimed the gate since the primitives
   landed, but nothing checked it — only the namespace prefix stood
@@ -64,7 +98,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declaration the way `session.import` and `telemetry.configure`
   already did, so a kraft whose manifest never declares `secrets:auth`
   can no longer touch its secret namespace (the webview `ctx.secrets`
-  surface required the grant all along).
+  surface required the grant all along). A refusal is logged host-side
+  once per (plugin, permission) — see the upgrade note above.
 - The plugin manifest's subprocess section is called `kraft` now, not
   `capability`: `plugin.json` declares `"kraft": { "binary": … }`, the
   hosts package is `capabilities/plugins/kraft` (with `kraft.Kraft` /
@@ -74,8 +109,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the other half is the user-facing bundle — and it stops overloading
   "capability", which in this repo already names host permissions and
   agent-facing features. Manifests written by older builds keep
-  loading: the host still reads the old `capability` key, and a
-  manifest declaring both spellings is rejected.
+  loading: the host still reads the old `capability` key. A manifest
+  declaring both spellings is read on the new key when the two sections
+  agree (the old one is logged once) and refused when they disagree;
+  offered to `Inspect`/`Install`/`Update`, the pair is refused either
+  way, so a new manifest carries one spelling.
 - The desktop and plugin wire calls the conversation id `conversation_id`
   everywhere: in `NewChat`'s result, in the session-delete and bundle-import
   DTOs, and in the plugin `session.import` result, which mirrors the desktop

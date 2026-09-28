@@ -130,7 +130,9 @@ and then answer host→plugin method calls. It may call host primitives
 back, each gated by a manifest permission where one exists:
 `secret.get/set/delete` (`secrets:auth`; the call is also confined to
 `auth/<plugin>/…` and `inference/<plugin>/…`), `open.url` (only the
-hosts listed in `kraft.hosts`), `inference.upsert/remove`,
+hosts listed in `kraft.hosts`), `inference.upsert/remove` (a profile's
+credential lives in your secret namespace and only `secret.set` writes
+it, so declare `secrets:auth` alongside),
 `session.import` / `session.imported_sources` (`sessions:import`),
 `workspace.current`, `telemetry.configure/disable` (`telemetry:export`;
 `emit.event` is reserved and currently a no-op).
@@ -138,7 +140,9 @@ The declared `kraft.protocol` must equal the host's protocol
 version (1), and the handshake re-checks it. Everything the child writes
 to stderr is forwarded to the app log — never log credentials. On macOS
 the host ad-hoc signs the binary during install, so ship an unsigned
-build.
+build. A primitive whose grant the manifest does not declare is refused
+with `plugin <id> lacks <permission>` and logged once host-side: when a
+call fails, read that error before assuming the credential is wrong.
 
 ## Install and iterate
 
@@ -146,9 +150,12 @@ build.
    `exec_command` for a build).
 2. `plugin_install({ "path": ".opencraft-plugins/my-plugin" })` — the
    user sees the id, version, permissions, entry bundle and kraft
-   binary, then confirms. The plugin is enabled on install, and the
-   runtime reloads once the current turn ends, so its skills, tools,
-   MCP servers and hooks are live from the next turn on.
+   binary, then confirms. The plugin is enabled on install. Its tools
+   are callable from the next round of the turn that installed it — the
+   tool source republishes on the registry's own signal, and the kraft
+   method gate follows the registry immediately — while its skills, MCP
+   servers and hooks are live once the runtime reloads, which for an
+   install made mid-turn means the turn after this one.
 3. Iterate with `plugin_update({ "id": "my-plugin", "path": "…" })`:
    the manifest must keep the id and carry a strictly newer version.
    The previous version stays as a rollback snapshot, and enabled

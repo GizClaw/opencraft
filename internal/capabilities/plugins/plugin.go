@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -94,9 +95,11 @@ type PluginSummary struct {
 	// version is available (user plugins only).
 	CanRollback bool `json:"canRollback,omitempty"`
 	// Kraft is the plugin-relative path of the declared kraft binary,
-	// set when the plugin ships one; empty for UI-only plugins. The
-	// host runs that binary as a subprocess, so installers surface it
-	// before anything is copied into the registry.
+	// set when the plugin ships one, by both the installed-plugin scan
+	// (List) and the source scan (Inspect/Install/Update/Rollback); an
+	// empty value means the plugin declares none. The host runs that
+	// binary as a subprocess, so installers surface it before anything
+	// is copied into the registry.
 	Kraft string `json:"kraft,omitempty"`
 }
 
@@ -183,6 +186,11 @@ type Store struct {
 	// re-scans when it is behind, and the desktop rebuilds once per
 	// revision. See charter.go's FaceRefreshes.
 	rev uint64
+	// subs is the push side of the clock: faces that cannot re-read on
+	// demand subscribe here instead (see Subscribe). Keyed by a
+	// monotonic id so a cancel is exact.
+	subs    map[int]func()
+	nextSub int
 }
 
 // NewStore returns a registry rooted at root.
@@ -200,6 +208,61 @@ func (s *Store) Revision() uint64 {
 	return s.rev
 }
 
+// Subscribe registers fn to run once after every mutation that moved
+// the revision, and returns a cancel that is safe to call more than
+// once. A mutation that changes nothing never moves the revision, so it
+// never notifies.
+//
+// This is the push side of the register clock (see charter.go's
+// FaceRefreshes). A face that owns derived state it cannot rebuild on
+// demand — the agent tool source, publishing into a live tool registry —
+// subscribes instead of waiting for its next read; a pull-only face (the
+// settings page, the agent host's own scan) needs nothing here.
+//
+// fn runs on the mutating goroutine with the store lock released, so it
+// may read the registry; it must not mutate it, because that would
+// recurse into fn.
+func (s *Store) Subscribe(fn func()) (cancel func()) {
+	if fn == nil {
+		return func() {}
+	}
+	s.mu.Lock()
+	if s.subs == nil {
+		s.subs = make(map[int]func())
+	}
+	key := s.nextSub
+	s.nextSub++
+	s.subs[key] = fn
+	s.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			delete(s.subs, key)
+			s.mu.Unlock()
+		})
+	}
+}
+
+// notify wakes every subscriber. Mutators call it after releasing the
+// lock, and only when the revision moved.
+func (s *Store) notify() {
+	s.mu.Lock()
+	if len(s.subs) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	fns := make([]func(), 0, len(s.subs))
+	for _, fn := range s.subs {
+		fns = append(fns, fn)
+	}
+	s.mu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
+}
+
 // SetHostVersion records the running host version for minHostVersion
 // enforcement. An empty value disables the check (tests/CLI).
 func (s *Store) SetHostVersion(v string) { s.hostVersion = v }
@@ -208,6 +271,35 @@ func (s *Store) SetHostVersion(v string) { s.hostVersion = v }
 // enabled state. A broken plugin is reported with its validation error
 // instead of failing the whole list.
 func (s *Store) List() ([]PluginSummary, error) {
+	entries, err := s.Entries()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PluginSummary, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Summary)
+	}
+	return out, nil
+}
+
+// Entry is one installed plugin as a scan sees it: the summary callers
+// render, the directory the manifest was read from, and the parsed
+// manifest itself, so a caller that needs more than the summary does not
+// have to read and parse plugin.json a second time. Manifest is nil
+// exactly when Summary.Error is set: a plugin that does not parse has no
+// manifest to hand out.
+type Entry struct {
+	Summary  PluginSummary
+	Dir      string
+	Manifest *Manifest
+}
+
+// Entries returns every installed plugin, parsed once. List is this
+// scan's summaries; anything that walks the registry per turn (the agent
+// host's scan of skills, hooks, MCP servers and tools) should take the
+// entries, because a second manifest read per plugin per scan is work
+// nobody asked for.
+func (s *Store) Entries() ([]Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := os.MkdirAll(s.root, 0o700); err != nil {
@@ -218,11 +310,13 @@ func (s *Store) List() ([]PluginSummary, error) {
 		return nil, err
 	}
 	seen := map[string]bool{}
-	out := s.scanDir(s.root, state, false, seen)
+	out := s.scanDirEntries(s.root, state, false, seen)
 	if s.builtin != "" {
-		out = append(out, s.scanDir(s.builtin, state, true, seen)...)
+		out = append(out, s.scanDirEntries(s.builtin, state, true, seen)...)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Summary.ID < out[j].Summary.ID
+	})
 	return out, nil
 }
 
@@ -230,18 +324,18 @@ func (s *Store) List() ([]PluginSummary, error) {
 // (builtin enable/disable choices persist in the user root's state
 // file). ids already in seen are skipped so the user root wins over the
 // builtin root; every listed id is recorded in seen.
-func (s *Store) scanDir(
+func (s *Store) scanDirEntries(
 	root string,
 	state map[string]bool,
 	builtin bool,
 	seen map[string]bool,
-) []PluginSummary {
-	entries, err := os.ReadDir(root)
+) []Entry {
+	dirs, err := os.ReadDir(root)
 	if err != nil {
 		return nil
 	}
-	out := []PluginSummary{}
-	for _, entry := range entries {
+	out := []Entry{}
+	for _, entry := range dirs {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
@@ -250,24 +344,25 @@ func (s *Store) scanDir(
 			continue
 		}
 		sum := PluginSummary{ID: id, Builtin: builtin}
+		dir := filepath.Join(root, id)
 		if enabled, ok := state[id]; ok {
 			sum.Enabled = enabled
 		} else {
 			sum.Enabled = true
 		}
-		raw, err := os.ReadFile(filepath.Join(root, id, "plugin.json"))
+		raw, err := os.ReadFile(filepath.Join(dir, "plugin.json"))
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue // directory without a manifest is not a plugin
 			}
 			sum.Error = fmt.Sprintf("plugins: read manifest: %v", err)
-			out = append(out, sum)
+			out = append(out, Entry{Summary: sum})
 			continue
 		}
 		m, verr := parseManifest(id, raw)
 		if verr != nil {
 			sum.Error = verr.Error()
-			out = append(out, sum)
+			out = append(out, Entry{Summary: sum})
 			continue
 		}
 		sum.Name = m.Name
@@ -276,13 +371,16 @@ func (s *Store) scanDir(
 		sum.Permissions = m.Permissions
 		sum.HasSkills = len(m.Skills) > 0
 		if !sum.HasSkills && manifestHasPermission(m, "skills:provide") &&
-			dirExists(filepath.Join(root, id, "skills")) {
+			dirExists(filepath.Join(dir, "skills")) {
 			sum.HasSkills = true
 		}
 		sum.HasMCP = len(m.McpServers) > 0
 		sum.HasHooks = len(m.Hooks) > 0
 		sum.HasTools = len(m.Tools) > 0
 		sum.HasUpdate = m.Update != nil
+		if m.Kraft != nil {
+			sum.Kraft = m.Kraft.Binary
+		}
 		if !builtin {
 			sum.CanRollback = rollbackAvailable(s.root, id)
 			if v := s.builtinVersion(id); v != "" {
@@ -290,7 +388,7 @@ func (s *Store) scanDir(
 				sum.BuiltinVersion = v
 			}
 		}
-		out = append(out, sum)
+		out = append(out, Entry{Summary: sum, Dir: dir, Manifest: m})
 		seen[id] = true
 	}
 	return out
@@ -366,7 +464,13 @@ func (s *Store) Kraft(id string) (kraft.Kraft, bool, error) {
 // move the registry revision, so it cannot trigger a refresh.
 func (s *Store) SetEnabled(id string, enabled bool) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	moved := false
+	defer func() {
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
+	}()
 	if _, err := s.readManifest(id); err != nil {
 		return err
 	}
@@ -388,6 +492,7 @@ func (s *Store) SetEnabled(id string, enabled bool) error {
 		return err
 	}
 	s.rev++
+	moved = true
 	return nil
 }
 
@@ -397,7 +502,13 @@ func (s *Store) SetEnabled(id string, enabled bool) error {
 // rejected; uninstall it first.
 func (s *Store) Install(src string) (PluginSummary, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	moved := false
+	defer func() {
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
+	}()
 	if err := os.MkdirAll(s.root, 0o700); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: create dir: %w", err)
 	}
@@ -420,7 +531,7 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: decode manifest: %w", err)
 	}
-	m, err := parseManifest(probe.ID, raw)
+	m, err := parseManifestForAuthoring(probe.ID, raw)
 	if err != nil {
 		return PluginSummary{}, err
 	}
@@ -457,6 +568,7 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 		return PluginSummary{}, err
 	}
 	s.rev++
+	moved = true
 	return s.withBuiltinInfo(summaryFromManifest(m, dst, false)), nil
 }
 
@@ -482,7 +594,7 @@ func (s *Store) Inspect(src string) (PluginSummary, error) {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: decode manifest: %w", err)
 	}
-	m, err := parseManifest(probe.ID, raw)
+	m, err := parseManifestForAuthoring(probe.ID, raw)
 	if err != nil {
 		return PluginSummary{}, err
 	}
@@ -573,7 +685,13 @@ func summaryFromManifest(m *Manifest, dir string, canRollback bool) PluginSummar
 // data, secrets and inference profile are preserved.
 func (s *Store) Update(id, src string) (PluginSummary, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	moved := false
+	defer func() {
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
+	}()
 	if err := ValidateID(id); err != nil {
 		return PluginSummary{}, err
 	}
@@ -608,7 +726,7 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: decode manifest: %w", err)
 	}
-	m, err := parseManifest(probe.ID, raw)
+	m, err := parseManifestForAuthoring(probe.ID, raw)
 	if err != nil {
 		return PluginSummary{}, err
 	}
@@ -680,6 +798,7 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 	// bookkeeping below fails: the revision is about the registry, not
 	// about the backup layout.
 	s.rev++
+	moved = true
 	old := backup + ".old"
 	telemetry.WarnErr(context.Background(),
 		"plugins: clear previous rollback snapshot failed",
@@ -729,7 +848,13 @@ func (s *Store) UpdateZip(id, zipPath string) (PluginSummary, error) {
 // secrets and inference profile are preserved.
 func (s *Store) Rollback(id string) (PluginSummary, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	moved := false
+	defer func() {
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
+	}()
 	if err := ValidateID(id); err != nil {
 		return PluginSummary{}, err
 	}
@@ -745,7 +870,7 @@ func (s *Store) Rollback(id string) (PluginSummary, error) {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: decode rollback manifest: %w", err)
 	}
-	m, err := parseManifest(probe.ID, raw)
+	m, err := parseManifestForAuthoring(probe.ID, raw)
 	if err != nil {
 		return PluginSummary{}, err
 	}
@@ -781,6 +906,7 @@ func (s *Store) Rollback(id string) (PluginSummary, error) {
 	// Same as Update: the rolled-back version is live before the
 	// discard step below can fail.
 	s.rev++
+	moved = true
 	telemetry.WarnErr(context.Background(),
 		"plugins: remove discard snapshot failed", os.RemoveAll(pending))
 	sum := summaryFromManifest(m, dir, false)
@@ -1074,7 +1200,13 @@ func signAdHoc(path string) error {
 // data (KV) is removed by the caller via KVStore.RemoveAll.
 func (s *Store) Uninstall(id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	moved := false
+	defer func() {
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
+	}()
 	_, builtin, err := s.pluginDir(id)
 	if err != nil {
 		return err
@@ -1092,6 +1224,7 @@ func (s *Store) Uninstall(id string) error {
 		os.RemoveAll(filepath.Join(s.root, ".backups", id)))
 	// The registry changed even if the state write below fails.
 	s.rev++
+	moved = true
 	state, err := s.readState()
 	if err != nil {
 		return err
@@ -1162,7 +1295,38 @@ func (s *Store) pluginDir(id string) (string, bool, error) {
 	return "", false, fmt.Errorf("plugins: plugin %q is not installed", id)
 }
 
+// manifestAudience says who is reading a manifest. The two differ in
+// exactly one place — a manifest that declares the same thing twice,
+// on both the old and the new spelling. The registry load path serves a
+// plugin that is already installed, so it keeps the plugin loading; the
+// authoring gates read a source the author (or the agent) is offering
+// right now, and refuse the ambiguity there, where it can be fixed.
+type manifestAudience int
+
+const (
+	// manifestInstalled reads a plugin.json the registry is serving:
+	// installed plugins, the agent host's scan, the kraft lookup.
+	manifestInstalled manifestAudience = iota
+	// manifestAuthored reads a plugin.json offered to Inspect,
+	// Install, Update or Rollback.
+	manifestAuthored
+)
+
 func parseManifest(id string, raw []byte) (*Manifest, error) {
+	return parseManifestAs(id, raw, manifestInstalled)
+}
+
+// parseManifestForAuthoring parses a manifest a caller is about to
+// install, update or roll back.
+func parseManifestForAuthoring(id string, raw []byte) (*Manifest, error) {
+	return parseManifestAs(id, raw, manifestAuthored)
+}
+
+func parseManifestAs(
+	id string,
+	raw []byte,
+	audience manifestAudience,
+) (*Manifest, error) {
 	if len(raw) > maxPluginManifestBytes {
 		return nil, fmt.Errorf(
 			"plugins: manifest %q exceeds %d bytes", id, maxPluginManifestBytes)
@@ -1198,7 +1362,7 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 	if strings.TrimSpace(m.Entry) == "" {
 		return nil, fmt.Errorf("plugins: manifest requires entry")
 	}
-	perms, err := canonicalPermissions(m.ID, m.Permissions)
+	perms, err := canonicalPermissions(m.ID, m.Permissions, audience)
 	if err != nil {
 		return nil, err
 	}
@@ -1211,8 +1375,15 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 	// still read far enough to keep installed plugins loading: the kraft
 	// section is translated, the contributes segment — which nothing
 	// consumes, because panels, sidebar entries and pet packs register
-	// from the bundle — is accepted, dropped and logged once. A manifest
-	// that declares both kraft spellings is rejected.
+	// from the bundle — is accepted, dropped, and logged once for the
+	// keys it still writes.
+	//
+	// A manifest that writes both spellings of the kraft section is the
+	// one case where the audience decides: an installed plugin whose
+	// two sections agree keeps loading on the new key (the old one is
+	// redundant, and the log line says so), while the authoring gates
+	// refuse the pair outright. Two sections that disagree are refused
+	// either way — that is a manifest bug, not a spelling.
 	var legacy struct {
 		Capability  *kraft.Kraft    `json:"capability"`
 		Contributes json.RawMessage `json:"contributes"`
@@ -1221,15 +1392,18 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("plugins: decode manifest: %w", err)
 	}
 	if legacy.Capability != nil {
-		if m.Kraft != nil {
-			return nil, fmt.Errorf(
-				"plugins: manifest declares both kraft and legacy capability keys")
+		switch {
+		case m.Kraft == nil:
+			m.Kraft = legacy.Capability
+		case audience == manifestAuthored,
+			!sameKraftSection(m.Kraft, legacy.Capability):
+			return nil, errBothKraftSpellings
+		default:
+			warnLegacyKraftPair(m.ID)
 		}
-		m.Kraft = legacy.Capability
 	}
-	if v := strings.TrimSpace(string(legacy.Contributes)); v != "" &&
-		v != "null" && v != "{}" {
-		warnLegacyContributes(m.ID)
+	if written := legacyContributeKeysWritten(legacy.Contributes); len(written) > 0 {
+		warnLegacyContributes(m.ID, written)
 	}
 	if err := validateKraft(m.Kraft); err != nil {
 		return nil, fmt.Errorf("plugins: %w", err)
@@ -1238,6 +1412,22 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// errBothKraftSpellings is the refusal shared by the authoring gates and
+// by an installed manifest whose two sections disagree.
+var errBothKraftSpellings = fmt.Errorf(
+	"plugins: manifest declares both kraft and legacy capability keys")
+
+// sameKraftSection reports whether the two spellings of the kraft
+// section describe the same subprocess. They agree when an author wrote
+// both keys for hosts of different vintages; they disagree when one of
+// them is stale, which is worth a refusal rather than a guess.
+func sameKraftSection(a, b *kraft.Kraft) bool {
+	return a != nil && b != nil &&
+		a.Binary == b.Binary &&
+		a.Protocol == b.Protocol &&
+		slices.Equal(a.Hosts, b.Hosts)
 }
 
 // validateAgentCapabilities checks the skills / MCP / hooks / tools

@@ -1034,6 +1034,12 @@ func (m *Manager) handleSecret(p *process, req rpcRequest) (any, error) {
 // The check is fail-closed in both directions: a loader that cannot
 // answer refuses the primitive, and a nil permission list grants
 // nothing.
+//
+// A refusal is logged host-side once per (plugin, permission): the
+// plugin is told too, but a plugin that renders the error as a missing
+// credential — which is how a refused secret.set reads from inside a
+// provider-registration flow — would otherwise leave the user with no
+// trace of the missing grant.
 func (m *Manager) requirePermission(id, perm string) error {
 	perms, err := m.loader.Permissions(id)
 	if err != nil {
@@ -1045,7 +1051,26 @@ func (m *Manager) requirePermission(id, perm string) error {
 			return nil
 		}
 	}
+	m.warnPermissionDenied(id, perm)
 	return fmt.Errorf("kraft: plugin %q lacks %s permission", id, perm)
+}
+
+// deniedPermissions dedupes the host-side breadcrumb across processes
+// and calls: a plugin that never declared the grant retries the
+// primitive on every call, and one line per grant is what makes the line
+// readable.
+var deniedPermissions sync.Map
+
+func (m *Manager) warnPermissionDenied(id, perm string) {
+	if _, loaded := deniedPermissions.LoadOrStore(id+"\x00"+perm, struct{}{}); loaded {
+		return
+	}
+	telemetry.Warn(m.baseCtx,
+		"plugin kraft: refused a primitive the manifest does not declare; "+
+			"declare the permission in plugin.json",
+		otellog.String("plugin", id),
+		otellog.String("permission", perm),
+	)
 }
 
 func (m *Manager) handleOpenURL(p *process, req rpcRequest) (any, error) {
