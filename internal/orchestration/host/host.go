@@ -30,8 +30,8 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
-// Manager pools Hosts by workspace and keeps one sessions.Store per
-// workspace root. Document-only configuration reloads go through
+// Manager pools Hosts by Target and keeps one sessions.Store per state
+// root. Document-only configuration reloads go through
 // Host.ReloadDocument in place; Manager invalidation (and the
 // stale/retire machinery below) is reserved for engine-input changes
 // (plugin install/uninstall, workspace switches) and fallback rebuilds.
@@ -44,8 +44,10 @@ type Manager struct {
 	// document resolves ${ocraft:APP_HOME} to this value.
 	appHome string
 
-	mu             sync.Mutex
-	openMu         sync.Mutex
+	mu     sync.Mutex
+	openMu sync.Mutex
+	// hosts holds the pooled Hosts by Target.Key(): one entry per
+	// workspace and per application.
 	hosts          map[string]*hostRef
 	stores         map[string]*storeRef
 	engineOptFunc  func() []engine.Option
@@ -55,14 +57,14 @@ type Manager struct {
 	automationHost automationtool.Host
 	usageObserver  func(context.Context, inference.Usage)
 	usageRecorder  UsageRecorder
-	// retiring maps a workspace root to a Host that was removed from
-	// the pool and is draining its last runs. Acquire waits for these
-	// hosts to finish teardown instead of assembling a second Host for
-	// the same workspace, which would let two runtimes serve one
-	// conversation concurrently.
+	// retiring maps a Target.Key() to a Host that was removed from the
+	// pool and is draining its last runs. Acquire waits for these hosts
+	// to finish teardown instead of assembling a second Host for the
+	// same target, which would let two runtimes serve one conversation
+	// concurrently.
 	retiring map[string]*Host
-	// assembling holds the in-flight assembly per workspace so
-	// concurrent Acquire calls share one build instead of racing
+	// assembling holds the in-flight assembly per target so concurrent
+	// Acquire calls share one build instead of racing
 	// (see assemblyCall). Entries live only while assembleHost runs.
 	assembling map[string]*assemblyCall
 	// hostConfigurator is applied once per pooled Host, before the pool
@@ -73,7 +75,7 @@ type Manager struct {
 	// replacementHooks carry the adapter's half of the deferred
 	// rebuild (see SetReplacementHooks).
 	replacementHooks ReplacementHooks
-	// armed holds the workspaces whose deferred replacement is already
+	// armed holds the targets whose deferred replacement is already
 	// scheduled (see ScheduleReplacement).
 	armed map[string]struct{}
 	// closeHost is the teardown entry point. It is a field so tests
@@ -81,16 +83,18 @@ type Manager struct {
 	closeHost func(*Host)
 	// assembleHost is the assembly entry point behind Acquire. It is a
 	// field so tests can substitute a fake build without spinning up a
-	// runtime; production always uses (*Manager).assemble.
+	// runtime; production always uses (*Manager).assemble. Whatever it
+	// builds has to carry the target it was asked for: the pool keys
+	// the entry by the Host's own target from then on.
 	assembleHost func(
 		context.Context,
-		string,
+		Target,
 		interact.Backend,
 		func(string) interact.Backend,
 	) (*Host, error)
-	// assemblies counts one workspace's runtime assemblies in this
+	// assemblies counts one target's runtime assemblies in this
 	// process. A rebuild storm is visible as this number climbing: a
-	// single workspace is supposed to assemble once per engine-input
+	// single target is supposed to assemble once per engine-input
 	// change, not once per turn.
 	assemblies map[string]int
 	// recovered records, by session root, what this process's
@@ -132,6 +136,10 @@ type hostRef struct {
 	host  *Host
 	refs  int
 	stale bool
+	// target is the pool entry's identity, kept next to the Host so a
+	// sweep over the pool can name what it is retiring without parsing
+	// the map key back into a Target.
+	target Target
 	// configured records that the host configurator already ran for
 	// this Host. The marker rides the pool entry on purpose: it goes
 	// away together with the entry, so a retired Host — and the

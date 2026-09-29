@@ -53,7 +53,7 @@ func (m *Manager) configureHost(h *Host) {
 	}
 	m.mu.Lock()
 	fn := m.hostConfigurator
-	ref := m.hosts[h.workDir]
+	ref := m.hosts[h.target.Key()]
 	if fn == nil || ref == nil || ref.host != h || ref.configured {
 		m.mu.Unlock()
 		return
@@ -63,34 +63,35 @@ func (m *Manager) configureHost(h *Host) {
 	fn(h)
 }
 
-// assembleShared runs the one assembly for a workspace and publishes
+// assembleShared runs the one assembly for a target and publishes
 // its result: the Host enters the pool (or is closed when another
 // caller installed one meanwhile), and every waiting Acquire is woken.
 // The pool is updated before the wake-up, so a follower either finds
 // the pooled Host on its next pass or replays the shared error.
 func (m *Manager) assembleShared(
 	ctx context.Context,
-	workDir string,
+	t Target,
 	fallback interact.Backend,
 	resolver func(runID string) interact.Backend,
 	call *assemblyCall,
 ) (h *Host, err error) {
+	key := t.Key()
 	// One exit point publishes the result: the in-flight entry goes away,
 	// the error is recorded, and the waiters are released, whatever the
 	// assembly did.
 	defer func() {
 		m.mu.Lock()
-		delete(m.assembling, workDir)
+		delete(m.assembling, key)
 		call.err = err
 		m.mu.Unlock()
 		close(call.done)
 	}()
-	h, err = m.assembleHost(ctx, workDir, fallback, resolver)
+	h, err = m.assembleHost(ctx, t, fallback, resolver)
 	if err != nil {
 		return nil, err
 	}
 	m.mu.Lock()
-	if ref := m.hosts[workDir]; ref != nil {
+	if ref := m.hosts[key]; ref != nil {
 		ref.refs++
 		existing := ref.host
 		m.mu.Unlock()
@@ -100,27 +101,37 @@ func (m *Manager) assembleShared(
 		h.doClose()
 		return existing, nil
 	}
-	m.hosts[workDir] = &hostRef{host: h, refs: 1}
+	m.hosts[key] = &hostRef{host: h, target: t, refs: 1}
 	m.mu.Unlock()
 	return h, nil
 }
 
 // assemble builds one Host without holding the manager lock and logs
 // the one line every assembly is identified by: who asked for it, how
-// long it took, and whether the app was busy while it ran.
+// long it took, and whether the app was busy while it ran. The target
+// kind decides how it is built; a kind with no builder is refused here
+// rather than assembled as a workspace, so one scope can never be
+// served by another scope's runtime.
 func (m *Manager) assemble(
 	ctx context.Context,
-	workDir string,
+	t Target,
 	fallback interact.Backend,
 	resolver func(runID string) interact.Backend,
 ) (*Host, error) {
 	started := time.Now()
-	h, err := m.buildHost(ctx, workDir, fallback, resolver)
+	var h *Host
+	var err error
+	switch t.Kind {
+	case TargetWorkspace:
+		h, err = m.buildWorkspaceHost(ctx, t, fallback, resolver)
+	default:
+		err = fmt.Errorf("host: no assembly for %s", t)
+	}
 	duration := time.Since(started)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: runtime assembly failed", err,
 			otellog.String("reason", string(AssemblyReasonFrom(ctx))),
-			otellog.String("workspace", workDir),
+			otellog.String("workspace", t.ID),
 			otellog.Int64("duration_ms", duration.Milliseconds()))
 		return nil, err
 	}
@@ -140,8 +151,8 @@ func (m *Manager) logAssembled(
 	if m.assemblies == nil {
 		m.assemblies = make(map[string]int)
 	}
-	m.assemblies[h.workDir]++
-	seq := m.assemblies[h.workDir]
+	m.assemblies[h.target.Key()]++
+	seq := m.assemblies[h.target.Key()]
 	m.mu.Unlock()
 	if ctx == nil {
 		ctx = context.Background()
@@ -155,13 +166,17 @@ func (m *Manager) logAssembled(
 		otellog.String("host_ptr", fmt.Sprintf("%p", h)))
 }
 
-// buildHost builds one Host without holding the manager lock.
-func (m *Manager) buildHost(
+// buildWorkspaceHost builds one user workspace's Host without holding
+// the manager lock. t is a workspace target, and its ID — the cleaned
+// work dir — is what the runtime, the state root and the session store
+// are derived from.
+func (m *Manager) buildWorkspaceHost(
 	ctx context.Context,
-	workDir string,
+	t Target,
 	fallback interact.Backend,
 	resolver func(runID string) interact.Backend,
 ) (*Host, error) {
+	workDir := t.ID
 	userDir := m.userDir
 	dataDir := m.dataDir
 	m.mu.Lock()
@@ -205,6 +220,7 @@ func (m *Manager) buildHost(
 		return nil, err
 	}
 	h := &Host{
+		target:        t,
 		workDir:       workDir,
 		userDir:       userDir,
 		workspaceID:   layout.ID,

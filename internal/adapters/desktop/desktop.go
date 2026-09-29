@@ -484,7 +484,7 @@ func (d *Desktop) runAutomation(
 		filepath.Clean(d.core.ActiveWorkDir()) == filepath.Clean(task.Workspace)
 	h, err := d.core.Runtime.EnsureHost(
 		host.WithAssemblyReason(ctx, host.ReasonAutomation),
-		task.Workspace)
+		host.WorkspaceTarget(task.Workspace))
 	if err != nil {
 		return automations.RunResult{Status: automations.RunFailed}, err
 	}

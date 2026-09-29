@@ -45,11 +45,11 @@ type Runtime struct {
 
 	automationManager *automations.Manager
 
-	// ensureHost resolves the Host that serves one workspace. It
+	// ensureHost resolves the Host that serves one target. It
 	// defaults to EnsureHost and is swappable in tests so the retry
 	// window and the loop can be pinned without assembling a real
 	// engine.
-	ensureHost func(context.Context, string) (*host.Host, error)
+	ensureHost func(context.Context, host.Target) (*host.Host, error)
 
 	// window is how long Do waits for a workspace's replacement Host.
 	// Zero means startRetryWindow; a test covering the wait shortens
@@ -109,12 +109,12 @@ func (r *Runtime) Manager() *host.Manager {
 	return r.manager
 }
 
-// HostFor returns the Host that serves one workspace right now — the
+// HostFor returns the Host that serves one target right now — the
 // pooled one, or the one retiring while its last runs drain — or nil
-// when the workspace has none. Callers read state off it directly; a
+// when the target has none. Callers read state off it directly; a
 // closing Host is refused by EnsureHost, not by this.
-func (r *Runtime) HostFor(workDir string) *host.Host {
-	return r.manager.Current(workDir)
+func (r *Runtime) HostFor(t host.Target) *host.Host {
+	return r.manager.Current(t)
 }
 
 // Usage returns the user-level usage store after OpenUserDB.
@@ -149,42 +149,42 @@ func (r *Runtime) OpenUserDB(ctx context.Context) error {
 	return r.manager.OpenUserDB(ctx)
 }
 
-// EnsureHost returns a Host that can serve new work for workDir: the
+// EnsureHost returns a Host that can serve new work for one target: the
 // pooled one when it is live, and otherwise a fresh assembly, waiting
-// out any Host that is still retiring from the workspace. There is one
-// of these for every caller — a window turn, a draft draining after a
+// out any Host that is still retiring from the target. There is one of
+// these for every caller — a window turn, a draft draining after a
 // switch, an automation, a session import — because the answer is now
-// the same for all of them: the workspace's Host. Adapters use it to
+// the same for all of them: the target's Host. Adapters use it to
 // recover from the transient host lifecycle guards (runtime closing /
 // runtime not ready) inside one binding RPC.
 func (r *Runtime) EnsureHost(
 	ctx context.Context,
-	workDir string,
+	t host.Target,
 ) (*host.Host, error) {
 	if r.manager == nil {
 		return nil, fmt.Errorf("runtime: host manager is not configured")
 	}
-	return r.manager.Ensure(ctx, workDir)
+	return r.manager.Ensure(ctx, t)
 }
 
 // ScheduleReplacement arms the pool's deferred replacement for one
-// workspace and reports whether this call armed it. It is how a reload
+// target and reports whether this call armed it. It is how a reload
 // hands off a workspace that is still running on the assembly it
 // retired: the pool waits out the drain and assembles the replacement
-// (see host.Manager.ScheduleReplacement for the once-per-workspace
+// (see host.Manager.ScheduleReplacement for the once-per-target
 // rule).
-func (r *Runtime) ScheduleReplacement(ctx context.Context, workDir string) bool {
-	return r.manager.ScheduleReplacement(ctx, workDir)
+func (r *Runtime) ScheduleReplacement(ctx context.Context, t host.Target) bool {
+	return r.manager.ScheduleReplacement(ctx, t)
 }
 
 // ReplacementArmed reports whether a deferred replacement is already
-// scheduled for one workspace, i.e. whether the stale generation
+// scheduled for one target, i.e. whether the stale generation
 // serving it is about to be replaced.
-func (r *Runtime) ReplacementArmed(workDir string) bool {
-	return r.manager.ReplacementArmed(workDir)
+func (r *Runtime) ReplacementArmed(t host.Target) bool {
+	return r.manager.ReplacementArmed(t)
 }
 
-// Do runs fn against the Host that serves workDir, absorbing the
+// Do runs fn against the Host that serves one target, absorbing the
 // transient host lifecycle guards (the runtime is closing, the shared
 // session store is not ready yet) by waiting — inside one retry window
 // — for the workspace's replacement Host and running fn again. It is
@@ -219,7 +219,7 @@ func (r *Runtime) ReplacementArmed(workDir string) bool {
 // aimed elsewhere) wants.
 func (r *Runtime) Do(
 	ctx context.Context,
-	workDir string,
+	t host.Target,
 	stop func() bool,
 	fn func(*host.Host) error,
 ) error {
@@ -231,7 +231,7 @@ func (r *Runtime) Do(
 			return lastErr
 		}
 		attemptCtx, cancel := context.WithTimeout(ctx, remaining)
-		h, err := r.ensure(attemptCtx, workDir)
+		h, err := r.ensure(attemptCtx, t)
 		// Only the window's own expiry is absorbed below. A caller whose
 		// context died (a canceled RPC, a deadline of its own) keeps
 		// its error, and so does an assembly that failed for its own
@@ -274,24 +274,24 @@ func (r *Runtime) Do(
 	return lastErr
 }
 
-// ensure is the one way the retry paths resolve the Host for a
-// workspace, so a test can substitute the resolution (see the
-// ensureHost field).
+// ensure is the one way the retry paths resolve the Host for a target,
+// so a test can substitute the resolution (see the ensureHost field).
 func (r *Runtime) ensure(
 	ctx context.Context,
-	workDir string,
+	t host.Target,
 ) (*host.Host, error) {
 	if r.ensureHost == nil {
-		return r.EnsureHost(ctx, workDir)
+		return r.EnsureHost(ctx, t)
 	}
-	return r.ensureHost(ctx, workDir)
+	return r.ensureHost(ctx, t)
 }
 
-// Reload invalidates pooled hosts so the next EnsureHost rebuilds from
-// the current configuration.
+// Reload invalidates the pooled workspace hosts so the next EnsureHost
+// rebuilds from the current configuration. Applications assemble from
+// their own documents and are left alone.
 func (r *Runtime) Reload(ctx context.Context) error {
 	if r.manager != nil {
-		r.manager.InvalidateAll(ctx)
+		r.manager.InvalidateWorkspaces(ctx)
 	}
 	return nil
 }

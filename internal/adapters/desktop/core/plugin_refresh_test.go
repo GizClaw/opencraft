@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
@@ -23,7 +24,7 @@ import (
 func TestRefreshPluginRuntimeRebuildsOncePerRevision(t *testing.T) {
 	c, workDir, _ := newInstallerTestCore(t)
 	ctx := context.Background()
-	first, err := c.Runtime.EnsureHost(ctx, workDir)
+	first, err := c.Runtime.EnsureHost(ctx, host.WorkspaceTarget(workDir))
 	if err != nil {
 		t.Fatalf("ensure host: %v", err)
 	}
@@ -140,7 +141,7 @@ func invalidationsWithReason(recorder *logcapture.Recorder, reason string) int {
 func TestRefreshPluginRuntimeCoalescesConcurrentCallers(t *testing.T) {
 	c, workDir, _ := newInstallerTestCore(t)
 	ctx := context.Background()
-	if _, err := c.Runtime.EnsureHost(ctx, workDir); err != nil {
+	if _, err := c.Runtime.EnsureHost(ctx, host.WorkspaceTarget(workDir)); err != nil {
 		t.Fatalf("ensure host: %v", err)
 	}
 	src := filepath.Join(workDir, ".opencraft-plugins", "hello")
@@ -214,7 +215,7 @@ func TestRefreshPluginRuntimeCoalescesConcurrentCallers(t *testing.T) {
 func TestRefreshPluginRuntimeFoldsAMutationInsideTheRebuild(t *testing.T) {
 	c, workDir, _ := newInstallerTestCore(t)
 	ctx := context.Background()
-	if _, err := c.Runtime.EnsureHost(ctx, workDir); err != nil {
+	if _, err := c.Runtime.EnsureHost(ctx, host.WorkspaceTarget(workDir)); err != nil {
 		t.Fatalf("ensure host: %v", err)
 	}
 	first := filepath.Join(workDir, ".opencraft-plugins", "hello")
@@ -290,7 +291,7 @@ func TestRefreshPluginRuntimeFoldsAMutationInsideTheRebuild(t *testing.T) {
 func TestRefreshPluginRuntimeBoundsTheTrailingPasses(t *testing.T) {
 	c, workDir, _ := newInstallerTestCore(t)
 	ctx := context.Background()
-	if _, err := c.Runtime.EnsureHost(ctx, workDir); err != nil {
+	if _, err := c.Runtime.EnsureHost(ctx, host.WorkspaceTarget(workDir)); err != nil {
 		t.Fatalf("ensure host: %v", err)
 	}
 	first := filepath.Join(workDir, ".opencraft-plugins", "hello")

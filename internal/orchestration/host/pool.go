@@ -1,4 +1,4 @@
-// Pool lifecycle: which workspace gets which Host, how a stale Host is
+// Pool lifecycle: which target gets which Host, how a stale Host is
 // retired, and how the pool drains on shutdown.
 
 package host
@@ -7,8 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
@@ -17,33 +15,71 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 )
 
-// InvalidateAll drops every pooled Host. Idle hosts close immediately;
-// hosts with active runs finish on the old runtime and close after the
-// last run ends.
+// InvalidateAll drops every pooled Host, whatever it serves. Idle hosts
+// close immediately; hosts with active runs finish on the old runtime
+// and close after the last run ends.
 func (m *Manager) InvalidateAll(ctx context.Context) {
+	m.invalidate(ctx, func(Target) bool { return true })
+}
+
+// InvalidateWorkspaces drops every pooled user-workspace Host, and
+// nothing else. A settings save, a plugin write and a workspace switch
+// all change what a workspace's runtime assembles from; an application
+// assembles from its own document and is not affected by any of them.
+func (m *Manager) InvalidateWorkspaces(ctx context.Context) {
+	m.invalidate(ctx, func(t Target) bool { return t.Kind == TargetWorkspace })
+}
+
+// InvalidateApps drops pooled application Hosts: all of them when ids is
+// empty, the named ones otherwise. Enabling, updating, rolling back or
+// uninstalling an application invalidates that application's Host —
+// never a workspace's.
+func (m *Manager) InvalidateApps(ctx context.Context, ids ...string) {
+	wanted := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		wanted[id] = struct{}{}
+	}
+	m.invalidate(ctx, func(t Target) bool {
+		if t.Kind != TargetApp {
+			return false
+		}
+		if len(wanted) == 0 {
+			return true
+		}
+		_, ok := wanted[t.ID]
+		return ok
+	})
+}
+
+// invalidate collects the targets whose pooled Host matches, then
+// retires them through the single-target path. Matching runs under the
+// pool lock; the retirement itself does not.
+func (m *Manager) invalidate(ctx context.Context, match func(Target) bool) {
 	m.mu.Lock()
-	dirs := make([]string, 0, len(m.hosts))
-	for wd := range m.hosts {
-		dirs = append(dirs, wd)
+	targets := make([]Target, 0, len(m.hosts))
+	for _, ref := range m.hosts {
+		if match(ref.target) {
+			targets = append(targets, ref.target)
+		}
 	}
 	m.mu.Unlock()
-	for _, wd := range dirs {
-		m.Invalidate(ctx, wd)
+	for _, t := range targets {
+		m.Invalidate(ctx, t)
 	}
 }
 
-// Acquire returns (creating if needed) the shared Host for workDir.
+// Acquire returns (creating if needed) the shared Host for one target.
 // fallback is used for runs without a resolver hit. Concurrent callers
-// for one workspace share a single assembly: whoever gets there first
+// for one target share a single assembly: whoever gets there first
 // builds, the rest wait and reuse the result. Every Host the pool hands
 // out has the host configurator applied first.
 func (m *Manager) Acquire(
 	ctx context.Context,
-	workDir string,
+	t Target,
 	fallback interact.Backend,
 	resolver func(runID string) interact.Backend,
 ) (*Host, error) {
-	h, err := m.acquire(ctx, workDir, fallback, resolver)
+	h, err := m.acquire(ctx, t, fallback, resolver)
 	if err != nil {
 		return nil, err
 	}
@@ -52,39 +88,44 @@ func (m *Manager) Acquire(
 }
 
 // acquire is Acquire's pool half: it resolves or assembles the Host and
-// leaves the configurator to the caller.
+// leaves the configurator to the caller. It is also the one place a
+// call that named no target is refused, so an unnamed workspace or app
+// cannot assemble a runtime for whatever filepath.Clean("") produces.
 func (m *Manager) acquire(
 	ctx context.Context,
-	workDir string,
+	t Target,
 	fallback interact.Backend,
 	resolver func(runID string) interact.Backend,
 ) (*Host, error) {
-	workDir = filepath.Clean(workDir)
+	if !t.Valid() {
+		return nil, ErrNoTarget
+	}
+	key := t.Key()
 	for {
 		m.mu.Lock()
-		if ref := m.hosts[workDir]; ref != nil {
+		if ref := m.hosts[key]; ref != nil {
 			ref.refs++
 			h := ref.host
 			m.mu.Unlock()
 			return h, nil
 		}
-		if h := m.retiring[workDir]; h != nil {
+		if h := m.retiring[key]; h != nil {
 			m.mu.Unlock()
 			if err := h.waitClosed(ctx); err != nil {
 				return nil, err
 			}
 			continue
 		}
-		call := m.assembling[workDir]
+		call := m.assembling[key]
 		if call == nil {
 			call = &assemblyCall{done: make(chan struct{})}
 			if m.assembling == nil {
 				m.assembling = make(map[string]*assemblyCall)
 			}
-			m.assembling[workDir] = call
+			m.assembling[key] = call
 			m.mu.Unlock()
 			return m.assembleShared(
-				ctx, workDir, fallback, resolver, call)
+				ctx, t, fallback, resolver, call)
 		}
 		m.mu.Unlock()
 		select {
@@ -115,40 +156,37 @@ func (m *Manager) acquire(
 // the workspace has no Host at all: never assembled, or fully torn
 // down.
 //
-// This is the pool's answer to "which generation serves this
-// workspace", and it is deliberately per workspace: no process-wide
-// current Host means a background acquire cannot make a read for the
-// window's workspace land on another workspace's store.
-func (m *Manager) Current(workDir string) *Host {
-	if strings.TrimSpace(workDir) == "" {
+// This is the pool's answer to "which generation serves this target",
+// and it is deliberately per target: no process-wide current Host means
+// a background acquire cannot make a read for the window's workspace
+// land on another workspace's store.
+func (m *Manager) Current(t Target) *Host {
+	if !t.Valid() {
 		return nil
 	}
-	workDir = filepath.Clean(workDir)
+	key := t.Key()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if ref := m.hosts[workDir]; ref != nil {
+	if ref := m.hosts[key]; ref != nil {
 		return ref.host
 	}
-	return m.retiring[workDir]
+	return m.retiring[key]
 }
 
-// Ensure returns a Host for workDir that can serve new work: the pooled
-// Host when it is live (a stale one still serving its last runs
+// Ensure returns a Host for one target that can serve new work: the
+// pooled Host when it is live (a stale one still serving its last runs
 // counts), and otherwise a fresh assembly, once any retiring Host for
-// the workspace has finished teardown. It never assembles a second Host
-// while one is still draining, and never hands out another workspace's.
-// A Host it returns is wired with the host configurator, whether it
-// came out of the pool or from an assembly this call started.
+// the target has finished teardown. It never assembles a second Host
+// while one is still draining, and never hands out another target's. A
+// Host it returns is wired with the host configurator, whether it came
+// out of the pool or from an assembly this call started.
 //
 // Programmatic callers make up this pool's supply side, so the assembly
 // runs on the backend they all use (interact.Auto); a caller that needs
 // its own fallback backend for the runs on that Host goes through
 // Acquire instead.
-func (m *Manager) Ensure(ctx context.Context, workDir string) (*Host, error) {
-	if strings.TrimSpace(workDir) == "" {
-		return nil, ErrNoWorkspace
-	}
-	if h := m.Current(workDir); h != nil && !h.IsClosing() {
+func (m *Manager) Ensure(ctx context.Context, t Target) (*Host, error) {
+	if h := m.Current(t); h != nil && !h.IsClosing() {
 		// The pooled branch hands out a Host the assembler may not
 		// have reached yet (it configures after publishing), so the
 		// configurator is applied here too: no hand-out path leaves a
@@ -156,20 +194,23 @@ func (m *Manager) Ensure(ctx context.Context, workDir string) (*Host, error) {
 		m.configureHost(h)
 		return h, nil
 	}
-	return m.Acquire(ctx, workDir, interact.Auto{}, nil)
+	return m.Acquire(ctx, t, interact.Auto{}, nil)
 }
 
-// Invalidate marks one workspace's Host as stale (the rebuild path).
-// An idle Host closes immediately; a Host with active runs stays
-// pooled and keeps serving new turns on the old runtime until the last
-// run ends, then retires itself through hostIdle. This defers
-// engine-input swaps to idle so a second Host (and a second flowcraft
-// Session for the same conversation) is never assembled while the old
-// runtime still has live runs.
-func (m *Manager) Invalidate(ctx context.Context, workDir string) {
-	workDir = filepath.Clean(workDir)
+// Invalidate marks one target's Host as stale (the rebuild path). An
+// idle Host closes immediately; a Host with active runs stays pooled and
+// keeps serving new turns on the old runtime until the last run ends,
+// then retires itself through hostIdle. This defers engine-input swaps
+// to idle so a second Host (and a second flowcraft Session for the same
+// conversation) is never assembled while the old runtime still has live
+// runs.
+func (m *Manager) Invalidate(ctx context.Context, t Target) {
+	if !t.Valid() {
+		return
+	}
+	key := t.Key()
 	m.mu.Lock()
-	ref := m.hosts[workDir]
+	ref := m.hosts[key]
 	if ref == nil {
 		m.mu.Unlock()
 		return
@@ -180,8 +221,8 @@ func (m *Manager) Invalidate(ctx context.Context, workDir string) {
 	active := h.hasActiveRuns()
 	var closeNow bool
 	if !active {
-		delete(m.hosts, workDir)
-		closeNow = m.trackRetiringLocked(workDir, h)
+		delete(m.hosts, key)
+		closeNow = m.trackRetiringLocked(t, h)
 	}
 	m.mu.Unlock()
 	if ctx == nil {
@@ -192,7 +233,7 @@ func (m *Manager) Invalidate(ctx context.Context, workDir string) {
 	// the signal this line exists for.
 	telemetry.Info(ctx, "host: runtime invalidated",
 		otellog.String("reason", string(AssemblyReasonFrom(ctx))),
-		otellog.String("workspace", workDir),
+		otellog.String("workspace", t.ID),
 		otellog.Bool("in_turn", active),
 		otellog.Bool("deferred", !closeNow),
 		otellog.String("host_ptr", fmt.Sprintf("%p", h)))
@@ -210,12 +251,12 @@ func (m *Manager) hostIdle(h *Host) {
 	}
 	m.mu.Lock()
 	var closeNow bool
-	for workDir, ref := range m.hosts {
+	for key, ref := range m.hosts {
 		if ref.host != h || !ref.stale {
 			continue
 		}
-		delete(m.hosts, workDir)
-		closeNow = m.trackRetiringLocked(workDir, h)
+		delete(m.hosts, key)
+		closeNow = m.trackRetiringLocked(ref.target, h)
 		break
 	}
 	m.mu.Unlock()
@@ -226,13 +267,14 @@ func (m *Manager) hostIdle(h *Host) {
 
 // hostClosed forgets a fully torn-down Host so Acquire can assemble a
 // replacement. Host.doClose reports itself through this hook.
-func (m *Manager) hostClosed(workDir string, h *Host) {
+func (m *Manager) hostClosed(t Target, h *Host) {
 	if m == nil {
 		return
 	}
+	key := t.Key()
 	m.mu.Lock()
-	if m.retiring != nil && m.retiring[workDir] == h {
-		delete(m.retiring, workDir)
+	if m.retiring != nil && m.retiring[key] == h {
+		delete(m.retiring, key)
 	}
 	m.mu.Unlock()
 }
@@ -240,14 +282,15 @@ func (m *Manager) hostClosed(workDir string, h *Host) {
 // trackRetiringLocked records a Host that is leaving the pool. The
 // caller must hold m.mu and must have removed the host from m.hosts.
 // It returns true when closeHost should be invoked after unlocking.
-func (m *Manager) trackRetiringLocked(workDir string, h *Host) bool {
+func (m *Manager) trackRetiringLocked(t Target, h *Host) bool {
 	if m.retiring == nil {
 		m.retiring = make(map[string]*Host)
 	}
-	if m.retiring[workDir] != nil {
+	key := t.Key()
+	if m.retiring[key] != nil {
 		return false
 	}
-	m.retiring[workDir] = h
+	m.retiring[key] = h
 	return true
 }
 

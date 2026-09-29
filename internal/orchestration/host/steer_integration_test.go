@@ -44,7 +44,7 @@ func steerHost(t *testing.T, provider *fakeprovider.Server) (*host.Host, context
 
 	ctx := context.Background()
 	mgr := host.NewManagerAt(dataDir, configDir)
-	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	h, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}

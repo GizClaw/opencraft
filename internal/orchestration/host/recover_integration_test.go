@@ -78,7 +78,7 @@ func acquireHost(
 ) (*host.Manager, *host.Host) {
 	t.Helper()
 	mgr := host.NewManagerAt(dataDir, configDir)
-	h, err := mgr.Acquire(context.Background(), workDir, interact.Auto{}, nil)
+	h, err := mgr.Acquire(context.Background(), host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}

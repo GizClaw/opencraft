@@ -169,7 +169,8 @@ func (c *Core) hostForPluginImport(
 	ctx context.Context, workDir string,
 ) (*host.Host, error) {
 	h, err := c.Runtime.EnsureHost(
-		host.WithAssemblyReason(ctx, host.ReasonSessionImport), workDir)
+		host.WithAssemblyReason(ctx, host.ReasonSessionImport),
+		host.WorkspaceTarget(workDir))
 	if err != nil {
 		return nil, fmt.Errorf("session.import: workspace runtime: %w", err)
 	}

@@ -8,20 +8,36 @@ import (
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
-// fakeManagerHost builds a Host that can sit in a Manager pool without
-// a real runtime behind it. Run lifecycle and teardown state are real;
-// only the engine pieces stay nil.
-func fakeManagerHost(m *Manager, workDir string, runs int) *Host {
+// fakeManagerHost builds a Host that can sit in a Manager pool without a
+// real runtime behind it. It does not install it: an assembly stub has
+// to be able to return a Host the pool is going to publish itself. Run
+// lifecycle and teardown state are real; only the engine pieces stay
+// nil.
+func fakeManagerHost(m *Manager, t Target, runs int) *Host {
 	h := &Host{
-		workDir:   workDir,
+		target:    t,
 		manager:   m,
 		runs:      make(map[RunID]*runDetail),
 		closeDone: make(chan struct{}),
+	}
+	// Only a workspace target has a work dir these tests care about;
+	// the pool itself never reads it.
+	if t.Kind == TargetWorkspace {
+		h.workDir = t.ID
 	}
 	h.runsCond = sync.NewCond(&h.mu)
 	for i := 0; i < runs; i++ {
 		h.runs[RunID(string(rune('a'+i)))] = &runDetail{}
 	}
+	return h
+}
+
+// pooledFakeHost is fakeManagerHost plus the pool entry, installed the
+// way assembleShared installs one: keyed by the target, with the entry
+// carrying that target.
+func pooledFakeHost(m *Manager, t Target, runs int) *Host {
+	h := fakeManagerHost(m, t, runs)
+	m.hosts[h.target.Key()] = &hostRef{host: h, target: h.target, refs: 1}
 	return h
 }
 
@@ -39,7 +55,7 @@ func recordingClose(m *Manager, closed chan *Host) {
 			}
 		}
 		h.mu.Unlock()
-		m.hostClosed(h.workDir, h)
+		m.hostClosed(h.target, h)
 	}
 }
 
@@ -47,12 +63,11 @@ func TestInvalidateDefersBusyHost(t *testing.T) {
 	m := NewManagerAt(t.TempDir(), t.TempDir())
 	closed := make(chan *Host, 1)
 	recordingClose(m, closed)
-	h := fakeManagerHost(m, "/workspace/a", 1)
-	m.hosts[h.workDir] = &hostRef{host: h, refs: 1}
+	h := pooledFakeHost(m, WorkspaceTarget("/workspace/a"), 1)
 
-	m.Invalidate(context.Background(), h.workDir)
+	m.Invalidate(context.Background(), h.target)
 
-	ref := m.hosts[h.workDir]
+	ref := m.hosts[h.target.Key()]
 	if ref == nil {
 		t.Fatal("busy host was removed from the pool while still running")
 	}
@@ -73,12 +88,11 @@ func TestInvalidateClosesIdleHost(t *testing.T) {
 	m := NewManagerAt(t.TempDir(), t.TempDir())
 	closed := make(chan *Host, 1)
 	recordingClose(m, closed)
-	h := fakeManagerHost(m, "/workspace/b", 0)
-	m.hosts[h.workDir] = &hostRef{host: h, refs: 1}
+	h := pooledFakeHost(m, WorkspaceTarget("/workspace/b"), 0)
 
-	m.Invalidate(context.Background(), h.workDir)
+	m.Invalidate(context.Background(), h.target)
 
-	if m.hosts[h.workDir] != nil {
+	if m.hosts[h.target.Key()] != nil {
 		t.Fatal("idle host stayed in the pool")
 	}
 	if got := <-closed; got != h {
@@ -87,7 +101,7 @@ func TestInvalidateClosesIdleHost(t *testing.T) {
 	if !h.closed {
 		t.Fatal("idle host was not closed")
 	}
-	if m.retiring[h.workDir] != nil {
+	if m.retiring[h.target.Key()] != nil {
 		t.Fatal("retiring entry was not cleaned up after close")
 	}
 }
@@ -96,11 +110,10 @@ func TestStaleHostRetiresWhenLastRunEnds(t *testing.T) {
 	m := NewManagerAt(t.TempDir(), t.TempDir())
 	closed := make(chan *Host, 1)
 	recordingClose(m, closed)
-	h := fakeManagerHost(m, "/workspace/c", 1)
-	m.hosts[h.workDir] = &hostRef{host: h, refs: 1}
+	h := pooledFakeHost(m, WorkspaceTarget("/workspace/c"), 1)
 
-	m.Invalidate(context.Background(), h.workDir)
-	if m.hosts[h.workDir] == nil {
+	m.Invalidate(context.Background(), h.target)
+	if m.hosts[h.target.Key()] == nil {
 		t.Fatal("busy host left the pool at invalidate time")
 	}
 	if !h.IsStale() {
@@ -114,7 +127,7 @@ func TestStaleHostRetiresWhenLastRunEnds(t *testing.T) {
 	}
 	h.dropRun(runID)
 
-	if m.hosts[h.workDir] != nil {
+	if m.hosts[h.target.Key()] != nil {
 		t.Fatal("stale host stayed in the pool after its last run ended")
 	}
 	if got := <-closed; got != h {
@@ -132,8 +145,7 @@ func TestHostIdleIgnoresNonStaleHost(t *testing.T) {
 	m := NewManagerAt(t.TempDir(), t.TempDir())
 	closed := make(chan *Host, 1)
 	recordingClose(m, closed)
-	h := fakeManagerHost(m, "/workspace/d", 1)
-	m.hosts[h.workDir] = &hostRef{host: h, refs: 1}
+	h := pooledFakeHost(m, WorkspaceTarget("/workspace/d"), 1)
 
 	var runID RunID
 	for id := range h.runs {
@@ -142,7 +154,7 @@ func TestHostIdleIgnoresNonStaleHost(t *testing.T) {
 	}
 	h.dropRun(runID)
 
-	if m.hosts[h.workDir] == nil {
+	if m.hosts[h.target.Key()] == nil {
 		t.Fatal("non-stale host left the pool when it became idle")
 	}
 	select {
@@ -171,11 +183,10 @@ func TestInvalidateLogsAttribution(t *testing.T) {
 	m := NewManagerAt(t.TempDir(), t.TempDir())
 	closed := make(chan *Host, 1)
 	recordingClose(m, closed)
-	h := fakeManagerHost(m, "/workspace/logged", 1)
-	m.hosts[h.workDir] = &hostRef{host: h, refs: 1}
+	h := pooledFakeHost(m, WorkspaceTarget("/workspace/logged"), 1)
 
 	ctx := WithAssemblyReason(context.Background(), ReasonSettingsSave)
-	m.Invalidate(ctx, h.workDir)
+	m.Invalidate(ctx, h.target)
 
 	var found bool
 	for _, record := range recorder.Records() {

@@ -44,7 +44,7 @@ func TestReloadDefersUntilActiveRunFinishes(t *testing.T) {
 	mgr := host.NewManagerAt(dataDir, configDir)
 	ctx := context.Background()
 
-	hostA, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	hostA, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host A: %v", err)
 	}
@@ -61,8 +61,8 @@ func TestReloadDefersUntilActiveRunFinishes(t *testing.T) {
 		t.Fatal("provider request did not start")
 	}
 
-	mgr.Invalidate(ctx, workDir)
-	hostB, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	mgr.Invalidate(ctx, host.WorkspaceTarget(workDir))
+	hostB, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host during active run: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestReloadDefersUntilActiveRunFinishes(t *testing.T) {
 	// run.Wait must also wait for the post-run auto-title before the
 	// stale Host closes the shared store; otherwise the title write is
 	// lost to "sql: database is closed".
-	hostC, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	hostC, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host C after teardown: %v", err)
 	}

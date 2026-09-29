@@ -152,12 +152,15 @@ func NewCoreWithPaths(p Paths) *Core {
 	// host.Manager.ScheduleReplacement); this is the adapter's half of
 	// that policy: a workspace the window has left is not rebuilt
 	// behind the user's back, and a replacement that lands refreshes
-	// everything the UI renders out of the document.
+	// everything the UI renders out of the document. An application's
+	// runtime is not the window's workspace, so this half speaks only
+	// for workspace targets; the application page answers for its own.
 	runtime.Manager().SetReplacementHooks(host.ReplacementHooks{
-		Wanted: func(workDir string) bool {
-			return SameWorkspace(c.ActiveWorkDir(), workDir)
+		Wanted: func(t host.Target) bool {
+			return t.Kind == host.TargetWorkspace &&
+				SameWorkspace(c.ActiveWorkDir(), t.ID)
 		},
-		Installed: func(string) { c.EmitReady() },
+		Installed: func(host.Target) { c.EmitReady() },
 	})
 	plugin.Kraft.SetOpenURL(c.Shell.OpenURL)
 	defaultMode, defaultThink := c.Shell.SessionDefaults()

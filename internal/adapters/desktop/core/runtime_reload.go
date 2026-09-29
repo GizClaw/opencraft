@@ -51,7 +51,7 @@ func (c *Core) RebuildRuntime(ctx context.Context) error {
 		c.EmitReady()
 		return nil
 	}
-	h, err := c.Runtime.EnsureHost(ctx, workDir)
+	h, err := c.Runtime.EnsureHost(ctx, host.WorkspaceTarget(workDir))
 	if err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func (c *Core) RebuildRuntime(ctx context.Context) error {
 		// the drain ends and announces it through EmitReady; arming is
 		// once per workspace, so a reload storm inside one drain asks
 		// for one replacement.
-		c.Runtime.ScheduleReplacement(ctx, workDir)
+		c.Runtime.ScheduleReplacement(ctx, host.WorkspaceTarget(workDir))
 		if !SameWorkspace(announced, workDir) {
 			// A switch away and back lands on a Host that was retired
 			// while the window was elsewhere: that Host has no

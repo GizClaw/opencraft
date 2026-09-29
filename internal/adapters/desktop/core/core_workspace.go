@@ -38,7 +38,7 @@ func (c *Core) ActiveWorkDir() string {
 // the UI shows go"; the pool answers per workspace, so a background
 // acquire for another workspace cannot redirect them.
 func (c *Core) ActiveHost() *host.Host {
-	return c.Runtime.HostFor(c.ActiveWorkDir())
+	return c.Runtime.HostFor(host.WorkspaceTarget(c.ActiveWorkDir()))
 }
 
 // RecordWorkspace persists one workspace open. Failures are best-effort.

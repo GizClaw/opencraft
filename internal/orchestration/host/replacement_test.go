@@ -35,7 +35,7 @@ func TestScheduleReplacementAssemblesWhenTheDrainIsAlreadyGone(t *testing.T) {
 
 	mgr := host.NewManagerAt(dataDir, configDir)
 	ctx := context.Background()
-	first, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	first, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}
@@ -47,16 +47,16 @@ func TestScheduleReplacementAssemblesWhenTheDrainIsAlreadyGone(t *testing.T) {
 	if err := first.WaitClosed(ctx); err != nil {
 		t.Fatalf("wait closed: %v", err)
 	}
-	if got := mgr.Current(workDir); got != nil {
+	if got := mgr.Current(host.WorkspaceTarget(workDir)); got != nil {
 		t.Fatalf("current after teardown = %p, want the workspace unserved",
 			got)
 	}
 
 	installed := make(chan string, 1)
 	mgr.SetReplacementHooks(host.ReplacementHooks{
-		Installed: func(workDir string) { installed <- workDir },
+		Installed: func(t host.Target) { installed <- t.ID },
 	})
-	if !mgr.ScheduleReplacement(ctx, workDir) {
+	if !mgr.ScheduleReplacement(ctx, host.WorkspaceTarget(workDir)) {
 		t.Fatal("the replacement was not armed")
 	}
 	select {
@@ -68,7 +68,7 @@ func TestScheduleReplacementAssemblesWhenTheDrainIsAlreadyGone(t *testing.T) {
 		t.Fatal("no replacement was assembled: the workspace was left " +
 			"with no Host")
 	}
-	replacement := mgr.Current(workDir)
+	replacement := mgr.Current(host.WorkspaceTarget(workDir))
 	if replacement == nil || replacement == first {
 		t.Fatalf("current after replacement = %p, want a fresh Host",
 			replacement)
@@ -88,7 +88,7 @@ func TestScheduleReplacementAssemblesWhenTheDrainIsAlreadyGone(t *testing.T) {
 	// The armed slot is released once the replacement settled, so the
 	// next reload can arm one of its own.
 	deadline := time.Now().Add(30 * time.Second)
-	for mgr.ReplacementArmed(workDir) {
+	for mgr.ReplacementArmed(host.WorkspaceTarget(workDir)) {
 		if time.Now().After(deadline) {
 			t.Fatal("the armed slot was never released")
 		}
