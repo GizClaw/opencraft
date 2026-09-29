@@ -61,6 +61,6 @@ var Retired = []Name{
 			"agrees with them (W5.3: `bindings/conversation.go`'s " +
 			"NewChatResult, `bindings/session.go`'s " +
 			"SessionDeleteResult/SessionImportDTO, and " +
-			"`capabilities/plugins/runtime`'s SessionImportResult).",
+			"`capabilities/plugins/kraft`'s SessionImportResult).",
 	},
 }

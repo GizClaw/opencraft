@@ -10,7 +10,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 
-	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
@@ -20,7 +20,7 @@ import (
 func TestPluginSessionImportRequiresPermission(t *testing.T) {
 	c := NewCore(t.TempDir(), t.TempDir(), "")
 	_, err := c.handlePluginSessionImport("unknown",
-		pluginruntime.SessionImportRequest{BundlePath: "/tmp/conv.json"})
+		kraft.SessionImportRequest{BundlePath: "/tmp/conv.json"})
 	if err == nil || !strings.Contains(err.Error(), "lacks sessions:import") {
 		t.Fatalf("error = %v, want permission error", err)
 	}
@@ -31,7 +31,7 @@ func TestPluginSessionImportRequiresWorkspace(t *testing.T) {
 	writeTestPlugin(t, dataDir, "plug", []string{"sessions:import"})
 	c := NewCore(t.TempDir(), dataDir, "")
 	_, err := c.handlePluginSessionImport("plug",
-		pluginruntime.SessionImportRequest{BundlePath: "/tmp/conv.json"})
+		kraft.SessionImportRequest{BundlePath: "/tmp/conv.json"})
 	if err == nil || !strings.Contains(err.Error(), "no workspace selected") {
 		t.Fatalf("error = %v, want no-workspace error", err)
 	}
@@ -77,7 +77,7 @@ func TestPluginSessionImportWiresHostWritePath(t *testing.T) {
 	}
 
 	res, err := c.handlePluginSessionImport("plug",
-		pluginruntime.SessionImportRequest{BundlePath: bundlePath})
+		kraft.SessionImportRequest{BundlePath: bundlePath})
 	if err != nil {
 		t.Fatalf("handlePluginSessionImport: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestPluginSessionImportWiresHostWritePath(t *testing.T) {
 		t.Fatalf("imported turns = %+v, want one two-message turn", turns)
 	}
 	again, err := c.handlePluginSessionImport("plug",
-		pluginruntime.SessionImportRequest{BundlePath: bundlePath})
+		kraft.SessionImportRequest{BundlePath: bundlePath})
 	if err != nil {
 		t.Fatalf("duplicate import: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestPluginSessionImportedSourcesReportsExisting(t *testing.T) {
 	importRes := func(t *testing.T, source string) string {
 		t.Helper()
 		res, err := c.handlePluginSessionImport("plug",
-			pluginruntime.SessionImportRequest{BundlePath: writeBundle(t, source)})
+			kraft.SessionImportRequest{BundlePath: writeBundle(t, source)})
 		if err != nil {
 			t.Fatalf("import %s: %v", source, err)
 		}
@@ -175,7 +175,7 @@ func TestPluginSessionImportedSourcesReportsExisting(t *testing.T) {
 	id2 := importRes(t, "codex:conv-2")
 
 	got, err := c.handlePluginSessionImportedSources("plug",
-		pluginruntime.SessionImportStatusRequest{
+		kraft.SessionImportStatusRequest{
 			Sources: []string{"codex:conv-1", "codex:conv-2", "codex:missing"},
 		})
 	if err != nil {
@@ -190,7 +190,7 @@ func TestPluginSessionImportedSourcesReportsExisting(t *testing.T) {
 	}
 
 	if _, err := c.handlePluginSessionImportedSources("plug-no",
-		pluginruntime.SessionImportStatusRequest{Sources: []string{"codex:conv-1"}},
+		kraft.SessionImportStatusRequest{Sources: []string{"codex:conv-1"}},
 	); err == nil || !strings.Contains(err.Error(), "lacks sessions:import") {
 		t.Fatalf("unpermissioned query error = %v", err)
 	}

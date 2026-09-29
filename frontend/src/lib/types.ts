@@ -1103,7 +1103,7 @@ export interface WebSearchTestResult {
  * leave the backend.
  */
 export interface TelemetryExportStatus {
-  /** User switch allowing capability plugins to install export sinks. */
+  /** User switch allowing a plugin kraft to install an export sink. */
   enabled: boolean;
   /** Whether any OTLP endpoint is active, whoever installed it. */
   configured: boolean;

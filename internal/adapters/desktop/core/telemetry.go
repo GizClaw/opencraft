@@ -11,7 +11,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
 
-	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 )
 
@@ -30,29 +30,29 @@ type rememberedPluginSink struct {
 	sink     octelemetry.Sink
 }
 
-// wirePluginTelemetry routes capability-plugin OTLP export requests into
+// wirePluginTelemetry routes a plugin kraft's OTLP export requests into
 // the shared telemetry pipeline. The host owns the policy: one active
 // plugin sink at a time, gated by the declaring permission and the user
 // switch, validated before the live pipeline is touched, and dropped
 // when the owning plugin is disabled or uninstalled.
 func (c *Core) wirePluginTelemetry() {
-	if c.Plugin == nil || c.Plugin.Capability == nil {
+	if c.Plugin == nil || c.Plugin.Kraft == nil {
 		return
 	}
-	c.Plugin.Capability.SetTelemetryHandler(pluginruntime.TelemetryHandler{
+	c.Plugin.Kraft.SetTelemetryHandler(kraft.TelemetryHandler{
 		Configure: c.handlePluginTelemetryConfigure,
 		Disable:   c.handlePluginTelemetryDisable,
 	})
-	c.Plugin.Capability.SetProcessExitHandler(c.handlePluginProcessExit)
+	c.Plugin.Kraft.SetProcessExitHandler(c.handlePluginProcessExit)
 }
 
-// handlePluginTelemetryConfigure installs the OTLP sink one capability
-// plugin asked for. Header values are collector credentials: they stay
+// handlePluginTelemetryConfigure installs the OTLP sink one kraft asked
+// for. Header values are collector credentials: they stay
 // in host memory (the pipeline drops them when the sink is replaced) and
 // only header names are logged.
 func (c *Core) handlePluginTelemetryConfigure(
 	pluginID string,
-	req pluginruntime.TelemetryExportRequest,
+	req kraft.TelemetryExportRequest,
 ) error {
 	if !c.pluginHasPermission(pluginID, "telemetry:export") {
 		c.auditTelemetry(octelemetry.AuditEntry{
@@ -179,7 +179,7 @@ func (c *Core) handlePluginTelemetryDisable(pluginID string) error {
 	return c.dropPluginTelemetry(pluginID, "plugin removed its export sink")
 }
 
-// handlePluginProcessExit drops the export sink of a capability plugin
+// handlePluginProcessExit drops the export sink of a kraft
 // that died on its own (crash or kill): a process the host can no longer
 // talk to must not keep shipping logs to its collector. The host-stopped
 // paths (disable, uninstall) clear it explicitly and do not fire this.

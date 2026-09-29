@@ -15,7 +15,7 @@ import (
 //
 // One JSON shape describes one inference deployment for every producer:
 // the desktop settings page submits a list of InstanceSpec, and a
-// capability plugin submits the same shape over inference.upsert.
+// plugin kraft submits the same shape over inference.upsert.
 // Lower is the only path from that shape into the stored Instance, so
 // the two producers cannot drift: every field a plugin may declare is a
 // field the settings page may edit, and the source policy (row identity,
@@ -35,7 +35,7 @@ const (
 	// identity when the submitted row has none, and any credential
 	// source may be used.
 	SourceUser InstanceSource = iota
-	// SourcePlugin is a capability plugin: the row carries its own
+	// SourcePlugin is a plugin kraft: the row carries its own
 	// identity, its credential must reference the calling plugin's
 	// secret namespace, and the user-owned enabled flag is rejected.
 	SourcePlugin

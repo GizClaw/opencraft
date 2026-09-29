@@ -139,7 +139,7 @@ interface InstanceRow {
   // an empty object means "driver defaults".
   advanced: ProviderAdvanced;
   enabled: boolean;
-  managed: boolean; // deployment owned by a capability plugin
+  managed: boolean; // deployment owned by a plugin kraft
 }
 
 type Tab =

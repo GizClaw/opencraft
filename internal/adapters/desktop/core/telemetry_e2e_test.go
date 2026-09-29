@@ -11,23 +11,24 @@ import (
 	"time"
 
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
+	"github.com/GizClaw/opencraft/internal/testing/kraftfixture"
 )
 
-// TestPluginTelemetryE2E drives the whole path a real capability plugin
+// TestPluginTelemetryE2E drives the whole path a real plugin kraft
 // takes: subprocess handshake → telemetry.configure primitive over
 // JSON-RPC → host permission check → pipeline swap → audit trail.
 func TestPluginTelemetryE2E(t *testing.T) {
 	if testing.Short() {
 		// This test compiles, copies and repeatedly spawns a
-		// capability-plugin fixture binary; `go test -short ./...` skips
+		// kraft fixture binary; `go test -short ./...` skips
 		// the subprocess plumbing and keeps the fast local loop fast.
 		t.Skip("skipping plugin subprocess end-to-end test in short mode")
 	}
-	binary := buildTelemetryPlugin(t)
-	warmTelemetryPlugin(t, binary)
+	binary := kraftfixture.Build(t, kraftfixture.TelemetryPlugin)
+	warmPlugin(t, binary)
 
 	t.Run("granted", func(t *testing.T) {
-		c, dataDir := newTelemetryPluginCore(t, binary,
+		c, dataDir := newFixturePluginCore(t, binary, "Telemetry Plugin",
 			[]string{"telemetry:export"})
 		result := probeTelemetry(t, c, map[string]any{
 			"endpoint": "collector.example:4318",
@@ -51,7 +52,7 @@ func TestPluginTelemetryE2E(t *testing.T) {
 	})
 
 	t.Run("denied without permission", func(t *testing.T) {
-		c, dataDir := newTelemetryPluginCore(t, binary, []string{"storage:kv"})
+		c, dataDir := newFixturePluginCore(t, binary, "Telemetry Plugin", []string{"storage:kv"})
 		result := probeTelemetry(t, c, map[string]any{
 			"endpoint": "collector.example:4318",
 		})
@@ -74,7 +75,7 @@ func TestPluginTelemetryE2E(t *testing.T) {
 	// A plugin that dies on its own loses its sink: the host cannot ask
 	// it anything anymore, so it must not keep exporting on its behalf.
 	t.Run("crash drops the sink", func(t *testing.T) {
-		c, _ := newTelemetryPluginCore(t, binary, []string{"telemetry:export"})
+		c, _ := newFixturePluginCore(t, binary, "Telemetry Plugin", []string{"telemetry:export"})
 		if result := probeTelemetry(t, c, map[string]any{
 			"endpoint": "collector.example:4318",
 			"exit":     true,
@@ -98,7 +99,7 @@ func TestPluginTelemetryE2E(t *testing.T) {
 	// The user switch suspends and restores the sink without the plugin
 	// re-running its configure call.
 	t.Run("switch restores the sink", func(t *testing.T) {
-		c, _ := newTelemetryPluginCore(t, binary, []string{"telemetry:export"})
+		c, _ := newFixturePluginCore(t, binary, "Telemetry Plugin", []string{"telemetry:export"})
 		if result := probeTelemetry(t, c, map[string]any{
 			"endpoint": "collector.example:4318",
 			"headers":  map[string]string{"authorization": "Bearer plugin"},
@@ -133,7 +134,7 @@ func probeTelemetry(t *testing.T, c *Core, params map[string]any) map[string]any
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	// Starting a freshly written binary can exceed the handshake window
-	raw, err := c.Plugin.Capability.Invoke(ctx, "plug", "telemetry.probe", params)
+	raw, err := c.Plugin.Kraft.Invoke(ctx, "plug", "telemetry.probe", params)
 	if err != nil {
 		t.Fatalf("invoke telemetry.probe: %v", err)
 	}
@@ -144,24 +145,25 @@ func probeTelemetry(t *testing.T, c *Core, params map[string]any) map[string]any
 	return result
 }
 
-// warmTelemetryPlugin runs the fixture once with stdin closed: it
+// warmPlugin runs a fixture once with stdin closed: it
 // announces itself and exits on EOF. The exec validates the code
 // signature and warms the page cache, so the subtests below do not pay
 // that cost inside their handshake window.
-func warmTelemetryPlugin(t *testing.T, binary string) {
+func warmPlugin(t *testing.T, binary string) {
 	t.Helper()
 	cmd := exec.Command(binary)
 	cmd.Stdin = nil
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("warm telemetry plugin: %v\n%s", err, out)
+		t.Fatalf("warm plugin: %v\n%s", err, out)
 	}
 }
 
-// newTelemetryPluginCore installs the fixture plugin into a fresh data
-// dir and wires the desktop core to it.
-func newTelemetryPluginCore(
+// newFixturePluginCore installs a fixture plugin into a fresh data dir
+// and wires the desktop core to it.
+func newFixturePluginCore(
 	t *testing.T,
 	binary string,
+	name string,
 	permissions []string,
 ) (*Core, string) {
 	t.Helper()
@@ -176,11 +178,11 @@ func newTelemetryPluginCore(
 	}
 	manifest := `{
 		"id": "plug",
-		"name": "Telemetry Plugin",
+		"name": "` + name + `",
 		"version": "0.1.0",
 		"entry": "dist/index.js",
 		"permissions": ` + string(perms) + `,
-		"capability": {"binary": "helper", "protocol": 1}
+		"kraft": {"binary": "helper", "protocol": 1}
 	}`
 	if err := os.WriteFile(
 		filepath.Join(pluginDir, "plugin.json"), []byte(manifest), 0o600,
@@ -200,7 +202,7 @@ func newTelemetryPluginCore(
 	// `go test ./...` oversubscribes the machine, and the default 5s
 	// handshake window turns that scheduling noise into a plugin
 	// failure. The fixtures are healthy; give them room.
-	c.Plugin.Capability.SetTimeouts(30*time.Second, 60*time.Second)
+	c.Plugin.Kraft.SetTimeouts(30*time.Second, 60*time.Second)
 	t.Cleanup(c.Plugin.Close)
 	return c, dataDir
 }
@@ -214,16 +216,4 @@ func copyExecutable(t *testing.T, src, dst string) {
 	if err := os.WriteFile(dst, data, 0o700); err != nil {
 		t.Fatalf("write plugin binary: %v", err)
 	}
-}
-
-// buildTelemetryPlugin compiles the capability-plugin fixture once per
-// test binary run.
-func buildTelemetryPlugin(t *testing.T) string {
-	t.Helper()
-	binary := filepath.Join(t.TempDir(), "telemetryplugin")
-	build := exec.Command("go", "build", "-o", binary, "./testdata/telemetryplugin")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build telemetry plugin: %v\n%s", err, out)
-	}
-	return binary
 }

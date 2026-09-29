@@ -62,7 +62,7 @@ func TestPluginSkillsReturnsSkillDTOs(t *testing.T) {
 		"plugin.json": `{
 			"id": "plug", "name": "Plug", "version": "0.1.0",
 			"entry": "dist/index.js",
-			"permissions": ["skills:contribute"],
+			"permissions": ["skills:provide"],
 			"skills": ["skills"]
 		}`,
 		"dist/index.js": "export const apply = () => {};",

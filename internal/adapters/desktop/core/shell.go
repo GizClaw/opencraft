@@ -624,7 +624,7 @@ func (s *Shell) GetCloseToTray() bool {
 	return s.prefs.CloseToTray
 }
 
-// PluginTelemetryExport reports whether capability plugins may install
+// PluginTelemetryExport reports whether plugin krafts may install
 // their own OTLP export sink (Settings > Telemetry).
 func (s *Shell) PluginTelemetryExport() bool {
 	s.mu.Lock()

@@ -37,7 +37,7 @@ func TestInstallZip(t *testing.T) {
 		"name": "Zip Plugin",
 		"version": "1.0.0",
 		"entry": "dist/index.js",
-		"capability": {"binary": "bin/auth", "protocol": 1}
+		"kraft": {"binary": "bin/auth", "protocol": 1}
 	}`
 	zipPath := writeTestZip(t, map[string]string{
 		"zip-plugin-1.0.0/plugin.json":   manifest,

@@ -93,7 +93,7 @@ func TestDropProviderOwnersScopedByPlugin(t *testing.T) {
 	}
 }
 
-// legacyPluginInstance mirrors the inference row a capability plugin
+// legacyPluginInstance mirrors the inference row a plugin kraft
 // wrote before the ownership sidecar existed: the host only accepted
 // profile ids equal to the plugin id and kept the key reference inside
 // the plugin's secret namespace.

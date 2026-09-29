@@ -5,13 +5,13 @@ import (
 	"sync"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
-	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // pluginInferenceWrite remembers how the last runtime rebuild triggered
-// by a capability-plugin inference write went. A plugin re-submits its
+// by an inference write from a plugin kraft went. A plugin re-submits its
 // whole row set on every catalog sync, so a write that leaves the stored
 // rows identical does not need a rebuild — the live runtime already
 // serves that document. After a failed rebuild the rows may have changed
@@ -42,17 +42,17 @@ func (w *pluginInferenceWrite) lastRebuildApplied() bool {
 	return w.applied
 }
 
-// wirePluginInference routes capability-plugin inference profile
+// wirePluginInference routes a plugin kraft's inference profile
 // primitives into the user config. The row shape, the source policy
 // (identity, credential namespace, the user-owned enabled flag) and the
 // ownership sidecar all live in config; this wiring only reports the
 // change and rebuilds the runtime so the new deployment takes effect.
 func (c *Core) wirePluginInference() {
-	if c.Plugin == nil || c.Plugin.Capability == nil {
+	if c.Plugin == nil || c.Plugin.Kraft == nil {
 		return
 	}
-	c.Plugin.Capability.SetInferenceHandler(pluginruntime.InferenceHandler{
-		Upsert: func(pluginID string, profile pluginruntime.InferenceProfile) error {
+	c.Plugin.Kraft.SetInferenceHandler(kraft.InferenceHandler{
+		Upsert: func(pluginID string, profile kraft.InferenceProfile) error {
 			changed, err := config.UpsertPluginInstance(
 				c.UserDir, pluginID, profile,
 			)

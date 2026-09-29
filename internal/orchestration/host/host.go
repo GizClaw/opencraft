@@ -16,7 +16,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
-	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	reviewstore "github.com/GizClaw/opencraft/internal/capabilities/review/store"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
@@ -50,7 +50,7 @@ type Manager struct {
 	stores         map[string]*storeRef
 	engineOptFunc  func() []engine.Option
 	pluginStore    *plugins.Store
-	pluginCap      *pluginruntime.Manager
+	pluginKraft    *kraft.Manager
 	pluginInstall  plugininstalltool.Installer
 	automationHost automationtool.Host
 	usageObserver  func(context.Context, inference.Usage)

@@ -1,11 +1,11 @@
-// Package runtime hosts subprocess capability plugins: separate
-// executables that implement domain logic (e.g. the SSO auth
-// protocol) and talk to the host over line-delimited JSON-RPC 2.0 on
-// stdin/stdout. The host only understands method names + JSON payloads;
-// it never interprets domain semantics, and secrets never appear in
-// RPC results (plugins persist them via the secret.* primitives).
+// Package kraft hosts plugin krafts: the separate executables a plugin
+// declares to implement domain logic (e.g. the SSO auth protocol) and
+// talk to the host over line-delimited JSON-RPC 2.0 on stdin/stdout.
+// The host only understands method names + JSON payloads; it never
+// interprets domain semantics, and secrets never appear in RPC results
+// (plugins persist them via the secret.* primitives).
 //
-// A capability process announces itself with a "handshake" request
+// A kraft announces itself with a "handshake" request
 // ({"jsonrpc":"2.0","id":1,"method":"handshake",
 // "params":{"id":"<plugin-id>","protocol":1}}), then serves host→plugin
 // methods. The host recognises these plugin→host primitives, each gated
@@ -14,7 +14,7 @@
 //	secret.get / secret.set / secret.delete   (secrets:auth, scoped to
 //	                                           auth/<plugin>/… and
 //	                                           inference/<plugin>/…)
-//	open.url                                  (capability.hosts allowlist)
+//	open.url                                  (kraft.hosts allowlist)
 //	inference.upsert / inference.remove       (credential namespace of the
 //	                                           calling plugin)
 //	session.import / session.imported_sources (sessions:import)
@@ -22,7 +22,11 @@
 //	telemetry.configure / telemetry.disable   (telemetry:export)
 //	emit.event                                (reserved)
 //
-// Unknown methods are rejected. Arguments that carry structured payloads
+// The grant is checked before the namespace: a plugin whose manifest
+// does not declare secrets:auth cannot touch its own secret namespace
+// through the subprocess either, and the scoped check narrows the call
+// to auth/<plugin>/… and inference/<plugin>/… on top of that. Unknown
+// methods are rejected. Arguments that carry structured payloads
 // are decoded strictly, so a mistyped field fails the call instead of
 // silently configuring something else.
 //
@@ -46,7 +50,7 @@
 // https), allows one plugin sink at a time, and drops it when the plugin
 // is disabled, uninstalled or dies. The local log file is unaffected:
 // plugins replace the export target, not the logging pipeline.
-package runtime
+package kraft
 
 import (
 	"bufio"
@@ -95,8 +99,8 @@ const (
 	stdoutLineLimit     = 8 * 1024 * 1024
 )
 
-// Capability is the manifest-declared runtime of one plugin.
-type Capability struct {
+// Kraft is the manifest-declared subprocess runtime of one plugin.
+type Kraft struct {
 	// Binary is the executable path relative to the plugin directory.
 	Binary string `json:"binary"`
 	// Protocol is the wire protocol version this binary speaks.
@@ -106,8 +110,8 @@ type Capability struct {
 	Hosts []string `json:"hosts,omitempty"`
 }
 
-// InferenceProfile is one inference deployment a capability plugin
-// submits over inference.upsert. It is exactly the row shape the desktop
+// InferenceProfile is one inference deployment a kraft submits over
+// inference.upsert. It is exactly the row shape the desktop
 // settings page posts, so a plugin can configure everything a user can;
 // the host applies the plugin write policy on the way in (see
 // config.InstanceSpec.Lower): the row carries its own stable_id, its
@@ -170,10 +174,10 @@ type SessionImportHandler struct {
 	ImportedSources func(pluginID string, req SessionImportStatusRequest) (map[string]string, error)
 }
 
-// WorkspaceHandler answers one capability plugin's question about the
-// host's current workspace. The answer is read dynamically on every
-// call because capability subprocesses are long-lived and do not
-// observe environment-variable changes across workspace switches.
+// WorkspaceHandler answers one kraft's question about the host's
+// current workspace. The answer is read dynamically on every call
+// because kraft processes are long-lived and do not observe
+// environment-variable changes across workspace switches.
 type WorkspaceHandler struct {
 	// Current returns the currently active workspace path.
 	Current func() (string, error)
@@ -213,12 +217,18 @@ type SecretStore interface {
 // search-provider keys, which only the settings page may write.
 var AllowedSecretScopes = map[string]bool{"auth": true, "inference": true}
 
-// Loader resolves a plugin's declared capability and its binary path.
+// Loader resolves a plugin's declarations: the kraft it runs, that
+// binary's path, and the permissions its manifest grants.
 type Loader interface {
-	// Capability returns the manifest-declared runtime for id.
-	Capability(id string) (Capability, bool, error)
+	// Kraft returns the manifest-declared runtime for id.
+	Kraft(id string) (Kraft, bool, error)
 	// BinaryPath resolves and validates the executable path for id.
-	BinaryPath(id string, cap Capability) (string, error)
+	BinaryPath(id string, k Kraft) (string, error)
+	// Permissions returns the canonical manifest permissions of id.
+	// Primitives the manifest must declare (secrets:auth, ...) are
+	// checked against this list before they run, so the gate reads the
+	// same vocabulary the plugin summary shows.
+	Permissions(id string) ([]string, error)
 }
 
 // Manager owns the subprocess plugins. Processes are started lazily on
@@ -234,12 +244,12 @@ type Manager struct {
 	telemetry     TelemetryHandler
 
 	// Timeout budgets are atomic: the host may retune them while
-	// capability processes are running, and -race covers this path.
+	// kraft processes are running, and -race covers this path.
 	handshakeTimeout atomic.Int64
 	callTimeout      atomic.Int64
 	env              []string
 	hostVersion      string
-	// onExit observes capability processes that ended on their own
+	// onExit observes kraft processes that ended on their own
 	// (crash, kill, stdin/stdout closed). Processes the host stopped
 	// deliberately do not fire it: the stopping path already cleans up
 	// after itself.
@@ -247,7 +257,7 @@ type Manager struct {
 
 	mu    sync.Mutex
 	procs map[string]*process
-	// shuttingDown marks that Shutdown ran: no capability process may
+	// shuttingDown marks that Shutdown ran: no kraft process may
 	// start afterwards (nothing would own its lifetime), and
 	// exitWatchers lets Shutdown wait for the exit handlers the deaths
 	// of the processes it stopped already started.
@@ -260,7 +270,7 @@ type Manager struct {
 
 // NewManager returns a manager rooted at the plugin directory.
 func NewManager(root string, loader Loader, secrets SecretStore) *Manager {
-	// Manager-owned lifecycle: capability calls and cleanups outlive
+	// Manager-owned lifecycle: kraft calls and cleanups outlive
 	// individual requests, and Shutdown cancels the base context.
 	baseCtx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
@@ -299,7 +309,7 @@ func (m *Manager) SetTelemetryHandler(h TelemetryHandler) {
 	m.telemetry = h
 }
 
-// SetProcessExitHandler wires the callback invoked once per capability
+// SetProcessExitHandler wires the callback invoked once per kraft
 // process that exits without the host asking it to. It lets the host
 // drop runtime-installed state, such as the plugin's export sink.
 func (m *Manager) SetProcessExitHandler(fn func(pluginID string)) {
@@ -310,7 +320,7 @@ func (m *Manager) SetProcessExitHandler(fn func(pluginID string)) {
 
 // SetTimeouts overrides the handshake and per-call budgets. Zero leaves
 // the corresponding default in place, and a negative value resets it.
-// Embedders that start capability plugins on a loaded or slow machine
+// Embedders that start krafts on a loaded or slow machine
 // (test runners, CI) raise them so a scheduling hiccup is not reported
 // as a broken plugin.
 func (m *Manager) SetTimeouts(handshake, call time.Duration) {
@@ -342,7 +352,7 @@ func (m *Manager) SetEnv(env []string) {
 }
 
 // SetHostVersion records the host application version reported in the
-// capability handshake reply. Plugins use it for feature detection and
+// handshake reply. Plugins use it for feature detection and
 // compatibility; the same value gates manifest minHostVersion at
 // install time (plugins.Store). Empty disables reporting (tests/CLI).
 func (m *Manager) SetHostVersion(v string) {
@@ -351,7 +361,7 @@ func (m *Manager) SetHostVersion(v string) {
 	m.hostVersion = v
 }
 
-// Invoke calls method on the capability plugin id with args (JSON
+// Invoke calls method on the kraft of plugin id with args (JSON
 // marshalable) and returns the raw result JSON.
 func (m *Manager) Invoke(ctx context.Context, id, method string, args any) (json.RawMessage, error) {
 	p, err := m.get(ctx, id)
@@ -374,7 +384,7 @@ func (m *Manager) Stop(id string) {
 	}
 }
 
-// StopAll terminates every running capability process. Unlike
+// StopAll terminates every running kraft process. Unlike
 // Shutdown it keeps the manager usable: the next Invoke restarts a
 // process with the manager's current environment.
 func (m *Manager) StopAll() {
@@ -390,7 +400,7 @@ func (m *Manager) StopAll() {
 	}
 }
 
-// Cleanup asks a running capability plugin to clean up its own
+// Cleanup asks a running kraft to clean up its own
 // resources (inference profile, secrets) via lifecycle.cleanup, then
 // stops it. Best-effort: a plugin without a running process or without
 // cleanup support leaves the host fallback to remove leftovers.
@@ -410,7 +420,7 @@ func (m *Manager) Cleanup(id string) error {
 
 // Shutdown stops every running plugin process and waits for the exit
 // handlers those deaths started. It closes the manager: nothing may
-// start a new capability process afterwards. When Shutdown returns the
+// start a new kraft process afterwards. When Shutdown returns the
 // host's exit bookkeeping for a plugin that died (dropping its export
 // sink, appending the audit line) is finished, so a caller tearing the
 // data directory down no longer races it.
@@ -440,7 +450,7 @@ func (m *Manager) get(ctx context.Context, id string) (*process, error) {
 	m.mu.Lock()
 	if m.shuttingDown {
 		m.mu.Unlock()
-		return nil, errors.New("runtime: capability plugins are shut down")
+		return nil, errors.New("kraft: manager is shut down")
 	}
 	if p, ok := m.procs[id]; ok {
 		select {
@@ -455,26 +465,26 @@ func (m *Manager) get(ctx context.Context, id string) (*process, error) {
 			return p, nil
 		}
 	}
-	cap, ok, err := m.loader.Capability(id)
+	kraft, ok, err := m.loader.Kraft(id)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
 	if !ok {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("runtime: plugin %q declares no capability binary", id)
+		return nil, fmt.Errorf("kraft: plugin %q declares no kraft binary", id)
 	}
-	bin, err := m.loader.BinaryPath(id, cap)
+	bin, err := m.loader.BinaryPath(id, kraft)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
-	if cap.Protocol != ProtocolVersion {
+	if kraft.Protocol != ProtocolVersion {
 		m.mu.Unlock()
 		return nil, fmt.Errorf(
-			"runtime: plugin %q protocol %d != host %d", id, cap.Protocol, ProtocolVersion)
+			"kraft: plugin %q protocol %d != host %d", id, kraft.Protocol, ProtocolVersion)
 	}
-	p, err := m.start(id, cap, bin)
+	p, err := m.start(id, kraft, bin)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
@@ -487,10 +497,10 @@ func (m *Manager) get(ctx context.Context, id string) (*process, error) {
 	case <-p.ready:
 		return p, nil
 	case <-p.done:
-		return nil, fmt.Errorf("runtime: plugin %q exited during handshake", id)
+		return nil, fmt.Errorf("kraft: plugin %q exited during handshake", id)
 	case <-time.After(m.handshakeBudget()):
 		p.stop()
-		return nil, fmt.Errorf("runtime: plugin %q handshake timeout", id)
+		return nil, fmt.Errorf("kraft: plugin %q handshake timeout", id)
 	case <-ctx.Done():
 		p.stop()
 		return nil, ctx.Err()
@@ -498,7 +508,7 @@ func (m *Manager) get(ctx context.Context, id string) (*process, error) {
 }
 
 // stderrSecretQuery matches credential-carrying query parameters in a
-// forwarded plugin stderr line. Capability children print connection
+// forwarded plugin stderr line. Kraft processes print connection
 // URLs that carry short-lived credentials (a websocket handshake, for
 // example); the log file is on disk, so the key stays readable and the
 // value never lands.
@@ -513,30 +523,30 @@ func redactStderrLine(line string) string {
 	return stderrSecretQuery.ReplaceAllString(line, "${1}***")
 }
 
-func (m *Manager) start(id string, cap Capability, bin string) (*process, error) {
+func (m *Manager) start(id string, k Kraft, bin string) (*process, error) {
 	cmd := exec.Command(bin)
 	if len(m.env) > 0 {
 		cmd.Env = append(os.Environ(), m.env...)
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, fmt.Errorf("runtime: stdin pipe: %w", err)
+		return nil, fmt.Errorf("kraft: stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("runtime: stdout pipe: %w", err)
+		return nil, fmt.Errorf("kraft: stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return nil, fmt.Errorf("runtime: stderr pipe: %w", err)
+		return nil, fmt.Errorf("kraft: stderr pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("runtime: start %q: %w", bin, err)
+		return nil, fmt.Errorf("kraft: start %q: %w", bin, err)
 	}
 	p := &process{
 		manager: m,
 		id:      id,
-		cap:     cap,
+		kraft:   k,
 		cmd:     cmd,
 		stdin:   stdin,
 		nextID:  1,
@@ -560,7 +570,7 @@ func (m *Manager) start(id string, cap Capability, bin string) (*process, error)
 				otellog.String("plugin.line", redactStderrLine(sc.Text())))
 		}
 		telemetry.WarnErr(m.baseCtx,
-			"plugin runtime: drain capability stderr failed", sc.Err())
+			"plugin kraft: drain stderr failed", sc.Err())
 	}()
 	// The exit watcher runs the host's process-exit handler, so it is
 	// registered in exitWatchers: Shutdown has to be able to wait for
@@ -584,11 +594,11 @@ func (m *Manager) start(id string, cap Capability, bin string) (*process, error)
 	return p, nil
 }
 
-// process is one running capability plugin.
+// process is one running kraft.
 type process struct {
 	manager *Manager
 	id      string
-	cap     Capability
+	kraft   Kraft
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
 
@@ -627,13 +637,13 @@ func (p *process) call(ctx context.Context, method string, args any) (json.RawMe
 	select {
 	case <-p.ready:
 	case <-p.done:
-		return nil, errors.New("runtime: plugin process exited")
+		return nil, errors.New("kraft: plugin process exited")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 	params, err := json.Marshal(args)
 	if err != nil {
-		return nil, fmt.Errorf("runtime: marshal args: %w", err)
+		return nil, fmt.Errorf("kraft: marshal args: %w", err)
 	}
 	p.mu.Lock()
 	id := p.nextID
@@ -660,9 +670,9 @@ func (p *process) call(ctx context.Context, method string, args any) (json.RawMe
 		return resp.Result, nil
 	case <-time.After(p.manager.callBudget()):
 		p.drop(id)
-		return nil, fmt.Errorf("runtime: plugin %q call %s timeout", p.id, method)
+		return nil, fmt.Errorf("kraft: plugin %q call %s timeout", p.id, method)
 	case <-p.done:
-		return nil, errors.New("runtime: plugin process exited")
+		return nil, errors.New("kraft: plugin process exited")
 	case <-ctx.Done():
 		p.drop(id)
 		return nil, ctx.Err()
@@ -676,7 +686,7 @@ type RPCCallError struct {
 }
 
 func (e *RPCCallError) Error() string {
-	return fmt.Sprintf("runtime: plugin %s: %s", e.Method, e.Message)
+	return fmt.Sprintf("kraft: plugin %s: %s", e.Method, e.Message)
 }
 
 func (p *process) drop(id int) {
@@ -720,7 +730,7 @@ func (p *process) readLoop(r io.Reader) {
 	// exited" instead of what actually happened.
 	if err := sc.Err(); err != nil {
 		telemetry.WarnErr(p.manager.baseCtx,
-			"plugin runtime: read capability output failed", err,
+			"plugin kraft: read output failed", err,
 			otellog.String("plugin.id", p.id))
 		p.stop()
 	}
@@ -750,7 +760,7 @@ func (p *process) handleRequest(line []byte) {
 	var req rpcRequest
 	if err := json.Unmarshal(line, &req); err != nil {
 		telemetry.WarnErr(p.manager.baseCtx,
-			"plugin runtime: decode capability request failed", err)
+			"plugin kraft: decode request failed", err)
 		return
 	}
 	// The handshake is a plugin→host request with no response writer
@@ -763,24 +773,24 @@ func (p *process) handleRequest(line []byte) {
 	case <-p.ready:
 	default:
 		telemetry.WarnErr(p.manager.baseCtx,
-			"plugin runtime: send handshake-required response failed",
+			"plugin kraft: send handshake-required response failed",
 			p.respondError(req, -32001, "handshake required"))
 		return
 	}
 	result, err := p.manager.handlePrimitive(p, req)
 	if err != nil {
 		telemetry.WarnErr(p.manager.baseCtx,
-			"plugin runtime: send primitive error response failed",
+			"plugin kraft: send primitive error response failed",
 			p.respondError(req, -32000, err.Error()))
 		return
 	}
 	telemetry.WarnErr(p.manager.baseCtx,
-		"plugin runtime: send primitive response failed",
+		"plugin kraft: send primitive response failed",
 		p.respond(req, result))
 }
 
-// handshakeResult is the host's reply to a capability plugin's
-// handshake. HostVersion carries the running host application version
+// handshakeResult is the host's reply to a kraft's handshake.
+// HostVersion carries the running host application version
 // ("" when unknown, e.g. tests/CLI) so plugins can feature-detect
 // without extra round trips; protocol compatibility is enforced before
 // this reply is produced.
@@ -796,19 +806,19 @@ func (p *process) handleHandshake(req rpcRequest) {
 	}
 	if err := json.Unmarshal(req.Params, &hs); err != nil {
 		telemetry.WarnErr(p.manager.baseCtx,
-			"plugin runtime: decode capability handshake failed", err)
+			"plugin kraft: decode handshake failed", err)
 	}
 	select {
 	case <-p.ready:
 		telemetry.WarnErr(p.manager.baseCtx,
-			"plugin runtime: send duplicate handshake response failed",
+			"plugin kraft: send duplicate handshake response failed",
 			p.respondError(req, -32000, "duplicate handshake"))
 		return
 	default:
 	}
 	if hs.ID != p.id || hs.Protocol != ProtocolVersion {
 		telemetry.WarnErr(p.manager.baseCtx,
-			"plugin runtime: send handshake mismatch response failed",
+			"plugin kraft: send handshake mismatch response failed",
 			p.respondError(req, -32002, "handshake mismatch"))
 		p.stop()
 		return
@@ -818,7 +828,7 @@ func (p *process) handleHandshake(req rpcRequest) {
 	hostVersion := p.manager.hostVersion
 	p.manager.mu.Unlock()
 	telemetry.WarnErr(p.manager.baseCtx,
-		"plugin runtime: send handshake response failed",
+		"plugin kraft: send handshake response failed",
 		p.respond(req, handshakeResult{Ok: true, HostVersion: hostVersion}))
 }
 
@@ -850,9 +860,9 @@ func (p *process) stop() {
 	}
 	p.hostStopped.Store(true)
 	telemetry.WarnErr(p.manager.baseCtx,
-		"plugin runtime: kill capability process failed", p.cmd.Process.Kill())
+		"plugin kraft: kill process failed", p.cmd.Process.Kill())
 	telemetry.WarnErr(p.manager.baseCtx,
-		"plugin runtime: close capability stdin failed", p.stdin.Close())
+		"plugin kraft: close stdin failed", p.stdin.Close())
 }
 
 // handlePrimitive executes one plugin→host primitive request.
@@ -880,19 +890,19 @@ func (m *Manager) handlePrimitive(p *process, req rpcRequest) (any, error) {
 		// Reserved: forward to the host event bus once wired.
 		return map[string]any{}, nil
 	default:
-		return nil, fmt.Errorf("runtime: unknown primitive %q", req.Method)
+		return nil, fmt.Errorf("kraft: unknown primitive %q", req.Method)
 	}
 }
 
 func (m *Manager) handleTelemetryConfigure(p *process, req rpcRequest) (any, error) {
 	if m.telemetry.Configure == nil {
-		return nil, errors.New("runtime: telemetry handler unavailable")
+		return nil, errors.New("kraft: telemetry handler unavailable")
 	}
 	var args TelemetryExportRequest
 	decoder := json.NewDecoder(bytes.NewReader(req.Params))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&args); err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("runtime: telemetry.configure args: %w", err)
+		return nil, fmt.Errorf("kraft: telemetry.configure args: %w", err)
 	}
 	if err := m.telemetry.Configure(p.id, args); err != nil {
 		return nil, err
@@ -902,7 +912,7 @@ func (m *Manager) handleTelemetryConfigure(p *process, req rpcRequest) (any, err
 
 func (m *Manager) handleTelemetryDisable(p *process, req rpcRequest) (any, error) {
 	if m.telemetry.Disable == nil {
-		return nil, errors.New("runtime: telemetry handler unavailable")
+		return nil, errors.New("kraft: telemetry handler unavailable")
 	}
 	if err := m.telemetry.Disable(p.id); err != nil {
 		return nil, err
@@ -912,11 +922,11 @@ func (m *Manager) handleTelemetryDisable(p *process, req rpcRequest) (any, error
 
 func (m *Manager) handleWorkspaceCurrent() (any, error) {
 	if m.workspace.Current == nil {
-		return nil, errors.New("runtime: workspace handler unavailable")
+		return nil, errors.New("kraft: workspace handler unavailable")
 	}
 	path, err := m.workspace.Current()
 	if err != nil {
-		return nil, fmt.Errorf("runtime: workspace.current: %w", err)
+		return nil, fmt.Errorf("kraft: workspace.current: %w", err)
 	}
 	return map[string]any{"workspace": path}, nil
 }
@@ -924,13 +934,13 @@ func (m *Manager) handleWorkspaceCurrent() (any, error) {
 func (m *Manager) handleSessionImport(p *process, req rpcRequest) (any, error) {
 	var args SessionImportRequest
 	if err := json.Unmarshal(req.Params, &args); err != nil {
-		return nil, fmt.Errorf("runtime: session.import args: %w", err)
+		return nil, fmt.Errorf("kraft: session.import args: %w", err)
 	}
 	if strings.TrimSpace(args.BundlePath) == "" {
-		return nil, errors.New("runtime: session.import bundle_path is required")
+		return nil, errors.New("kraft: session.import bundle_path is required")
 	}
 	if m.sessionImport.Import == nil {
-		return nil, errors.New("runtime: session import handler unavailable")
+		return nil, errors.New("kraft: session import handler unavailable")
 	}
 	return m.sessionImport.Import(p.id, args)
 }
@@ -938,10 +948,10 @@ func (m *Manager) handleSessionImport(p *process, req rpcRequest) (any, error) {
 func (m *Manager) handleSessionImportedSources(p *process, req rpcRequest) (any, error) {
 	var args SessionImportStatusRequest
 	if err := json.Unmarshal(req.Params, &args); err != nil {
-		return nil, fmt.Errorf("runtime: session.imported_sources args: %w", err)
+		return nil, fmt.Errorf("kraft: session.imported_sources args: %w", err)
 	}
 	if m.sessionImport.ImportedSources == nil {
-		return nil, errors.New("runtime: session imported-sources handler unavailable")
+		return nil, errors.New("kraft: session imported-sources handler unavailable")
 	}
 	return m.sessionImport.ImportedSources(p.id, args)
 }
@@ -954,10 +964,10 @@ func (m *Manager) handleInferenceUpsert(p *process, req rpcRequest) (any, error)
 	dec.DisallowUnknownFields()
 	var profile InferenceProfile
 	if err := dec.Decode(&profile); err != nil {
-		return nil, fmt.Errorf("runtime: inference.upsert args: %w", err)
+		return nil, fmt.Errorf("kraft: inference.upsert args: %w", err)
 	}
 	if m.inference.Upsert == nil {
-		return nil, errors.New("runtime: inference upsert handler unavailable")
+		return nil, errors.New("kraft: inference upsert handler unavailable")
 	}
 	return map[string]any{}, m.inference.Upsert(p.id, profile)
 }
@@ -967,36 +977,39 @@ func (m *Manager) handleInferenceRemove(p *process, req rpcRequest) (any, error)
 		ID string `json:"id"`
 	}
 	if err := json.Unmarshal(req.Params, &args); err != nil {
-		return nil, fmt.Errorf("runtime: inference.remove args: %w", err)
+		return nil, fmt.Errorf("kraft: inference.remove args: %w", err)
 	}
 	if m.inference.Remove == nil {
-		return nil, errors.New("runtime: inference remove handler unavailable")
+		return nil, errors.New("kraft: inference remove handler unavailable")
 	}
 	return map[string]any{}, m.inference.Remove(p.id, args.ID)
 }
 
 func (m *Manager) handleSecret(p *process, req rpcRequest) (any, error) {
+	if err := m.requirePermission(p.id, "secrets:auth"); err != nil {
+		return nil, err
+	}
 	var args struct {
 		Scope string `json:"scope"`
 		Name  string `json:"name"`
 		Value string `json:"value"`
 	}
 	if err := json.Unmarshal(req.Params, &args); err != nil {
-		return nil, fmt.Errorf("runtime: secret args: %w", err)
+		return nil, fmt.Errorf("kraft: secret args: %w", err)
 	}
 	if !AllowedSecretScopes[args.Scope] {
-		return nil, fmt.Errorf("runtime: unknown secret scope %q", args.Scope)
+		return nil, fmt.Errorf("kraft: unknown secret scope %q", args.Scope)
 	}
 	// The plugin may only touch its own namespace: scope/<id>/...
 	if !strings.HasPrefix(args.Name, p.id+"/") {
-		return nil, fmt.Errorf("runtime: secret %q outside plugin namespace", args.Name)
+		return nil, fmt.Errorf("kraft: secret %q outside plugin namespace", args.Name)
 	}
 	account := args.Scope + "/" + args.Name
 	ctx := m.baseCtx
 	switch req.Method {
 	case "secret.get":
 		if m.secrets == nil {
-			return nil, errors.New("runtime: secret store unavailable")
+			return nil, errors.New("kraft: secret store unavailable")
 		}
 		v, found, err := m.secrets.Get(ctx, account)
 		if err != nil {
@@ -1005,16 +1018,59 @@ func (m *Manager) handleSecret(p *process, req rpcRequest) (any, error) {
 		return map[string]any{"found": found, "value": v}, nil
 	case "secret.set":
 		if m.secrets == nil {
-			return nil, errors.New("runtime: secret store unavailable")
+			return nil, errors.New("kraft: secret store unavailable")
 		}
 		return map[string]any{}, m.secrets.Set(ctx, account, args.Value)
 	case "secret.delete":
 		if m.secrets == nil {
-			return nil, errors.New("runtime: secret store unavailable")
+			return nil, errors.New("kraft: secret store unavailable")
 		}
 		return map[string]any{}, m.secrets.Delete(ctx, account)
 	}
-	return nil, errors.New("runtime: unreachable")
+	return nil, errors.New("kraft: unreachable")
+}
+
+// requirePermission checks that plugin id's manifest declares perm.
+// The check is fail-closed in both directions: a loader that cannot
+// answer refuses the primitive, and a nil permission list grants
+// nothing.
+//
+// A refusal is logged host-side once per (plugin, permission): the
+// plugin is told too, but a plugin that renders the error as a missing
+// credential — which is how a refused secret.set reads from inside a
+// provider-registration flow — would otherwise leave the user with no
+// trace of the missing grant.
+func (m *Manager) requirePermission(id, perm string) error {
+	perms, err := m.loader.Permissions(id)
+	if err != nil {
+		return fmt.Errorf(
+			"kraft: resolve %s permission of %q: %w", perm, id, err)
+	}
+	for _, p := range perms {
+		if p == perm {
+			return nil
+		}
+	}
+	m.warnPermissionDenied(id, perm)
+	return fmt.Errorf("kraft: plugin %q lacks %s permission", id, perm)
+}
+
+// deniedPermissions dedupes the host-side breadcrumb across processes
+// and calls: a plugin that never declared the grant retries the
+// primitive on every call, and one line per grant is what makes the line
+// readable.
+var deniedPermissions sync.Map
+
+func (m *Manager) warnPermissionDenied(id, perm string) {
+	if _, loaded := deniedPermissions.LoadOrStore(id+"\x00"+perm, struct{}{}); loaded {
+		return
+	}
+	telemetry.Warn(m.baseCtx,
+		"plugin kraft: refused a primitive the manifest does not declare; "+
+			"declare the permission in plugin.json",
+		otellog.String("plugin", id),
+		otellog.String("permission", perm),
+	)
 }
 
 func (m *Manager) handleOpenURL(p *process, req rpcRequest) (any, error) {
@@ -1022,14 +1078,14 @@ func (m *Manager) handleOpenURL(p *process, req rpcRequest) (any, error) {
 		URL string `json:"url"`
 	}
 	if err := json.Unmarshal(req.Params, &args); err != nil {
-		return nil, fmt.Errorf("runtime: open.url args: %w", err)
+		return nil, fmt.Errorf("kraft: open.url args: %w", err)
 	}
 	u, err := url.Parse(args.URL)
 	if err != nil || u.Hostname() == "" {
-		return nil, fmt.Errorf("runtime: invalid url %q", args.URL)
+		return nil, fmt.Errorf("kraft: invalid url %q", args.URL)
 	}
-	if !allowedHost(p.cap.Hosts, u.Hostname()) {
-		return nil, fmt.Errorf("runtime: host %q not allowed", u.Hostname())
+	if !allowedHost(p.kraft.Hosts, u.Hostname()) {
+		return nil, fmt.Errorf("kraft: host %q not allowed", u.Hostname())
 	}
 	if m.openURL != nil {
 		m.openURL(args.URL)
@@ -1046,30 +1102,41 @@ func allowedHost(allowed []string, host string) bool {
 	return false
 }
 
-// DefaultLoader resolves capabilities from the plugin Store.
+// DefaultLoader resolves krafts from the plugin Store.
 type DefaultLoader struct {
-	// CapabilityFunc returns the declared capability for id.
-	CapabilityFunc func(id string) (Capability, bool, error)
+	// KraftFunc returns the declared kraft for id.
+	KraftFunc func(id string) (Kraft, bool, error)
 	// DirFunc resolves where an installed plugin lives and whether it
 	// is a user copy. When set, BinaryPath uses it to refuse falling
 	// back to a builtin binary for a user plugin that shadows a
 	// builtin (the manifests could disagree).
 	DirFunc func(id string) (dir string, builtin bool, err error)
+	// PermissionsFunc returns the canonical manifest permissions of
+	// id. Nil reports none: a primitive that needs a declaration then
+	// refuses (fail-closed).
+	PermissionsFunc func(id string) ([]string, error)
 	// Root is the plugin directory.
 	Root string
 }
 
-func (l DefaultLoader) Capability(id string) (Capability, bool, error) {
-	if l.CapabilityFunc == nil {
-		return Capability{}, false, nil
+func (l DefaultLoader) Kraft(id string) (Kraft, bool, error) {
+	if l.KraftFunc == nil {
+		return Kraft{}, false, nil
 	}
-	return l.CapabilityFunc(id)
+	return l.KraftFunc(id)
 }
 
-func (l DefaultLoader) BinaryPath(id string, cap Capability) (string, error) {
-	bin := filepath.Clean(cap.Binary)
+func (l DefaultLoader) Permissions(id string) ([]string, error) {
+	if l.PermissionsFunc == nil {
+		return nil, nil
+	}
+	return l.PermissionsFunc(id)
+}
+
+func (l DefaultLoader) BinaryPath(id string, k Kraft) (string, error) {
+	bin := filepath.Clean(k.Binary)
 	if bin == "" || !pathsafe.RelRef(bin) {
-		return "", fmt.Errorf("runtime: capability binary escapes plugin dir: %q", cap.Binary)
+		return "", fmt.Errorf("kraft: binary escapes plugin dir: %q", k.Binary)
 	}
 	path := filepath.Join(l.Root, id, bin)
 	if _, err := os.Stat(path); err != nil {
@@ -1079,11 +1146,11 @@ func (l DefaultLoader) BinaryPath(id string, cap Capability) (string, error) {
 		if l.DirFunc != nil {
 			_, builtin, err := l.DirFunc(id)
 			if err != nil {
-				return "", fmt.Errorf("runtime: resolve plugin %q: %w", id, err)
+				return "", fmt.Errorf("kraft: resolve plugin %q: %w", id, err)
 			}
 			if !builtin {
 				return "", fmt.Errorf(
-					"runtime: capability binary %q missing from user plugin %q",
+					"kraft: binary %q missing from user plugin %q",
 					bin, id)
 			}
 		}
@@ -1095,10 +1162,10 @@ func (l DefaultLoader) BinaryPath(id string, cap Capability) (string, error) {
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("runtime: capability binary %q: %w", bin, err)
+		return "", fmt.Errorf("kraft: binary %q: %w", bin, err)
 	}
 	if info.IsDir() {
-		return "", fmt.Errorf("runtime: capability binary %q is a directory", bin)
+		return "", fmt.Errorf("kraft: binary %q is a directory", bin)
 	}
 	return path, nil
 }

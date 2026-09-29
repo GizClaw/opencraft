@@ -1,4 +1,4 @@
-package runtime
+package kraft
 
 import (
 	"bufio"
@@ -14,8 +14,8 @@ import (
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
-// helperPlugin simulates a capability plugin: it handshakes, then
-// answers auth.* calls and exercises the secret.set primitive.
+// helperPlugin simulates a kraft: it handshakes, then answers auth.*
+// calls and exercises the secret.set primitive.
 func helperPlugin() {
 	sc := bufio.NewScanner(os.Stdin)
 	out := bufio.NewWriter(os.Stdout)
@@ -82,7 +82,7 @@ func oversizedOutputPlugin() {
 }
 
 // crashingPlugin handshakes and then exits on its own, simulating a
-// capability process that died after announcing itself. It explains
+// kraft process that died after announcing itself. It explains
 // itself on stderr, which is the only channel a plugin has for that.
 func crashingPlugin() {
 	_, _ = fmt.Fprintln(os.Stdout,
@@ -132,24 +132,34 @@ func (s *memSecrets) Delete(_ context.Context, name string) error {
 }
 
 type testLoader struct {
-	cap Capability
-	bin string
+	kraft Kraft
+	bin   string
+	perms []string
 }
 
-func (l testLoader) Capability(string) (Capability, bool, error) {
-	return l.cap, true, nil
+func (l testLoader) Kraft(string) (Kraft, bool, error) {
+	return l.kraft, true, nil
 }
 
-func (l testLoader) BinaryPath(string, Capability) (string, error) {
+func (l testLoader) BinaryPath(string, Kraft) (string, error) {
 	return l.bin, nil
 }
 
+func (l testLoader) Permissions(string) ([]string, error) {
+	return l.perms, nil
+}
+
 func newTestManager(t *testing.T) (*Manager, *memSecrets) {
+	return newTestManagerWithPerms(t, []string{"secrets:auth"})
+}
+
+func newTestManagerWithPerms(t *testing.T, perms []string) (*Manager, *memSecrets) {
 	t.Helper()
 	sec := &memSecrets{m: map[string]string{}}
 	loader := testLoader{
-		cap: Capability{Binary: "helper", Protocol: 1},
-		bin: os.Args[0],
+		kraft: Kraft{Binary: "helper", Protocol: 1},
+		bin:   os.Args[0],
+		perms: perms,
 	}
 	m := NewManager(t.TempDir(), loader, sec)
 	m.SetEnv([]string{"GO_WANT_HELPER_PROCESS=1"})
@@ -161,8 +171,8 @@ func newTestManagerWithHelper(t *testing.T, mode string) (*Manager, *memSecrets)
 	t.Helper()
 	sec := &memSecrets{m: map[string]string{}}
 	loader := testLoader{
-		cap: Capability{Binary: "helper", Protocol: 1},
-		bin: os.Args[0],
+		kraft: Kraft{Binary: "helper", Protocol: 1},
+		bin:   os.Args[0],
 	}
 	m := NewManager(t.TempDir(), loader, sec)
 	m.SetEnv([]string{"GO_WANT_HELPER_PROCESS=" + mode})
@@ -251,7 +261,7 @@ func TestOversizedOutputStopsPlugin(t *testing.T) {
 	var seen bool
 	for _, record := range capture.Records() {
 		if record.Body().AsString() !=
-			"plugin runtime: read capability output failed" {
+			"plugin kraft: read output failed" {
 			continue
 		}
 		if got := logcapture.Attribute(record, "plugin.id"); got != "test-plugin" {
@@ -361,6 +371,56 @@ func TestSecretScopeGuard(t *testing.T) {
 	}
 	if len(sec.m) != 0 {
 		t.Fatalf("secrets mutated: %v", sec.m)
+	}
+}
+
+func TestSecretRequiresAuthPermission(t *testing.T) {
+	// The manifest does not declare secrets:auth, so the primitive is
+	// refused before the namespace arithmetic — even for the plugin's
+	// own namespace. TestSecretScopeGuard covers the granted path,
+	// which falls through to the namespace guard. The refusal is also
+	// logged host-side, once per (plugin, permission) however many times
+	// the primitive is retried: the plugin's own error is the only other
+	// trace of a gate it never declared.
+	capture := logcapture.Install(t)
+	m, sec := newTestManagerWithPerms(t, nil)
+	// A plugin id of its own: the dedupe map is process-wide, so a
+	// shared id would let another test's denial suppress this one.
+	const id = "denied-primitive-test-plugin"
+	probe := func() error {
+		_, err := m.handleSecret(&process{id: id}, rpcRequest{
+			Method: "secret.set",
+			Params: json.RawMessage(
+				`{"scope":"auth","name":"` + id + `/token","value":"x"}`),
+		})
+		return err
+	}
+	err := probe()
+	if err == nil || !strings.Contains(err.Error(), "secrets:auth") {
+		t.Fatalf("expected a secrets:auth denial, got: %v", err)
+	}
+	if len(sec.m) != 0 {
+		t.Fatalf("secrets mutated: %v", sec.m)
+	}
+	if err := probe(); err == nil {
+		t.Fatal("expected the retry to be refused too")
+	}
+	lines := 0
+	for _, record := range capture.Records() {
+		if !strings.Contains(record.Body().AsString(), "does not declare") {
+			continue
+		}
+		lines++
+		if got := logcapture.Attribute(record, "plugin"); got != id {
+			t.Errorf("denial log plugin = %q, want %q", got, id)
+		}
+		if got := logcapture.Attribute(record, "permission"); got != "secrets:auth" {
+			t.Errorf("denial log permission = %q, want secrets:auth", got)
+		}
+	}
+	if lines != 1 {
+		t.Errorf("denial logged %d times across two refusals, want 1: %v",
+			lines, capture.Bodies())
 	}
 }
 
@@ -557,7 +617,7 @@ func TestInvokeAfterShutdownRefused(t *testing.T) {
 	m, _ := newTestManager(t)
 	m.Shutdown()
 	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.poll", nil); err == nil {
-		t.Fatal("Invoke after Shutdown started a capability process")
+		t.Fatal("Invoke after Shutdown started a kraft process")
 	}
 	m.mu.Lock()
 	n := len(m.procs)
@@ -751,7 +811,7 @@ func waitForPluginStderr(capture *logcapture.Recorder, want string) bool {
 }
 
 // stubWriter is a write-only sink capturing what the host sends to a
-// (simulated) capability process.
+// (simulated) kraft.
 type stubWriter struct {
 	buf bytes.Buffer
 }

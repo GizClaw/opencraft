@@ -1,4 +1,4 @@
-// Command telemetryplugin is a capability-plugin fixture for the
+// Command telemetryplugin is a kraft fixture for the
 // desktop tests. It speaks the subprocess protocol, and on a
 // "telemetry.probe" call it asks the host to install an OTLP export
 // sink, then reports what the host answered.
@@ -56,6 +56,17 @@ func main() {
 	for in.Scan() {
 		var req request
 		if err := json.Unmarshal(in.Bytes(), &req); err != nil {
+			continue
+		}
+		// fixture.pid reports this process's pid; the lifecycle tests
+		// use it to tell a restarted plugin from the one that was
+		// stopped by the mutation before it.
+		if req.Method == "fixture.pid" {
+			write(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      json.RawMessage(req.ID),
+				"result":  map[string]any{"pid": os.Getpid()},
+			})
 			continue
 		}
 		if req.Method != "telemetry.probe" {

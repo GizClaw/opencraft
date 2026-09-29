@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,7 +24,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
@@ -46,7 +47,6 @@ const (
 	maxPluginHookCount        = 16
 	maxPluginMCPServerCount   = 16
 	maxPluginToolCount        = 64
-	maxPluginPetCount         = 8
 	maxPluginPathLen          = 256
 	maxPluginDescriptionChars = 1024
 	maxPluginInputSchemaBytes = 32 << 10 // 32 KiB
@@ -67,38 +67,6 @@ func ValidateID(id string) error {
 	return nil
 }
 
-// AllowedPermissions is the closed set of host capabilities a plugin
-// may declare. Unknown permissions reject the plugin (fail-closed).
-var AllowedPermissions = map[string]bool{
-	"secrets:auth":         true,
-	"storage:kv":           true,
-	"events:subscribe":     true,
-	"commands:register":    true,
-	"statusbar:contribute": true,
-	"pets:contribute":      true,
-	"tools:expose":         true,
-	"sessions:import":      true,
-	"skills:contribute":    true,
-	"mcp:contribute":       true,
-	"hooks:register":       true,
-	// telemetry:export lets a capability plugin point OTLP export at
-	// its own collector over telemetry.configure. It ships the whole
-	// app log stream (prompts included) to that collector, so the host
-	// records the active sink and drops it when the plugin is
-	// disabled or uninstalled.
-	"telemetry:export": true,
-}
-
-// CheckPermissions validates a manifest permission list.
-func CheckPermissions(perms []string) error {
-	for _, p := range perms {
-		if !AllowedPermissions[p] {
-			return fmt.Errorf("plugins: unknown permission %q", p)
-		}
-	}
-	return nil
-}
-
 // PluginSummary is the frontend-facing view of one installed plugin.
 type PluginSummary struct {
 	ID          string   `json:"id"`
@@ -108,10 +76,8 @@ type PluginSummary struct {
 	Permissions []string `json:"permissions"`
 	Enabled     bool     `json:"enabled"`
 	// Builtin marks an app-bundled read-only plugin (see Store).
-	Builtin bool     `json:"builtin,omitempty"`
-	Error   string   `json:"error,omitempty"`
-	Panels  []string `json:"panels,omitempty"`
-	Entries []string `json:"entries,omitempty"`
+	Builtin bool   `json:"builtin,omitempty"`
+	Error   string `json:"error,omitempty"`
 	// ShadowsBuiltin marks a user plugin that overrides an app-bundled
 	// builtin with the same id. BuiltinVersion reports the version of
 	// the shadowed builtin so the UI can compare it with the user
@@ -128,16 +94,18 @@ type PluginSummary struct {
 	// CanRollback reports whether a rollback snapshot of the previous
 	// version is available (user plugins only).
 	CanRollback bool `json:"canRollback,omitempty"`
-	// Capability is the declared capability binary (a plugin-relative
-	// path) when the plugin ships one; empty for UI-only plugins. The
-	// host runs that binary as a subprocess, so installers surface it
-	// before anything is copied into the registry.
-	Capability string `json:"capability,omitempty"`
+	// Kraft is the plugin-relative path of the declared kraft binary,
+	// set when the plugin ships one, by both the installed-plugin scan
+	// (List) and the source scan (Inspect/Install/Update/Rollback); an
+	// empty value means the plugin declares none. The host runs that
+	// binary as a subprocess, so installers surface it before anything
+	// is copied into the registry.
+	Kraft string `json:"kraft,omitempty"`
 }
 
-// PluginTool is one agent-callable tool exposed by a capability
-// subprocess. The host only routes by method name; the plugin owns the
-// semantics of its tool methods.
+// PluginTool is one agent-callable tool exposed by a plugin's kraft.
+// The host only routes by method name; the plugin owns the semantics
+// of its tool methods.
 type PluginTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
@@ -184,27 +152,12 @@ type Manifest struct {
 	MinHostVersion string   `json:"minHostVersion,omitempty"`
 	Entry          string   `json:"entry"`
 	Permissions    []string `json:"permissions"`
-	Contributes    struct {
-		SettingsPanels []struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-			Order int    `json:"order"`
-		} `json:"settingsPanels"`
-		SidebarEntries []struct {
-			ID    string `json:"id"`
-			Title string `json:"title"`
-			Order int    `json:"order"`
-		} `json:"sidebarEntries"`
-		Pets []struct {
-			ID string `json:"id"`
-		} `json:"pets"`
-	} `json:"contributes"`
-	// Capability declares an optional subprocess runtime for the
-	// plugin (see internal/capabilities/plugins/runtime).
-	Capability *runtime.Capability `json:"capability,omitempty"`
+	// Kraft declares an optional subprocess runtime for the plugin
+	// (see internal/capabilities/plugins/kraft).
+	Kraft *kraft.Kraft `json:"kraft,omitempty"`
 	// Agent-facing capabilities. Each group requires its matching
-	// permission (skills:contribute, mcp:contribute, hooks:register,
-	// tools:expose) and is ignored otherwise.
+	// permission (skills:provide, mcp:provide, hooks:provide,
+	// tools:provide) and is ignored otherwise.
 	Skills     []string          `json:"skills,omitempty"`
 	McpServers []PluginMCPServer `json:"mcpServers,omitempty"`
 	Hooks      []string          `json:"hooks,omitempty"`
@@ -219,7 +172,7 @@ const pluginStateFile = "state.json"
 
 // Store is the plugin registry: a writable user root (usually
 // <dataDir>/plugins) plus an optional read-only builtin root
-// (app-bundled plugins, see runtime.BuiltinPluginRoot). User plugins
+// (app-bundled plugins, see kraft.BuiltinPluginRoot). User plugins
 // shadow builtins with the same id; builtins are always present, can be
 // disabled but never uninstalled.
 type Store struct {
@@ -227,11 +180,87 @@ type Store struct {
 	builtin     string
 	hostVersion string
 	mu          sync.Mutex
+	// rev is the registry revision: it moves once per successful
+	// mutation (enable/disable, install, update, rollback, uninstall)
+	// and is the clock every consumer face watches — the agent host
+	// re-scans when it is behind, and the desktop rebuilds once per
+	// revision. See charter.go's FaceRefreshes.
+	rev uint64
+	// subs is the push side of the clock: faces that cannot re-read on
+	// demand subscribe here instead (see Subscribe). Keyed by a
+	// monotonic id so a cancel is exact.
+	subs    map[int]func()
+	nextSub int
 }
 
 // NewStore returns a registry rooted at root.
 func NewStore(root string) *Store {
-	return &Store{root: root, builtin: runtime.BuiltinPluginRoot()}
+	return &Store{root: root, builtin: kraft.BuiltinPluginRoot()}
+}
+
+// Revision returns the registry revision. Reads never move it; every
+// successful mutation does. Faces cache what they derived from the
+// registry against it and refresh when they see it behind (see
+// charter.go's FaceRefreshes).
+func (s *Store) Revision() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rev
+}
+
+// Subscribe registers fn to run once after every mutation that moved
+// the revision, and returns a cancel that is safe to call more than
+// once. A mutation that changes nothing never moves the revision, so it
+// never notifies.
+//
+// This is the push side of the register clock (see charter.go's
+// FaceRefreshes). A face that owns derived state it cannot rebuild on
+// demand — the agent tool source, publishing into a live tool registry —
+// subscribes instead of waiting for its next read; a pull-only face (the
+// settings page, the agent host's own scan) needs nothing here.
+//
+// fn runs on the mutating goroutine with the store lock released, so it
+// may read the registry; it must not mutate it, because that would
+// recurse into fn.
+func (s *Store) Subscribe(fn func()) (cancel func()) {
+	if fn == nil {
+		return func() {}
+	}
+	s.mu.Lock()
+	if s.subs == nil {
+		s.subs = make(map[int]func())
+	}
+	key := s.nextSub
+	s.nextSub++
+	s.subs[key] = fn
+	s.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			delete(s.subs, key)
+			s.mu.Unlock()
+		})
+	}
+}
+
+// notify wakes every subscriber. Mutators call it after releasing the
+// lock, and only when the revision moved.
+func (s *Store) notify() {
+	s.mu.Lock()
+	if len(s.subs) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	fns := make([]func(), 0, len(s.subs))
+	for _, fn := range s.subs {
+		fns = append(fns, fn)
+	}
+	s.mu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
 }
 
 // SetHostVersion records the running host version for minHostVersion
@@ -242,6 +271,35 @@ func (s *Store) SetHostVersion(v string) { s.hostVersion = v }
 // enabled state. A broken plugin is reported with its validation error
 // instead of failing the whole list.
 func (s *Store) List() ([]PluginSummary, error) {
+	entries, err := s.Entries()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PluginSummary, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Summary)
+	}
+	return out, nil
+}
+
+// Entry is one installed plugin as a scan sees it: the summary callers
+// render, the directory the manifest was read from, and the parsed
+// manifest itself, so a caller that needs more than the summary does not
+// have to read and parse plugin.json a second time. Manifest is nil
+// exactly when Summary.Error is set: a plugin that does not parse has no
+// manifest to hand out.
+type Entry struct {
+	Summary  PluginSummary
+	Dir      string
+	Manifest *Manifest
+}
+
+// Entries returns every installed plugin, parsed once. List is this
+// scan's summaries; anything that walks the registry per turn (the agent
+// host's scan of skills, hooks, MCP servers and tools) should take the
+// entries, because a second manifest read per plugin per scan is work
+// nobody asked for.
+func (s *Store) Entries() ([]Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := os.MkdirAll(s.root, 0o700); err != nil {
@@ -252,11 +310,13 @@ func (s *Store) List() ([]PluginSummary, error) {
 		return nil, err
 	}
 	seen := map[string]bool{}
-	out := s.scanDir(s.root, state, false, seen)
+	out := s.scanDirEntries(s.root, state, false, seen)
 	if s.builtin != "" {
-		out = append(out, s.scanDir(s.builtin, state, true, seen)...)
+		out = append(out, s.scanDirEntries(s.builtin, state, true, seen)...)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Summary.ID < out[j].Summary.ID
+	})
 	return out, nil
 }
 
@@ -264,18 +324,18 @@ func (s *Store) List() ([]PluginSummary, error) {
 // (builtin enable/disable choices persist in the user root's state
 // file). ids already in seen are skipped so the user root wins over the
 // builtin root; every listed id is recorded in seen.
-func (s *Store) scanDir(
+func (s *Store) scanDirEntries(
 	root string,
 	state map[string]bool,
 	builtin bool,
 	seen map[string]bool,
-) []PluginSummary {
-	entries, err := os.ReadDir(root)
+) []Entry {
+	dirs, err := os.ReadDir(root)
 	if err != nil {
 		return nil
 	}
-	out := []PluginSummary{}
-	for _, entry := range entries {
+	out := []Entry{}
+	for _, entry := range dirs {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
@@ -284,24 +344,25 @@ func (s *Store) scanDir(
 			continue
 		}
 		sum := PluginSummary{ID: id, Builtin: builtin}
+		dir := filepath.Join(root, id)
 		if enabled, ok := state[id]; ok {
 			sum.Enabled = enabled
 		} else {
 			sum.Enabled = true
 		}
-		raw, err := os.ReadFile(filepath.Join(root, id, "plugin.json"))
+		raw, err := os.ReadFile(filepath.Join(dir, "plugin.json"))
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue // directory without a manifest is not a plugin
 			}
 			sum.Error = fmt.Sprintf("plugins: read manifest: %v", err)
-			out = append(out, sum)
+			out = append(out, Entry{Summary: sum})
 			continue
 		}
 		m, verr := parseManifest(id, raw)
 		if verr != nil {
 			sum.Error = verr.Error()
-			out = append(out, sum)
+			out = append(out, Entry{Summary: sum})
 			continue
 		}
 		sum.Name = m.Name
@@ -309,14 +370,17 @@ func (s *Store) scanDir(
 		sum.Entry = m.Entry
 		sum.Permissions = m.Permissions
 		sum.HasSkills = len(m.Skills) > 0
-		if !sum.HasSkills && manifestHasPermission(m, "skills:contribute") &&
-			dirExists(filepath.Join(root, id, "skills")) {
+		if !sum.HasSkills && manifestHasPermission(m, "skills:provide") &&
+			dirExists(filepath.Join(dir, "skills")) {
 			sum.HasSkills = true
 		}
 		sum.HasMCP = len(m.McpServers) > 0
 		sum.HasHooks = len(m.Hooks) > 0
 		sum.HasTools = len(m.Tools) > 0
 		sum.HasUpdate = m.Update != nil
+		if m.Kraft != nil {
+			sum.Kraft = m.Kraft.Binary
+		}
 		if !builtin {
 			sum.CanRollback = rollbackAvailable(s.root, id)
 			if v := s.builtinVersion(id); v != "" {
@@ -324,13 +388,7 @@ func (s *Store) scanDir(
 				sum.BuiltinVersion = v
 			}
 		}
-		for _, p := range m.Contributes.SettingsPanels {
-			sum.Panels = append(sum.Panels, p.ID)
-		}
-		for _, e := range m.Contributes.SidebarEntries {
-			sum.Entries = append(sum.Entries, e.ID)
-		}
-		out = append(out, sum)
+		out = append(out, Entry{Summary: sum, Dir: dir, Manifest: m})
 		seen[id] = true
 	}
 	return out
@@ -386,26 +444,33 @@ func (s *Store) Asset(id, rel string) ([]byte, error) {
 	return data, nil
 }
 
-// Capability returns the declared subprocess runtime for an installed
+// Kraft returns the declared subprocess runtime for an installed
 // plugin, if any.
-func (s *Store) Capability(id string) (runtime.Capability, bool, error) {
+func (s *Store) Kraft(id string) (kraft.Kraft, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m, err := s.readManifest(id)
 	if err != nil {
-		return runtime.Capability{}, false, err
+		return kraft.Kraft{}, false, err
 	}
-	if m.Capability == nil {
-		return runtime.Capability{}, false, nil
+	if m.Kraft == nil {
+		return kraft.Kraft{}, false, nil
 	}
-	return *m.Capability, true, nil
+	return *m.Kraft, true, nil
 }
 
 // SetEnabled toggles a plugin's enabled state. The plugin must be
-// installed with a valid manifest.
+// installed with a valid manifest. A call that changes nothing does not
+// move the registry revision, so it cannot trigger a refresh.
 func (s *Store) SetEnabled(id string, enabled bool) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	moved := false
+	defer func() {
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
+	}()
 	if _, err := s.readManifest(id); err != nil {
 		return err
 	}
@@ -413,8 +478,22 @@ func (s *Store) SetEnabled(id string, enabled bool) error {
 	if err != nil {
 		return err
 	}
+	// No state entry means enabled, so an explicit enable of a plugin
+	// that was never disabled is the same no-op as a repeat call.
+	cur := true
+	if v, ok := state[id]; ok {
+		cur = v
+	}
+	if cur == enabled {
+		return nil
+	}
 	state[id] = enabled
-	return s.writeState(state)
+	if err := s.writeState(state); err != nil {
+		return err
+	}
+	s.rev++
+	moved = true
+	return nil
 }
 
 // Install copies a plugin folder (containing plugin.json) into the
@@ -423,7 +502,13 @@ func (s *Store) SetEnabled(id string, enabled bool) error {
 // rejected; uninstall it first.
 func (s *Store) Install(src string) (PluginSummary, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	moved := false
+	defer func() {
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
+	}()
 	if err := os.MkdirAll(s.root, 0o700); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: create dir: %w", err)
 	}
@@ -446,7 +531,7 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: decode manifest: %w", err)
 	}
-	m, err := parseManifest(probe.ID, raw)
+	m, err := parseManifestForAuthoring(probe.ID, raw)
 	if err != nil {
 		return PluginSummary{}, err
 	}
@@ -482,6 +567,8 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 			"plugins: remove invalid install failed", os.RemoveAll(dst))
 		return PluginSummary{}, err
 	}
+	s.rev++
+	moved = true
 	return s.withBuiltinInfo(summaryFromManifest(m, dst, false)), nil
 }
 
@@ -507,7 +594,7 @@ func (s *Store) Inspect(src string) (PluginSummary, error) {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: decode manifest: %w", err)
 	}
-	m, err := parseManifest(probe.ID, raw)
+	m, err := parseManifestForAuthoring(probe.ID, raw)
 	if err != nil {
 		return PluginSummary{}, err
 	}
@@ -582,18 +669,12 @@ func summaryFromManifest(m *Manifest, dir string, canRollback bool) PluginSummar
 		HasUpdate:   m.Update != nil,
 		CanRollback: canRollback,
 	}
-	if m.Capability != nil {
-		sum.Capability = m.Capability.Binary
+	if m.Kraft != nil {
+		sum.Kraft = m.Kraft.Binary
 	}
-	if !sum.HasSkills && manifestHasPermission(m, "skills:contribute") &&
+	if !sum.HasSkills && manifestHasPermission(m, "skills:provide") &&
 		dirExists(filepath.Join(dir, "skills")) {
 		sum.HasSkills = true
-	}
-	for _, p := range m.Contributes.SettingsPanels {
-		sum.Panels = append(sum.Panels, p.ID)
-	}
-	for _, e := range m.Contributes.SidebarEntries {
-		sum.Entries = append(sum.Entries, e.ID)
 	}
 	return sum
 }
@@ -604,7 +685,13 @@ func summaryFromManifest(m *Manifest, dir string, canRollback bool) PluginSummar
 // data, secrets and inference profile are preserved.
 func (s *Store) Update(id, src string) (PluginSummary, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	moved := false
+	defer func() {
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
+	}()
 	if err := ValidateID(id); err != nil {
 		return PluginSummary{}, err
 	}
@@ -639,7 +726,7 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: decode manifest: %w", err)
 	}
-	m, err := parseManifest(probe.ID, raw)
+	m, err := parseManifestForAuthoring(probe.ID, raw)
 	if err != nil {
 		return PluginSummary{}, err
 	}
@@ -707,6 +794,11 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 		return PluginSummary{}, fmt.Errorf(
 			"plugins: replace %q: %w (restore: %v)", id, err, restoreErr)
 	}
+	// The new version is live from here on, even if the snapshot
+	// bookkeeping below fails: the revision is about the registry, not
+	// about the backup layout.
+	s.rev++
+	moved = true
 	old := backup + ".old"
 	telemetry.WarnErr(context.Background(),
 		"plugins: clear previous rollback snapshot failed",
@@ -756,7 +848,13 @@ func (s *Store) UpdateZip(id, zipPath string) (PluginSummary, error) {
 // secrets and inference profile are preserved.
 func (s *Store) Rollback(id string) (PluginSummary, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	moved := false
+	defer func() {
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
+	}()
 	if err := ValidateID(id); err != nil {
 		return PluginSummary{}, err
 	}
@@ -772,7 +870,7 @@ func (s *Store) Rollback(id string) (PluginSummary, error) {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: decode rollback manifest: %w", err)
 	}
-	m, err := parseManifest(probe.ID, raw)
+	m, err := parseManifestForAuthoring(probe.ID, raw)
 	if err != nil {
 		return PluginSummary{}, err
 	}
@@ -805,6 +903,10 @@ func (s *Store) Rollback(id string) (PluginSummary, error) {
 		return PluginSummary{}, fmt.Errorf(
 			"plugins: restore %q: %w (restore current: %v)", id, err, restoreErr)
 	}
+	// Same as Update: the rolled-back version is live before the
+	// discard step below can fail.
+	s.rev++
+	moved = true
 	telemetry.WarnErr(context.Background(),
 		"plugins: remove discard snapshot failed", os.RemoveAll(pending))
 	sum := summaryFromManifest(m, dir, false)
@@ -1050,18 +1152,18 @@ func validateInstalledAgentResources(dst string, m *Manifest) error {
 }
 
 // preparePluginDir validates every declared agent resource and makes
-// the capability binary executable (ad-hoc signed on macOS). It is
-// the shared gate for install, update staging and rollback restore.
+// the kraft binary executable (ad-hoc signed on macOS). It is the
+// shared gate for install, update staging and rollback restore.
 func preparePluginDir(dir string, m *Manifest) error {
 	if err := validateInstalledAgentResources(dir, m); err != nil {
 		return err
 	}
-	if m.Capability == nil {
+	if m.Kraft == nil {
 		return nil
 	}
-	bin := filepath.Join(dir, m.Capability.Binary)
+	bin := filepath.Join(dir, m.Kraft.Binary)
 	if err := os.Chmod(bin, 0o755); err != nil {
-		return fmt.Errorf("plugins: make capability binary executable: %w", err)
+		return fmt.Errorf("plugins: make kraft binary executable: %w", err)
 	}
 	if err := signAdHoc(bin); err != nil {
 		return err
@@ -1069,7 +1171,7 @@ func preparePluginDir(dir string, m *Manifest) error {
 	return nil
 }
 
-// signAdHoc ad-hoc codesigns a capability binary on macOS. An unsigned
+// signAdHoc ad-hoc codesigns a kraft binary on macOS. An unsigned
 // Mach-O binary under ~/.opencraft is killed by the system's security
 // machinery (SIGKILL on exec); ad-hoc signing marks it as locally
 // trusted. No-op on other platforms.
@@ -1098,7 +1200,13 @@ func signAdHoc(path string) error {
 // data (KV) is removed by the caller via KVStore.RemoveAll.
 func (s *Store) Uninstall(id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	moved := false
+	defer func() {
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
+	}()
 	_, builtin, err := s.pluginDir(id)
 	if err != nil {
 		return err
@@ -1114,6 +1222,9 @@ func (s *Store) Uninstall(id string) error {
 	telemetry.WarnErr(context.Background(),
 		"plugins: remove plugin backups failed",
 		os.RemoveAll(filepath.Join(s.root, ".backups", id)))
+	// The registry changed even if the state write below fails.
+	s.rev++
+	moved = true
 	state, err := s.readState()
 	if err != nil {
 		return err
@@ -1141,6 +1252,18 @@ func (s *Store) Manifest(id string) (*Manifest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.readManifest(id)
+}
+
+// Permissions returns the canonical permission list of an installed
+// plugin. It is the gate for host write paths that check a declaration
+// themselves (kraft primitives such as secret.*), so they see exactly
+// the list the plugin summary shows.
+func (s *Store) Permissions(id string) ([]string, error) {
+	m, err := s.Manifest(id)
+	if err != nil {
+		return nil, err
+	}
+	return m.Permissions, nil
 }
 
 // Dir resolves the directory holding an installed plugin (user root
@@ -1172,7 +1295,38 @@ func (s *Store) pluginDir(id string) (string, bool, error) {
 	return "", false, fmt.Errorf("plugins: plugin %q is not installed", id)
 }
 
+// manifestAudience says who is reading a manifest. The two differ in
+// exactly one place — a manifest that declares the same thing twice,
+// on both the old and the new spelling. The registry load path serves a
+// plugin that is already installed, so it keeps the plugin loading; the
+// authoring gates read a source the author (or the agent) is offering
+// right now, and refuse the ambiguity there, where it can be fixed.
+type manifestAudience int
+
+const (
+	// manifestInstalled reads a plugin.json the registry is serving:
+	// installed plugins, the agent host's scan, the kraft lookup.
+	manifestInstalled manifestAudience = iota
+	// manifestAuthored reads a plugin.json offered to Inspect,
+	// Install, Update or Rollback.
+	manifestAuthored
+)
+
 func parseManifest(id string, raw []byte) (*Manifest, error) {
+	return parseManifestAs(id, raw, manifestInstalled)
+}
+
+// parseManifestForAuthoring parses a manifest a caller is about to
+// install, update or roll back.
+func parseManifestForAuthoring(id string, raw []byte) (*Manifest, error) {
+	return parseManifestAs(id, raw, manifestAuthored)
+}
+
+func parseManifestAs(
+	id string,
+	raw []byte,
+	audience manifestAudience,
+) (*Manifest, error) {
 	if len(raw) > maxPluginManifestBytes {
 		return nil, fmt.Errorf(
 			"plugins: manifest %q exceeds %d bytes", id, maxPluginManifestBytes)
@@ -1208,43 +1362,50 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 	if strings.TrimSpace(m.Entry) == "" {
 		return nil, fmt.Errorf("plugins: manifest requires entry")
 	}
+	perms, err := canonicalPermissions(m.ID, m.Permissions, audience)
+	if err != nil {
+		return nil, err
+	}
+	m.Permissions = perms
 	if err := CheckPermissions(m.Permissions); err != nil {
 		return nil, err
 	}
-	seenPanels := map[string]bool{}
-	for _, p := range m.Contributes.SettingsPanels {
-		if p.ID == "" || seenPanels[p.ID] {
-			return nil, fmt.Errorf(
-				"plugins: duplicate or empty settings panel id %q", p.ID)
-		}
-		seenPanels[p.ID] = true
+	// Earlier builds wrote the kraft section as "capability", and let a
+	// manifest declare the UI half under "contributes". Both keys are
+	// still read far enough to keep installed plugins loading: the kraft
+	// section is translated, the contributes segment — which nothing
+	// consumes, because panels, sidebar entries and pet packs register
+	// from the bundle — is accepted, dropped, and logged once for the
+	// keys it still writes.
+	//
+	// A manifest that writes both spellings of the kraft section is the
+	// one case where the audience decides: an installed plugin whose
+	// two sections agree keeps loading on the new key (the old one is
+	// redundant, and the log line says so), while the authoring gates
+	// refuse the pair outright. Two sections that disagree are refused
+	// either way — that is a manifest bug, not a spelling.
+	var legacy struct {
+		Capability  *kraft.Kraft    `json:"capability"`
+		Contributes json.RawMessage `json:"contributes"`
 	}
-	seenEntries := map[string]bool{}
-	for _, e := range m.Contributes.SidebarEntries {
-		if e.ID == "" || seenEntries[e.ID] {
-			return nil, fmt.Errorf(
-				"plugins: duplicate or empty sidebar entry id %q", e.ID)
-		}
-		seenEntries[e.ID] = true
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		return nil, fmt.Errorf("plugins: decode manifest: %w", err)
 	}
-	if len(m.Contributes.Pets) > maxPluginPetCount {
-		return nil, fmt.Errorf(
-			"plugins: pets exceed %d entries", maxPluginPetCount)
-	}
-	if len(m.Contributes.Pets) > 0 {
-		if err := requirePermission(&m, "pets:contribute", "pets"); err != nil {
-			return nil, err
-		}
-		seenPets := map[string]bool{}
-		for _, p := range m.Contributes.Pets {
-			if p.ID == "" || seenPets[p.ID] {
-				return nil, fmt.Errorf(
-					"plugins: duplicate or empty pet id %q", p.ID)
-			}
-			seenPets[p.ID] = true
+	if legacy.Capability != nil {
+		switch {
+		case m.Kraft == nil:
+			m.Kraft = legacy.Capability
+		case audience == manifestAuthored,
+			!sameKraftSection(m.Kraft, legacy.Capability):
+			return nil, errBothKraftSpellings
+		default:
+			warnLegacyKraftPair(m.ID)
 		}
 	}
-	if err := validateCapability(m.Capability); err != nil {
+	if written := legacyContributeKeysWritten(legacy.Contributes); len(written) > 0 {
+		warnLegacyContributes(m.ID, written)
+	}
+	if err := validateKraft(m.Kraft); err != nil {
 		return nil, fmt.Errorf("plugins: %w", err)
 	}
 	if err := validateAgentCapabilities(&m); err != nil {
@@ -1253,13 +1414,29 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 	return &m, nil
 }
 
+// errBothKraftSpellings is the refusal shared by the authoring gates and
+// by an installed manifest whose two sections disagree.
+var errBothKraftSpellings = fmt.Errorf(
+	"plugins: manifest declares both kraft and legacy capability keys")
+
+// sameKraftSection reports whether the two spellings of the kraft
+// section describe the same subprocess. They agree when an author wrote
+// both keys for hosts of different vintages; they disagree when one of
+// them is stale, which is worth a refusal rather than a guess.
+func sameKraftSection(a, b *kraft.Kraft) bool {
+	return a != nil && b != nil &&
+		a.Binary == b.Binary &&
+		a.Protocol == b.Protocol &&
+		slices.Equal(a.Hosts, b.Hosts)
+}
+
 // validateAgentCapabilities checks the skills / MCP / hooks / tools
 // declarations: each group requires its permission, paths must stay
 // inside the plugin directory, and tool/MCP entries must satisfy the
 // host contract.
 func validateAgentCapabilities(m *Manifest) error {
 	if len(m.Skills) > 0 {
-		if err := requirePermission(m, "skills:contribute", "skills"); err != nil {
+		if err := requirePermission(m, "skills:provide", "skills"); err != nil {
 			return err
 		}
 		if len(m.Skills) > maxPluginSkillCount {
@@ -1275,7 +1452,7 @@ func validateAgentCapabilities(m *Manifest) error {
 		}
 	}
 	if len(m.Hooks) > 0 {
-		if err := requirePermission(m, "hooks:register", "hooks"); err != nil {
+		if err := requirePermission(m, "hooks:provide", "hooks"); err != nil {
 			return err
 		}
 		if len(m.Hooks) > maxPluginHookCount {
@@ -1291,7 +1468,7 @@ func validateAgentCapabilities(m *Manifest) error {
 		}
 	}
 	if len(m.McpServers) > 0 {
-		if err := requirePermission(m, "mcp:contribute", "mcpServers"); err != nil {
+		if err := requirePermission(m, "mcp:provide", "mcpServers"); err != nil {
 			return err
 		}
 		if len(m.McpServers) > maxPluginMCPServerCount {
@@ -1344,10 +1521,10 @@ func validateAgentCapabilities(m *Manifest) error {
 		}
 	}
 	if len(m.Tools) > 0 {
-		if m.Capability == nil {
-			return fmt.Errorf("plugins: tools require a capability subprocess")
+		if m.Kraft == nil {
+			return fmt.Errorf("plugins: tools require a kraft subprocess")
 		}
-		if err := requirePermission(m, "tools:expose", "tools"); err != nil {
+		if err := requirePermission(m, "tools:provide", "tools"); err != nil {
 			return err
 		}
 		if len(m.Tools) > maxPluginToolCount {
@@ -1447,22 +1624,22 @@ func validateRelativePluginPath(p string) error {
 	return nil
 }
 
-// validateCapability checks a declared subprocess runtime: the binary
-// must be a relative path inside the plugin directory and the protocol
+// validateKraft checks a declared subprocess runtime: the binary must
+// be a relative path inside the plugin directory and the protocol
 // version must be positive.
-func validateCapability(cap *runtime.Capability) error {
-	if cap == nil {
+func validateKraft(k *kraft.Kraft) error {
+	if k == nil {
 		return nil
 	}
-	if cap.Binary == "" {
-		return fmt.Errorf("capability.binary is required")
+	if k.Binary == "" {
+		return fmt.Errorf("kraft.binary is required")
 	}
-	bin := filepath.Clean(cap.Binary)
+	bin := filepath.Clean(k.Binary)
 	if !pathsafe.RelRef(bin) {
-		return fmt.Errorf("capability.binary escapes plugin dir: %q", cap.Binary)
+		return fmt.Errorf("kraft.binary escapes plugin dir: %q", k.Binary)
 	}
-	if cap.Protocol <= 0 {
-		return fmt.Errorf("capability.protocol must be positive")
+	if k.Protocol <= 0 {
+		return fmt.Errorf("kraft.protocol must be positive")
 	}
 	return nil
 }

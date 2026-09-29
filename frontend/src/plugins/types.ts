@@ -17,8 +17,9 @@
 // plugin's branch unless the manifest grants the matching permission,
 // so an unpermitted service resolves to undefined (fail-closed); the
 // inject list is validated against the manifest before loading.
-// ctx.on is a core Cordis primitive and is always available (the old
-// "events:subscribe" permission is no longer required).
+// ctx.on is a core Cordis primitive and is always available (the
+// "events:subscribe" permission was retired: a manifest that still
+// declares it is accepted and the name ignored).
 
 import type { ComponentType } from 'react';
 import type { Context } from '@cordisjs/core';
@@ -53,8 +54,6 @@ export interface PluginSummary {
   /** Version of the shadowed builtin, when known. */
   builtinVersion?: string;
   error?: string;
-  panels?: string[];
-  entries?: string[];
   /** Agent-facing capability flags contributed by the plugin. */
   hasSkills?: boolean;
   hasMcp?: boolean;
@@ -64,9 +63,9 @@ export interface PluginSummary {
   hasUpdate?: boolean;
   /** A rollback snapshot of the previous version is available. */
   canRollback?: boolean;
-  /** Declared capability binary (plugin-relative path), when the plugin
+  /** Declared kraft binary (plugin-relative path), when the plugin
       ships one the host runs as a subprocess. */
-  capability?: string;
+  kraft?: string;
 }
 
 /** UI view of one agent-callable tool declared by a plugin manifest. */
@@ -205,7 +204,7 @@ declare module '@cordisjs/core' {
     /** Declarative pet packs; data only, see src/pet/pack. */
     pets: Registrar<PetPack>;
     /**
-     * Invokes a method on this plugin's capability subprocess (if the
+     * Invokes a method on this plugin's kraft subprocess (if the
      * manifest declares one). params and the result are JSON; the host
      * only routes by method name and never interprets the semantics.
      */

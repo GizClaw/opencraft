@@ -39,10 +39,16 @@ type Core struct {
 	// suspended (see telemetry.go).
 	telemetryMu   sync.Mutex
 	telemetryLast *rememberedPluginSink
-	// pluginWrites tracks the runtime rebuilds triggered by capability
-	// plugin inference writes, so a plugin that re-submits an unchanged
+	// pluginWrites tracks the runtime rebuilds triggered by inference
+	// writes from a plugin kraft, so a plugin that re-submits an unchanged
 	// row set does not rebuild the runtime per row (see inference.go).
 	pluginWrites pluginInferenceWrite
+	// pluginRefreshMu and pluginRefreshRev gate RefreshPluginRuntime
+	// (see plugin_refresh.go): the plugin registry revision the pooled
+	// runtimes were last rebuilt at, and the lock that serializes the
+	// catch-up rebuilds so a burst moves the runtime once.
+	pluginRefreshMu  sync.Mutex
+	pluginRefreshRev uint64
 	// readyWorkDir is the workspace the last ready event named. The
 	// frontend switches its workspace on that event alone, so this —
 	// not WorkDir — is what the window is rendering: a switch updates
@@ -133,7 +139,7 @@ func NewCoreWithPaths(p Paths) *Core {
 	c.Shell.SetPetSink(func(typ string, data any) {
 		pet.OnEvent(typ, data)
 	})
-	runtime.Manager().SetAgentPlugins(plugin.Store, plugin.Capability)
+	runtime.Manager().SetAgentPlugins(plugin.Store, plugin.Kraft)
 	runtime.Manager().SetAutomationHost(NewAutomationHost(runtime))
 	runtime.Manager().SetPluginInstaller(NewPluginInstaller(c))
 	// Delegated runs stream into the same conversation events as a
@@ -153,7 +159,7 @@ func NewCoreWithPaths(p Paths) *Core {
 		},
 		Installed: func(string) { c.EmitReady() },
 	})
-	plugin.Capability.SetOpenURL(c.Shell.OpenURL)
+	plugin.Kraft.SetOpenURL(c.Shell.OpenURL)
 	defaultMode, defaultThink := c.Shell.SessionDefaults()
 	c.Conversation.SetDefaults(
 		sessions.Mode(defaultMode), defaultThink,

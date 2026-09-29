@@ -10,7 +10,7 @@ import { Segmented } from './ui/Segmented';
 
 // TelemetryExportCard is the diagnostics view of the OTLP export sink:
 // where the app currently ships logs, traces and metrics, and whether
-// capability plugins that declare telemetry:export may point that export
+// plugins that declare telemetry:export may point that export
 // at their own collector. The local rotating log file is unaffected by
 // either, which the hint spells out.
 // showTitle is off when the card sits under a section heading that

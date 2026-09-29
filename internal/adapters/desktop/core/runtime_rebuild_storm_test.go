@@ -105,7 +105,7 @@ func TestRebuildRuntimeArmsOneReplacementForDrainingWorkspace(t *testing.T) {
 }
 
 // TestUnchangedPluginWriteSkipsRebuildWhileReplacementArmed pins the
-// capability-plugin contract that a catalog sync does not reassemble the
+// kraft contract that a catalog sync does not reassemble the
 // runtime. The SSO plugin re-submits its unchanged inference rows every
 // time its panel becomes visible and on startup; the host has to answer
 // that with nothing, including while the active workspace is draining

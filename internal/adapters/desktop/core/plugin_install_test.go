@@ -19,7 +19,7 @@ func writePluginSource(t *testing.T, dir, id, version string) {
 	manifest := fmt.Sprintf(
 		`{"id": %q, "name": %q, "version": %q, `+
 			`"entry": "dist/index.js", `+
-			`"permissions": ["skills:contribute"], `+
+			`"permissions": ["skills:provide"], `+
 			`"skills": ["skills"]}`,
 		id, id+" plugin", version)
 	files := map[string]string{
@@ -53,7 +53,7 @@ func writePluginZip(t *testing.T, path, id, version string) {
 		"plugin.json": fmt.Sprintf(
 			`{"id": %q, "name": %q, "version": %q, `+
 				`"entry": "dist/index.js", `+
-				`"permissions": ["skills:contribute"], `+
+				`"permissions": ["skills:provide"], `+
 				`"skills": ["skills"]}`,
 			id, id+" plugin", version),
 		"dist/index.js":         "export const apply = () => {};",

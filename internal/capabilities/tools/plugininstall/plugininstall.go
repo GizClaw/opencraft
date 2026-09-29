@@ -49,7 +49,10 @@ const ResourceImpl = "opencraft/plugininstall"
 // The registry owns every gate (manifest validation, host version,
 // version ordering, builtin shadowing, zip-slip checks) and reloads
 // the runtime after a mutation so the plugin's skills, tools, MCP
-// servers and hooks go live.
+// servers and hooks go live. The plugin's kraft tool definitions are
+// the exception: the tool source republishes them on the registry's own
+// signal, so a plugin installed, updated or disabled while a turn runs
+// reaches that turn's next round instead of the next assembly.
 type Installer interface {
 	// PluginsList returns every installed plugin.
 	PluginsList(ctx context.Context) ([]plugins.PluginSummary, error)
@@ -248,12 +251,14 @@ func (installTool) Definition() message.ToolDefinition {
 		InstallName,
 		"Installs a plugin into OpenCraft from a workspace directory "+
 			"containing plugin.json or from a .zip package, then "+
-			"reloads the runtime so its skills, tools, MCP servers and "+
-			"hooks go live from the next turn on. The plugin is enabled "+
-			"on install. The user reviews the manifest (id, version, "+
-			"permissions, entry, capability binary) and confirms before "+
-			"anything is copied; a denied install changes nothing. "+
-			"Returns JSON.",
+			"reloads the runtime. Its tools are callable from the next "+
+			"round of this turn; its skills, MCP servers and hooks go "+
+			"live once the runtime has reloaded, which for an install "+
+			"made mid-turn means the turn after this one. The plugin is "+
+			"enabled on install. The user reviews the manifest (id, "+
+			"version, permissions, entry, kraft binary) and confirms "+
+			"before anything is copied; a denied install changes "+
+			"nothing. Returns JSON.",
 		message.ToolProperty("path", "string",
 			"Plugin source, relative to the workspace root: a "+
 				"directory containing plugin.json, or a .zip package."),
@@ -292,9 +297,10 @@ func (t installTool) Execute(
 	}
 	sum, err := t.t.installer.PluginInstall(ctx, src)
 	return installResult(sum, err,
-		"installed and enabled; the runtime reloaded, so the plugin's "+
-			"skills, tools, MCP servers and hooks are live from the "+
-			"next turn on")
+		"installed and enabled; the plugin's tools are callable from "+
+			"the next round, and its skills, MCP servers and hooks are "+
+			"live once the runtime reloads (the turn after this one, "+
+			"when the runtime swap waits for the drain)")
 }
 
 // ---------------------------------------------------------------------------
@@ -365,8 +371,10 @@ func (t updateTool) Execute(
 	}
 	sum, err := t.t.installer.PluginUpdate(ctx, args.ID, src)
 	return installResult(sum, err,
-		"replaced; the runtime reloaded, so the new version is live "+
-			"from the next turn on")
+		"replaced; the new version's tools are callable from the next "+
+			"round, and the rest of its contributions are live once the "+
+			"runtime reloads (the turn after this one, when the runtime "+
+			"swap waits for the drain)")
 }
 
 // ---------------------------------------------------------------------------
@@ -409,10 +417,10 @@ func installPrompt(
 	if sum.Entry != "" {
 		fmt.Fprintf(&b, "Entry bundle: %s\n", sum.Entry)
 	}
-	if sum.Capability != "" {
+	if sum.Kraft != "" {
 		fmt.Fprintf(&b,
-			"Capability binary: %s (a native process the app runs)\n",
-			sum.Capability)
+			"Kraft binary: %s (a native process the app runs)\n",
+			sum.Kraft)
 	}
 	if len(sum.Permissions) > 0 {
 		fmt.Fprintf(&b, "Permissions: %s\n",
@@ -484,7 +492,7 @@ type pluginRow struct {
 	ShadowsBuiltin bool     `json:"shadows_builtin,omitempty"`
 	Permissions    []string `json:"permissions,omitempty"`
 	Entry          string   `json:"entry,omitempty"`
-	Capability     string   `json:"capability,omitempty"`
+	Kraft          string   `json:"kraft,omitempty"`
 	HasSkills      bool     `json:"has_skills,omitempty"`
 	HasTools       bool     `json:"has_tools,omitempty"`
 	HasMCP         bool     `json:"has_mcp,omitempty"`
@@ -503,7 +511,7 @@ func rowFromSummary(sum plugins.PluginSummary) pluginRow {
 		ShadowsBuiltin: sum.ShadowsBuiltin,
 		Permissions:    sum.Permissions,
 		Entry:          sum.Entry,
-		Capability:     sum.Capability,
+		Kraft:          sum.Kraft,
 		HasSkills:      sum.HasSkills,
 		HasTools:       sum.HasTools,
 		HasMCP:         sum.HasMCP,

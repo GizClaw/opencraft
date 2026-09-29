@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -35,11 +36,6 @@ func TestStoreListScansAndValidates(t *testing.T) {
 	writePlugin(t, root, "hello", map[string]any{
 		"id": "hello", "name": "Hello", "version": "0.1.0",
 		"entry": "dist/index.js", "permissions": []string{},
-		"contributes": map[string]any{
-			"settingsPanels": []any{
-				map[string]any{"id": "hello-panel", "title": "Hello", "order": 10},
-			},
-		},
 	}, "console.log('hi')")
 	writePlugin(t, root, "bad-perm", map[string]any{
 		"id": "bad-perm", "name": "Bad", "version": "0.1.0",
@@ -65,7 +61,7 @@ func TestStoreListScansAndValidates(t *testing.T) {
 	for _, p := range list {
 		byID[p.ID] = p
 	}
-	if h := byID["hello"]; !h.Enabled || h.Error != "" || len(h.Panels) != 1 || h.Panels[0] != "hello-panel" {
+	if h := byID["hello"]; !h.Enabled || h.Error != "" {
 		t.Fatalf("hello summary = %+v", h)
 	}
 	if b := byID["bad-perm"]; b.Error == "" {
@@ -73,6 +69,100 @@ func TestStoreListScansAndValidates(t *testing.T) {
 	}
 	if b := byID["bad-id"]; b.Error == "" {
 		t.Fatal("bad-id should be rejected")
+	}
+}
+
+// TestStoreEntriesCarryTheParsedManifest pins the scan both List and the
+// agent host read: one pass parses every plugin.json, hands back the
+// directory and the manifest with the summary, and reports an entry that
+// does not parse as an error instead of a manifest. List is the same
+// scan's summaries, so the two can never disagree about a plugin.
+func TestStoreEntriesCarryTheParsedManifest(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "hello", map[string]any{
+		"id": "hello", "name": "Hello", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{},
+		"kraft": map[string]any{"binary": "bin/srv", "protocol": 1},
+	}, "console.log('hi')")
+	writePlugin(t, root, "bad-perm", map[string]any{
+		"id": "bad-perm", "name": "Bad", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{"unknown:perm"},
+	}, "")
+
+	s := NewStore(root)
+	entries, err := s.Entries()
+	if err != nil {
+		t.Fatalf("Entries: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("Entries returned %d plugins, want 2: %+v", len(entries), entries)
+	}
+	byID := map[string]Entry{}
+	for _, e := range entries {
+		byID[e.Summary.ID] = e
+	}
+	e, ok := byID["hello"]
+	if !ok {
+		t.Fatalf("hello is missing from %+v", entries)
+	}
+	if e.Manifest == nil || e.Manifest.Name != "Hello" ||
+		e.Manifest.Kraft == nil || e.Manifest.Kraft.Binary != "bin/srv" {
+		t.Fatalf("hello entry = %+v, want the parsed manifest", e)
+	}
+	if e.Dir != filepath.Join(root, "hello") {
+		t.Fatalf("hello entry dir = %q", e.Dir)
+	}
+	if bad := byID["bad-perm"]; bad.Summary.Error == "" || bad.Manifest != nil {
+		t.Fatalf("bad-perm entry = %+v, want an error and no manifest", bad)
+	}
+
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != len(entries) {
+		t.Fatalf("List returned %d summaries for %d entries", len(list), len(entries))
+	}
+	for i, sum := range list {
+		if !reflect.DeepEqual(sum, entries[i].Summary) {
+			t.Fatalf("List[%d] = %+v, want the scan's summary %+v",
+				i, sum, entries[i].Summary)
+		}
+	}
+}
+
+// TestManifestIgnoresContributesSegment pins the manifest cleanup: the
+// UI half registers from the bundle, so a contributes segment written
+// against an older build is accepted and dropped — including duplicate
+// panel ids and a pet list, both of which used to reject the manifest
+// (pets through the retired pets:contribute gate).
+func TestManifestIgnoresContributesSegment(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "legacy-ui", map[string]any{
+		"id": "legacy-ui", "name": "Legacy UI", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{},
+		"contributes": map[string]any{
+			"settingsPanels": []any{
+				map[string]any{"id": "panel", "title": "P", "order": 1},
+				map[string]any{"id": "panel", "title": "P again", "order": 2},
+			},
+			"sidebarEntries": []any{
+				map[string]any{"id": "", "title": "no id", "order": 1},
+			},
+			"pets": []any{map[string]any{"id": "cat"}},
+		},
+	}, "console.log('legacy')")
+	s := NewStore(root)
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Error != "" || !list[0].Enabled {
+		t.Fatalf("a manifest with a retired contributes segment must "+
+			"load: %+v", list)
+	}
+	if _, err := s.Bundle("legacy-ui"); err != nil {
+		t.Fatalf("Bundle: %v", err)
 	}
 }
 
@@ -155,11 +245,6 @@ func TestStoreInstallCopiesAndValidates(t *testing.T) {
 	writePlugin(t, srcRoot, "installed", map[string]any{
 		"id": "installed", "name": "Installed", "version": "0.2.0",
 		"entry": "dist/index.js", "permissions": []string{},
-		"contributes": map[string]any{
-			"sidebarEntries": []any{
-				map[string]any{"id": "inst-entry", "title": "Inst", "order": 1},
-			},
-		},
 	}, "console.log('installed')")
 	src := filepath.Join(srcRoot, "unrelated-dir-name")
 	if err := os.Rename(filepath.Join(srcRoot, "installed"), src); err != nil {
@@ -170,7 +255,7 @@ func TestStoreInstallCopiesAndValidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if sum.ID != "installed" || !sum.Enabled || len(sum.Entries) != 1 {
+	if sum.ID != "installed" || !sum.Enabled {
 		t.Fatalf("installed summary = %+v", sum)
 	}
 	if _, err := s.Bundle("installed"); err != nil {
@@ -211,12 +296,12 @@ func TestStoreUninstallRemoves(t *testing.T) {
 	}
 }
 
-func TestInstallMakesCapabilityExecutable(t *testing.T) {
+func TestInstallMakesKraftExecutable(t *testing.T) {
 	srcRoot := t.TempDir()
 	writePlugin(t, srcRoot, "cap", map[string]any{
 		"id": "cap", "name": "Cap", "version": "1.0.0",
-		"entry":      "dist/index.js",
-		"capability": map[string]any{"binary": "bin/auth", "protocol": 1},
+		"entry": "dist/index.js",
+		"kraft": map[string]any{"binary": "bin/auth", "protocol": 1},
 	}, "export function apply() {}")
 	bin := filepath.Join(srcRoot, "cap", "bin", "auth")
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
@@ -236,9 +321,9 @@ func TestInstallMakesCapabilityExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	// copyDir writes everything 0600; Install must restore the exec bit
-	// for the declared capability binary.
+	// for the declared kraft binary.
 	if info.Mode().Perm()&0o111 == 0 {
-		t.Fatalf("capability binary is not executable after install: %v", info.Mode())
+		t.Fatalf("kraft binary is not executable after install: %v", info.Mode())
 	}
 }
 
@@ -246,10 +331,10 @@ func TestManifestValidatesAgentCapabilities(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "agent", map[string]any{
 		"id": "agent", "name": "Agent", "version": "0.1.0",
-		"entry":      "dist/index.js",
-		"capability": map[string]any{"binary": "bin/agent", "protocol": 1},
+		"entry": "dist/index.js",
+		"kraft": map[string]any{"binary": "bin/agent", "protocol": 1},
 		"permissions": []string{
-			"skills:contribute", "mcp:contribute", "hooks:register", "tools:expose",
+			"skills:provide", "mcp:provide", "hooks:provide", "tools:provide",
 		},
 		"update":     map[string]any{"url": "https://example.com/plugin/latest.json"},
 		"skills":     []string{"skills"},
@@ -274,6 +359,176 @@ func TestManifestValidatesAgentCapabilities(t *testing.T) {
 	}
 }
 
+func TestManifestLegacyCapabilityKey(t *testing.T) {
+	root := t.TempDir()
+	// The pre-rename spelling: a manifest that still writes the kraft
+	// section as "capability" keeps resolving its binary, so plugins
+	// installed by older builds survive the rename.
+	writePlugin(t, root, "legacy", map[string]any{
+		"id": "legacy", "name": "Legacy", "version": "0.1.0",
+		"entry":      "dist/index.js",
+		"capability": map[string]any{"binary": "bin/old", "protocol": 1},
+	}, "")
+	s := NewStore(root)
+	kraft, ok, err := s.Kraft("legacy")
+	if err != nil || !ok || kraft.Binary != "bin/old" {
+		t.Fatalf("legacy manifest: Kraft = (%+v, %v, %v)", kraft, ok, err)
+	}
+}
+
+// TestManifestBothKraftSpellingsSplitByAudience is the section half of
+// the rule the charter's legacy table states: a manifest that carries
+// both spellings of one section is read by the registry (an installed
+// plugin keeps loading, on the new key) and refused by the authoring
+// gates, where the author can delete one. Two sections that disagree are
+// refused either way — that is a stale value, not a spelling.
+func TestManifestBothKraftSpellingsSplitByAudience(t *testing.T) {
+	agreed := map[string]any{
+		"id": "both", "name": "Both", "version": "0.1.0",
+		"entry":      "dist/index.js",
+		"kraft":      map[string]any{"binary": "bin/new", "protocol": 1},
+		"capability": map[string]any{"binary": "bin/new", "protocol": 1},
+	}
+	root := t.TempDir()
+	writePlugin(t, root, "both", agreed, "bundle")
+	s := NewStore(root)
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Error != "" {
+		t.Fatalf("List = %+v, want the installed plugin to keep loading", list)
+	}
+	k, ok, err := s.Kraft("both")
+	if err != nil || !ok || k.Binary != "bin/new" {
+		t.Fatalf("Kraft = (%+v, %v, %v), want the new key's binary", k, ok, err)
+	}
+
+	src := t.TempDir()
+	writePlugin(t, src, "both", agreed, "bundle")
+	if _, err := NewStore(t.TempDir()).Inspect(filepath.Join(src, "both")); err == nil ||
+		!strings.Contains(err.Error(), "both kraft") {
+		t.Fatalf("Inspect error = %v, want a refusal naming both keys", err)
+	}
+
+	disagreed := map[string]any{
+		"id": "both", "name": "Both", "version": "0.1.0",
+		"entry":      "dist/index.js",
+		"kraft":      map[string]any{"binary": "bin/new", "protocol": 1},
+		"capability": map[string]any{"binary": "bin/old", "protocol": 1},
+	}
+	root = t.TempDir()
+	writePlugin(t, root, "both", disagreed, "bundle")
+	list, err = NewStore(root).List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || !strings.Contains(list[0].Error, "both kraft") {
+		t.Fatalf("List = %+v, want a rejection naming both keys", list)
+	}
+}
+
+func TestManifestTranslatesLegacyPermissions(t *testing.T) {
+	root := t.TempDir()
+	// The pre-sweep spellings: a manifest that still writes them keeps
+	// loading, and every read path sees the canonical names.
+	writePlugin(t, root, "legacy-perms", map[string]any{
+		"id": "legacy-perms", "name": "Legacy", "version": "0.1.0",
+		"entry": "dist/index.js",
+		"kraft": map[string]any{"binary": "bin/x", "protocol": 1},
+		"permissions": []string{
+			"skills:contribute", "hooks:register", "mcp:contribute", "tools:expose",
+		},
+		"skills":     []string{"skills"},
+		"hooks":      []string{"hooks/hooks.json"},
+		"mcpServers": []any{map[string]any{"name": "srv", "transport": "stdio", "command": "bin/srv"}},
+		"tools": []any{map[string]any{
+			"name": "ping", "description": "Ping", "method": "ping",
+			"inputSchema": map[string]any{"type": "object"},
+		}},
+	}, "")
+	want := "skills:provide,hooks:provide,mcp:provide,tools:provide"
+	s := NewStore(root)
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Error != "" {
+		t.Fatalf("List = %+v, want a valid plugin", list)
+	}
+	if got := strings.Join(list[0].Permissions, ","); got != want {
+		t.Fatalf("summary permissions = %q, want %q", got, want)
+	}
+	m, err := s.Manifest("legacy-perms")
+	if err != nil {
+		t.Fatalf("Manifest: %v", err)
+	}
+	if got := strings.Join(m.Permissions, ","); got != want {
+		t.Fatalf("manifest permissions = %q, want %q", got, want)
+	}
+}
+
+func TestManifestDropsRetiredPermissions(t *testing.T) {
+	root := t.TempDir()
+	// Retired names are accepted and dropped: rejecting the manifest
+	// would kill a plugin's working half over a name that gates
+	// nothing.
+	writePlugin(t, root, "retired-perms", map[string]any{
+		"id": "retired-perms", "name": "Retired", "version": "0.1.0",
+		"entry": "dist/index.js",
+		"permissions": []string{
+			"storage:kv", "commands:register", "statusbar:contribute",
+			"events:subscribe",
+		},
+	}, "")
+	s := NewStore(root)
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Error != "" {
+		t.Fatalf("List = %+v, want a valid plugin", list)
+	}
+	if got := strings.Join(list[0].Permissions, ","); got != "storage:kv" {
+		t.Fatalf("summary permissions = %q, want the retired names gone", got)
+	}
+}
+
+// TestManifestBothGrantSpellingsSplitByAudience is the grant half: the
+// two spellings grant identical authority, so an installed plugin is
+// read as the canonical one (and the list collapses to one entry), while
+// the authoring gates refuse the redundancy.
+func TestManifestBothGrantSpellingsSplitByAudience(t *testing.T) {
+	declared := map[string]any{
+		"id": "both-perms", "name": "Both", "version": "0.1.0",
+		"entry": "dist/index.js",
+		"permissions": []string{
+			"tools:provide", "tools:expose",
+		},
+	}
+	root := t.TempDir()
+	writePlugin(t, root, "both-perms", declared, "bundle")
+	list, err := NewStore(root).List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Error != "" {
+		t.Fatalf("List = %+v, want the installed plugin to keep loading", list)
+	}
+	if got := strings.Join(list[0].Permissions, ","); got != "tools:provide" {
+		t.Fatalf("permissions = %q, want the pair collapsed to one grant", got)
+	}
+
+	src := t.TempDir()
+	writePlugin(t, src, "both-perms", declared, "bundle")
+	_, err = NewStore(t.TempDir()).Inspect(filepath.Join(src, "both-perms"))
+	if err == nil ||
+		!strings.Contains(err.Error(), "tools:expose") ||
+		!strings.Contains(err.Error(), "tools:provide") {
+		t.Fatalf("Inspect error = %v, want a refusal naming both spellings", err)
+	}
+}
+
 func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -283,15 +538,15 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "tools without permission",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"capability": map[string]any{"binary": "bin/x", "protocol": 1},
-				"tools":      []any{map[string]any{"name": "t", "method": "m"}},
+				"kraft": map[string]any{"binary": "bin/x", "protocol": 1},
+				"tools": []any{map[string]any{"name": "t", "method": "m"}},
 			},
 		},
 		{
-			name: "tools without capability",
+			name: "tools without kraft",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"tools:expose"},
+				"permissions": []string{"tools:provide"},
 				"tools":       []any{map[string]any{"name": "t", "method": "m"}},
 			},
 		},
@@ -299,7 +554,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "mcp unknown transport",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"mcp:contribute"},
+				"permissions": []string{"mcp:provide"},
 				"mcpServers":  []any{map[string]any{"name": "s", "transport": "carrier"}},
 			},
 		},
@@ -307,7 +562,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "skill path escapes",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"skills:contribute"},
+				"permissions": []string{"skills:provide"},
 				"skills":      []string{"../skills"},
 			},
 		},
@@ -315,7 +570,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "tool schema not object",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"tools:expose"},
+				"permissions": []string{"tools:provide"},
 				"tools": []any{map[string]any{
 					"name": "t", "method": "m", "inputSchema": []string{"not", "object"},
 				}},
@@ -325,7 +580,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "mcp server name with separator",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"mcp:contribute"},
+				"permissions": []string{"mcp:provide"},
 				"mcpServers":  []any{map[string]any{"name": "bad:name", "transport": "stdio", "command": "bin/s"}},
 			},
 		},
@@ -333,8 +588,8 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "tool name with dot",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"capability":  map[string]any{"binary": "bin/x", "protocol": 1},
-				"permissions": []string{"tools:expose"},
+				"kraft":       map[string]any{"binary": "bin/x", "protocol": 1},
+				"permissions": []string{"tools:provide"},
 				"tools": []any{map[string]any{
 					"name": "tool.name", "method": "m",
 				}},
@@ -344,7 +599,7 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "mcp server name with dot",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"permissions": []string{"mcp:contribute"},
+				"permissions": []string{"mcp:provide"},
 				"mcpServers":  []any{map[string]any{"name": "bad.name", "transport": "stdio", "command": "bin/s"}},
 			},
 		},
@@ -352,8 +607,8 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "tool description too long",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"capability":  map[string]any{"binary": "bin/x", "protocol": 1},
-				"permissions": []string{"tools:expose"},
+				"kraft":       map[string]any{"binary": "bin/x", "protocol": 1},
+				"permissions": []string{"tools:provide"},
 				"tools": []any{map[string]any{
 					"name": "t", "method": "m",
 					"description": strings.Repeat("x", 1025),
@@ -364,8 +619,8 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			name: "tool schema too large",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
-				"capability":  map[string]any{"binary": "bin/x", "protocol": 1},
-				"permissions": []string{"tools:expose"},
+				"kraft":       map[string]any{"binary": "bin/x", "protocol": 1},
+				"permissions": []string{"tools:provide"},
 				"tools": []any{map[string]any{
 					"name": "t", "method": "m",
 					"inputSchema": map[string]any{
@@ -420,7 +675,7 @@ func TestInstallRejectsMissingAgentResources(t *testing.T) {
 		"id": "broken", "name": "Broken", "version": "0.1.0",
 		"entry": "dist/index.js",
 		"permissions": []string{
-			"skills:contribute", "hooks:register", "mcp:contribute",
+			"skills:provide", "hooks:provide", "mcp:provide",
 		},
 		"skills":     []string{"skills"},
 		"hooks":      []string{"hooks/hooks.json"},
@@ -588,7 +843,7 @@ func TestRollbackRejectsTamperedBackup(t *testing.T) {
 	writePlugin(t, oldSrc, "p", map[string]any{
 		"id": "p", "name": "P", "version": "0.1.0",
 		"entry":       "dist/index.js",
-		"permissions": []string{"skills:contribute"},
+		"permissions": []string{"skills:provide"},
 		"skills":      []string{"skills"},
 	}, "")
 	if err := os.MkdirAll(filepath.Join(oldSrc, "p", "skills"), 0o700); err != nil {
@@ -684,5 +939,10 @@ func TestConcurrentUpdateIsSerialized(t *testing.T) {
 	}
 	if success != 1 || failures != 1 {
 		t.Fatalf("concurrent updates: success=%d failures=%d, want 1/1", success, failures)
+	}
+	// The registry moved once for the update that landed and not for the
+	// one that lost the race.
+	if got := s.Revision(); got != 2 {
+		t.Fatalf("revision after concurrent updates = %d, want 2", got)
 	}
 }

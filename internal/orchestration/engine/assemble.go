@@ -352,7 +352,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	// being built from registry factories. The deploy document declares
 	// them under runtime.external_deps (assets/runtime.yaml); flowcraft
 	// keeps these values across in-place Runtime.Reload generations, so
-	// stable app objects (plugin store/capability runtime, automation
+	// stable app objects (plugin store/kraft runtime, automation
 	// manager) never need re-registration on document reloads.
 	pluginHost := o.AgentHost
 	if pluginHost == nil {

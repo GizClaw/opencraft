@@ -6,8 +6,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- A kraft that calls the `secret.*` primitives must declare
+  `secrets:auth` in its manifest. The gate was documented since those
+  primitives landed and never checked, so a plugin could reach its
+  secret namespace without it; now the call is refused. Because an
+  inference profile's credential lives in that namespace,
+  `inference.upsert` needs the grant too — the charter's `inference.*`
+  row names the dependency. The refusal goes to the plugin as a
+  primitive error and to the host log once per (plugin, permission),
+  naming the missing grant; a plugin that reports it as a missing
+  credential is reporting the symptom.
+
+### Added
+
+- The plugin framework has a charter. `capabilities/plugins/charter.go`
+  holds two tables — what a plugin gives the host, and what it may call
+  on it — and every row answers the same five questions: who consumes
+  it, where its code runs, how the host learns it exists, which grant
+  authorizes it, when it comes alive and what removes it.
+  `charter_test.go` scans the code the rows point at (the `Manifest`
+  struct, `AllowedPermissions`, the frontend's service list, the kraft
+  primitive dispatch) and fails in both directions, so a new
+  permission, manifest field, service or primitive cannot land without
+  a row, and a row cannot outlive what it names. `charter.md` beside it
+  is the generated view. The charter's first job was to name the
+  places where code and comment
+  disagreed — the kraft `secret.*` primitives claiming a `secrets:auth`
+  gate nothing checked, and the manifest `contributes.*` segments that
+  were parsed and displayed by nothing — and both were settled in this
+  same release, below.
+- The plugin registry has a clock. `plugins.Store` moves a revision on
+  every successful mutation — enable/disable, install, update,
+  rollback, uninstall — and the charter's new clock table
+  (`FaceRefreshes`) writes down what each consumer does when it sees
+  the revision behind the one it last read from: the settings page
+  reloads and the desktop rebuilds the runtime once per revision,
+  coalescing a burst into one rebuild; the agent host re-scans on its
+  next read instead of waiting for a new assembly, so a change made
+  mid-turn — the agent's own install, whose runtime swap waits for the
+  drain — reaches the turn that made it; the mutation paths stop a
+  plugin's kraft before anything re-reads the manifest it was started
+  from; the platform face lands with the node row.
+  `charter_test.go` refuses a consumer without a clock row.
+- The agent's plugin tool source follows that clock instead of its
+  assembly: the kraft tools a registry describes are republished into
+  the live tool registry on every revision, so a plugin installed,
+  updated or disabled while a turn runs is callable — or refused — from
+  that turn's next round, even though the runtime swap waits for the
+  drain. Tool definitions were snapshotted once per assembly before,
+  which made the agent's own install invisible to the turn that asked
+  for it until the turn after.
+- The registry as a whole is bounded too. The per-plugin limits (64
+  tools, 32 KiB input schema each, …) never bounded their sum, so the
+  model-facing tool budget was the only thing standing between a large
+  registry and the discovery pool: the agent source now publishes at
+  most 256 kraft tools and 512 KiB of definitions per assembly, keeps
+  what fits in registry order, and logs one line naming how many it
+  dropped. The charter's `agent.tool` bound records both.
+
 ### Changed
 
+- Plugin registry mutations rebuild the runtime once per revision, not
+  once per call: `Core.RefreshPluginRuntime` measures the runtime
+  against the registry's revision, serializes the rebuilds, and folds
+  everything that landed while one ran into a single trailing rebuild
+  — the agent-authored install and the settings page now share that
+  path instead of stacking two. A mutation that changes nothing (say,
+  enabling an already-enabled plugin) no longer moves the revision, so
+  it cannot rebuild anything. The trailing pass is bounded at two, so a
+  stream of mutations cannot turn one rebuild into a rebuild per
+  mutation — the next caller picks up whatever is left.
+- `PluginSummary.kraft` is filled on every read path, so `Plugin.List`
+  (the settings page) and the agent's `plugin_list` report a plugin's
+  declared kraft binary the way `Inspect`/`Install`/`Update` already
+  did.
+- The plugin permission vocabulary has one shape now: a contribution
+  grant is spelled `kind:provide`, so `tools:expose`,
+  `skills:contribute`, `mcp:contribute` and `hooks:register` became
+  `tools:provide`, `skills:provide`, `mcp:provide` and `hooks:provide`.
+  A manifest that still writes an old spelling keeps loading — the
+  parser translates it — and each legacy input's fate, including the
+  two that depend on who is reading, is recorded in the charter's new
+  legacy-inputs table. Every reader (validation, the plugin summary,
+  the agent host, the kraft gate) sees the canonical names.
+- The kraft `secret.*` primitives are gated by `secrets:auth` now.
+  The package comment had claimed the gate since the primitives
+  landed, but nothing checked it — only the namespace prefix stood
+  between a plugin and the keyring. `handleSecret` checks the manifest
+  declaration the way `session.import` and `telemetry.configure`
+  already did, so a kraft whose manifest never declares `secrets:auth`
+  can no longer touch its secret namespace (the webview `ctx.secrets`
+  surface required the grant all along). A refusal is logged host-side
+  once per (plugin, permission) — see the upgrade note above.
+- The plugin manifest's subprocess section is called `kraft` now, not
+  `capability`: `plugin.json` declares `"kraft": { "binary": … }`, the
+  hosts package is `capabilities/plugins/kraft` (with `kraft.Kraft` /
+  `kraft.Manager`), the store exposes `Store.Kraft`, the desktop DTO
+  field is `kraft`, and the docs, the plugin-creator skill and
+  `plugins/hello` follow. The name is the machine half of a plugin —
+  the other half is the user-facing bundle — and it stops overloading
+  "capability", which in this repo already names host permissions and
+  agent-facing features. Manifests written by older builds keep
+  loading: the host still reads the old `capability` key. A manifest
+  declaring both spellings is read on the new key when the two sections
+  agree (the old one is logged once) and refused when they disagree;
+  offered to `Inspect`/`Install`/`Update`, the pair is refused either
+  way, so a new manifest carries one spelling.
 - The desktop and plugin wire calls the conversation id `conversation_id`
   everywhere: in `NewChat`'s result, in the session-delete and bundle-import
   DTOs, and in the plugin `session.import` result, which mirrors the desktop
@@ -48,6 +154,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Three plugin permissions are retired: `events:subscribe`,
+  `commands:register` and `statusbar:contribute` gated nothing any
+  more (the Cordis event bus and the commands/status-bar registrars are
+  always available to every plugin). A manifest that still declares
+  one keeps loading: `CheckPermissions` is fail-closed, and rejecting a
+  manifest over a name that gates nothing would kill the plugin's
+  working half; the parser drops the name and logs it once instead.
+  `plugins/hello` no longer declares any of them (nor the old
+  `skills:contribute`). `pets:contribute` was still read then — it
+  gated only the inert `contributes.pets` segment — and was retired
+  with that segment in the manifest cleanup below.
+- The plugin manifest carries no UI contributions any more:
+  `contributes.settingsPanels`, `contributes.sidebarEntries` and
+  `contributes.pets` were parsed, validated and reported in the plugin
+  summary while nothing consumed them. Panels, sidebar entries and pet
+  packs register from the bundle (`ctx.settingsPanels.add`,
+  `ctx.sidebarEntries.add`, `ctx.pets.add`), the only source that
+  cannot drift from what renders. The `Manifest` field, the summary's
+  `panels` / `entries` wire fields and the pet count bound are gone; a
+  manifest that still writes the segment keeps loading, with the
+  segment dropped and one log line for a non-empty one. With its last
+  reader gone, `pets:contribute` was retired like the other dead names
+  — accepted, dropped, logged once — and the charter's sunset list,
+  which held it while it was still read, had no members left and went
+  with it. `plugins/hello` and the plugin-creator skill follow.
 - The `setup:docker` task is gone. It built the `wails-cross` image from
   `build/docker/Dockerfile.cross`, a file this repo never carried, so it could
   only ever fail; the per-platform `build:docker` cross tasks stay and now say

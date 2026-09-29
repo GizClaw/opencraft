@@ -465,8 +465,8 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 		t.Fatalf("write inference config: %v", err)
 	}
 
-	// A real plugin on disk: one skill, one hook file, one capability
-	// tool declaration.
+	// A real plugin on disk: one skill, one hook file, one kraft tool
+	// declaration.
 	pluginRoot := t.TempDir()
 	plugDir := filepath.Join(pluginRoot, "plug")
 	for _, dir := range []string{
@@ -481,10 +481,10 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 	}
 	manifest := map[string]any{
 		"id": "plug", "name": "Plug", "version": "0.1.0",
-		"entry":      "dist/index.js",
-		"capability": map[string]any{"binary": "bin/ping", "protocol": 1},
+		"entry": "dist/index.js",
+		"kraft": map[string]any{"binary": "bin/ping", "protocol": 1},
 		"permissions": []string{
-			"skills:contribute", "hooks:register", "tools:expose",
+			"skills:provide", "hooks:provide", "tools:provide",
 		},
 		"skills": []string{"skills"},
 		"hooks":  []string{"hooks/hooks.json"},
@@ -589,7 +589,7 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 		t.Fatalf("plugin hook did not run through the runtime: %v", err)
 	}
 
-	// Plugin capability tool is in the assembled tool catalog.
+	// Plugin kraft tool is in the assembled tool catalog.
 	toolsValue, ok := rt.Resource("tools")
 	if !ok {
 		t.Fatal("tools resource missing")
@@ -606,7 +606,7 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 		}
 	}
 	if !foundTool {
-		t.Fatal("plugin capability tool missing from tool catalog")
+		t.Fatal("plugin kraft tool missing from tool catalog")
 	}
 }
 

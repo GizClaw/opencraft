@@ -205,7 +205,7 @@ func listOrEmpty(values []string) []string {
 // Header values are credentials and stay in the host, so the DTO carries
 // header names only.
 type TelemetryExportDTO struct {
-	// Enabled is the user switch: may capability plugins install their
+	// Enabled is the user switch: may kraft plugins install their
 	// own export sink?
 	Enabled bool `json:"enabled"`
 	// Configured reports whether an OTLP endpoint is active, whoever
@@ -220,7 +220,7 @@ type TelemetryExportDTO struct {
 }
 
 // TelemetryExport reports where the app currently exports telemetry and
-// whether capability plugins may point it at their own collector.
+// whether kraft plugins may point it at their own collector.
 func (b *Diagnostics) TelemetryExport() TelemetryExportDTO {
 	state := b.core.PluginTelemetryState()
 	return TelemetryExportDTO{

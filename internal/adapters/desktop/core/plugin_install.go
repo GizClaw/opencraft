@@ -7,7 +7,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	plugininstalltool "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
-	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // pluginInstaller adapts the desktop plugin registry to the agent's
@@ -59,9 +58,11 @@ func (p pluginInstaller) PluginInstall(
 	return sum, p.reload(ctx)
 }
 
-// PluginUpdate replaces an installed plugin with a newer source and
-// reloads the runtime, stopping the previous capability process first
-// (its binary is replaced on disk).
+// PluginUpdate replaces an installed plugin with a newer source,
+// reloads the runtime, and stops the previous kraft process. The stop
+// comes after the swap on purpose: the process keeps running on the
+// inode it was started from, so an update that fails to land does not
+// kill a plugin the user is still using.
 func (p pluginInstaller) PluginUpdate(
 	ctx context.Context, id, src string,
 ) (plugins.PluginSummary, error) {
@@ -78,7 +79,7 @@ func (p pluginInstaller) PluginUpdate(
 	if err != nil {
 		return plugins.PluginSummary{}, err
 	}
-	p.core.Plugin.Capability.Stop(id)
+	p.core.Plugin.Kraft.Stop(id)
 	return sum, p.reload(ctx)
 }
 
@@ -108,17 +109,21 @@ func sourceIsDir(src string) (bool, error) {
 }
 
 // reload reassembles the runtime from the plugin registry change. It
-// mirrors the plugin binding's refresh, so an install from the agent
-// and an install from the settings page take the same path — including
+// goes through the same revision-gated refresh as the plugin binding
+// (Core.RefreshPluginRuntime), so an install from the agent and an
+// install from the settings page take the same path — including
 // running on the shell's app context rather than the calling turn's:
 // the registry change is already durable, so pressing stop in the same
-// instant must not leave the runtime unassembled.
+// instant must not leave the runtime unassembled. When the calling
+// turn defers the swap to the drain, the turn keeps running on the old
+// Host — which re-reads the registry on the revision — and the
+// replacement the pool installs after the drain assembles from the
+// registry as it stands then.
 func (p pluginInstaller) reload(ctx context.Context) error {
 	if p.core.Shell != nil {
 		ctx = p.core.Shell.Context()
 	}
-	ctx = host.WithAssemblyReason(ctx, host.ReasonPluginChange)
-	return p.core.RebuildRuntime(ctx)
+	return p.core.RefreshPluginRuntime(ctx)
 }
 
 var _ plugininstalltool.Installer = pluginInstaller{}
