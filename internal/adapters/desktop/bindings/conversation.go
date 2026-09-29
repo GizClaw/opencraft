@@ -167,7 +167,7 @@ func (b *Conversation) StartTurn(
 	start := TurnStart{ConversationID: contextID}
 	err := b.core.Runtime.Do(
 		host.WithAssemblyReason(ctx, host.ReasonConversation),
-		workDir, stop,
+		host.WorkspaceTarget(workDir), stop,
 		func(h *host.Host) error {
 			run, err := h.StartRun(ctx, opts)
 			if err != nil {
@@ -544,7 +544,8 @@ func (b *Conversation) runHost(
 		return nil, errNotReady("conversation")
 	}
 	return b.core.Runtime.EnsureHost(
-		host.WithAssemblyReason(ctx, host.ReasonConversation), workDir)
+		host.WithAssemblyReason(ctx, host.ReasonConversation),
+		host.WorkspaceTarget(workDir))
 }
 
 // ReplyPrompt answers one pending interaction.

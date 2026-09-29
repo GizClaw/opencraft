@@ -112,7 +112,7 @@ func (c *Core) runtimeServesActiveWorkspace() bool {
 		return false
 	}
 	if h.IsStale() {
-		return c.Runtime.ReplacementArmed(active)
+		return c.Runtime.ReplacementArmed(host.WorkspaceTarget(active))
 	}
 	return true
 }

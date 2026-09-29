@@ -17,16 +17,17 @@ func TestDoAbsorbsRetryableLifecycleGuards(t *testing.T) {
 	r := NewRuntime(t.TempDir(), t.TempDir(), "")
 	replacement := &host.Host{}
 	var ensured int
-	r.ensureHost = func(_ context.Context, workDir string) (*host.Host, error) {
+	r.ensureHost = func(_ context.Context, target host.Target) (*host.Host, error) {
 		ensured++
-		if workDir != "/workspace/a" {
-			t.Fatalf("ensure asked for %q, want the caller's workspace", workDir)
+		if target.ID != "/workspace/a" {
+			t.Fatalf("ensure asked for %q, want the caller's workspace",
+				target.ID)
 		}
 		return replacement, nil
 	}
 
 	var calls int
-	err := r.Do(context.Background(), "/workspace/a", nil,
+	err := r.Do(context.Background(), host.WorkspaceTarget("/workspace/a"), nil,
 		func(h *host.Host) error {
 			calls++
 			if h != replacement {
@@ -55,13 +56,13 @@ func TestDoAbsorbsRetryableLifecycleGuards(t *testing.T) {
 // must not be retried into the window.
 func TestDoReportsNonRetryableErrorsAsTheyAre(t *testing.T) {
 	r := NewRuntime(t.TempDir(), t.TempDir(), "")
-	r.ensureHost = func(_ context.Context, _ string) (*host.Host, error) {
+	r.ensureHost = func(_ context.Context, _ host.Target) (*host.Host, error) {
 		return &host.Host{}, nil
 	}
 
 	refused := errors.New("conversation is busy")
 	var calls int
-	err := r.Do(context.Background(), "/workspace/a", nil,
+	err := r.Do(context.Background(), host.WorkspaceTarget("/workspace/a"), nil,
 		func(*host.Host) error {
 			calls++
 			return refused
@@ -74,16 +75,16 @@ func TestDoReportsNonRetryableErrorsAsTheyAre(t *testing.T) {
 	}
 
 	var ensured int
-	r.ensureHost = func(_ context.Context, _ string) (*host.Host, error) {
+	r.ensureHost = func(_ context.Context, _ host.Target) (*host.Host, error) {
 		ensured++
-		return nil, host.ErrNoWorkspace
+		return nil, host.ErrNoTarget
 	}
-	err = r.Do(context.Background(), "", nil, func(*host.Host) error {
+	err = r.Do(context.Background(), host.Target{}, nil, func(*host.Host) error {
 		t.Fatal("fn ran without a host")
 		return nil
 	})
-	if !errors.Is(err, host.ErrNoWorkspace) {
-		t.Fatalf("Do = %v, want the empty-workspace refusal", err)
+	if !errors.Is(err, host.ErrNoTarget) {
+		t.Fatalf("Do = %v, want the unnamed-target refusal", err)
 	}
 	if ensured != 1 {
 		t.Fatalf("ensure calls = %d, want 1: a pool refusal is not retried", ensured)
@@ -101,12 +102,12 @@ func TestDoReportsNonRetryableErrorsAsTheyAre(t *testing.T) {
 // attempt, fn would never run.
 func TestDoStopsWhenTheCallerPremiseExpired(t *testing.T) {
 	r := NewRuntime(t.TempDir(), t.TempDir(), "")
-	r.ensureHost = func(_ context.Context, _ string) (*host.Host, error) {
+	r.ensureHost = func(_ context.Context, _ host.Target) (*host.Host, error) {
 		return &host.Host{}, nil
 	}
 
 	var calls int
-	err := r.Do(context.Background(), "/workspace/a",
+	err := r.Do(context.Background(), host.WorkspaceTarget("/workspace/a"),
 		func() bool { return true },
 		func(*host.Host) error {
 			calls++
@@ -127,7 +128,7 @@ func TestDoStopsWhenTheCallerPremiseExpired(t *testing.T) {
 // lifecycle guard nobody can act on.
 func TestDoSurfacesTheCallersOwnCancellation(t *testing.T) {
 	r := NewRuntime(t.TempDir(), t.TempDir(), "")
-	r.ensureHost = func(attemptCtx context.Context, _ string) (*host.Host, error) {
+	r.ensureHost = func(attemptCtx context.Context, _ host.Target) (*host.Host, error) {
 		<-attemptCtx.Done()
 		return nil, attemptCtx.Err()
 	}
@@ -138,7 +139,7 @@ func TestDoSurfacesTheCallersOwnCancellation(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	err := r.Do(ctx, "/workspace/a", nil, func(*host.Host) error {
+	err := r.Do(ctx, host.WorkspaceTarget("/workspace/a"), nil, func(*host.Host) error {
 		t.Fatal("fn ran without a host")
 		return nil
 	})
@@ -158,13 +159,13 @@ func TestDoBoundsTheWaitForAReplacement(t *testing.T) {
 	r.window = window
 	blocking := make(chan struct{})
 	defer close(blocking)
-	r.ensureHost = func(attemptCtx context.Context, _ string) (*host.Host, error) {
+	r.ensureHost = func(attemptCtx context.Context, _ host.Target) (*host.Host, error) {
 		<-attemptCtx.Done()
 		return nil, attemptCtx.Err()
 	}
 
 	start := time.Now()
-	err := r.Do(context.Background(), "/workspace/a", nil,
+	err := r.Do(context.Background(), host.WorkspaceTarget("/workspace/a"), nil,
 		func(*host.Host) error {
 			t.Fatal("fn ran without a host")
 			return nil
@@ -193,13 +194,13 @@ func TestDoUsesAHostResolvedAsTheWindowClosed(t *testing.T) {
 	r := NewRuntime(t.TempDir(), t.TempDir(), "")
 	r.window = 100 * time.Millisecond
 	resolved := &host.Host{}
-	r.ensureHost = func(attemptCtx context.Context, _ string) (*host.Host, error) {
+	r.ensureHost = func(attemptCtx context.Context, _ host.Target) (*host.Host, error) {
 		<-attemptCtx.Done()
 		return resolved, nil
 	}
 
 	var calls int
-	err := r.Do(context.Background(), "/workspace/a", nil,
+	err := r.Do(context.Background(), host.WorkspaceTarget("/workspace/a"), nil,
 		func(h *host.Host) error {
 			calls++
 			if h != resolved {

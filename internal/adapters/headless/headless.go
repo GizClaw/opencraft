@@ -114,7 +114,8 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	} else {
 		defer hostMgr.CloseUserDB()
 	}
-	h, err := hostMgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	h, err := hostMgr.Acquire(
+		ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		return Result{}, fmt.Errorf("headless: acquire host: %w", err)
 	}

@@ -328,7 +328,7 @@ func TestEnsureHostRebuildsRetiredWorkspace(t *testing.T) {
 
 	// EnsureHost must assemble a replacement for A even though no
 	// rebuild was armed while B was on screen.
-	h, err := c.Runtime.EnsureHost(ctx, workA)
+	h, err := c.Runtime.EnsureHost(ctx, host.WorkspaceTarget(workA))
 	if err != nil {
 		t.Fatalf("ensure usable host for A: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestEnsureHostRebuildsRetiredWorkspace(t *testing.T) {
 		t.Fatalf("replacement host workdir = %q, want %q", h.WorkDir(), workA)
 	}
 	// The replacement serves A, which is not the workspace on screen.
-	if got := c.Runtime.HostFor(workA); got != h {
+	if got := c.Runtime.HostFor(host.WorkspaceTarget(workA)); got != h {
 		t.Fatalf("host for A after EnsureHost = %p, want %p", got, h)
 	}
 	if got := c.ActiveHost(); got == h {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
@@ -69,7 +70,7 @@ func TestNewCoreWiresPluginSkillsIntoRuntime(t *testing.T) {
 	c := NewCore(configDir, dataDir, "")
 	c.SetWorkDir(workDir)
 	ctx := context.Background()
-	h, err := c.Runtime.EnsureHost(ctx, workDir)
+	h, err := c.Runtime.EnsureHost(ctx, host.WorkspaceTarget(workDir))
 	if err != nil {
 		t.Fatalf("ensure host: %v", err)
 	}

@@ -330,7 +330,7 @@ func (b *Session) Delete(id string) (SessionDeleteResult, error) {
 	// the window's own, so a switch during that wait ends the retry.
 	var result SessionDeleteResult
 	err := b.core.Runtime.Do(
-		ctx, workDir,
+		ctx, host.WorkspaceTarget(workDir),
 		func() bool { return !core.SameWorkspace(b.core.ActiveWorkDir(), workDir) },
 		func(h *host.Host) error {
 			if h.Sessions() == nil {

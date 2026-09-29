@@ -10,6 +10,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
@@ -115,7 +116,7 @@ func TestPluginInstallerInstallsAndReloads(t *testing.T) {
 	c, workDir, dataDir := newInstallerTestCore(t)
 	ctx := context.Background()
 	// Warm the runtime so the install has a pooled Host to replace.
-	if _, err := c.Runtime.EnsureHost(ctx, workDir); err != nil {
+	if _, err := c.Runtime.EnsureHost(ctx, host.WorkspaceTarget(workDir)); err != nil {
 		t.Fatalf("ensure host: %v", err)
 	}
 

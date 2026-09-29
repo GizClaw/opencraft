@@ -151,6 +151,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disagree, when an embedded deployment document writes a kind that is
   neither inventoried nor spellable, or when a spelling that follows neither
   style joins `memory` (the one legacy entry, on a budget of one).
+- A host's lifecycle is keyed by what the host serves, not by a workspace
+  path: `host.Target` (`TargetWorkspace` | `TargetApp`) is the pool's only
+  namespace now, so the pool, the deferred-replacement machine, the assembly
+  counters and the configurator's pool lookup can tell a user workspace from
+  an installed application apart without a compile error standing in for the
+  check. Nothing a user can see changes — a workspace's key is
+  `"ws\x00<cleaned dir>"`, and every existing call site resolves the same
+  Host it resolved before. Three things tighten on the way: an unnamed
+  target is refused before anything is assembled (`ErrNoTarget`), where an
+  empty path used to be cleaned into `.` and handed a runtime for whatever
+  directory the process was in; invalidation is scope-aware —
+  `InvalidateWorkspaces` / `InvalidateApps` / `InvalidateAll`, with
+  `Runtime.Reload` answering on the workspace side — so a settings save or a
+  plugin write can no longer drop an application's runtime, and an
+  application's own enable/update/rollback can no longer drop the workspace's;
+  and the assembly entry point dispatches on the target kind, refusing a kind
+  it has no builder for instead of assembling a workspace runtime under its
+  name. The application host builder lands in that seam.
 
 ### Removed
 
