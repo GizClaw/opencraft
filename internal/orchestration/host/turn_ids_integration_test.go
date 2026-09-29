@@ -31,7 +31,7 @@ func startFakeHost(
 
 	mgr := host.NewManagerAt(dataDir, configDir)
 	h, err := mgr.Acquire(
-		context.Background(), workDir, interact.Auto{}, nil)
+		context.Background(), host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}

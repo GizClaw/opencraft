@@ -30,11 +30,11 @@ func blockingAssembler(
 			}
 		}
 		h.mu.Unlock()
-		m.hostClosed(h.workDir, h)
+		m.hostClosed(h.target, h)
 	}
 	m.assembleHost = func(
 		_ context.Context,
-		workDir string,
+		t Target,
 		_ interact.Backend,
 		_ func(string) interact.Backend,
 	) (*Host, error) {
@@ -43,7 +43,7 @@ func blockingAssembler(
 		if fail != nil {
 			return nil, fail
 		}
-		return fakeManagerHost(m, workDir, 0), nil
+		return fakeManagerHost(m, WorkspaceTarget(t.ID), 0), nil
 	}
 }
 
@@ -73,7 +73,7 @@ func TestAcquireSharesOneAssembly(t *testing.T) {
 			defer wg.Done()
 			<-started
 			h, err := m.Acquire(
-				context.Background(), workDir, interact.Auto{}, nil)
+				context.Background(), WorkspaceTarget(workDir), interact.Auto{}, nil)
 			mu.Lock()
 			defer mu.Unlock()
 			hosts = append(hosts, h)
@@ -112,7 +112,7 @@ func TestAcquireSharesOneAssembly(t *testing.T) {
 			t.Fatalf("caller %d got host %p, want %p", i, h, hosts[0])
 		}
 	}
-	ref := m.hosts[workDir]
+	ref := m.hosts[WorkspaceTarget(workDir).Key()]
 	if ref == nil {
 		t.Fatal("assembled host never reached the pool")
 	}
@@ -142,7 +142,7 @@ func TestAcquireRetriesAfterFailedAssembly(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			_, errs[i] = m.Acquire(
-				context.Background(), workDir, interact.Auto{}, nil)
+				context.Background(), WorkspaceTarget(workDir), interact.Auto{}, nil)
 		}(i)
 	}
 	wg.Wait()
@@ -162,14 +162,14 @@ func TestAcquireRetriesAfterFailedAssembly(t *testing.T) {
 	builds.Store(0)
 	m.assembleHost = func(
 		_ context.Context,
-		workDir string,
+		t Target,
 		_ interact.Backend,
 		_ func(string) interact.Backend,
 	) (*Host, error) {
 		builds.Add(1)
-		return fakeManagerHost(m, workDir, 0), nil
+		return fakeManagerHost(m, WorkspaceTarget(t.ID), 0), nil
 	}
-	h, err := m.Acquire(context.Background(), workDir, interact.Auto{}, nil)
+	h, err := m.Acquire(context.Background(), WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("retry after failure: %v", err)
 	}
@@ -214,11 +214,11 @@ func TestHostConfiguratorAppliesOncePerPooledHost(t *testing.T) {
 
 	workDir := "/workspace/configure-once"
 	ctx := context.Background()
-	first, err := m.Acquire(ctx, workDir, interact.Auto{}, nil)
+	first, err := m.Acquire(ctx, WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("first acquire: %v", err)
 	}
-	second, err := m.Acquire(ctx, workDir, interact.Auto{}, nil)
+	second, err := m.Acquire(ctx, WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("second acquire: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestEnsureWiresAHostThePoolAlreadyHeld(t *testing.T) {
 
 	workDir := "/workspace/configure-on-ensure"
 	ctx := context.Background()
-	pooled, err := m.Acquire(ctx, workDir, interact.Auto{}, nil)
+	pooled, err := m.Acquire(ctx, WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestEnsureWiresAHostThePoolAlreadyHeld(t *testing.T) {
 		configured = append(configured, h)
 	})
 
-	h, err := m.Ensure(ctx, workDir)
+	h, err := m.Ensure(ctx, WorkspaceTarget(workDir))
 	if err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestEnsureWiresAHostThePoolAlreadyHeld(t *testing.T) {
 			ran, wired, pooled)
 	}
 
-	if _, err := m.Ensure(ctx, workDir); err != nil {
+	if _, err := m.Ensure(ctx, WorkspaceTarget(workDir)); err != nil {
 		t.Fatalf("second ensure: %v", err)
 	}
 	mu.Lock()

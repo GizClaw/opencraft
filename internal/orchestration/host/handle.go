@@ -23,8 +23,10 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
-// Host is one shared workspace runtime.
+// Host is one shared runtime: one target's engine deployment, session
+// store and run bookkeeping.
 type Host struct {
+	target      Target
 	workDir     string
 	userDir     string
 	workspaceID string
@@ -318,7 +320,21 @@ type rolloutBuffer struct {
 	reasoning strings.Builder
 }
 
-// WorkDir returns the workspace path.
+// Target returns what this Host serves: a user workspace or an
+// installed application.
+func (h *Host) Target() Target { return h.target }
+
+// AppID returns the application this Host serves, or "" for a user
+// workspace's Host.
+func (h *Host) AppID() string {
+	if h.target.Kind == TargetApp {
+		return h.target.ID
+	}
+	return ""
+}
+
+// WorkDir returns the directory this Host's runtime works in: the user
+// workspace, or an application's own private workspace.
 func (h *Host) WorkDir() string { return h.workDir }
 
 // Sessions returns the shared conversation store.
@@ -387,8 +403,9 @@ func (h *Host) Close() error {
 	if m == nil {
 		return nil
 	}
+	key := h.target.Key()
 	m.mu.Lock()
-	ref := m.hosts[h.workDir]
+	ref := m.hosts[key]
 	if ref != nil && ref.host != h {
 		m.mu.Unlock()
 		return nil
@@ -399,11 +416,11 @@ func (h *Host) Close() error {
 			m.mu.Unlock()
 			return nil
 		}
-		delete(m.hosts, h.workDir)
+		delete(m.hosts, key)
 		if m.retiring == nil {
 			m.retiring = make(map[string]*Host)
 		}
-		m.retiring[h.workDir] = h
+		m.retiring[key] = h
 	}
 	m.mu.Unlock()
 
@@ -482,7 +499,7 @@ func (h *Host) doClose() {
 		close(closeDone)
 	}
 	if h.manager != nil {
-		h.manager.hostClosed(h.workDir, h)
+		h.manager.hostClosed(h.target, h)
 	}
 }
 

@@ -64,7 +64,7 @@ func acquireHostFixture(
 	writeFakeConfig(t, configDir, provider.URL())
 
 	mgr := host.NewManagerAt(dataDir, configDir)
-	h, err := mgr.Acquire(context.Background(), workDir, interact.Auto{}, nil)
+	h, err := mgr.Acquire(context.Background(), host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestHostRunWritesFileEndToEnd(t *testing.T) {
 
 	mgr := host.NewManagerAt(dataDir, configDir)
 	ctx := context.Background()
-	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	h, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestHostTapsSandboxProcessOutput(t *testing.T) {
 
 	mgr := host.NewManagerAt(dataDir, configDir)
 	ctx := context.Background()
-	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	h, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestHostConcurrentRunsArchiveMatchesStream(t *testing.T) {
 
 	mgr := host.NewManagerAt(dataDir, configDir)
 	ctx := context.Background()
-	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	h, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestHostRunFiresExternalLifecycleHooks(t *testing.T) {
 
 	mgr := host.NewManagerAt(dataDir, configDir)
 	ctx := context.Background()
-	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	h, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}

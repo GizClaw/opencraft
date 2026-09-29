@@ -82,7 +82,7 @@ func TestRuntimeInPlaceReloadGenerationSemantics(t *testing.T) {
 
 	mgr := host.NewManagerAt(dataDir, configDir)
 	ctx := context.Background()
-	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	h, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestHostArtifactObservationSurvivesDocumentReload(t *testing.T) {
 
 	mgr := host.NewManagerAt(dataDir, configDir)
 	ctx := context.Background()
-	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	h, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}
@@ -455,7 +455,7 @@ func TestSameConversationBargeInDuringReloadStaysSerial(t *testing.T) {
 
 	mgr := host.NewManagerAt(dataDir, configDir)
 	ctx := context.Background()
-	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	h, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host: %v", err)
 	}
