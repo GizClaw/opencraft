@@ -146,13 +146,13 @@ func (c *Core) pluginImportWorkDir(workspace string) (string, error) {
 		return "", errors.New("session.import: no workspace selected")
 	}
 	wd = filepath.Clean(wd)
-	if filepath.Clean(active) != wd {
+	if !SameWorkspace(active, wd) {
 		metas, err := c.Workspaces()
 		if err != nil {
 			return "", fmt.Errorf("session.import: list workspaces: %w", err)
 		}
 		for _, m := range metas {
-			if filepath.Clean(m.Path) == wd {
+			if SameWorkspace(m.Path, wd) {
 				return wd, nil
 			}
 		}

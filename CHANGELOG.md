@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upgrade notes
 
+- The host lifecycle entry points name a target instead of a work dir
+  string: `host.Manager.Acquire`/`Ensure`/`Current`/`Invalidate`/
+  `ScheduleReplacement`/`ReplacementArmed` take a `host.Target`, built
+  with `host.WorkspaceTarget(dir)` (the cleaning that used to happen
+  inside the pool) or `host.AppTarget(id)`, and `host.ErrNoWorkspace` is
+  `host.ErrNoTarget`. The desktop side moves with it: `core.Runtime.Reload`
+  is `ReloadWorkspaces` (a workspace reload; the application scope reloads
+  on its own path), and `host.SameTarget` — with the desktop's
+  `Runtime.SameWorkspace` as its string spelling — is now the one "is this
+  the same thing" comparison, replacing the hand-written path comparisons.
+  In-tree callers are updated; a fork or a self-fork that calls these
+  recompiles with the target at the call site. `internal/` is not an API,
+  so the migration is the compile error, not a runtime one.
 - A kraft that calls the `secret.*` primitives must declare
   `secrets:auth` in its manifest. The gate was documented since those
   primitives landed and never checked, so a plugin could reach its
@@ -156,19 +169,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   namespace now, so the pool, the deferred-replacement machine, the assembly
   counters and the configurator's pool lookup can tell a user workspace from
   an installed application apart without a compile error standing in for the
-  check. Nothing a user can see changes — a workspace's key is
+  check. No user-visible surface moves: the Wails services, their DTOs and
+  the events keep their shapes, a workspace's key is
   `"ws\x00<cleaned dir>"`, and every existing call site resolves the same
-  Host it resolved before. Three things tighten on the way: an unnamed
-  target is refused before anything is assembled (`ErrNoTarget`), where an
-  empty path used to be cleaned into `.` and handed a runtime for whatever
-  directory the process was in; invalidation is scope-aware —
+  Host it resolved before. Four things tighten on the way, of which the
+  first two a caller can see in an error: an unnamed target is refused
+  before anything is assembled (`ErrNoTarget`, the renamed
+  `ErrNoWorkspace`) where an empty path used to be cleaned into `.` and
+  handed a runtime for whatever directory the process was in, and a start
+  with no workspace named is refused with the domain's own message instead
+  of that sentinel; invalidation is scope-aware —
   `InvalidateWorkspaces` / `InvalidateApps` / `InvalidateAll`, with
-  `Runtime.Reload` answering on the workspace side — so a settings save or a
-  plugin write can no longer drop an application's runtime, and an
+  `Runtime.ReloadWorkspaces` answering on the workspace side — so a settings
+  save or a plugin write can no longer drop an application's runtime, and an
   application's own enable/update/rollback can no longer drop the workspace's;
-  and the assembly entry point dispatches on the target kind, refusing a kind
-  it has no builder for instead of assembling a workspace runtime under its
-  name. The application host builder lands in that seam.
+  the assembly entry point dispatches on the target kind, refusing a kind
+  it has no builder for (`ErrNoAssembly`, naming the target it refused)
+  instead of assembling a workspace runtime under its name; and the
+  builder's answer is checked against the target it was asked for before it
+  is published, so a Host built for another target — or no Host at all —
+  fails that request instead of being handed out as this target's.
+  `host.SameTarget` is the one comparison behind all of it, the desktop's
+  `Runtime.SameWorkspace` included, so "the same workspace" and "the same
+  pool key" cannot come apart. The application host builder lands in that
+  seam.
 
 ### Removed
 

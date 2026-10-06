@@ -27,6 +27,43 @@ func TestRuntimeOpenUserDB(t *testing.T) {
 	}
 }
 
+// TestSameWorkspaceIsThePoolIdentity pins the comparison every desktop
+// caller asks before deciding "this is the same workspace": it is the
+// pool's own rule (host.SameTarget), so two spellings it reports equal
+// are also one pool key. The direction worth stating is the other one —
+// a trailing space is part of a path, and a hand-rolled comparison that
+// trims it calls two directories the same while the pool keeps two
+// Hosts for them.
+func TestSameWorkspaceIsThePoolIdentity(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"same path", "/x/y", "/x/y", true},
+		{"trailing slash", "/x/y/", "/x/y", true},
+		{"dot segments", "/x/./y", "/x/y", true},
+		{"relative", "project", "project", true},
+		{"trailing space is another path", "/x/y ", "/x/y", false},
+		{"leading space is another path", " /x/y", "/x/y", false},
+		{"different path", "/x/y", "/x/z", false},
+		{"empty names nothing", "", "/x/y", false},
+		{"blank names nothing", "   ", "   ", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SameWorkspace(tc.a, tc.b); got != tc.want {
+				t.Fatalf("SameWorkspace(%q, %q) = %v, want %v",
+					tc.a, tc.b, got, tc.want)
+			}
+			if got := SameWorkspace(tc.b, tc.a); got != tc.want {
+				t.Fatalf("SameWorkspace(%q, %q) = %v, want %v (not symmetric)",
+					tc.b, tc.a, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRuntimeRecordTurnUsagePersistsModelRows(t *testing.T) {
 	dir := t.TempDir()
 	rt := NewRuntime(dir, dir, "")

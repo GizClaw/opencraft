@@ -19,9 +19,11 @@ func TestDoAbsorbsRetryableLifecycleGuards(t *testing.T) {
 	var ensured int
 	r.ensureHost = func(_ context.Context, target host.Target) (*host.Host, error) {
 		ensured++
-		if target.ID != "/workspace/a" {
-			t.Fatalf("ensure asked for %q, want the caller's workspace",
-				target.ID)
+		// The whole target, kind included: the caller named a
+		// workspace, and "which workspace" is a question the kind is
+		// half of.
+		if want := host.WorkspaceTarget("/workspace/a"); target != want {
+			t.Fatalf("ensure asked for %+v, want %+v", target, want)
 		}
 		return replacement, nil
 	}

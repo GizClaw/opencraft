@@ -73,6 +73,14 @@ func (b *Conversation) StartTurn(
 	if workDir == "" {
 		workDir = active
 	}
+	// No workspace is named, so nothing can serve this turn: refuse
+	// before minting a conversation id. The pool would refuse the same
+	// call with its own unnamed-target sentinel, one line later, after
+	// Conversation.New had already handed the window an id no store
+	// backs and no Host can answer for.
+	if strings.TrimSpace(workDir) == "" {
+		return TurnStart{}, errNoWorkspace("conversation")
+	}
 	contextID := req.ContextID
 	if contextID == "" {
 		contextID = b.core.Conversation.New(workDir)

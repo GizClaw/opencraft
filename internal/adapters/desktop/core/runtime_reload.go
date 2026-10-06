@@ -12,10 +12,12 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
-// RebuildRuntime invalidates every pooled Host and immediately
+// RebuildRuntime invalidates the pooled workspace Hosts and immediately
 // reassembles the active workspace's one when inference is configured.
 // Bindings use this when the reload changes engine assembly inputs
-// (plugin install/uninstall, workspace switch, startup).
+// (plugin install/uninstall, workspace switch, startup). An installed
+// application's Host is not a workspace's and is left alone; whatever
+// reloads it says so on its own path.
 //
 // A workspace whose old runtime still has live runs cannot be
 // reassembled yet — a second Host would serve the same conversations
@@ -27,7 +29,7 @@ import (
 func (c *Core) RebuildRuntime(ctx context.Context) error {
 	c.reconcileProbe(ctx)
 	announced := c.readyWorkspace()
-	if err := c.Runtime.Reload(ctx); err != nil {
+	if err := c.Runtime.ReloadWorkspaces(ctx); err != nil {
 		return err
 	}
 	workDir := c.ActiveWorkDir()

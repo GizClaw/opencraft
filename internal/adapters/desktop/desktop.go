@@ -480,8 +480,10 @@ func (d *Desktop) runAutomation(
 	if mode == "" {
 		mode = sessions.ModeWorkspace
 	}
-	current := d.core.ActiveWorkDir() != "" &&
-		filepath.Clean(d.core.ActiveWorkDir()) == filepath.Clean(task.Workspace)
+	// The pool's identity rule, not a second one: a task whose
+	// workspace is the window's must route as a foreground run, and two
+	// spellings this reports equal are also the same pool key.
+	current := core.SameWorkspace(d.core.ActiveWorkDir(), task.Workspace)
 	h, err := d.core.Runtime.EnsureHost(
 		host.WithAssemblyReason(ctx, host.ReasonAutomation),
 		host.WorkspaceTarget(task.Workspace))

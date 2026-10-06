@@ -1,7 +1,6 @@
 package core
 
 import (
-	"path/filepath"
 	"sync"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
@@ -108,7 +107,9 @@ func (c *Core) runtimeServesActiveWorkspace() bool {
 	if active == "" {
 		return true
 	}
-	if filepath.Clean(h.WorkDir()) != filepath.Clean(active) {
+	// The pool's identity rule, not a second one: a Host that serves
+	// another workspace must not be mistaken for the window's.
+	if !SameWorkspace(h.WorkDir(), active) {
 		return false
 	}
 	if h.IsStale() {

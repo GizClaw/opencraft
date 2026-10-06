@@ -2,6 +2,7 @@ package bindings
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,47 @@ func TestStartTurnRoutesToOwningWorkspace(t *testing.T) {
 	waitForTurns(t, homeStore, convID, 3)
 	if metas := listSessions(t, otherStore); len(metas) != 0 {
 		t.Fatalf("stale hint created %d sessions: %+v", len(metas), metas)
+	}
+}
+
+// TestStartTurnWithoutAWorkspaceIsRefused pins the guard in front of the
+// id mint: a start that names no workspace, while none is on screen
+// either, is refused as a workspace problem — before Conversation.New
+// hands the window a conversation id that no store backs and no Host
+// can serve.
+//
+// Three shapes of "no workspace" reach it, and the third is why the
+// guard trims: a request that names nothing and a request whose name is
+// only whitespace both fall back to the window (which has none), while a
+// window whose own workspace is only whitespace survives the request's
+// trim and has to be caught here.
+func TestStartTurnWithoutAWorkspaceIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		window  string
+		request string
+	}{
+		{"nothing named anywhere", "", ""},
+		{"blank request workspace", "", "   "},
+		{"a window workspace that is only whitespace", "   ", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := core.NewCore(t.TempDir(), t.TempDir(), tc.window)
+			b := NewConversationBinding(c)
+			_, err := b.StartTurn(StartTurnRequest{
+				Workspace: tc.request,
+				Message: message.NewTextMessage(
+					message.RoleUser, "no workspace",
+				),
+			})
+			if err == nil || !strings.Contains(err.Error(), "open a workspace first") {
+				t.Fatalf("start without a workspace = %v, want the workspace refusal",
+					err)
+			}
+			if got := c.Conversation.Current(""); got != "" {
+				t.Fatalf("a refused start minted conversation %q", got)
+			}
+		})
 	}
 }
 

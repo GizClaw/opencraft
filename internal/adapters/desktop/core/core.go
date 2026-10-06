@@ -156,10 +156,7 @@ func NewCoreWithPaths(p Paths) *Core {
 	// runtime is not the window's workspace, so this half speaks only
 	// for workspace targets; the application page answers for its own.
 	runtime.Manager().SetReplacementHooks(host.ReplacementHooks{
-		Wanted: func(t host.Target) bool {
-			return t.Kind == host.TargetWorkspace &&
-				SameWorkspace(c.ActiveWorkDir(), t.ID)
-		},
+		Wanted:    c.replacementWanted,
 		Installed: func(host.Target) { c.EmitReady() },
 	})
 	plugin.Kraft.SetOpenURL(c.Shell.OpenURL)

@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -96,12 +94,14 @@ func NewRuntime(dataDir, userDir, appHome string) *Runtime {
 // SameWorkspace reports whether two paths name the same workspace
 // directory. Empty paths never match: an unresolved workspace must not
 // borrow another workspace's identity.
+//
+// It is the pool's own identity rule (host.SameTarget), spelled for
+// callers that hold strings: a trailing space is part of a path, so two
+// spellings this reports equal are also the same pool key. A caller
+// that compares paths by hand gets the two answers apart — "same
+// directory" here, two Hosts there.
 func SameWorkspace(a, b string) bool {
-	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
-	if a == "" || b == "" {
-		return false
-	}
-	return filepath.Clean(a) == filepath.Clean(b)
+	return host.SameTarget(host.WorkspaceTarget(a), host.WorkspaceTarget(b))
 }
 
 // Manager returns the shared host manager.
@@ -198,7 +198,7 @@ func (r *Runtime) ReplacementArmed(t host.Target) bool {
 // out, and what the caller saw last is what comes back: the guard it
 // hit, or "the runtime is not ready" when the workspace never got a
 // usable Host before the window closed. A pool error that is not a
-// lifecycle guard (an assembly failure, no workspace named) is reported
+// lifecycle guard (an assembly failure, an unnamed target) is reported
 // as-is instead of being retried into a timeout.
 //
 // The wait itself is bounded by the remaining window rather than by the
@@ -286,10 +286,13 @@ func (r *Runtime) ensure(
 	return r.ensureHost(ctx, t)
 }
 
-// Reload invalidates the pooled workspace hosts so the next EnsureHost
-// rebuilds from the current configuration. Applications assemble from
-// their own documents and are left alone.
-func (r *Runtime) Reload(ctx context.Context) error {
+// ReloadWorkspaces invalidates the pooled workspace hosts so the next
+// EnsureHost rebuilds from the current configuration. Applications
+// assemble from their own documents and are left alone — that is what
+// makes this the reload a settings save, a plugin write and a workspace
+// switch want. A caller that needs both scopes says so by name
+// (ReloadAll, with the application page).
+func (r *Runtime) ReloadWorkspaces(ctx context.Context) error {
 	if r.manager != nil {
 		r.manager.InvalidateWorkspaces(ctx)
 	}
