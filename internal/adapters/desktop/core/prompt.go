@@ -26,6 +26,10 @@ type Prompt struct {
 	pending map[string]pendingPrompt
 	notify  func(typ string, data any)
 	runConv func(runID string) string
+	// autoApprove, when set, answers a spec before it reaches the UI:
+	// a true return short-circuits Ask (no pending entry, no interact
+	// event) so the asking turn sees an immediate reply.
+	autoApprove func(ctx context.Context, spec interact.Spec, conversationID string) bool
 }
 
 // NewPrompt creates the prompt backend.
@@ -49,14 +53,42 @@ func (p *Prompt) SetRunConvResolver(fn func(runID string) string) {
 	p.mu.Unlock()
 }
 
-// Ask registers one prompt and blocks for an answer.
+// SetAutoApprover installs the predicate that answers a spec without
+// presenting it. It runs before the prompt is registered or emitted;
+// returning true means the caller of Ask gets an immediate "ok" reply
+// and the frontend never sees an interaction. A false return (or no
+// approver installed) keeps the interactive flow.
+func (p *Prompt) SetAutoApprover(
+	fn func(ctx context.Context, spec interact.Spec, conversationID string) bool,
+) {
+	p.mu.Lock()
+	p.autoApprove = fn
+	p.mu.Unlock()
+}
+
+// Ask registers one prompt and blocks for an answer, unless an
+// installed auto-approver answers it first.
 func (p *Prompt) Ask(ctx context.Context, spec interact.Spec) (interact.Reply, error) {
-	ch := make(chan interact.Reply, 1)
 	p.mu.Lock()
 	conversationID := ""
 	if p.runConv != nil {
 		conversationID = p.runConv(spec.RunID)
 	}
+	approve := p.autoApprove
+	p.mu.Unlock()
+	if approve != nil && approve(ctx, spec, conversationID) {
+		// "yes" is the value confirm.Confirm's Yes option carries; an
+		// auto-answered confirmation is indistinguishable from a
+		// click on it.
+		yes := "yes"
+		return interact.Reply{
+			ID:     spec.ID,
+			Status: interact.ReplyOK,
+			Option: &yes,
+		}, nil
+	}
+	ch := make(chan interact.Reply, 1)
+	p.mu.Lock()
 	p.pending[spec.ID] = pendingPrompt{
 		ch:             ch,
 		conversationID: conversationID,

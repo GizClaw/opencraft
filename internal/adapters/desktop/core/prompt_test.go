@@ -180,3 +180,102 @@ func TestPromptResolveEmitsResolvedEvent(t *testing.T) {
 		t.Fatal("Ask did not return after resolve")
 	}
 }
+
+// TestPromptAutoApprovesBeforeEmitting pins the auto-approver seam: a
+// spec the approver answers never becomes a pending interaction, never
+// reaches the notifier, and comes back as the same ok/yes reply a
+// click on the Yes option produces.
+func TestPromptAutoApprovesBeforeEmitting(t *testing.T) {
+	p := NewPrompt()
+	conv := NewConversation()
+	sessionID := conv.New("/tmp/w")
+	conv.TrackRun("/tmp/w", sessionID, "r-1")
+	p.SetRunConvResolver(conv.ConversationForRun)
+	emitted := make(chan struct{}, 1)
+	p.SetNotifier(func(string, any) { emitted <- struct{}{} })
+
+	var gotSpec interact.Spec
+	var gotConversation string
+	p.SetAutoApprover(
+		func(_ context.Context, spec interact.Spec, conversationID string) bool {
+			gotSpec, gotConversation = spec, conversationID
+			return true
+		})
+
+	reply, err := p.Ask(context.Background(), interact.Spec{
+		ID:     "p-1",
+		RunID:  "r-1",
+		Kind:   interact.KindConfirm,
+		Source: "opencraft.confirm",
+		Title:  "Install skill?",
+	})
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if reply.ID != "p-1" || reply.Status != interact.ReplyOK ||
+		reply.Option == nil || *reply.Option != "yes" {
+		t.Fatalf("reply = %+v, want ok/yes for p-1", reply)
+	}
+	if gotSpec.ID != "p-1" || gotConversation != sessionID {
+		t.Fatalf("approver saw %q/%q, want p-1/%s",
+			gotSpec.ID, gotConversation, sessionID)
+	}
+	select {
+	case <-emitted:
+		t.Fatal("auto-approved prompt was emitted to the notifier")
+	default:
+	}
+	if p.Answer("p-1", "", "yes", nil, false) {
+		t.Fatal("auto-approved prompt stayed pending")
+	}
+}
+
+// TestPromptFallsBackWhenApproverDeclines verifies a false return is
+// only a vote: the prompt registers, emits and blocks as usual.
+func TestPromptFallsBackWhenApproverDeclines(t *testing.T) {
+	p := NewPrompt()
+	conv := NewConversation()
+	sessionID := conv.New("/tmp/w")
+	conv.TrackRun("/tmp/w", sessionID, "r-1")
+	p.SetRunConvResolver(conv.ConversationForRun)
+	events := make(chan map[string]any, 1)
+	p.SetNotifier(func(_ string, data any) {
+		events <- data.(map[string]any)
+	})
+	p.SetAutoApprover(
+		func(context.Context, interact.Spec, string) bool { return false })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan interact.Reply, 1)
+	go func() {
+		reply, err := p.Ask(ctx, interact.Spec{
+			ID:     "p-1",
+			RunID:  "r-1",
+			Kind:   interact.KindConfirm,
+			Source: "opencraft.confirm",
+			Title:  "Install skill?",
+		})
+		if err != nil {
+			t.Errorf("Ask: %v", err)
+		}
+		done <- reply
+	}()
+
+	select {
+	case <-events:
+	case <-time.After(5 * time.Second):
+		t.Fatal("declined prompt was not emitted")
+	}
+	if !p.Answer("p-1", "", "no", nil, false) {
+		t.Fatal("Answer did not resolve the pending prompt")
+	}
+	select {
+	case reply := <-done:
+		if reply.Option == nil || *reply.Option != "no" {
+			t.Fatalf("reply = %+v, want no", reply)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Ask did not return after answer")
+	}
+}

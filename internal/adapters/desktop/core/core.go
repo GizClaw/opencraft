@@ -139,6 +139,11 @@ func NewCoreWithPaths(p Paths) *Core {
 	c.Shell.SetPetSink(func(typ string, data any) {
 		pet.OnEvent(typ, data)
 	})
+	// A YOLO conversation answers its own confirmations (see
+	// autoapprove.go): Ask consults the predicate before it registers
+	// or renders anything, and the predicate reads the mode off the
+	// run's workspace Host.
+	c.Prompt.SetAutoApprover(c.autoApproveConfirm)
 	runtime.Manager().SetAgentPlugins(plugin.Store, plugin.Kraft)
 	runtime.Manager().SetAutomationHost(NewAutomationHost(runtime))
 	runtime.Manager().SetPluginInstaller(NewPluginInstaller(c))
