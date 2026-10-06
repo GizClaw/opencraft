@@ -151,6 +151,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disagree, when an embedded deployment document writes a kind that is
   neither inventoried nor spellable, or when a spelling that follows neither
   style joins `memory` (the one legacy entry, on a budget of one).
+- A turn is not cut off at two hours any more. The assistant's
+  `policy.run_timeout` and `build.timeout` are gone — from the embedded
+  `agents.yaml` and from the definition every dynamic-subagent
+  registration writes — so a turn ends when its work does, when the
+  user stops it or sends a new message, or when a step fails; never
+  when a wall clock runs out. The two keys were bounding the same
+  window all along: nothing in this repository installs a Referee, so
+  a revise attempt — the one thing `build.timeout` (per `Execute`) did
+  not cover — never happens. The per-call bounds stay: a tool dispatch
+  is still bounded by the tool middleware's timeout, and a user layer
+  that sets either key is still honored by flowcraft.
 
 ### Removed
 

@@ -211,15 +211,16 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	}
 	defer func() { _ = rt.Close() }()
 
-	// The deployed assistant carries the run-level wall clock: with the
-	// graph's iteration guard lifted (build.max_iterations: 0), this is
-	// what bounds a runaway turn across revise attempts.
+	// The deployed assistant carries no wall clock: the graph's
+	// iteration guard is lifted (build.max_iterations: 0) and neither
+	// build.timeout nor policy.run_timeout is declared, so a turn ends
+	// when its work does or the user stops it.
 	assistant, ok := rt.Agent("assistant")
 	if !ok {
 		t.Fatal("assistant agent missing")
 	}
-	if assistant.Policy.RunTimeout != "2h" {
-		t.Errorf("assistant policy.run_timeout = %q, want 2h",
+	if assistant.Policy.RunTimeout != "" {
+		t.Errorf("assistant policy.run_timeout = %q, want none",
 			assistant.Policy.RunTimeout)
 	}
 

@@ -10,10 +10,10 @@ import (
 )
 
 // ErrorKindTimeout is the harness-level failure class for a turn that
-// hit a deadline: the graph's per-Execute build.timeout, the agent's
-// policy.run_timeout, or a step the engine classified as timed out. It
-// fills the gap inference kinds leave so a UI never renders a deadline
-// as an unclassified failure.
+// hit a deadline: the graph's per-Execute build.timeout or the agent's
+// policy.run_timeout, when a configuration declares either, or a step
+// the engine classified as timed out. It fills the gap inference kinds
+// leave so a UI never renders a deadline as an unclassified failure.
 const ErrorKindTimeout = "timeout"
 
 // TurnErrorClass is the machine-readable half of one run's terminal
