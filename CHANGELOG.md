@@ -162,19 +162,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not cover — never happens. The per-call bounds stay: a tool dispatch
   is still bounded by the tool middleware's timeout, and a user layer
   that sets either key is still honored by flowcraft.
-- A YOLO conversation answers its own confirmations. The yes/no gate
-  in front of durable side effects — skill and plugin installs, the
-  subagent lifecycle, automation creation — used to park the turn on
-  an interaction card even in the one mode whose point is not asking;
-  the desktop prompt backend now answers those prompts yes when the
+- A YOLO conversation answers its own confirmations. The fixed yes/no
+  cards the shared gate raises — skill, plugin, subagent and
+  automation changes, and long-term memory writes — used to park the
+  turn on an interaction card even in the one mode whose point is not
+  asking; the desktop prompt backend now answers them yes when the
   run's conversation is in YOLO mode, and the card never renders. The
-  reply is the one a click on Yes produces, and an auto-answered
-  confirmation is logged once with its conversation, run and title.
-  Everything else is unchanged: `ask_user`, `request_permissions` and
-  the sandbox approvals still reach the user; automation runs
-  (`interact.Auto`) and subagent turns still fail closed; and a run
-  whose Host or mode cannot be read falls back to the card — the
-  check is fail-closed.
+  reply carries the value a click on Yes produces, and an
+  auto-answered card is logged once with its conversation, run and
+  title. Nothing else changes: the predicate matches one prompt
+  source in one shape (a kind-confirm spec offering the Yes option),
+  so `ask_user`, `request_permissions` and the sandbox prompts never
+  reach it; automation runs (`interact.Auto`) and subagent turns still
+  fail closed; and a run whose Host or conversation mode cannot be
+  read falls back to the card — the check is fail-closed.
 
 ### Removed
 

@@ -27,9 +27,10 @@ type Prompt struct {
 	notify  func(typ string, data any)
 	runConv func(runID string) string
 	// autoApprove, when set, answers a spec before it reaches the UI:
-	// a true return short-circuits Ask (no pending entry, no interact
-	// event) so the asking turn sees an immediate reply.
-	autoApprove func(ctx context.Context, spec interact.Spec, conversationID string) bool
+	// a non-empty option value short-circuits Ask (no pending entry,
+	// no interact event) and becomes the reply, so the asking turn
+	// sees an immediate answer (see SetAutoApprover).
+	autoApprove func(ctx context.Context, spec interact.Spec, conversationID string) (string, bool)
 }
 
 // NewPrompt creates the prompt backend.
@@ -55,11 +56,12 @@ func (p *Prompt) SetRunConvResolver(fn func(runID string) string) {
 
 // SetAutoApprover installs the predicate that answers a spec without
 // presenting it. It runs before the prompt is registered or emitted;
-// returning true means the caller of Ask gets an immediate "ok" reply
-// and the frontend never sees an interaction. A false return (or no
-// approver installed) keeps the interactive flow.
+// returning an option value with true means the caller of Ask gets an
+// immediate "ok" reply carrying that value and the frontend never
+// sees an interaction. A false return, an empty value (or no approver
+// installed) keeps the interactive flow.
 func (p *Prompt) SetAutoApprover(
-	fn func(ctx context.Context, spec interact.Spec, conversationID string) bool,
+	fn func(ctx context.Context, spec interact.Spec, conversationID string) (string, bool),
 ) {
 	p.mu.Lock()
 	p.autoApprove = fn
@@ -76,16 +78,18 @@ func (p *Prompt) Ask(ctx context.Context, spec interact.Spec) (interact.Reply, e
 	}
 	approve := p.autoApprove
 	p.mu.Unlock()
-	if approve != nil && approve(ctx, spec, conversationID) {
-		// "yes" is the value confirm.Confirm's Yes option carries; an
-		// auto-answered confirmation is indistinguishable from a
-		// click on it.
-		yes := "yes"
-		return interact.Reply{
-			ID:     spec.ID,
-			Status: interact.ReplyOK,
-			Option: &yes,
-		}, nil
+	if approve != nil {
+		if option, ok := approve(ctx, spec, conversationID); ok && option != "" {
+			// The predicate names the value, so an auto-answered
+			// prompt carries the same option a click would (the
+			// confirm gate's is confirm.OptionYes): the asking tool
+			// sees a reply, not a special case.
+			return interact.Reply{
+				ID:     spec.ID,
+				Status: interact.ReplyOK,
+				Option: &option,
+			}, nil
+		}
 	}
 	ch := make(chan interact.Reply, 1)
 	p.mu.Lock()

@@ -183,8 +183,9 @@ func TestPromptResolveEmitsResolvedEvent(t *testing.T) {
 
 // TestPromptAutoApprovesBeforeEmitting pins the auto-approver seam: a
 // spec the approver answers never becomes a pending interaction, never
-// reaches the notifier, and comes back as the same ok/yes reply a
-// click on the Yes option produces.
+// reaches the notifier, and comes back as an ok reply carrying the
+// option value the approver named — the same reply a click on that
+// option produces.
 func TestPromptAutoApprovesBeforeEmitting(t *testing.T) {
 	p := NewPrompt()
 	conv := NewConversation()
@@ -197,9 +198,9 @@ func TestPromptAutoApprovesBeforeEmitting(t *testing.T) {
 	var gotSpec interact.Spec
 	var gotConversation string
 	p.SetAutoApprover(
-		func(_ context.Context, spec interact.Spec, conversationID string) bool {
+		func(_ context.Context, spec interact.Spec, conversationID string) (string, bool) {
 			gotSpec, gotConversation = spec, conversationID
-			return true
+			return spec.Options[0].Value, true
 		})
 
 	reply, err := p.Ask(context.Background(), interact.Spec{
@@ -208,6 +209,10 @@ func TestPromptAutoApprovesBeforeEmitting(t *testing.T) {
 		Kind:   interact.KindConfirm,
 		Source: "opencraft.confirm",
 		Title:  "Install skill?",
+		Options: []interact.Option{
+			{Label: "Yes", Value: "yes"},
+			{Label: "No", Value: "no"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
@@ -243,7 +248,9 @@ func TestPromptFallsBackWhenApproverDeclines(t *testing.T) {
 		events <- data.(map[string]any)
 	})
 	p.SetAutoApprover(
-		func(context.Context, interact.Spec, string) bool { return false })
+		func(context.Context, interact.Spec, string) (string, bool) {
+			return "", false
+		})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -266,6 +273,64 @@ func TestPromptFallsBackWhenApproverDeclines(t *testing.T) {
 	case <-events:
 	case <-time.After(5 * time.Second):
 		t.Fatal("declined prompt was not emitted")
+	}
+	if !p.Answer("p-1", "", "no", nil, false) {
+		t.Fatal("Answer did not resolve the pending prompt")
+	}
+	select {
+	case reply := <-done:
+		if reply.Option == nil || *reply.Option != "no" {
+			t.Fatalf("reply = %+v, want no", reply)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Ask did not return after answer")
+	}
+}
+
+// TestPromptAsksWhenTheAnswerHasNoValue pins the padding on the seam's
+// other side: a predicate that claims the prompt without naming an
+// option value gets no short-circuit, so a half-configured approver
+// cannot resolve a prompt with a reply no click could have produced.
+func TestPromptAsksWhenTheAnswerHasNoValue(t *testing.T) {
+	p := NewPrompt()
+	conv := NewConversation()
+	sessionID := conv.New("/tmp/w")
+	conv.TrackRun("/tmp/w", sessionID, "r-1")
+	p.SetRunConvResolver(conv.ConversationForRun)
+	events := make(chan map[string]any, 1)
+	p.SetNotifier(func(_ string, data any) {
+		events <- data.(map[string]any)
+	})
+	p.SetAutoApprover(
+		func(context.Context, interact.Spec, string) (string, bool) {
+			return "", true
+		})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan interact.Reply, 1)
+	go func() {
+		reply, err := p.Ask(ctx, interact.Spec{
+			ID:     "p-1",
+			RunID:  "r-1",
+			Kind:   interact.KindConfirm,
+			Source: "opencraft.confirm",
+			Title:  "Install skill?",
+			Options: []interact.Option{
+				{Label: "Yes", Value: "yes"},
+				{Label: "No", Value: "no"},
+			},
+		})
+		if err != nil {
+			t.Errorf("Ask: %v", err)
+		}
+		done <- reply
+	}()
+
+	select {
+	case <-events:
+	case <-time.After(5 * time.Second):
+		t.Fatal("valueless auto-answer hid the prompt instead of asking")
 	}
 	if !p.Answer("p-1", "", "no", nil, false) {
 		t.Fatal("Answer did not resolve the pending prompt")
