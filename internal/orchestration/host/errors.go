@@ -30,6 +30,13 @@ var (
 	// turn an empty path into a workspace. Callers reach it only by
 	// asking for a Host before a workspace is selected.
 	ErrNoTarget = errors.New("host: no target to serve")
+	// ErrNoAssembly reports a request for a target kind the manager has
+	// no builder for (see Target.Kind). It is not a retryable lifecycle
+	// error: the gap is in the code, not in a runtime that is still
+	// coming up, and retrying it would fail the same way for the whole
+	// retry window. Its message names the target, and the pool never
+	// falls back to another scope's builder to answer it.
+	ErrNoAssembly = errors.New("host: no assembly for this target kind")
 )
 
 // IsRetryableStartError reports whether err is one of the host

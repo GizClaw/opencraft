@@ -3,11 +3,13 @@ package host
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/GizClaw/opencraft/internal/orchestration/engine"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
@@ -21,17 +23,7 @@ func blockingAssembler(
 	fail error,
 ) {
 	t.Helper()
-	m.closeHost = func(h *Host) {
-		h.mu.Lock()
-		if !h.closed {
-			h.closed = true
-			if h.closeDone != nil {
-				close(h.closeDone)
-			}
-		}
-		h.mu.Unlock()
-		m.hostClosed(h.target, h)
-	}
+	m.closeHost = func(h *Host) { finishTeardown(m, h) }
 	m.assembleHost = func(
 		_ context.Context,
 		t Target,
@@ -43,7 +35,93 @@ func blockingAssembler(
 		if fail != nil {
 			return nil, fail
 		}
-		return fakeManagerHost(m, WorkspaceTarget(t.ID), 0), nil
+		// The Host a builder returns carries the target it was asked
+		// for — assembleShared refuses one that does not.
+		return fakeManagerHost(m, t, 0), nil
+	}
+}
+
+// misTargetedHost builds a Host a real teardown can run on without a
+// runtime behind it: the engine controller and broker a close touches
+// are present as zero values, everything else is a fake. It is how a
+// test observes what happens to a Host the pool refuses to publish.
+func misTargetedHost(m *Manager, t Target) *Host {
+	h := &Host{
+		target:    t,
+		manager:   m,
+		runs:      make(map[RunID]*runDetail),
+		closeDone: make(chan struct{}),
+		broker:    &interact.Broker{},
+		ctrl:      &engine.Controller{},
+	}
+	h.runsCond = sync.NewCond(&h.mu)
+	return h
+}
+
+// TestAssembleRejectsHostForAnotherTarget pins the identity check every
+// builder's answer goes through: a Host for the wrong target must never
+// be published under the requested target's key. The pool would hand it
+// out as if it served the request, and its own Close would look up a
+// pool entry that was never written — so the mismatch fails the lookup
+// instead, naming both targets, and the mis-targeted Host is torn down
+// rather than leaked.
+func TestAssembleRejectsHostForAnotherTarget(t *testing.T) {
+	m := NewManagerAt(t.TempDir(), t.TempDir())
+	asked := WorkspaceTarget("/workspace/asked")
+	answered := WorkspaceTarget("/workspace/elsewhere")
+	stray := misTargetedHost(m, answered)
+	m.assembleHost = func(
+		context.Context, Target, interact.Backend, func(string) interact.Backend,
+	) (*Host, error) {
+		return stray, nil
+	}
+
+	_, err := m.Ensure(context.Background(), asked)
+	if err == nil {
+		t.Fatal("a host built for another target was accepted as this one's")
+	}
+	for _, want := range []string{answered.String(), asked.String()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal = %q, want it to name both targets (%q)", err, want)
+		}
+	}
+	if !stray.closed {
+		t.Fatal("the mis-targeted host was not torn down")
+	}
+	if m.hosts[asked.Key()] != nil || m.hosts[answered.Key()] != nil {
+		t.Fatalf("the mis-targeted host reached the pool: %v", m.hosts)
+	}
+	if m.Current(asked) != nil || m.Current(answered) != nil {
+		t.Fatal("the mis-targeted host was published as a target's host")
+	}
+}
+
+// TestAssembleRejectsEmptyResult pins the other half of the same check:
+// a builder that reports no error and hands back no Host is not "here
+// is your Host". Publishing it would leave the target looking served to
+// every reader while Acquire returns a nil Host to a caller about to
+// start a run on it.
+func TestAssembleRejectsEmptyResult(t *testing.T) {
+	m := NewManagerAt(t.TempDir(), t.TempDir())
+	target := WorkspaceTarget("/workspace/empty")
+	m.assembleHost = func(
+		context.Context, Target, interact.Backend, func(string) interact.Backend,
+	) (*Host, error) {
+		return nil, nil
+	}
+
+	h, err := m.Ensure(context.Background(), target)
+	if err == nil {
+		t.Fatalf("an empty assembly was accepted as %s's: %p", target, h)
+	}
+	if !strings.Contains(err.Error(), target.String()) {
+		t.Fatalf("refusal = %q, want it to name %s", err, target)
+	}
+	if ref := m.hosts[target.Key()]; ref != nil {
+		t.Fatalf("the empty assembly left pool entry %+v", ref)
+	}
+	if got := m.Current(target); got != nil {
+		t.Fatalf("Current = %p, want the target unserved", got)
 	}
 }
 
@@ -167,7 +245,7 @@ func TestAcquireRetriesAfterFailedAssembly(t *testing.T) {
 		_ func(string) interact.Backend,
 	) (*Host, error) {
 		builds.Add(1)
-		return fakeManagerHost(m, WorkspaceTarget(t.ID), 0), nil
+		return fakeManagerHost(m, t, 0), nil
 	}
 	h, err := m.Acquire(context.Background(), WorkspaceTarget(workDir), interact.Auto{}, nil)
 	if err != nil {

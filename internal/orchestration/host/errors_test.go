@@ -29,6 +29,8 @@ func TestIsRetryableStartError(t *testing.T) {
 		context.Canceled,
 		ErrConversationBusy,
 		fmt.Errorf("wrapped: %w", ErrConversationBusy),
+		ErrNoTarget,
+		fmt.Errorf("wrapped: %w", ErrNoAssembly),
 		errors.New("host: session \"s-1\" is deleted or being deleted"),
 		errors.New("host: deletion already in progress for session \"s-1\""),
 		errors.New("host: invalid session id \"nope\""),
@@ -51,6 +53,8 @@ func TestSentinelsMatchPublicMessages(t *testing.T) {
 		{ErrRuntimeClosing, "host: runtime is closing"},
 		{ErrSessionStoreNotReady, "host: session store is not ready"},
 		{ErrConversationBusy, "host: conversation has a live run"},
+		{ErrNoTarget, "host: no target to serve"},
+		{ErrNoAssembly, "host: no assembly for this target kind"},
 	} {
 		if got := tt.err.Error(); got != tt.msg {
 			t.Errorf("sentinel message = %q, want %q", got, tt.msg)

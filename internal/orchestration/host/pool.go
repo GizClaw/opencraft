@@ -149,12 +149,14 @@ func (m *Manager) acquire(
 	}
 }
 
-// Current returns the Host that serves workDir right now: the pooled
+// Current returns the Host that serves t right now: the pooled
 // Host when one is installed — stale ones included, because a stale
 // Host keeps serving its live runs on the old assembly — or the Host
 // that is retiring out of the pool while those runs finish. Nil when
-// the workspace has no Host at all: never assembled, or fully torn
-// down.
+// the target has no Host at all: never assembled, or fully torn down.
+// An unnamed target has no Host either, so it answers nil the same way
+// a never-assembled one does; it is a read, and a read has nothing to
+// refuse.
 //
 // This is the pool's answer to "which generation serves this target",
 // and it is deliberately per target: no process-wide current Host means
@@ -203,7 +205,9 @@ func (m *Manager) Ensure(ctx context.Context, t Target) (*Host, error) {
 // then retires itself through hostIdle. This defers engine-input swaps
 // to idle so a second Host (and a second flowcraft Session for the same
 // conversation) is never assembled while the old runtime still has live
-// runs.
+// runs. An unnamed target is ignored: there is no Host to retire, and
+// the entry points that must refuse a call (Acquire, Ensure) are the
+// ones that return a target's absence as an error.
 func (m *Manager) Invalidate(ctx context.Context, t Target) {
 	if !t.Valid() {
 		return
@@ -233,7 +237,7 @@ func (m *Manager) Invalidate(ctx context.Context, t Target) {
 	// the signal this line exists for.
 	telemetry.Info(ctx, "host: runtime invalidated",
 		otellog.String("reason", string(AssemblyReasonFrom(ctx))),
-		otellog.String("workspace", t.ID),
+		otellog.String("target", t.String()),
 		otellog.Bool("in_turn", active),
 		otellog.Bool("deferred", !closeNow),
 		otellog.String("host_ptr", fmt.Sprintf("%p", h)))

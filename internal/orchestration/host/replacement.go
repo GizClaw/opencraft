@@ -39,7 +39,8 @@ func (m *Manager) SetReplacementHooks(h ReplacementHooks) {
 // for one target. A caller deciding whether the document it holds still
 // needs a rebuild asks this to tell "the generation in use is stale and
 // its replacement is on the way" from "it is stale and nothing is
-// coming".
+// coming". An unnamed target is never armed, so it answers false — a
+// target that names nothing has nothing draining.
 func (m *Manager) ReplacementArmed(t Target) bool {
 	if !t.Valid() {
 		return false
@@ -63,7 +64,8 @@ func (m *Manager) ReplacementArmed(t Target) bool {
 // woke at once and assembled a runtime each — one installed, the rest
 // built and thrown away. The single armed watcher always assembles from
 // the document on disk at the time it runs, so a later invalidation has
-// nothing left to ask for.
+// nothing left to ask for. An unnamed target is not armed: false, the
+// same answer a second arm gets, because there is no drain to wait for.
 func (m *Manager) ScheduleReplacement(ctx context.Context, t Target) bool {
 	if !t.Valid() {
 		return false
@@ -124,7 +126,7 @@ func (m *Manager) replaceAfterDrain(ctx context.Context, t Target) {
 	h, err := m.Ensure(ctx, t)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: deferred rebuild failed", err,
-			otellog.String("workspace", t.ID))
+			otellog.String("target", t.String()))
 		return
 	}
 	if h == nil {

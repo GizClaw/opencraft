@@ -90,6 +90,21 @@ func (m *Manager) assembleShared(
 	if err != nil {
 		return nil, err
 	}
+	// The Host has to carry the target it was asked for: a builder that
+	// returns one for another target would be published under this
+	// target's key, handed out as if it served t, and never found again
+	// by Host.Close (which looks its pool entry up by its own target).
+	// That can only be a builder bug, so it fails here, loudly, and the
+	// Host never reaches the pool.
+	if h == nil {
+		return nil, fmt.Errorf("host: assembly returned no host for %s", t)
+	}
+	if h.target != t {
+		built := h.target
+		h.doClose()
+		return nil, fmt.Errorf(
+			"host: assembly returned a host for %s, want %s", built, t)
+	}
 	m.mu.Lock()
 	if ref := m.hosts[key]; ref != nil {
 		ref.refs++
@@ -125,13 +140,13 @@ func (m *Manager) assemble(
 	case TargetWorkspace:
 		h, err = m.buildWorkspaceHost(ctx, t, fallback, resolver)
 	default:
-		err = fmt.Errorf("host: no assembly for %s", t)
+		err = fmt.Errorf("%w: %s", ErrNoAssembly, t)
 	}
 	duration := time.Since(started)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: runtime assembly failed", err,
 			otellog.String("reason", string(AssemblyReasonFrom(ctx))),
-			otellog.String("workspace", t.ID),
+			otellog.String("target", t.String()),
 			otellog.Int64("duration_ms", duration.Milliseconds()))
 		return nil, err
 	}

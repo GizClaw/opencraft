@@ -38,9 +38,27 @@ type Target struct {
 	ID   string
 }
 
+// SameTarget reports whether two targets name the same thing. A target
+// that names nothing matches nothing: an unresolved workspace must not
+// borrow another target's identity, and the same string in another
+// scope is another target. It is the one comparison every layer should
+// ask — two spellings that this reports equal must also key equal, or
+// one directory ends up with two Hosts.
+func SameTarget(a, b Target) bool {
+	return a.Valid() && b.Valid() && a == b
+}
+
 // WorkspaceTarget returns the target that serves one workspace
 // directory. A blank path yields the zero Target: "no workspace" is not
 // a workspace, and filepath.Clean would otherwise turn it into ".".
+//
+// A path that is literally "." is a directory the caller named — the
+// process's own, which is what the guard above is there to keep out —
+// and it keys as ".". Producers resolve an absolute path before they
+// get here (the headless runner a working directory, the desktop the
+// workspace the window shows, automations a validated absolute path),
+// so this is the arm of the constructor a programming error reaches,
+// not a way in.
 func WorkspaceTarget(workDir string) Target {
 	if strings.TrimSpace(workDir) == "" {
 		return Target{}

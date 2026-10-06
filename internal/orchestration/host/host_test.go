@@ -12,6 +12,31 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
 )
 
+// TestHostIdentityAccessors pins the two reads the host side has to
+// answer with: what it serves, and whether that is an application. The
+// pool's own identity is Target; these are how a caller holding a Host
+// asks the same question, and an application's Host must not answer ""
+// for its id while its target says app.
+func TestHostIdentityAccessors(t *testing.T) {
+	cases := []struct {
+		target Target
+		appID  string
+	}{
+		{WorkspaceTarget("/workspace/a"), ""},
+		{AppTarget("werewolf"), "werewolf"},
+		{Target{}, ""},
+	}
+	for _, tc := range cases {
+		h := &Host{target: tc.target}
+		if got := h.Target(); got != tc.target {
+			t.Fatalf("Target() = %+v, want %+v", got, tc.target)
+		}
+		if got := h.AppID(); got != tc.appID {
+			t.Fatalf("%s: AppID() = %q, want %q", tc.target, got, tc.appID)
+		}
+	}
+}
+
 func TestStorePoolSharesPerRoot(t *testing.T) {
 	m := NewManager(t.TempDir())
 	ctx := context.Background()
