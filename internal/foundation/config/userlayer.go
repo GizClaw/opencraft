@@ -95,7 +95,7 @@ func mergeUserLayer(
 			key := oldRes.Content[i].Value
 			if replaceKeys[key] ||
 				dropKeys[key] ||
-				(dropProviderKeys && strings.HasPrefix(key, "provider.")) {
+				(dropProviderKeys && strings.HasPrefix(key, providerKeyPrefix)) {
 				continue
 			}
 			if mergeKeys[key] {

@@ -107,16 +107,24 @@ func ResolveWorkspace(dataDir, workDir string) (WorkspaceLayout, error) {
 	}, nil
 }
 
-// Ensure creates every directory the workspace layout owns. It never
-// touches the workspace project directory.
+// Ensure creates every directory the layout owns: the root, the
+// session store root, the tool cache, and the audit and export
+// directories — plus the private workspace when the layout owns it (an
+// application layout, whose WorkDir lives inside its own root). A
+// workspace layout never touches its WorkDir: that is the user's
+// project directory, not state this package created.
 func (l WorkspaceLayout) Ensure() error {
-	for _, dir := range []string{
+	dirs := []string{
 		l.Root,
 		l.SessionsDir,
 		l.CacheDir,
 		l.AuditDir,
 		l.ExportsDir,
-	} {
+	}
+	if l.ownsWorkDir() {
+		dirs = append(dirs, l.WorkDir)
+	}
+	for _, dir := range dirs {
 		if strings.TrimSpace(dir) == "" {
 			continue
 		}

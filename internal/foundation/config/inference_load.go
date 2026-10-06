@@ -288,7 +288,7 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 	}
 	providers := make(map[string]parsedProvider, len(doc.Resources))
 	for id, raw := range doc.Resources {
-		if !strings.HasPrefix(id, "provider.") {
+		if !strings.HasPrefix(id, providerKeyPrefix) {
 			continue
 		}
 		var res instanceSettings
@@ -363,7 +363,7 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 		res := entry.res
 		instID := res.Settings.ID
 		if instID == "" {
-			instID = strings.TrimPrefix(key, "provider.")
+			instID = strings.TrimPrefix(key, providerKeyPrefix)
 		}
 		// The driver impl no longer identifies the provider: the whole
 		// OpenAI wire family shares one impl, so the deployment id is
