@@ -2,29 +2,20 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/resource"
 
-	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
-
-// unusedSessionStore satisfies the registry builder's SessionStore
-// requirement; this test only registers factories, it never builds one.
-func unusedSessionStore(
-	context.Context, string, int,
-) (*ocsessions.Store, error) {
-	return nil, errors.New("session store unused in registry test")
-}
 
 // TestEmbeddedAssetsResolveAgainstRegistry writes down the deploy-time
 // promise as a test: every (kind, impl) the embedded assets name —
 // resources, agent engines, agent hooks — must resolve in the registry
-// registerResources installs.
+// RegisterFactories installs. Registration runs with zero options,
+// which is also what makes the enumeration path (KnownKinds) safe.
 //
 // It exists because a missing registration is otherwise silent: the
 // flowcraft windows sandbox backend went unregistered until W1.4, and
@@ -43,9 +34,7 @@ func TestEmbeddedAssetsResolveAgainstRegistry(t *testing.T) {
 		t.Fatalf("load embedded layers: %v", err)
 	}
 	reg := resource.NewRegistry()
-	if err := registerResources(reg, &Options{
-		SessionStore: unusedSessionStore,
-	}); err != nil {
+	if err := RegisterFactories(reg, Options{}); err != nil {
 		t.Fatalf("register resources: %v", err)
 	}
 
@@ -89,9 +78,7 @@ func TestEmbeddedAssetsResolveAgainstRegistry(t *testing.T) {
 // asset selects it, because a user layer is allowed to.
 func TestWindowsSandboxBackendIsRegistered(t *testing.T) {
 	reg := resource.NewRegistry()
-	if err := registerResources(reg, &Options{
-		SessionStore: unusedSessionStore,
-	}); err != nil {
+	if err := RegisterFactories(reg, Options{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := reg.Lookup("sandbox.Runner", "windows"); !ok {

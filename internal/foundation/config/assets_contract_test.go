@@ -112,6 +112,10 @@ func TestEmbeddedAssetsResolveAppHome(t *testing.T) {
 		"assets/opencraft.yaml": 4,
 		"assets/agents.yaml":    1,
 		"assets/tools.yaml":     2,
+		// The application contract layer's keyring view: the shared
+		// keyring the assistant resolves, never a path under the
+		// application's own state root.
+		"assets/app.yaml": 1,
 	}
 	for file, count := range want {
 		data, err := fs.ReadFile(root, file)

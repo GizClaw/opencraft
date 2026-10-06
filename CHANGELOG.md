@@ -78,6 +78,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   most 256 kraft tools and 512 KiB of definitions per assembly, keeps
   what fits in registry order, and logs one line naming how many it
   dropped. The charter's `agent.tool` bound records both.
+- The application platform has a deployment path. `config.AppLayout`
+  builds the state root of one installed application (its own workspace,
+  session.db, cache, audit and exports under `<dataDir>/apps/<id>`, with
+  `config.ValidAppID` as the id rule the import wizard validates
+  against), and `config.UserInferenceOverlay` renders the user layer's
+  inference wiring — the router, the infer assembly and every
+  `provider.*`, the same key set the settings-page writer owns — as the
+  JSON partial layer an application deployment carries, or nothing at
+  all when the wizard never ran. `engine.LoadAppDocument` merges the
+  three layers an application document is made of: the new embedded
+  contract layer (`config/assets/app.yaml`: event bus, keyring view,
+  private session store, artifact sink, private workspace, transcript
+  path and the reserved `agents.app` slot — deliberately no tools,
+  sandbox, skills or plugins), the application's own layers in manifest
+  order, and the inference overlay above them. `{file:}` references now
+  resolve against `engine.WithFileBase` (defaulting to the historical
+  root, so the assistant is unchanged), which is what lets an
+  application's graph live in its content root. `engine.RegisterFactories`
+  is the one factory list `BuildRuntime` walks, `engine.KnownKinds()`
+  enumerates what it registers, and the new `capabilities/apps` table
+  decides — per kind, explicitly — whether an application layer may
+  declare it. The two are checked against each other, so a new factory
+  fails a test until someone decides, instead of becoming an execution
+  surface an application could deploy.
 
 ### Changed
 

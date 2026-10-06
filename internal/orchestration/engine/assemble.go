@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/agent/scriptrt"
@@ -66,6 +67,13 @@ type Options struct {
 	// ConfigBase anchors the user configuration directory. Defaults to
 	// ~/.opencraft/config.
 	ConfigBase string
+	// FileBase anchors every {file: ...} reference inside the deploy
+	// document — the directory a layer's relative references resolve
+	// against. Empty falls back to ConfigBase, the assistant's single
+	// root. An application deployment points it at the application's
+	// content root while its inference overlay keeps coming from
+	// ConfigBase (see LoadAppDocument).
+	FileBase string
 	// WorkBase is the sandbox/workspace root. Defaults to the current
 	// working directory (where opencraft was invoked).
 	WorkBase string
@@ -143,6 +151,12 @@ func LoadDocument(
 // WithConfigBase overrides the config reference base directory.
 func WithConfigBase(dir string) Option {
 	return func(o *Options) { o.ConfigBase = dir }
+}
+
+// WithFileBase overrides the base directory for {file:} references
+// inside the deploy document. See Options.FileBase.
+func WithFileBase(dir string) Option {
+	return func(o *Options) { o.FileBase = dir }
 }
 
 // WithWorkBase overrides the sandbox/workspace root.
@@ -331,12 +345,29 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		}
 	}
 
+	// {file:} references resolve against FileBase; the assistant keeps
+	// the historical single root (ConfigBase), an application points it
+	// at its content root.
+	fileBase := o.FileBase
+	if fileBase == "" {
+		fileBase = o.ConfigBase
+	}
 	loader := resource.NewLoader(
-		resource.WithBaseDir(o.ConfigBase),
+		resource.WithBaseDir(fileBase),
 		resource.WithEmbed(config.FS()),
 	)
+	// Session-store construction is centralized here rather than in the
+	// factory list (RegisterFactories has to register with zero options
+	// so KnownKinds can enumerate this build's kinds): building a
+	// runtime without a store would assemble against a schema nobody
+	// migrated (the migration lives in internal/foundation/compat).
+	if o.SessionStore == nil {
+		return nil, fmt.Errorf(
+			"engine: session store requires WithSessionStore " +
+				"(schema migration is centralized in internal/foundation/compat)")
+	}
 	reg := resource.NewRegistry()
-	if err := registerResources(reg, &o); err != nil {
+	if err := RegisterFactories(reg, o); err != nil {
 		return nil, err
 	}
 
@@ -491,7 +522,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 // persistent subagent registry.
 const agentsResourceName = "agentlifecycle"
 
-// registerResources installs every resource factory this build ships:
+// RegisterFactories installs every resource factory this build ships:
 // flowcraft's own kinds, the OS backends, the inference drivers,
 // opencraft's capabilities, and the user-level store bindings. It is
 // the one registry the embedded deploy assets are validated against
@@ -499,7 +530,15 @@ const agentsResourceName = "agentlifecycle"
 // asset names must resolve here. A missing registration — the windows
 // sandbox backend was one — only fails at deploy time, and only for
 // the asset that names it, so the scan is what keeps the list honest.
-func registerResources(reg *resource.Registry, o *Options) error {
+//
+// It registers with zero options as happily as with a full set: the
+// values it reads (the usage observer, the session store) either may be
+// nil or are validated at BuildRuntime. That is what makes KnownKinds
+// possible — and the app platform's kind table is checked against it,
+// so a factory added without a decision fails a test instead of
+// becoming a silent execution surface an application layer could
+// deploy.
+func RegisterFactories(reg *resource.Registry, o Options) error {
 	registers := []func(*resource.Registry) error{
 		event.Register,
 		graphresource.Register,
@@ -529,11 +568,6 @@ func registerResources(reg *resource.Registry, o *Options) error {
 			return opmemory.RegisterWithObserver(r, o.usageObserver)
 		},
 		func(r *resource.Registry) error {
-			if o.SessionStore == nil {
-				return fmt.Errorf(
-					"engine: session store requires WithSessionStore " +
-						"(schema migration is centralized in internal/foundation/compat)")
-			}
 			return r.Register(ocsessions.Factory{StoreFor: o.SessionStore})
 		},
 		opmedia.Register,
@@ -588,4 +622,34 @@ func registerResources(reg *resource.Registry, o *Options) error {
 	reg.MustRegister(review.Factory{})
 	reg.MustRegister(subagents.PolicyFactory{})
 	return nil
+}
+
+// KnownKinds returns every resource kind this build can construct,
+// sorted and deduplicated: the registry read without a document. The
+// app platform's allow/deny table is checked against this list (see
+// apps.Classify), so adding a factory is a review event — a kind
+// nobody classified would otherwise be a resource an application layer
+// could deploy without a decision.
+//
+// It panics when this build's own factory list cannot register itself
+// with zero options. That is the same failure every BuildRuntime would
+// report, it is a defect in the list rather than an input error, and
+// returning a short list would hide it from the test that exists to
+// catch it.
+func KnownKinds() []resource.Kind {
+	reg := resource.NewRegistry()
+	if err := RegisterFactories(reg, Options{}); err != nil {
+		panic(fmt.Sprintf("engine: register factories: %v", err))
+	}
+	kinds := make([]resource.Kind, 0, 32)
+	seen := make(map[resource.Kind]bool, 32)
+	for _, spec := range reg.Specs() {
+		if seen[spec.Kind] {
+			continue
+		}
+		seen[spec.Kind] = true
+		kinds = append(kinds, spec.Kind)
+	}
+	sort.Slice(kinds, func(i, j int) bool { return kinds[i] < kinds[j] })
+	return kinds
 }

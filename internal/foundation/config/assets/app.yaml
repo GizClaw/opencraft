@@ -1,0 +1,164 @@
+version: v1
+
+# Application contract layer: the lowest-priority layer of every
+# application deployment (the embedded equivalent of assets/opencraft.yaml
+# for the assistant). An application's own layers merge on top of it, and
+# the host adds one more layer above them: the user's inference wiring.
+#
+# What this layer is: the application runtime's minimal runnable set —
+# its own event bus, its private workspace, its own session.db, the
+# artifact sink, the transcript path, and the script runtime. What it
+# deliberately is not: tools, sandbox/exec, skills, plugins, MCP,
+# worldstate, delegation, automations or user-level memory. v1 gives an
+# application none of those (the app platform plan, §2.4).
+#
+# Three entries deserve their own note:
+#   - `mem` declares no router dependency, so folding degrades to the
+#     deterministic buffer fold with no inference cost. It owns the
+#     transcript's commit path: without `mem`, `commit` and `observe` an
+#     application has no history at all — do not trim them to make the
+#     layer "lighter".
+#   - `agents.app` is a reserved slot; an application layer merges its
+#     card and its graph reference into it. `settings.graph` is
+#     intentionally unset: a missing graph must fail validation instead
+#     of silently pointing at a file that does not exist.
+#   - `infer` and `router` are referenced but not declared here: they
+#     arrive in the host-generated inference layer, which BuildRuntime
+#     reports as the settings page's business when it is absent.
+
+resources:
+  # The application's own event bus (script host.publish lands here).
+  events:
+    kind: event.Bus
+    impl: memory
+
+  # Read-only view of the shared keyring: what the overlay's
+  # ${secret:keychain.*} references resolve against. The directory is
+  # the app home's keyring, never the application's content or state
+  # root.
+  secret.keychain:
+    kind: secret.Store
+    impl: keychain
+    settings:
+      id: keychain
+      default: true
+      dir: ${ocraft:APP_HOME}/keyring
+
+  # The application's private session.db plus the engine's checkpoint
+  # store (window 40 matches the assistant's read-time projection).
+  sessions:
+    kind: session.Store
+    impl: opencraft
+    settings:
+      root: ${ocraft:SESSIONS_DIR}
+      window: 40
+
+  # Artifact sink behind the private workspace: the same observer
+  # contract as the assistant's, so a turn's files land in the archive
+  # and in the artifact event stream.
+  artifacts:
+    kind: opencraft.artifacts
+    impl: local
+
+  # The application's private workspace — the only directory its runtime
+  # reads and writes (the content root it was installed from is not in
+  # this layout).
+  ws:
+    kind: opencraft.workspace
+    impl: local
+    deps:
+      observer: artifacts
+    settings:
+      root: ${ocraft:WORKDIR}
+
+  # Transcript: the fold buffer, the commit path and the interrupted-run
+  # archive. No router dependency (see the header note).
+  mem:
+    kind: memory
+    impl: summary
+    deps:
+      sessions: sessions
+    settings:
+      max_raw_messages: 36
+      preserve_recent: 4
+  observer:
+    kind: memory.UsageObserver
+    impl: function
+
+  # Graph script runtime.
+  js:
+    kind: agent.ScriptRuntime
+    impl: js
+    settings:
+      pool_size: 1
+
+agents:
+  # Reserved application agent slot. An application layer merges into it;
+  # the deps below are the whole surface v1 gives an application, so a
+  # layer cannot widen it by redeclaring the entry (the importer
+  # normalizes away attempts to).
+  app:
+    card:
+      name: App
+      description: ""
+    engine:
+      kind: agent.Engine
+      impl: graph
+      deps:
+        inference: infer
+        router: router
+        workspace: ws
+        script_runtime: js
+      settings:
+        # 0 lifts the node-count guard (every round is compact + llm +
+        # tools); policy.run_timeout below is what bounds a turn.
+        build:
+          max_iterations: 0
+    # One whole turn end to end, revise attempts included.
+    policy:
+      run_timeout: 2h
+    prepare:
+      # Media preparation needs the work dir only: it makes an
+      # application turn able to receive image/video input without
+      # touching the project or rewriting paths.
+      - type: opencraft.media
+        settings:
+          work_dir: ${ocraft:WORKDIR}
+    commit:
+      - type: opencraft.commit
+        deps:
+          memory: mem
+          sessions: sessions
+    observe:
+      # Archives turns that did not complete (user stop, engine error,
+      # application restart) so a reload reconstructs them.
+      - type: opencraft.archive
+        deps:
+          memory: mem
+          sessions: sessions
+
+runtime:
+  event_bus: events
+  checkpoint_store: sessions
+  # resume: false keeps the board out of the loop; the engine still
+  # writes one checkpoint per completed wave, which is what the host
+  # replays after a crash.
+  sessions:
+    idle_timeout: 3m
+    resume: false
+  # Must match the six caller-owned values the engine injects at
+  # assembly (engine/assemble.go's WithExternalResource list). No
+  # dynamic_catalog: v1 exposes no tool catalog to applications.
+  external_deps:
+    - name: plugin.host
+      contract: opencraft.plugins
+    - name: automation.host
+      contract: opencraft.automations
+    - name: plugin.installer
+      contract: opencraft.plugin_installer
+    - name: user.memory
+      contract: opencraft.user_memory_store
+    - name: skill.usage
+      contract: opencraft.skill_usage_store
+    - name: review.queue
+      contract: opencraft.review_queue_store
