@@ -234,7 +234,7 @@ export function AppImportWizard({
         {candidate?.error && (
           <div className="rounded-card border border-err/40 bg-err/5 px-3 py-2">
             <p className="text-xs font-medium text-err">
-              {t('apps.wizard.unreadable')}
+              {t('apps.wizard.unusable')}
             </p>
             <p className="mt-1 break-words text-xs text-dim">
               {candidate.error}

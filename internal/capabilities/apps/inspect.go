@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/zipx"
 )
 
 // maxAssetBytes bounds one file read out of a content root. An
@@ -43,19 +44,48 @@ type Inspection struct {
 }
 
 // Inspect reads one candidate package — a directory holding app.yaml,
-// the layers it names and the files they reference — and reports what
-// installing it would do. It copies nothing, writes nothing and never
-// touches the state root, so it is safe to run on any directory a user
-// picked.
+// the layers it names and the files they reference, or an archive of one
+// (a release artifact, a zipped-up directory) — and reports what
+// installing it would do. It copies nothing into the registry, writes
+// nothing and never touches the state root, so it is safe to run on any
+// path a user picked.
 //
 // A manifest the host cannot even parse is an error: there is nothing to
 // report rows about. Everything after it — reserved keys, restricted
-// kinds, references leaving the content root, a missing agent — is a
-// refusal, because those are the things a user can go and fix.
+// kinds, references leaving the content root, a missing agent, a path
+// the platform would not take — is a refusal, because those are the
+// things a user can go and fix.
 func (s *Store) Inspect(ctx context.Context, src string) (Inspection, error) {
-	if err := s.checkSource(src); err != nil {
+	if strings.TrimSpace(src) == "" {
+		return Inspection{}, errors.New("apps: source is required")
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return Inspection{}, fmt.Errorf("apps: source: %w", err)
+	}
+	if err := s.checkOutsideRoot(src); err != nil {
 		return Inspection{}, err
 	}
+	if !info.IsDir() {
+		// A file is an archive, and unpacking it is how it is read at
+		// all: the checks below want a tree. An archive over a size
+		// bound stays an error rather than becoming a row — nothing
+		// inside it could be read, and the bound's own sentence ("the
+		// archive declares 90.0 MiB for this entry") already says what
+		// is wrong with the package.
+		dir, cleanup, err := zipx.Extract(src, ManifestFile)
+		if err != nil {
+			return Inspection{}, err
+		}
+		defer cleanup()
+		return s.inspect(ctx, dir)
+	}
+	return s.inspect(ctx, src)
+}
+
+// inspect reads one package tree, wherever it came from: the directory a
+// user picked, or the extraction of the archive they picked.
+func (s *Store) inspect(ctx context.Context, src string) (Inspection, error) {
 	m, err := s.readManifest(src, "")
 	if err != nil {
 		return Inspection{}, err
@@ -75,6 +105,19 @@ func (s *Store) Inspect(ctx context.Context, src string) (Inspection, error) {
 		insp.Refusals = refusals.List
 	default:
 		return Inspection{}, err
+	}
+	// The platform's own verdict on where these files would land, as one
+	// more row to fix. It is the last row because it is the only one
+	// that is about the host rather than about the package's documents.
+	if err := s.checkLandingPaths(src, s.landingRoot(m.ID)); err != nil {
+		var tooLong *PathTooLong
+		if !errors.As(err, &tooLong) {
+			return Inspection{}, err
+		}
+		insp.Refusals = append(insp.Refusals, Refusal{
+			Key:    tooLong.Entry,
+			Reason: err.Error(),
+		})
 	}
 	return insp, nil
 }

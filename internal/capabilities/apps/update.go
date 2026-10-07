@@ -87,6 +87,11 @@ func (s *Store) Update(ctx context.Context, id, src string) (Summary, error) {
 				id, m.Version, cur.Version)
 		}
 	}
+	// The new files land where the installed ones are, so the platform's
+	// verdict is about the same paths an install would check.
+	if err := s.checkLandingPaths(src, content); err != nil {
+		return Summary{}, err
+	}
 	staging, err := os.MkdirTemp(s.root, ".update-")
 	if err != nil {
 		return Summary{}, fmt.Errorf("apps: create update staging dir: %w", err)

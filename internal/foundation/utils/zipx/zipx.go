@@ -13,6 +13,7 @@ package zipx
 import (
 	"archive/zip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -33,6 +34,51 @@ const (
 	MaxTotal = 256 << 20 // 256 MiB
 )
 
+// TooLarge is the refusal about an archive's declared sizes: one entry
+// past MaxFile, or the whole archive past MaxTotal. The numbers come
+// from the archive's own directory and are checked before anything is
+// decompressed, which is what makes a zip bomb a refusal rather than an
+// out-of-memory kill.
+//
+// It is a type rather than a formatted string so the sentence can be
+// written for the person who packaged the archive and read on its own:
+// it names the entry that broke the bound and the bound it broke, and it
+// carries no package prefix, because a prefixed one ("zipx: zip entry
+// too large: \"big.bin\"") is a log line, not something to show a user.
+type TooLarge struct {
+	// Entry is the entry that broke the bound.
+	Entry string
+	// Size is what the archive declares for Entry, or the running total
+	// once Entry is counted when Total is set.
+	Size int64
+	// Limit is the bound that was broken: MaxFile, or MaxTotal when
+	// Total is set.
+	Limit int64
+	// Total reports the refusal is about the archive as a whole rather
+	// than about Entry alone.
+	Total bool
+}
+
+func (e *TooLarge) Error() string {
+	if e.Total {
+		return fmt.Sprintf(
+			"the archive unpacks to %s in total, past the %s the host "+
+				"accepts for one package",
+			formatSize(e.Size), formatSize(e.Limit))
+	}
+	return fmt.Sprintf(
+		"the archive declares %s for %q, past the %s the host accepts for "+
+			"one file",
+		formatSize(e.Size), e.Entry, formatSize(e.Limit))
+}
+
+// formatSize renders a byte count the way a packager reads it: whole
+// mebibytes with one decimal, because the bounds are stated in MiB and
+// "67371008 bytes" is not a number anyone compares against a limit.
+func formatSize(n int64) string {
+	return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+}
+
 // Extract unpacks one package archive into a temporary directory and
 // returns the directory holding the package — the one the manifest named
 // by marker lives in — plus a cleanup function that closes the archive
@@ -43,6 +89,14 @@ const (
 func Extract(zipPath, marker string) (string, func(), error) {
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
+		// The user picked something that is not an archive — a renamed
+		// tarball, an HTML error page saved as .zip — which is about the
+		// pick rather than about a package inside it, so the sentence
+		// names the file they chose.
+		if errors.Is(err, zip.ErrFormat) {
+			return "", nil, fmt.Errorf(
+				"zipx: %s is not a zip archive", filepath.Base(zipPath))
+		}
 		return "", nil, fmt.Errorf("zipx: open zip: %w", err)
 	}
 	tmp, err := os.MkdirTemp("", "oc-package-*")
@@ -70,12 +124,21 @@ func Extract(zipPath, marker string) (string, func(), error) {
 		if f.FileInfo().IsDir() {
 			continue
 		}
-		if f.UncompressedSize64 > MaxFile ||
-			total+int64(f.UncompressedSize64) > MaxTotal {
+		entry := int64(f.UncompressedSize64)
+		switch {
+		case entry > MaxFile:
 			cleanup()
-			return "", nil, fmt.Errorf("zipx: zip entry too large: %q", f.Name)
+			return "", nil, &TooLarge{Entry: f.Name, Size: entry, Limit: MaxFile}
+		case total+entry > MaxTotal:
+			cleanup()
+			return "", nil, &TooLarge{
+				Entry: f.Name,
+				Size:  total + entry,
+				Limit: MaxTotal,
+				Total: true,
+			}
 		}
-		total += int64(f.UncompressedSize64)
+		total += entry
 
 		// RelRef on the cleaned name is the zip-slip gate: absolute
 		// names and ".." components are rejected above, so this join

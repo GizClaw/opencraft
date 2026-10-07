@@ -79,12 +79,15 @@ func (s *Store) Install(
 	if err := s.checkHostVersion(manifest); err != nil {
 		return Summary{}, err
 	}
-	dst := filepath.Join(s.root, manifest.ID, "content")
+	dst := s.landingRoot(manifest.ID)
 	if _, err := os.Stat(dst); err == nil {
 		return Summary{}, fmt.Errorf(
 			"apps: %q is already installed; uninstall it first", manifest.ID)
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return Summary{}, fmt.Errorf("apps: check destination: %w", err)
+	}
+	if err := s.checkLandingPaths(src, dst); err != nil {
+		return Summary{}, err
 	}
 	if err := os.MkdirAll(s.root, 0o700); err != nil {
 		return Summary{}, fmt.Errorf("apps: create content root: %w", err)

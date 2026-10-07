@@ -290,10 +290,40 @@ describe('AppImportWizard', () => {
 
     await waitFor(() =>
       expect(
-        screen.getByText('No usable application manifest in this source'),
+        screen.getByText('No usable application package in this source'),
       ).toBeTruthy(),
     );
     expect(screen.getByText(/no manifest in/)).toBeTruthy();
+    expect(screen.getByTestId('app-install-confirm')).toBeDisabled();
+  });
+
+  // The archive the host refuses to unpack is one of the sources this
+  // block reports on, and the sentence the host wrote about it is what
+  // the user has to read: which entry, how big, and the bound it broke.
+  it('shows why an archive the host will not unpack is refused', async () => {
+    apiMock.appInspect.mockRejectedValue(
+      new Error(
+        'the archive declares 64.0 MiB for "big.bin", past the 64.0 MiB ' +
+          'the host accepts for one file',
+      ),
+    );
+    render(
+      <AppImportWizard
+        open
+        update={null}
+        onClose={() => {}}
+        onDone={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('app-pick-zip'));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('No usable application package in this source'),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByText(/"big\.bin"/)).toBeTruthy();
     expect(screen.getByTestId('app-install-confirm')).toBeDisabled();
   });
 });

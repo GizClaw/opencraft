@@ -37,6 +37,7 @@ import (
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/fshidden"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/guilock"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/maxpath"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/shelldetect"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
 )
@@ -49,6 +50,10 @@ type row struct {
 	probe   string // sandbox.BackendProbe: external binary, "" = built in
 	tty     bool   // sandbox.InteractiveSessions: exec_session offered?
 	shell   string // shelldetect.Default(goos).Program
+	// maxPath is the longest path this platform's file APIs accept
+	// (maxpath.Limit): 0 where the whole path has no cap a package
+	// author has to know about, MAX_PATH less the NUL on Windows.
+	maxPath int
 	// endpoint is the single-instance raise channel (guilock): a unix
 	// socket under the state root, or a Windows named pipe.
 	endpoint string
@@ -70,6 +75,7 @@ func matrix() map[string]row {
 			probe:    "sandbox-exec",
 			tty:      true,
 			shell:    "/bin/sh",
+			maxPath:  0,
 			endpoint: "unix socket <state root>/gui.sock",
 			hidden:   "leading dot",
 			lock:     "flock",
@@ -79,6 +85,7 @@ func matrix() map[string]row {
 			probe:    "bwrap",
 			tty:      true,
 			shell:    "/bin/sh",
+			maxPath:  0,
 			endpoint: "unix socket <state root>/gui.sock",
 			hidden:   "leading dot",
 			lock:     "flock",
@@ -88,6 +95,7 @@ func matrix() map[string]row {
 			probe:    "",
 			tty:      false, // issue #38
 			shell:    "cmd.exe",
+			maxPath:  259, // MAX_PATH 260, less the terminating NUL
 			endpoint: `named pipe \\.\pipe\opencraft-gui-<identity>`,
 			hidden:   "leading dot or FILE_ATTRIBUTE_HIDDEN|SYSTEM",
 			lock:     "LockFileEx range",
@@ -96,7 +104,7 @@ func matrix() map[string]row {
 }
 
 // TestPlatformCapabilityMatrixValues asserts the whole table on every
-// host: these four columns come from goos-parameterised functions, so
+// host: these five columns come from goos-parameterised functions, so
 // a macOS or Linux CI lane still pins the Windows answer.
 func TestPlatformCapabilityMatrixValues(t *testing.T) {
 	for goos, want := range matrix() {
@@ -112,6 +120,9 @@ func TestPlatformCapabilityMatrixValues(t *testing.T) {
 			}
 			if got := shelldetect.Default(goos).Program; got != want.shell {
 				t.Errorf("shelldetect.Default(%q) = %q, want %q", goos, got, want.shell)
+			}
+			if got := maxpath.Limit(goos); got != want.maxPath {
+				t.Errorf("maxpath.Limit(%q) = %d, want %d", goos, got, want.maxPath)
 			}
 		})
 	}

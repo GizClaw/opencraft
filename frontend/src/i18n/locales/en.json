@@ -73,7 +73,7 @@
       "chooseFolder": "Choose a folder…",
       "chooseZip": "Choose a zip…",
       "install": "Install",
-      "unreadable": "No usable application manifest in this source",
+      "unusable": "No usable application package in this source",
       "layers": "Deployment layers",
       "noLayers": "This package adds no deployment layer of its own.",
       "refused_one": "One check has to be fixed before this can be installed",

@@ -15,6 +15,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/platform/maxpath"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/semver"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
@@ -76,6 +77,11 @@ type Store struct {
 	dataDir     string
 	builtin     string
 	hostVersion string
+	// pathLimit is the longest landing path this host's file APIs
+	// accept, or 0 when it caps none (platform/maxpath, landing.go). It
+	// is a field so that the preflight and every install read one
+	// answer, and so that the check can be exercised on any platform.
+	pathLimit int
 }
 
 // NewStore returns the registry described by o. It creates nothing: an
@@ -87,6 +93,7 @@ func NewStore(o Options) *Store {
 		dataDir:     o.DataDir,
 		builtin:     o.Builtin,
 		hostVersion: o.HostVersion,
+		pathLimit:   maxpath.HostLimit(),
 	}
 }
 
@@ -416,6 +423,14 @@ func (s *Store) checkSource(src string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("apps: source %q is not a directory", src)
 	}
+	return s.checkOutsideRoot(src)
+}
+
+// checkOutsideRoot refuses a source inside the content root. An install
+// from there would copy the registry into its own staging area, and the
+// preflight reads a candidate out of a tree that may not be the
+// registry's either way.
+func (s *Store) checkOutsideRoot(src string) error {
 	if pathsafe.Within(s.root, src) {
 		return fmt.Errorf(
 			"apps: source %q is inside the application root %q", src, s.root)
@@ -451,7 +466,7 @@ func (s *Store) contentDir(id string) (string, bool, error) {
 	if strings.TrimSpace(s.root) == "" {
 		return "", false, errors.New("apps: content root is not configured")
 	}
-	user := filepath.Join(s.root, id, "content")
+	user := s.landingRoot(id)
 	if info, err := os.Stat(user); err == nil && info.IsDir() {
 		return user, false, nil
 	}

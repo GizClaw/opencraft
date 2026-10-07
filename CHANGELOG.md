@@ -44,6 +44,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Installing an application refuses a package whose files cannot land
+  where it would put them. Windows with long-path support off takes
+  MAX_PATH — 260 characters including the terminating NUL — and refuses
+  a longer path with a not-found-ish error that names neither the path
+  nor its length, so a copy into a deep content root used to fail
+  partway through, files already written, with nothing to act on. The
+  preflight now walks the package, measures every landing path against
+  the content root the install would use — `platform/maxpath` owns the
+  per-OS cap, and the count is in UTF-16 code units, so a package whose
+  directories are named in Chinese is not counted three bytes per
+  character — and reports the first file that does not fit as one more
+  row to fix, with the sentence an install would refuse with: `this file
+  would land on a 274-character path, past the 259 this system's file
+  APIs accept; the package needs shorter directory names, or a shorter
+  application home`. The walk mirrors the copy (a `.git` directory and a
+  link are not paths it lands), so the two halves answer one question
+  about one directory; `Install` and `Update` ask it themselves rather
+  than trusting a preflight to have run, and POSIX answers 0 — a name
+  past 255 bytes already fails with "file name too long", which reads as
+  itself.
 - The plugin framework has a charter. `capabilities/plugins/charter.go`
   holds two tables — what a plugin gives the host, and what it may call
   on it — and every row answers the same five questions: who consumes
@@ -584,6 +604,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The import wizard's zip button works. It has always handed the archive
+  path to `App.Inspect`, which read a source as a directory and nowhere
+  else, so picking a zip answered `apps: source "…" is not a directory`
+  — before anything looked inside it. `Inspect` now resolves both source
+  kinds the way the plugin registry's already did: a directory is read
+  where it lies, an archive is unpacked into the system temp directory
+  and the package inside it is read there, and neither half of the
+  registry is written. A file that is not an archive at all is reported
+  as what it is (`package.zip is not a zip archive`) rather than as
+  something about a directory.
+- An archive the host will not unpack says so in a sentence about the
+  archive. The size bound used to refuse with `zipx: zip entry too
+  large: "big.bin"` — a log line, shown verbatim to whoever packaged the
+  archive — so `zipx.TooLarge` is now a typed refusal whose message
+  names the entry, what the archive declares for it and the bound it
+  broke (`the archive declares 90.0 MiB for "big.bin", past the 64.0 MiB
+  the host accepts for one file`), and the total bound reads as the
+  archive's own (`the archive unpacks to 300.0 MiB in total, past the
+  256.0 MiB…`). An archive over a bound stays an error rather than
+  becoming a preflight row: nothing inside it could be read, so there is
+  no card to report rows against. The wizard's block for a source it
+  cannot use says "no usable application package" instead of "no usable
+  application manifest", because the manifest may be perfectly fine —
+  the archive is what the host refused.
 - Opening a SQLite database no longer fails because another handle for
   the same file happened to be closing. The open path's pragmas ran with
   `PRAGMA journal_mode=WAL` first and the busy timeout third, so the one

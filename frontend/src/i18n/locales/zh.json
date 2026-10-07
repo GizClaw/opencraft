@@ -73,7 +73,7 @@
       "chooseFolder": "选择目录…",
       "chooseZip": "选择 zip…",
       "install": "安装",
-      "unreadable": "这个来源里没有可用的应用清单",
+      "unusable": "这个来源里没有可用的应用包",
       "layers": "部署层",
       "noLayers": "这个包没有自带部署层。",
       "refused_one": "还有 1 项检查需要处理才能安装",

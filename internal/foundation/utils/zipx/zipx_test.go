@@ -2,6 +2,7 @@ package zipx
 
 import (
 	"archive/zip"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -234,7 +235,7 @@ func TestExtractRefusesAFileThatIsNotAnArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := Extract(path, testMarker); err == nil ||
-		!strings.Contains(err.Error(), "open zip") {
+		!strings.Contains(err.Error(), "package.zip is not a zip archive") {
 		t.Fatalf("extract of a file that is not a zip = %v", err)
 	}
 }
@@ -248,8 +249,19 @@ func TestExtractRefusesAnEntryOverTheFileBound(t *testing.T) {
 	_, _, err := Extract(writeZipSized(t, "id: hello", map[string]int64{
 		"big.bin": MaxFile + 1,
 	}), testMarker)
-	if err == nil || !strings.Contains(err.Error(), "zip entry too large") {
+	var tooLarge *TooLarge
+	if err == nil || !errors.As(err, &tooLarge) {
 		t.Fatalf("extract of an entry over the file bound = %v", err)
+	}
+	// The refusal names the entry, what it declares and the bound it
+	// broke: the wizard shows this sentence to whoever packaged it.
+	if tooLarge.Total || tooLarge.Entry != "big.bin" || tooLarge.Limit != MaxFile {
+		t.Errorf("refusal = %+v", tooLarge)
+	}
+	for _, want := range []string{"big.bin", "64.0 MiB"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not name %q", err, want)
+		}
 	}
 	if names := entriesIn(t, root); len(names) != 0 {
 		t.Fatalf("a refused archive left %v behind", names)
@@ -265,8 +277,18 @@ func TestExtractRefusesAnArchiveOverTheTotalBound(t *testing.T) {
 	}
 	root := tempRoot(t)
 	_, _, err := Extract(writeZipSized(t, "id: hello", sizes), testMarker)
-	if err == nil || !strings.Contains(err.Error(), "zip entry too large") {
+	var tooLarge *TooLarge
+	if err == nil || !errors.As(err, &tooLarge) {
 		t.Fatalf("extract of an archive over the total bound = %v", err)
+	}
+	// Which entry crosses the total depends on the order the archive
+	// happens to hold them, so the test pins what the refusal says about
+	// itself: this is the archive's bound, not one file's.
+	if !tooLarge.Total || tooLarge.Limit != MaxTotal || tooLarge.Size <= MaxFile {
+		t.Errorf("refusal = %+v", tooLarge)
+	}
+	if !strings.Contains(err.Error(), "in total") {
+		t.Errorf("refusal %q does not read as the archive's own bound", err)
 	}
 	if names := entriesIn(t, root); len(names) != 0 {
 		t.Fatalf("a refused archive left %v behind", names)

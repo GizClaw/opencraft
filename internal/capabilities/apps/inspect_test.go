@@ -1,12 +1,16 @@
 package apps
 
 import (
+	"archive/zip"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/zipx"
 )
 
 // Inspecting a candidate is the wizard's half of the registry: it answers
@@ -218,7 +222,7 @@ func TestInspectReadsTheSourceAndNothingElse(t *testing.T) {
 func TestInspectRefusesWhatItCannotRead(t *testing.T) {
 	store, _, _ := newStore(t)
 	file := filepath.Join(t.TempDir(), "package.zip")
-	if err := os.WriteFile(file, []byte("not a directory"), 0o600); err != nil {
+	if err := os.WriteFile(file, []byte("not a zip"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	install(t, store, newApp(t))
@@ -229,7 +233,7 @@ func TestInspectRefusesWhatItCannotRead(t *testing.T) {
 	}{
 		{"a directory that is not there", filepath.Join(t.TempDir(), "gone"),
 			"source: "},
-		{"a file", file, "is not a directory"},
+		{"a file that is not an archive", file, "is not a zip archive"},
 		{"nothing at all", "  ", "source is required"},
 		{"the registry itself", filepath.Join(store.root, "hello", "content"),
 			"is inside the application root"},
@@ -323,4 +327,149 @@ func TestReadAssetRefusesAnApplicationThatIsNotInstalled(t *testing.T) {
 	if !errors.Is(err, ErrNotInstalled) {
 		t.Fatalf("read asset of an uninstalled application = %v", err)
 	}
+}
+
+// TestInspectReadsAnArchiveTheWayItReadsADirectory: the wizard's zip
+// button hands an archive to the same call the folder button hands a
+// directory, so the two have to answer the same card — and the same
+// refusals, including the ones about where the files would land, which
+// are measured against the extraction that stands in for the package.
+func TestInspectReadsAnArchiveTheWayItReadsADirectory(t *testing.T) {
+	src := newApp(t)
+	store, root, dataDir := newStore(t)
+	want, err := store.Inspect(context.Background(), src)
+	if err != nil {
+		t.Fatalf("inspect directory: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		prefix string
+	}{
+		{"the files at the archive root", ""},
+		{"the files under one top-level directory", "hello-0.1.0/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := store.Inspect(
+				context.Background(), zipTree(t, src, tc.prefix))
+			if err != nil {
+				t.Fatalf("inspect zip: %v", err)
+			}
+			if got.Summary != want.Summary || len(got.Layers) != len(want.Layers) ||
+				len(got.Refusals) != 0 {
+				t.Fatalf("inspection of the archive = %+v, want %+v",
+					got, want)
+			}
+		})
+	}
+	// Reading an archive writes neither half of the registry: the
+	// extraction lives in the system temp directory and is removed
+	// before the call returns.
+	mustBeEmpty(t, root)
+	mustNotExist(t, filepath.Join(dataDir, "apps"))
+}
+
+// TestInspectRefusesAPathThePlatformWouldNotTake covers the archive half
+// of the landing-path check: a zip is measured against the same content
+// root a directory is, entry for entry, so a package the wizard refuses
+// as a folder is refused as an archive too — and with the same row.
+func TestInspectRefusesAPathThePlatformWouldNotTake(t *testing.T) {
+	src := newApp(t)
+	store, _, _ := newStore(t)
+	// Short enough that the fixture's own files do not land inside it:
+	// what is being tested is the measurement, not the platform.
+	store.pathLimit = pathLength(store.landingRoot("hello")) + 4
+	dir, err := store.Inspect(context.Background(), src)
+	if err != nil {
+		t.Fatalf("inspect directory: %v", err)
+	}
+	zip, err := store.Inspect(context.Background(), zipTree(t, src, ""))
+	if err != nil {
+		t.Fatalf("inspect zip: %v", err)
+	}
+	if len(dir.Refusals) != 1 || len(zip.Refusals) != 1 {
+		t.Fatalf("refusals = %+v (directory), %+v (archive)",
+			dir.Refusals, zip.Refusals)
+	}
+	if dir.Refusals[0] != zip.Refusals[0] {
+		t.Errorf("the archive was refused %+v, the directory %+v",
+			zip.Refusals[0], dir.Refusals[0])
+	}
+	row := dir.Refusals[0]
+	if row.Key == "" || !strings.Contains(row.Reason, "would land on a") ||
+		!strings.Contains(row.Reason, "file APIs accept") {
+		t.Errorf("refusal = %+v", row)
+	}
+}
+
+// TestInspectReportsAnArchiveOverTheBound: an archive that declares more
+// than the host unpacks is an error rather than a row — nothing inside it
+// could be read, so there is no card to report rows against — and the
+// sentence is the one the person who packaged it needs: which entry, how
+// big it declares itself, and the bound it broke.
+func TestInspectReportsAnArchiveOverTheBound(t *testing.T) {
+	store, root, _ := newStore(t)
+	_, err := store.Inspect(context.Background(), zipWithBigEntry(t))
+	var tooLarge *zipx.TooLarge
+	if err == nil || !errors.As(err, &tooLarge) {
+		t.Fatalf("inspect of an archive over the bound = %v", err)
+	}
+	if tooLarge.Entry != "big.bin" || tooLarge.Total {
+		t.Errorf("refusal = %+v", tooLarge)
+	}
+	for _, want := range []string{`"big.bin"`, "64.0 MiB"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not name %s", err, want)
+		}
+	}
+	mustBeEmpty(t, root)
+}
+
+// zipWithBigEntry writes an archive whose manifest is a valid package and
+// whose one extra entry declares more than the extractor unpacks, which
+// is what a stray dataset in the folder and a zip bomb both look like
+// from here. The bytes are streamed, so the test does not hold 65 MiB.
+func zipWithBigEntry(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "package.zip")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	zw := zip.NewWriter(f)
+	w, err := zw.Create(ManifestFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(w, fixtureManifest); err != nil {
+		t.Fatal(err)
+	}
+	w, err = zw.Create("big.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(w, &zeroReader{left: zipx.MaxFile + 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// zeroReader reads n zero bytes without holding them.
+type zeroReader struct{ left int64 }
+
+func (z *zeroReader) Read(p []byte) (int, error) {
+	if z.left <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > z.left {
+		p = p[:z.left]
+	}
+	for i := range p {
+		p[i] = 0
+	}
+	z.left -= int64(len(p))
+	return len(p), nil
 }

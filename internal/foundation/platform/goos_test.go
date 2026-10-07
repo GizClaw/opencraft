@@ -86,6 +86,15 @@ var goosAllowlist = map[string]goosSite{
 		reason: "Options.GOOS defaults to the host, and the Windows " +
 			"installer-root candidates are Windows-only.",
 	},
+	// The path cap is an OS fact like the shell it runs: the rule is a
+	// table (Limit(goos)), and HostLimit is the one place that asks
+	// which OS this is.
+	"internal/foundation/platform/maxpath/maxpath.go": {
+		max: 1,
+		reason: "HostLimit: the Windows path cap the application " +
+			"install preflight refuses a package for, before the " +
+			"copy fails partway with an error that does not name it.",
+	},
 	// gh: the binary name and its config directory differ on Windows.
 	"internal/foundation/utils/gitx/gh/service.go": {
 		max: 2,
