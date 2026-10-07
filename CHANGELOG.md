@@ -400,6 +400,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Opening a SQLite database no longer fails because another handle for
+  the same file happened to be closing. The open path's pragmas ran with
+  `PRAGMA journal_mode=WAL` first and the busy timeout third, so the one
+  statement that takes the database's exclusive lock — opening the WAL,
+  which a switch to WAL mode does and so does the first access from a
+  fresh connection — was also the only statement in the process without
+  a retry. A closing connection holds that same lock while it unlinks
+  the `-wal` and `-shm` files, and this process reaches that state on its
+  own: a store handle outlives its last caller for as long as the
+  detached search-backfill walk of the previous open takes to unwind,
+  and a retiring Host releases its handle from another goroutine. The
+  observable symptom was an application page reading its conversations
+  right after the runtime was torn down and getting `PRAGMA
+  journal_mode=WAL: database is locked (5) (SQLITE_BUSY)` on a read that
+  should have waited a millisecond. The busy timeout is now the first
+  pragma applied, which is what it was always for; the order was
+  measured, not assumed — the failing sequence was a coin toss (5 of 8
+  runs) before the swap.
 - A deleted conversation stays deleted. Deleting one retires its id in
   the same transaction that removes its rows (`deleted_conversations`,
   workspace migration 021), and every writer that could recreate the

@@ -52,6 +52,22 @@ func OpenWithOptions(path string, opts OpenOptions) (*DB, error) {
 	}
 	db.SetMaxOpenConns(1)
 	pragmas := []string{
+		// The busy timeout comes first, so it covers the pragma after
+		// it — the one that can collide with a handle being closed.
+		// Opening the WAL (which is what switching to WAL mode does,
+		// and what a fresh connection to a WAL database does as well)
+		// takes the database's exclusive lock, and a connection being
+		// closed holds exactly that lock for the length of its
+		// sqlite3WalClose: it unlinks the -wal and -shm files under
+		// it. This process reaches that state routinely, because a
+		// store handle outlives its last caller by however long the
+		// detached search-backfill walk of the previous open takes to
+		// unwind, and a retiring Host's release does it in another
+		// goroutine. Without the timeout in front, the next open fails
+		// on the spot with "database is locked" — measured as a coin
+		// toss on an application page reading its conversations right
+		// after the runtime was torn down.
+		"PRAGMA busy_timeout=5000",
 		"PRAGMA journal_mode=WAL",
 		// WAL + NORMAL is the combination SQLite documents as safe:
 		// a commit still writes the WAL before it is acknowledged, so
@@ -62,7 +78,6 @@ func OpenWithOptions(path string, opts OpenOptions) (*DB, error) {
 		// the turn-end archive+memory transaction is exactly the write
 		// path that pays it on every turn.
 		"PRAGMA synchronous=NORMAL",
-		"PRAGMA busy_timeout=5000",
 	}
 	if opts.ForeignKeys {
 		pragmas = append(pragmas, "PRAGMA foreign_keys=ON")
