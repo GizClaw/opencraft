@@ -17,7 +17,6 @@ import (
 	goruntime "runtime"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -26,6 +25,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/semver"
 )
 
 // idRe constrains plugin/provider ids: lowercase start, then lowercase
@@ -936,77 +936,12 @@ func (s *Store) checkHostVersion(m *Manifest) error {
 	return nil
 }
 
-const (
-	maxVersionLen        = 64
-	maxVersionSegments   = 4
-	maxPrereleaseIDs     = 8
-	maxVersionIdentifier = 32
-)
-
-// parsedVersion is a semver-shaped dotted numeric version with an
-// optional prerelease. Build metadata is ignored for ordering.
-type parsedVersion struct {
-	core []int
-	pre  []string
-}
-
-// parseVersion accepts "1", "1.2", "1.2.3", optional "v" prefix, an
-// optional "-prerelease" suffix (dot-separated identifiers) and
-// "+build" metadata. Numeric segments must be non-negative integers
-// without leading zeros; prerelease identifiers are bounded.
-func parseVersion(v string) (parsedVersion, error) {
-	orig := v
-	v = strings.TrimSpace(v)
-	v = strings.TrimPrefix(v, "v")
-	if v == "" || len(v) > maxVersionLen {
-		return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
-	}
-	if i := strings.IndexByte(v, '+'); i >= 0 {
-		v = v[:i]
-	}
-	pre := ""
-	if i := strings.IndexByte(v, '-'); i >= 0 {
-		v, pre = v[:i], v[i+1:]
-	}
-	if v == "" {
-		return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
-	}
-	parts := strings.Split(v, ".")
-	if len(parts) > maxVersionSegments {
-		return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
-	}
-	core := make([]int, 0, len(parts))
-	for _, p := range parts {
-		if p == "" || (len(p) > 1 && p[0] == '0') {
-			return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
-		}
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
-		}
-		core = append(core, n)
-	}
-	var preIDs []string
-	if pre != "" {
-		ids := strings.Split(pre, ".")
-		if len(ids) > maxPrereleaseIDs {
-			return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
-		}
-		for _, id := range ids {
-			if id == "" || len(id) > maxVersionIdentifier {
-				return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
-			}
-			preIDs = append(preIDs, id)
-		}
-	}
-	return parsedVersion{core: core, pre: preIDs}, nil
-}
-
-// validateVersion checks that v is a supported version string.
-func validateVersion(v string) error {
-	_, err := parseVersion(v)
-	return err
-}
+// validateVersion checks that v is a supported version string. The
+// rule itself is foundation/utils/semver: the application registry
+// gates its manifest's minHostVersion on the same function, and two
+// spellings of "which version is newer" is exactly the drift a
+// minHostVersion check cannot afford.
+func validateVersion(v string) error { return semver.Valid(v) }
 
 // ValidateVersion is the exported validation entrypoint used by the
 // update checker before accepting a remote version.
@@ -1018,75 +953,11 @@ func ValidateVersion(v string) error { return validateVersion(v) }
 // sorts first when all identifiers are equal). Missing core segments
 // count as zero so "1" and "1.0.0" compare equal.
 func compareVersions(a, b string) (int, error) {
-	pa, err := parseVersion(a)
+	cmp, err := semver.Compare(a, b)
 	if err != nil {
 		return 0, fmt.Errorf("plugins: %w", err)
 	}
-	pb, err := parseVersion(b)
-	if err != nil {
-		return 0, fmt.Errorf("plugins: %w", err)
-	}
-	max := len(pa.core)
-	if len(pb.core) > max {
-		max = len(pb.core)
-	}
-	for i := 0; i < max; i++ {
-		var x, y int
-		if i < len(pa.core) {
-			x = pa.core[i]
-		}
-		if i < len(pb.core) {
-			y = pb.core[i]
-		}
-		if x < y {
-			return -1, nil
-		}
-		if x > y {
-			return 1, nil
-		}
-	}
-	if len(pa.pre) == 0 && len(pb.pre) == 0 {
-		return 0, nil
-	}
-	if len(pa.pre) == 0 {
-		return 1, nil
-	}
-	if len(pb.pre) == 0 {
-		return -1, nil
-	}
-	for i := 0; i < len(pa.pre) || i < len(pb.pre); i++ {
-		if i >= len(pa.pre) {
-			return -1, nil
-		}
-		if i >= len(pb.pre) {
-			return 1, nil
-		}
-		x := pa.pre[i]
-		y := pb.pre[i]
-		xn, xerr := strconv.Atoi(x)
-		yn, yerr := strconv.Atoi(y)
-		switch {
-		case xerr == nil && yerr == nil:
-			if xn < yn {
-				return -1, nil
-			}
-			if xn > yn {
-				return 1, nil
-			}
-		case xerr == nil:
-			return -1, nil // numeric identifiers sort below alphanumeric
-		case yerr == nil:
-			return 1, nil
-		default:
-			if x < y {
-				return -1, nil
-			}
-			if x > y {
-				return 1, nil
-			}
-		}
-	}
-	return 0, nil
+	return cmp, nil
 }
 
 // rollbackAvailable reports whether a rollback snapshot exists for id.

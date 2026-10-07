@@ -869,29 +869,22 @@ func TestRollbackRejectsTamperedBackup(t *testing.T) {
 	}
 }
 
-func TestCompareVersionsSemverPrecedence(t *testing.T) {
-	cases := []struct {
-		a, b string
-		want int
-	}{
-		{"1.0.0", "1.0.0", 0},
-		{"1", "1.0.0", 0},
-		{"1.0.1", "1.0.0", 1},
-		{"1.0.0", "1.0.0-beta", 1},
-		{"1.0.0-beta", "1.0.0-rc.1", -1},
-		{"1.0.0-alpha.2", "1.0.0-alpha.10", -1},
+// TestCompareVersionsRefusalNamesThePluginLayer pins what the registry
+// still owns after the rule moved to foundation/utils/semver: the
+// ordering itself is tested there, and a refused version has to read as
+// the plugin registry's verdict (its text is what a manifest author
+// sees next to the field that was wrong).
+func TestCompareVersionsRefusalNamesThePluginLayer(t *testing.T) {
+	got, err := compareVersions("1.0.1", "1.0.0")
+	if err != nil || got != 1 {
+		t.Fatalf("compareVersions = %d, %v; want 1, nil", got, err)
 	}
-	for _, tc := range cases {
-		got, err := compareVersions(tc.a, tc.b)
-		if err != nil {
-			t.Fatalf("compareVersions(%q, %q): %v", tc.a, tc.b, err)
-		}
-		if got != tc.want {
-			t.Errorf("compareVersions(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
-		}
-	}
-	if _, err := compareVersions("abc", "1.0.0"); err == nil {
+	_, err = compareVersions("abc", "1.0.0")
+	if err == nil {
 		t.Fatal("invalid version must be rejected")
+	}
+	if !strings.Contains(err.Error(), "plugins: invalid version") {
+		t.Errorf("error %q does not name the layer that refused it", err)
 	}
 }
 
