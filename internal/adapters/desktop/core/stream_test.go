@@ -16,6 +16,40 @@ type sinkEvent struct {
 	data any
 }
 
+// TestEmitStreamKeepsApplicationStreamsApart covers the scope half of
+// the coalescing key: an application and the assistant mint their
+// conversation ids from the same generator, so the same id can name a
+// workspace conversation and an application one. Their deltas are two
+// streams, and merging them would splice one model's answer into the
+// other surface's transcript.
+func TestEmitStreamKeepsApplicationStreamsApart(t *testing.T) {
+	shell, sink := newStreamShell(t)
+
+	app := textEvent("run-1", "app ")
+	app.AppID = "hello"
+	workspace := textEvent("run-1", "workspace")
+	shell.EmitStream(app)
+	shell.EmitStream(workspace)
+	shell.flushStreams()
+
+	got := sink.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("events = %d, want one per scope (2)", len(got))
+	}
+	if text := eventText(t, got[0]); text != "app " {
+		t.Fatalf("application event text = %q", text)
+	}
+	if text := eventText(t, got[1]); text != "workspace" {
+		t.Fatalf("workspace event text = %q", text)
+	}
+	if id := got[0].data.(map[string]any)["app_id"]; id != "hello" {
+		t.Fatalf("application event app_id = %v, want hello", id)
+	}
+	if id := got[1].data.(map[string]any)["app_id"]; id != "" {
+		t.Fatalf("workspace event app_id = %v, want empty", id)
+	}
+}
+
 // shellSink records every event a shell delivers, and signals arrivals
 // for the tests that exercise the timer path.
 type shellSink struct {

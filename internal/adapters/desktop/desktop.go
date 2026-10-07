@@ -148,31 +148,9 @@ func New(opts Options) (*Desktop, error) {
 	c.Runtime.Manager().SetUsageObserver(func(_ context.Context, usage inference.Usage) {
 		c.Shell.Emit(core.EventUsage, core.NewUsageEvent(usage))
 	})
-	// The pool applies this once per Host it assembles; the observers
-	// below stay quiet for a Host that no longer serves the window's
-	// workspace.
-	c.Runtime.Manager().SetHostConfigurator(func(h *host.Host) {
-		h.SetArtifactObserver(func(ctx context.Context, path string, data []byte) {
-			if h != c.ActiveHost() {
-				return
-			}
-			info, ok := agent.RunInfoFromContext(ctx)
-			if !ok || info.ConversationID == "" {
-				return
-			}
-			c.Shell.Emit(core.EventArtifact, map[string]any{
-				"conversation_id": info.ConversationID,
-				"run_id":          info.RunID,
-				"path":            path,
-				"bytes":           len(data),
-			})
-		})
-		h.SetSessionUpdated(func(_ context.Context, contextID string) {
-			if h == c.ActiveHost() {
-				c.Shell.Emit(core.EventSessionUpdated, map[string]string{"id": contextID})
-			}
-		})
-	})
+	// The pool applies this once per Host it hands out, workspace or
+	// application (see core.ConfigureHost).
+	c.Runtime.Manager().SetHostConfigurator(c.ConfigureHost)
 	c.SetWorkDir(c.InitialWorkDir(opts.WorkDir))
 	pipeline, err := initTelemetry(opts.DataDir)
 	if err != nil {
@@ -535,7 +513,7 @@ func (d *Desktop) runAutomation(
 	if current {
 		requestID, responseID := run.FinishedIDs()
 		end := core.NewTurnEnd(
-			runID, contextID, string(status), errText,
+			runID, "", contextID, string(status), errText,
 			requestID, responseID, output,
 			finishedAt, durationMs, res,
 		)

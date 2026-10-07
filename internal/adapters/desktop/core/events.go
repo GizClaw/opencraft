@@ -20,6 +20,10 @@ const AssistantAgentID = "assistant"
 
 // TurnEndEvent is the terminal turn event consumed by the frontend.
 type TurnEndEvent struct {
+	// AppID names the application whose page shows this turn, empty
+	// for a workspace turn. The application page routes on it, and an
+	// empty value is the assistant's own transcript.
+	AppID          string `json:"app_id,omitempty"`
 	RunID          string `json:"run_id"`
 	ConversationID string `json:"conversation_id,omitempty"`
 	// AgentID identifies the agent that produced the run. Desktop UI
@@ -112,12 +116,13 @@ type CompactionEvent struct {
 // (the wait was cut short) leaves the count null, which the UI treats
 // as unknown rather than as "everything made it".
 func NewTurnEnd(
-	runID, conversationID, status, errorText, requestID, responseID string,
+	runID, appID, conversationID, status, errorText, requestID, responseID string,
 	output string,
 	finishedAt time.Time, durationMs int64,
 	res *agent.Result,
 ) TurnEndEvent {
 	end := TurnEndEvent{
+		AppID:          appID,
 		RunID:          runID,
 		ConversationID: conversationID,
 		Status:         status,
@@ -136,6 +141,10 @@ func NewTurnEnd(
 
 // UsageEvent reports one inference usage report.
 type UsageEvent struct {
+	// AppID is the application the reported call belongs to, empty for
+	// a workspace (or a process-level generation such as a background
+	// title, which no application pays for).
+	AppID            string `json:"app_id,omitempty"`
 	Model            string `json:"model"`
 	InputTokens      int64  `json:"input_tokens"`
 	OutputTokens     int64  `json:"output_tokens"`
@@ -173,4 +182,29 @@ func NewUsageEvent(usage inference.Usage) UsageEvent {
 type StatusEvent struct {
 	Text string `json:"text"`
 	Busy bool   `json:"busy"`
+}
+
+// ArtifactEvent is one file a turn produced, as the strip that renders
+// it consumes it: the turn it belongs to and the path within the
+// workspace (or the application's private workspace).
+type ArtifactEvent struct {
+	// AppID names the application that produced the file, empty for a
+	// workspace turn. It is what keeps an application's artifacts out
+	// of the assistant's strip: the two scopes mint their own
+	// conversation ids, so the id alone is not the answer.
+	AppID          string `json:"app_id,omitempty"`
+	ConversationID string `json:"conversation_id"`
+	RunID          string `json:"run_id"`
+	Path           string `json:"path"`
+	Bytes          int    `json:"bytes"`
+}
+
+// SessionUpdatedEvent reports that one conversation changed outside its
+// live stream (a turn the host appended on its own, a title, an
+// import), so the surface showing it can reload.
+type SessionUpdatedEvent struct {
+	// AppID names the application whose page holds the conversation,
+	// empty for the assistant's own.
+	AppID string `json:"app_id,omitempty"`
+	ID    string `json:"id"`
 }

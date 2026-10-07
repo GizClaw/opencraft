@@ -42,6 +42,11 @@ const (
 	EventInferenceChanged = "inference_changed"
 	EventTelemetryChanged = "telemetry_changed"
 
+	// Applications.
+	EventAppChanged = "app_changed"
+	EventAppStatus  = "app_status"
+	EventAppEvent   = "app_event"
+
 	// Pet feed.
 	EventPetPacksChanged    = "pet:packs_changed"
 	EventPetSettingsChanged = "pet:settings_changed"

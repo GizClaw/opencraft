@@ -321,7 +321,7 @@ func (b *Conversation) waitTurn(
 	finishedAt, durationMs := run.FinishedTiming()
 	requestID, responseID := run.FinishedIDs()
 	end := core.NewTurnEnd(
-		run.RunID(), contextID, status, errText,
+		run.RunID(), "", contextID, status, errText,
 		requestID, responseID,
 		lastAssistantOutput(res), finishedAt, durationMs, res,
 	)

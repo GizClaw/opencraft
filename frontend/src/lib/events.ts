@@ -49,6 +49,11 @@ export const UIEventType = {
   inferenceChanged: 'inference_changed',
   telemetryChanged: 'telemetry_changed',
 
+  // Applications.
+  appChanged: 'app_changed',
+  appStatus: 'app_status',
+  appEvent: 'app_event',
+
   // Pet feed (the pet window's own events travel on PetStateChannel).
   petPacksChanged: 'pet:packs_changed',
   petSettingsChanged: 'pet:settings_changed',

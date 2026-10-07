@@ -87,8 +87,11 @@ func (c *Core) handlePluginSessionImport(
 	if err != nil {
 		return kraft.SessionImportResult{}, err
 	}
-	if h == c.ActiveHost() {
-		c.Shell.Emit(EventSessionUpdated, map[string]string{"id": id})
+	if c.hostSpeaks(h) {
+		c.Shell.Emit(EventSessionUpdated, SessionUpdatedEvent{
+			AppID: h.AppID(),
+			ID:    id,
+		})
 	}
 	return kraft.SessionImportResult{
 		ConversationID: id,

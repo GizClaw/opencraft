@@ -19,7 +19,7 @@ func TestTurnEndEventCarriesDurationMs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := NewTurnEnd(
-				"r-1", "s-1", "completed", "", "req-1", "resp-1", "done",
+				"r-1", "", "s-1", "completed", "", "req-1", "resp-1", "done",
 				now, tc.durationMs, &agent.Result{},
 			)
 			raw, err := json.Marshal(ev)
@@ -54,7 +54,7 @@ func TestTurnEndEventSteerPendingWireShape(t *testing.T) {
 	marshal := func(res *agent.Result) map[string]any {
 		t.Helper()
 		ev := NewTurnEnd(
-			"r-1", "s-1", "completed", "", "", "", "done", now, 10, res,
+			"r-1", "", "s-1", "completed", "", "", "", "done", now, 10, res,
 		)
 		raw, err := json.Marshal(ev)
 		if err != nil {

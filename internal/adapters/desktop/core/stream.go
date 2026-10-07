@@ -35,6 +35,12 @@ const (
 
 // StreamEvent is one stream delta on its way to the window.
 type StreamEvent struct {
+	// AppID names the application whose page shows this delta, empty
+	// for a workspace turn. It is part of the stream's identity: a
+	// workspace and an application mint the same "s-" conversation ids
+	// from the same generator, so two deltas of the same id are still
+	// two different streams and must never merge into one.
+	AppID          string
 	RunID          string
 	ConversationID string
 	AgentID        string
@@ -48,7 +54,7 @@ type StreamEvent struct {
 // keep the shell stricter than the window, never looser, so a merged
 // event stays one the window would have merged too.
 func (ev StreamEvent) streamKey() string {
-	return ev.ConversationID + "\x00" + ev.RunID + "\x00" +
+	return ev.AppID + "\x00" + ev.ConversationID + "\x00" + ev.RunID + "\x00" +
 		ev.AgentID + "\x00" + ev.ParentRunID
 }
 
@@ -219,6 +225,7 @@ func (s *Shell) deliverStream(ev StreamEvent, kind message.PartKind, text string
 	}
 	s.stream.eventsOut++
 	s.deliver(EventStream, map[string]any{
+		"app_id":          ev.AppID,
 		"run_id":          ev.RunID,
 		"conversation_id": ev.ConversationID,
 		"agent_id":        ev.AgentID,
