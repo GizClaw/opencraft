@@ -6,271 +6,225 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-07
+
 ### Upgrade notes
 
 - A kraft that calls the `secret.*` primitives must declare
-  `secrets:auth` in its manifest. The gate was documented since those
+  `secrets:auth` in its manifest: the gate was documented since those
   primitives landed and never checked, so a plugin could reach its
-  secret namespace without it; now the call is refused. Because an
-  inference profile's credential lives in that namespace,
-  `inference.upsert` needs the grant too — the charter's `inference.*`
-  row names the dependency. The refusal goes to the plugin as a
-  primitive error and to the host log once per (plugin, permission),
-  naming the missing grant; a plugin that reports it as a missing
-  credential is reporting the symptom.
-
+  secret namespace without it, and the call is refused now.
+  `inference.upsert` needs the grant too — a profile's credential
+  lives in that namespace, and the charter's `inference.*` row names
+  the dependency. Refusals reach the plugin as a primitive error and
+  the host log once per (plugin, permission), naming the missing
+  grant; a plugin that reports it as a missing credential is reporting
+  the symptom. (#223)
 ### Added
-
-- The plugin framework has a charter. `capabilities/plugins/charter.go`
-  holds two tables — what a plugin gives the host, and what it may call
-  on it — and every row answers the same five questions: who consumes
-  it, where its code runs, how the host learns it exists, which grant
-  authorizes it, when it comes alive and what removes it.
-  `charter_test.go` scans the code the rows point at (the `Manifest`
-  struct, `AllowedPermissions`, the frontend's service list, the kraft
-  primitive dispatch) and fails in both directions, so a new
-  permission, manifest field, service or primitive cannot land without
-  a row, and a row cannot outlive what it names. `charter.md` beside it
-  is the generated view. The charter's first job was to name the
-  places where code and comment
-  disagreed — the kraft `secret.*` primitives claiming a `secrets:auth`
-  gate nothing checked, and the manifest `contributes.*` segments that
-  were parsed and displayed by nothing — and both were settled in this
-  same release, below.
-- The plugin registry has a clock. `plugins.Store` moves a revision on
-  every successful mutation — enable/disable, install, update,
-  rollback, uninstall — and the charter's new clock table
-  (`FaceRefreshes`) writes down what each consumer does when it sees
-  the revision behind the one it last read from: the settings page
-  reloads and the desktop rebuilds the runtime once per revision,
-  coalescing a burst into one rebuild; the agent host re-scans on its
-  next read instead of waiting for a new assembly, so a change made
-  mid-turn — the agent's own install, whose runtime swap waits for the
-  drain — reaches the turn that made it; the mutation paths stop a
-  plugin's kraft before anything re-reads the manifest it was started
-  from; the platform face lands with the node row.
-  `charter_test.go` refuses a consumer without a clock row.
+- The plugin framework has a charter (`capabilities/plugins/charter.go`):
+  two tables — what a plugin gives the host, what it may call on it —
+  with rows naming the consumer, where the code runs, how the host
+  learns it exists, the grant that authorizes it and its lifecycle.
+  `charter_test.go` holds the code and the rows to each other in both
+  directions, and `charter.md` is the generated view. (#223)
+- The plugin registry has a clock: `plugins.Store` moves a revision on
+  every successful mutation (enable/disable, install, update, rollback,
+  uninstall), and the charter's new clock table (`FaceRefreshes`)
+  writes down what each consumer does when it sees a revision behind
+  the one it last read — the settings page reloads, the desktop
+  rebuilds the runtime once per revision, the agent host re-scans on
+  its next read, and a mutation stops a plugin's kraft before its
+  manifest is re-read. `charter_test.go` refuses a consumer without a
+  clock row. (#223)
 - The agent's plugin tool source follows that clock instead of its
   assembly: the kraft tools a registry describes are republished into
   the live tool registry on every revision, so a plugin installed,
-  updated or disabled while a turn runs is callable — or refused — from
-  that turn's next round, even though the runtime swap waits for the
-  drain. Tool definitions were snapshotted once per assembly before,
-  which made the agent's own install invisible to the turn that asked
-  for it until the turn after.
-- The registry as a whole is bounded too. The per-plugin limits (64
+  updated or disabled mid-turn is callable — or refused — from that
+  turn's next round, even though the runtime swap waits for the drain.
+  (#223)
+- The registry as a whole is bounded too: the per-plugin limits (64
   tools, 32 KiB input schema each, …) never bounded their sum, so the
-  model-facing tool budget was the only thing standing between a large
-  registry and the discovery pool: the agent source now publishes at
-  most 256 kraft tools and 512 KiB of definitions per assembly, keeps
-  what fits in registry order, and logs one line naming how many it
-  dropped. The charter's `agent.tool` bound records both.
-
+  agent source publishes at most 256 kraft tools and 512 KiB of
+  definitions per assembly, keeps what fits in registry order, and logs
+  how many it dropped; the charter's `agent.tool` bound records both.
+  (#223)
 ### Changed
-
 - Plugin registry mutations rebuild the runtime once per revision, not
   once per call: `Core.RefreshPluginRuntime` measures the runtime
-  against the registry's revision, serializes the rebuilds, and folds
-  everything that landed while one ran into a single trailing rebuild
-  — the agent-authored install and the settings page now share that
-  path instead of stacking two. A mutation that changes nothing (say,
-  enabling an already-enabled plugin) no longer moves the revision, so
-  it cannot rebuild anything. The trailing pass is bounded at two, so a
-  stream of mutations cannot turn one rebuild into a rebuild per
-  mutation — the next caller picks up whatever is left.
-- `PluginSummary.kraft` is filled on every read path, so `Plugin.List`
-  (the settings page) and the agent's `plugin_list` report a plugin's
-  declared kraft binary the way `Inspect`/`Install`/`Update` already
-  did.
-- The plugin permission vocabulary has one shape now: a contribution
-  grant is spelled `kind:provide`, so `tools:expose`,
+  against the registry's revision, serializes the rebuilds and folds
+  what landed meanwhile into one trailing rebuild, bounded at two — a
+  path the agent-authored install and the settings page share now; a
+  mutation that changes nothing no longer moves the revision. (#223)
+- `PluginSummary.kraft` is filled on every read path now, so
+  `Plugin.List` (the settings page) and the agent's `plugin_list`
+  report a plugin's declared kraft binary the way
+  `Inspect`/`Install`/`Update` already did. (#223)
+- The plugin permission vocabulary has one shape now: contribution
+  grants are spelled `kind:provide`, so `tools:expose`,
   `skills:contribute`, `mcp:contribute` and `hooks:register` became
   `tools:provide`, `skills:provide`, `mcp:provide` and `hooks:provide`.
-  A manifest that still writes an old spelling keeps loading — the
-  parser translates it — and each legacy input's fate, including the
-  two that depend on who is reading, is recorded in the charter's new
-  legacy-inputs table. Every reader (validation, the plugin summary,
-  the agent host, the kraft gate) sees the canonical names.
-- The kraft `secret.*` primitives are gated by `secrets:auth` now.
-  The package comment had claimed the gate since the primitives
-  landed, but nothing checked it — only the namespace prefix stood
-  between a plugin and the keyring. `handleSecret` checks the manifest
-  declaration the way `session.import` and `telemetry.configure`
-  already did, so a kraft whose manifest never declares `secrets:auth`
-  can no longer touch its secret namespace (the webview `ctx.secrets`
-  surface required the grant all along). A refusal is logged host-side
-  once per (plugin, permission) — see the upgrade note above.
+  Old spellings still load — the parser translates them, and the
+  charter's new legacy-inputs table records each one's fate — and
+  every reader sees the canonical names. (#223)
+- The kraft `secret.*` primitives are gated by `secrets:auth` now:
+  `handleSecret` checks the manifest declaration the way
+  `session.import` and `telemetry.configure` already did, and a
+  refusal is logged host-side once per (plugin, permission) — see the
+  upgrade note above. (#223)
 - The plugin manifest's subprocess section is called `kraft` now, not
-  `capability`: `plugin.json` declares `"kraft": { "binary": … }`, the
-  hosts package is `capabilities/plugins/kraft` (with `kraft.Kraft` /
-  `kraft.Manager`), the store exposes `Store.Kraft`, the desktop DTO
-  field is `kraft`, and the docs, the plugin-creator skill and
-  `plugins/hello` follow. The name is the machine half of a plugin —
-  the other half is the user-facing bundle — and it stops overloading
-  "capability", which in this repo already names host permissions and
-  agent-facing features. Manifests written by older builds keep
-  loading: the host still reads the old `capability` key. A manifest
-  declaring both spellings is read on the new key when the two sections
-  agree (the old one is logged once) and refused when they disagree;
-  offered to `Inspect`/`Install`/`Update`, the pair is refused either
-  way, so a new manifest carries one spelling.
-- The desktop and plugin wire calls the conversation id `conversation_id`
-  everywhere: in `NewChat`'s result, in the session-delete and bundle-import
-  DTOs, and in the plugin `session.import` result, which mirrors the desktop
-  wire. Until now those four hand-written DTOs spelled it `session_id` while
-  the store, the graph and the archive called it a conversation — one rename,
-  landed in one step (the two-release window the plan called for never got
-  released, so there is no alias to carry: a plugin written against an older
-  SDK and reading the id out of `session.import` has to read
-  `conversation_id`; the plugin templates in this repo never read that field).
-  The retired name is recorded in `foundation/wirevocab`, whose scan fails the
-  build when a hand-written struct tag uses it again. Three things are
-  deliberately out of its scope, each said where it lives: the generated
-  protobuf of the `execd` channel (process-to-process, not UI wire), the
-  `model_usage.session_id` SQL column (a migration, not a rename) and the
-  `session_id` argument websearch sends to Parallel's API (their vocabulary).
-- The desktop shell is on Wails v3.0.0-beta.26, from beta.17 — the bump lands
-  in the three places that pin it (go.mod, `@wailsio/runtime`, the CI and
-  release `wails3` installs). What it buys: `wails3 dev` now waits for the vite
-  server to answer HTTP 200 before starting the app, so the first paint no
-  longer races the dev server, and it stops the frontend when the app exits
-  instead of leaving an orphan holding the port; SIGINT/SIGTERM reach the
-  app's shutdown hooks instead of being a bare kill that skips them; Windows
+  `capability` — in `plugin.json` (`"kraft": { "binary": … }`), in the
+  `capabilities/plugins/kraft` package (`kraft.Kraft` /
+  `kraft.Manager`), in `Store.Kraft`, in the desktop DTO, and in the
+  docs and the plugin-creator skill. Manifests written by older builds
+  keep loading — the old `capability` key is still read — and one
+  declaring both spellings is read on the new key when the two
+  sections agree (the old one logged once) and refused when they
+  disagree; offered to `Inspect`/`Install`/`Update`, the pair is
+  refused either way. (#223)
+- The desktop and plugin wire calls the conversation id
+  `conversation_id` everywhere — `NewChat`'s result, the session-delete
+  and bundle-import DTOs, and the plugin `session.import` result —
+  where four hand-written DTOs had spelled it `session_id`. There is no
+  alias to carry (the planned two-release window never shipped), so a
+  plugin reading the id out of `session.import` has to read
+  `conversation_id`. The retired name is recorded in
+  `foundation/wirevocab`, whose scan fails the build when a
+  hand-written struct tag uses it again; out of its scope: the `execd`
+  protobuf (process-to-process, not UI wire), the
+  `model_usage.session_id` column (a migration, not a rename) and the
+  `session_id` argument websearch sends to Parallel's API (their
+  vocabulary). (#222)
+- The desktop shell is on Wails v3.0.0-beta.26, from beta.17 — in the
+  three places that pin it: go.mod, `@wailsio/runtime`, and the CI and
+  release `wails3` installs. `wails3 dev` waits for the vite server to
+  answer HTTP 200 before starting the app (no first-paint race) and
+  stops the frontend with the app instead of leaving an orphan holding
+  the port; SIGINT/SIGTERM reach the app's shutdown hooks; Windows
   recovers from a WebView2 process failure by rebuilding the controller
-  instead of leaving a permanently blank window, and no longer ships the
-  bundled WebView2Loader DLL; on Linux a closing window stops its in-flight
-  loads and single-instance handling is stricter. The darwin build now passes
-  `-tags private_mac_apis`, which is required for the pet window to be
-  transparent — without it the window silently stays opaque — at the cost of
-  reading one undocumented WebKit property.
-- Resource kinds are inventoried once (`foundation/resourcekind`) with a
-  spelling rule: a new kind is either `opencraft.`-prefixed lower_snake or
-  flowcraft's `<domain>.<Role>` — the `hook.prepare` / `hook.commit` /
-  `hook.observe` slots are their own style — and it has to be listed with an
-  owner and a note. Scans fail the build when a declaration and the list
-  disagree, when an embedded deployment document writes a kind that is
-  neither inventoried nor spellable, or when a spelling that follows neither
+  — no more permanently blank window, and no bundled WebView2Loader
+  DLL; on Linux a closing window stops its in-flight loads and
+  single-instance handling is stricter. The darwin build now passes
+  `-tags private_mac_apis`, required for the pet window to be
+  transparent — without it the window silently stays opaque — at the
+  cost of reading one undocumented WebKit property. (#219)
+- The file viewer opens any local file now, not just workspace files:
+  `ResolveTarget` and `ReadPreview` accept absolute paths, `~` and
+  `file://` targets (localhost, percent-encoded and drive forms), and a
+  target outside the workspace is labelled "external" — UI information
+  (breadcrumb, git marks, where a directory link goes), not a gate; the
+  workspace tree (`List`/`Search`) and the git diff stay confined. The
+  system hand-off (OpenPath, Reveal, Open With) takes any local path,
+  and outside video/PDF previews stream from a new absolute-file route
+  on the loopback media server — one opaque id per file (a repeated
+  path reuses its URL; 256 files per launch, FIFO; an evicted id 404s
+  into the system-app fallback), so the URL never carries the path. The
+  webview now holds an arbitrary-path read primitive a clicked link can
+  aim anywhere — a deliberate widening, not an accident, and not
+  reachable from plugin UIs. (#220)
+- Resource kinds are inventoried once (`foundation/resourcekind`) with
+  a spelling rule — `opencraft.`-prefixed lower_snake, or flowcraft's
+  `<domain>.<Role>`, the `hook.prepare` / `hook.commit` / `hook.observe`
+  slots apart — and each entry needs an owner and a note. Scans fail
+  the build when a declaration and the list disagree, when an
+  embedded deployment document writes a kind that is neither
+  inventoried nor spellable, or when a spelling that follows neither
   style joins `memory` (the one legacy entry, on a budget of one).
-- A turn is not cut off at two hours any more. The assistant's
+  (#222)
+- A turn is not cut off at two hours any more: the assistant's
   `policy.run_timeout` and `build.timeout` are gone — from the embedded
-  `agents.yaml` and from the definition every dynamic-subagent
-  registration writes — so a turn ends when its work does, when the
-  user stops it or sends a new message, or when a step fails; never
-  when a wall clock runs out. The two keys were bounding the same
-  window all along: nothing in this repository installs a Referee, so
-  a revise attempt — the one thing `build.timeout` (per `Execute`) did
-  not cover — never happens. The per-call bounds stay: a tool dispatch
-  is still bounded by the tool middleware's timeout, and a user layer
-  that sets either key is still honored by flowcraft.
-- A YOLO conversation answers its own confirmations. The fixed yes/no
-  cards the shared gate raises — skill, plugin, subagent and
-  automation changes, and long-term memory writes — used to park the
-  turn on an interaction card even in the one mode whose point is not
-  asking; the desktop prompt backend now answers them yes when the
-  run's conversation is in YOLO mode, and the card never renders. The
-  reply carries the value a click on Yes produces, and an
-  auto-answered card is logged once with its conversation, run and
-  title. Nothing else changes: the predicate matches one prompt
-  source in one shape (a kind-confirm spec offering the Yes option),
-  so `ask_user`, `request_permissions` and the sandbox prompts never
-  reach it; automation runs (`interact.Auto`) and subagent turns still
-  fail closed; and a run whose Host or conversation mode cannot be
-  read falls back to the card — the check is fail-closed.
-
+  `agents.yaml` and from every dynamic-subagent registration — so a
+  turn ends when its work does, when the user stops it or sends a new
+  message, or when a step fails, never when a wall clock runs out. The
+  two keys bounded the same window all along (nothing here installs a
+  Referee, so a revise attempt never happens). A tool dispatch stays
+  bounded by the tool middleware's timeout, and flowcraft still honors
+  a user layer that sets either key. (#225)
+- A YOLO conversation answers its own confirmations: the fixed yes/no
+  cards the shared gate raises — skill, plugin, subagent and automation
+  changes, and long-term memory writes — parked the turn on an
+  interaction card even in the one mode whose point is not asking. The
+  desktop prompt backend answers them yes now, with the value a click
+  on Yes produces, and logs an auto-answered card once with its
+  conversation, run and title. The predicate matches one prompt source
+  in one shape (a kind-confirm spec offering the Yes option), so
+  `ask_user`, `request_permissions` and the sandbox prompts never reach
+  it; automation runs (`interact.Auto`) and subagent turns still fail
+  closed; and a run whose Host or conversation mode cannot be read
+  falls back to the card — the check is fail-closed. (#225)
 - flowcraft core moves to v0.4.9 (`driver/openai` v0.3.4) with the
-  OpenTelemetry modules at v1.45.0 / v0.21.0, clearing GO-2026-6505 —
-  endpoint URLs in the OTLP trace exporter's info logs — and
-  GO-2026-6615 — the `sdk/log` batch processor busy-spinning when its
-  export buffer is full. The database published both against the
-  versions core v0.4.8 resolved to; the release's log API is
-  `attribute.KeyValue` end to end, so the telemetry facade, the
-  graph-warning filter and the test log capture build their records
-  through it — the keys and values they carry are unchanged.
-
+  OpenTelemetry modules at v1.45.0 / v0.21.0, clearing GO-2026-6505
+  (endpoint URLs in the OTLP trace exporter's info logs) and
+  GO-2026-6615 (`sdk/log`'s batch processor busy-spinning on a full
+  export buffer). The log API is `attribute.KeyValue` end to end — the
+  telemetry facade, the graph-warning filter and the test log capture
+  build their records through it — keys and values unchanged. (#225)
 ### Removed
-
 - Three plugin permissions are retired: `events:subscribe`,
-  `commands:register` and `statusbar:contribute` gated nothing any
-  more (the Cordis event bus and the commands/status-bar registrars are
-  always available to every plugin). A manifest that still declares
-  one keeps loading: `CheckPermissions` is fail-closed, and rejecting a
-  manifest over a name that gates nothing would kill the plugin's
-  working half; the parser drops the name and logs it once instead.
-  `plugins/hello` no longer declares any of them (nor the old
-  `skills:contribute`). `pets:contribute` was still read then — it
-  gated only the inert `contributes.pets` segment — and was retired
-  with that segment in the manifest cleanup below.
+  `commands:register` and `statusbar:contribute` gated nothing any more
+  (the event bus and the commands/status-bar registrars are always
+  available to every plugin). A manifest that still declares one keeps
+  loading — the parser drops the name and logs it once, because
+  `CheckPermissions` is fail-closed and rejecting a manifest over a
+  dead name would kill the plugin's working half. `plugins/hello` no
+  longer declares any of them (nor the old `skills:contribute`), and
+  `pets:contribute` went with the manifest cleanup below. (#223)
 - The plugin manifest carries no UI contributions any more:
   `contributes.settingsPanels`, `contributes.sidebarEntries` and
-  `contributes.pets` were parsed, validated and reported in the plugin
-  summary while nothing consumed them. Panels, sidebar entries and pet
-  packs register from the bundle (`ctx.settingsPanels.add`,
-  `ctx.sidebarEntries.add`, `ctx.pets.add`), the only source that
-  cannot drift from what renders. The `Manifest` field, the summary's
-  `panels` / `entries` wire fields and the pet count bound are gone; a
-  manifest that still writes the segment keeps loading, with the
-  segment dropped and one log line for a non-empty one. With its last
-  reader gone, `pets:contribute` was retired like the other dead names
-  — accepted, dropped, logged once — and the charter's sunset list,
-  which held it while it was still read, had no members left and went
-  with it. `plugins/hello` and the plugin-creator skill follow.
-- The `setup:docker` task is gone. It built the `wails-cross` image from
-  `build/docker/Dockerfile.cross`, a file this repo never carried, so it could
-  only ever fail; the per-platform `build:docker` cross tasks stay and now say
-  where the image has to come from.
-- `build:server`, `run:server`, `build:docker` and `run:docker` are gone too.
-  `server` is a real Wails v3 build tag — it swaps the native shell for an HTTP
-  server and browser windows — but this repo never wired it up: no
-  `ServerOptions` (no port or bind address to configure), no CI job, no docs,
-  and the desktop shell (tray, pet window, native notifications) has never been
-  run that way. `build:docker` additionally required a
-  `build/docker/Dockerfile.server` that has never existed, and pointed at
-  `wails3 update build-assets`, which overwrites the whole `build/` tree. The
-  per-platform cross-compile `build:docker` (the `wails-cross` image) is
-  untouched.
-
+  `contributes.pets` were parsed, validated and reported while nothing
+  consumed them — panels, sidebar entries and pet packs register from
+  the bundle (`ctx.settingsPanels.add`, `ctx.sidebarEntries.add`,
+  `ctx.pets.add`). The manifest field, the summary's `panels` /
+  `entries` wire fields and the pet count bound are gone; a manifest
+  that still writes the segment keeps loading, dropped with one log
+  line when non-empty. `pets:contribute` and the charter's sunset list
+  went with it. (#223)
+- The `setup:docker` task is gone: it built the `wails-cross` image
+  from `build/docker/Dockerfile.cross`, a file this repo never carried,
+  so it could only ever fail. (#219)
+- `build:server`, `run:server`, `build:docker` and `run:docker` are
+  gone too: `server` is a real Wails v3 build tag, but this repo never
+  wired it up (no `ServerOptions`, no CI job, no docs), and
+  `build:docker` additionally required a `build/docker/Dockerfile.server`
+  that never existed and pointed at `wails3 update build-assets`, which
+  overwrites the whole `build/` tree. The per-platform cross-compile
+  `build:docker` (the `wails-cross` image) stays and now says where the
+  image has to come from. (#219)
 ### Fixed
-
-- A deleted conversation stays deleted. Deleting one retires its id in
+- A deleted conversation stays deleted: deleting one retires its id in
   the same transaction that removes its rows (`deleted_conversations`,
-  workspace migration 021), and every writer that could recreate the
-  conversation refuses a retired id: the transcript append and the
-  start-title seed, the metadata upsert, the conversation-state
-  documents, session settings, and memory fold nodes. The writers that
-  outlive a turn are the ones that bit — a detached review, a fold
-  condensing in the background, a delegation note reflowing after the
-  subagent finished — and they are the reason the in-process checks
-  (auto title, delegation reflow) are a fast path in front of the store
-  rather than the fix itself: "deleted" now holds across restarts, for
-  writers this process never sees. A one-way migration step (022)
-  removes the zero-turn, usage-only `(empty)` rows older builds had
-  already resurrected and retires their ids, so an upgrade does not ask
-  for a second delete.
-- The usage writers no longer mint the conversation they write to.
-  `AddUsage` and `RecordUsageIfEmpty` (and `RecordUsage`, the verbatim
-  overwrite with no production caller) used to read the row and, when
-  the read missed, create it and write the totals back through an
-  upsert — so a usage call landing after the delete rebuilt the row it
-  was writing to as an `(empty)` entry that the sidebar kept listing.
-  They now persist through `state.UpdateConversationUsage`, an UPDATE
-  that never inserts (`conversations.usage_json` is a cache on a row the
-  transcript owns); a row that is gone when the write lands is a skip,
-  not a rebuild. `RecordUsageIfEmpty` reports which of the three
-  outcomes it was — written, already accounted for, or the row was gone
-  — so an import whose conversation was deleted while it settled still
-  forwards the bundle's spent tokens to the user-level ledger instead of
-  dropping them or counting them twice.
+  workspace migration 021), and every writer that could recreate it
+  refuses a retired id — the transcript append and the start-title
+  seed, the metadata upsert, the conversation-state documents, session
+  settings, memory fold nodes. The writers that outlive a turn — a
+  detached review, a fold condensing in the background, a delegation
+  note reflowing after its subagent finished — were the ones that bit,
+  which is why the in-process checks ahead of the store are a fast
+  path, not the fix: "deleted" holds across restarts, for writers this
+  process never sees. A one-way migration step (022) removes the
+  zero-turn, usage-only `(empty)` rows older builds had resurrected and
+  retires their ids, so an upgrade does not ask for a second delete.
+  (#218)
+- The usage writers no longer mint the conversation they write to:
+  `AddUsage` and `RecordUsageIfEmpty` (and `RecordUsage`) used to create
+  the row when their read missed, so a usage call landing after the
+  delete rebuilt the row as an `(empty)` entry the sidebar kept
+  listing. They go through
+  `state.UpdateConversationUsage` now — an UPDATE that never inserts
+  (`conversations.usage_json` is a cache on a row the transcript owns),
+  where a miss is a skip, not a rebuild. `RecordUsageIfEmpty` reports
+  which of the three outcomes it was (written, already accounted for,
+  gone), so an import whose conversation was deleted while it settled
+  still forwards the bundle's spent tokens to the user-level ledger
+  instead of dropping or double-counting them. (#218)
 - The repeat delete purges whatever came back under a deleted id and
-  still reports success — the caller asked for "this conversation is
-  gone", and the rows were already gone the first time. A listing that
-  raced the delete is filtered by the same tombstone, so the sidebar
-  cannot show an entry that every path into it refuses. (#218)
+  still reports success, and a listing that raced the delete is
+  filtered by the same tombstone — the sidebar cannot show an entry
+  every path into it refuses. (#218)
 - The diagnostics panel reports the sandbox backend the child actually
-  runs. On Windows it said `local` — "no OS sandbox on this platform;
-  commands run unconfined" — while confined commands ran under the
-  job-object backend; the panel, the parent-side runner and the execd child
-  now read one table (`capabilities/sandbox/backend.go`), so the name, the
-  availability note and the runner itself cannot disagree.
+  runs: on Windows it said `local` ("no OS sandbox on this platform;
+  commands run unconfined") while confined commands ran under the
+  job-object backend; the panel, the parent-side runner and the execd
+  child now read one table (`capabilities/sandbox/backend.go`). (#222)
 
 ## [0.6.0] - 2026-09-25
 
