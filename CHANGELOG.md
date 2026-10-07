@@ -102,6 +102,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declare it. The two are checked against each other, so a new factory
   fails a test until someone decides, instead of becoming an execution
   surface an application could deploy.
+- The application registry installs and reads applications.
+  `capabilities/apps.Store` copies a package directory into
+  `<appHome>/apps/<id>/content` — a folder whose id comes from its own
+  manifest, the plugin rule — and answers with what an assembly needs
+  (the content root, the layers in manifest order, the entry agent), a
+  list for the page, and the enable/disable choices keyed by absence:
+  an installed application is enabled until a state entry says
+  otherwise. The content root carries an extra `content/` level because
+  the default launch has `AppHome == DataDir`: without it the package
+  and the state root (`<dataDir>/apps/<id>`: sessions, private
+  workspace, cache, audit, exports) would be the same directory, an
+  install could overwrite a running session and an uninstall would take
+  the data with it. Uninstall removes the content only; `purge` is what
+  reaches the state root, and a built-in application can only be
+  disabled (its content is a read-only bundle beside the executable,
+  `<bundle>/<id>/content`, so the same package installs either way). A
+  user install of a built-in id shadows it. `ParseManifest` refuses a
+  manifest that is not one (`app: v1`), an id it cannot spell, a
+  non-semver version or `minHostVersion`, a layer that is absolute,
+  walks out of the content root, is a dotfile or is the manifest itself,
+  a frontend entry that is not an ES module, and a reserved
+  `permissions` list — naming the field, before anything is copied. The
+  package is then validated twice over: the manifest as written, and a
+  two-pass preflight over the staged copy (the layers as declared, then
+  the merged document), so a refused install leaves nothing behind, not
+  even its staging directory. `capabilities/apps.Validate` is the same
+  preflight the enable path runs, over the application as it sits on
+  disk: reserved keys and restricted kinds by layer, the entry agent and
+  its graph, the dependency targets, the registry's inference keys, and
+  every `{file:}` reference inside the merged settings — followed into
+  the documents they name, refused when one leaves the content root,
+  names a directory, a symbolic link or a file that is not there.
+  `config.AppStateRoot` names that state root without creating it, which
+  is what lets the uninstall path remove it.
 
 ### Changed
 

@@ -39,7 +39,7 @@ func AppendInferenceOverlay(dst *deploy.Document, src deploy.Document) bool {
 	}
 	moved := false
 	for key, res := range src.Resources {
-		if !ownsInferenceKey(key) {
+		if !OwnsInferenceKey(key) {
 			continue
 		}
 		if dst.Resources == nil {
@@ -101,11 +101,17 @@ func UserInferenceOverlay(configDir string) ([]byte, bool, error) {
 	return blob, true, nil
 }
 
-// ownsInferenceKey reports whether one resource key belongs to the
+// OwnsInferenceKey reports whether one resource key belongs to the
 // inference wiring the settings page generates: the router policy and
 // the infer assembly (managedResourceKeys, the set the write side
 // replaces wholesale) plus every provider.* declaration (the write side
 // drops and re-emits the whole prefix).
-func ownsInferenceKey(key string) bool {
+//
+// It is exported because the application registry asks the same
+// question when it refuses an application layer that declares the
+// user's inference itself: the keys the host generates are exactly the
+// keys an application may not own, and the answer has to come from the
+// write side's set rather than a second list.
+func OwnsInferenceKey(key string) bool {
 	return managedResourceKeys()[key] || strings.HasPrefix(key, providerKeyPrefix)
 }

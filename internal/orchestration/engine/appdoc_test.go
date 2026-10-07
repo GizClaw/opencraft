@@ -419,12 +419,7 @@ func TestLoadAppDocumentRefusesLayersOutsideTheContentRoot(t *testing.T) {
 // host's, and an application layer may not redeclare them).
 func TestAppContractLayerStaysMinimal(t *testing.T) {
 	ctx := context.Background()
-	doc, _, err := deploy.LoadLayers(ctx, []deploy.Layer{{
-		Priority: 0,
-		Name:     "contract",
-		Source:   resource.Source{Embed: appContractAsset},
-		Embed:    config.FS(),
-	}})
+	doc, _, err := deploy.LoadLayers(ctx, []deploy.Layer{config.AppContractLayer()})
 	if err != nil {
 		t.Fatalf("load contract layer: %v", err)
 	}

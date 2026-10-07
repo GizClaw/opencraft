@@ -1,13 +1,6 @@
-// Package apps is the application platform's registry and policy: the
-// installed applications themselves (content root, manifest, layers),
-// and the decisions the host makes before one of their layers is ever
-// assembled.
-//
-// This file owns the static half of that policy: which resource kinds an
-// application layer may declare. Everything else about an application —
-// installing it, normalizing a foreign document into a layer, the
-// two-pass validation pipeline — arrives with the store, and it asks
-// this table rather than re-listing kinds.
+// This file owns the static half of the application policy: which
+// resource kinds an application layer may declare. The rest of the
+// package asks this table rather than re-listing kinds.
 package apps
 
 // Verdict is the answer for one resource kind. A denial always carries a
@@ -53,13 +46,20 @@ type kindRule struct {
 // an execution surface an application could reach by declaration, so the
 // coverage test fails instead of defaulting.
 //
-// Shape of the policy (the app platform plan, §2.5): an application gets
-// its own event bus, workspace, session store, artifact sink, transcript
-// buffer and script runtime — and nothing else. No tools, no sandbox, no
-// skills/plugins/MCP, no worldstate, no delegation, no automations, no
-// user-level stores. Inference is *referenced* through the host-generated
-// overlay but never declared by a layer; credentials live in the shared
-// keyring view the contract layer declares.
+// Shape of the policy (the app platform plan, §2.5): an application
+// layer declares *agents*, not infrastructure. The contract layer
+// already builds the application's event bus, workspace, session store,
+// artifact sink, transcript buffer, script runtime and credential view,
+// so every one of those kinds is refused here as well as under the
+// reserved key that carries it: a layer that could declare a second
+// `session.Store` could write a second history, and the reserved-key
+// rule alone would not stop it from naming it something else. What is
+// left is the agent surface itself — an engine per agent and the script
+// runtime it runs in — plus the reference-only surfaces named below.
+//
+// Inference is *referenced* through the host-generated overlay but never
+// declared by a layer; credentials live in the shared keyring view the
+// contract layer declares.
 var kindTable = []kindRule{
 	// The agent surface an application actually uses.
 	{kind: "agent.Engine",
@@ -69,23 +69,23 @@ var kindTable = []kindRule{
 	{kind: "agent.ScriptBindings",
 		reason: "the graph's script globals are the host's to set, not an application layer's"},
 
-	// The contract layer's own kinds: the application may name them
-	// (the contract layer declares them already), which keeps a layer
-	// that repeats one from being rejected for a kind it needs.
+	// The contract layer's own kinds. A layer uses the resources; it
+	// does not build a second one of any of them (and the reserved-key
+	// rule refuses the key as well).
 	{kind: "event.Bus",
-		allowed: true},
+		reason: "the contract layer owns the application's event bus"},
 	{kind: "memory",
-		allowed: true},
+		reason: "the contract layer owns the transcript buffer; an application gets one history, not a second store"},
 	{kind: "memory.UsageObserver",
-		allowed: true},
+		reason: "the contract layer declares the usage observer"},
 	{kind: "opencraft.artifacts",
-		allowed: true},
+		reason: "the contract layer owns the artifact sink"},
 	{kind: "opencraft.workspace",
-		allowed: true},
+		reason: "the contract layer owns the application's private workspace"},
 	{kind: "session.Store",
-		allowed: true},
+		reason: "the contract layer owns the application's session store; a second one would be a second history"},
 	{kind: "workspace.Workspace",
-		allowed: true},
+		reason: "an application has one private workspace, declared by the contract layer"},
 
 	// Inference is the host's: the overlay carries the user's router,
 	// infer assembly and provider declarations, and a layer may only

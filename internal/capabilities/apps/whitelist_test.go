@@ -6,25 +6,17 @@ import (
 	"testing"
 )
 
-// TestOnlyTheContractLayersSurfaceIsAllowed pins the v1 policy in the
-// direction review cares about: the kinds an application layer may
-// declare are exactly the ones the contract layer itself ships, plus
-// the second workspace impl. Granting a layer a kind the host never
-// gave an application is a policy change, and it has to show up here,
-// not only in the row it edited — a denial that disappears quietly is
-// the whole failure mode this table exists to prevent. (The reverse is
-// an error too: a kind the contract layer needs cannot be denied.)
+// TestOnlyTheAgentSurfaceIsAllowed pins the v1 policy in the direction
+// review cares about: an application layer may declare the agent surface
+// itself, and nothing that would build a second instance of what the
+// contract layer already provides. Granting a layer a kind the host
+// never gave an application is a policy change, and it has to show up
+// here, not only in the row it edited — a denial that disappears quietly
+// is the whole failure mode this table exists to prevent.
 func TestOnlyTheContractLayersSurfaceIsAllowed(t *testing.T) {
 	want := []string{
 		"agent.Engine",
 		"agent.ScriptRuntime",
-		"event.Bus",
-		"memory",
-		"memory.UsageObserver",
-		"opencraft.artifacts",
-		"opencraft.workspace",
-		"session.Store",
-		"workspace.Workspace",
 	}
 	got := make([]string, 0, len(want))
 	for _, rule := range kindTable {
@@ -34,10 +26,12 @@ func TestOnlyTheContractLayersSurfaceIsAllowed(t *testing.T) {
 	}
 	sort.Strings(got)
 	if !slices.Equal(got, want) {
-		t.Errorf("allowed kinds = %v, want exactly %v\n"+
-			"an application layer gets the contract layer's own surface and nothing else: "+
-			"a new allowance is a policy decision (the app platform plan, \u00a72.5), "+
-			"not a table edit", got, want)
+		t.Errorf("allowed kinds = %v, want exactly %v — an application "+
+			"layer declares agents, not infrastructure: every store, bus "+
+			"and workspace the contract layer already provides is refused "+
+			"as a kind too, so a layer cannot build a second history under "+
+			"another key. A new allowance is a policy decision (the app "+
+			"platform plan, §2.5), not a table edit", got, want)
 	}
 }
 

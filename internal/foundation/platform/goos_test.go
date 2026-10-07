@@ -60,12 +60,19 @@ var goosAllowlist = map[string]goosSite{
 			"fact (§4 row 5); the rules themselves live in the platform " +
 			"package.",
 	},
-	// Plugin packaging is OS-shaped: bundle layout and codesigning.
+	// Bundle packaging is OS-shaped: bundle layout and codesigning.
 	"internal/capabilities/plugins/kraft/kraft.go": {
 		max: 1,
 		reason: "BuiltinPluginRoot: a macOS .app keeps plugins under " +
 			"Contents/Resources/plugins, every other platform keeps " +
 			"plugins/ next to the binary (§4 row '插件 bundle 根').",
+	},
+	"internal/capabilities/apps/store.go": {
+		max: 1,
+		reason: "BuiltinAppRoot: a macOS .app keeps bundled applications " +
+			"under Contents/Resources/apps, every other platform keeps " +
+			"apps/ next to the binary — the plugin bundle root, one " +
+			"directory over.",
 	},
 	"internal/capabilities/plugins/plugin.go": {
 		max: 1,

@@ -22,6 +22,10 @@ import (
 // leading dot ("..", ".ssh") and a separator are not spellable at all.
 var appIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
+// appsDirName is the one spelling of the directory under a data dir (or
+// an app home) that holds installed applications: <root>/apps/<id>.
+const appsDirName = "apps"
+
 // ValidAppID reports whether id is a well-formed application id: the
 // name a manifest declares, the name of the install directory under the
 // content root, and the last segment of the state root all at once.
@@ -35,7 +39,7 @@ func AppsRoot(dataDir string) (string, error) {
 	if strings.TrimSpace(dataDir) == "" {
 		return "", fmt.Errorf("config: data dir is required")
 	}
-	dir := filepath.Join(dataDir, "apps")
+	dir := filepath.Join(dataDir, appsDirName)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("config: create apps root: %w", err)
 	}
@@ -54,16 +58,15 @@ func AppsRoot(dataDir string) (string, error) {
 // hash. The content root the layers were installed from is not part of
 // this layout: nothing here may write to it.
 func AppLayout(dataDir, id string) (WorkspaceLayout, error) {
-	if strings.TrimSpace(dataDir) == "" {
-		return WorkspaceLayout{}, fmt.Errorf("config: data dir is required")
-	}
-	if !ValidAppID(id) {
-		return WorkspaceLayout{}, fmt.Errorf(
-			"config: application id %q: want %s", id, appIDRe)
-	}
-	root, err := appStateRoot(dataDir, id)
+	root, err := AppStateRoot(dataDir, id)
 	if err != nil {
 		return WorkspaceLayout{}, err
+	}
+	if _, err := AppsRoot(dataDir); err != nil {
+		return WorkspaceLayout{}, err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return WorkspaceLayout{}, fmt.Errorf("config: create application root: %w", err)
 	}
 	return WorkspaceLayout{
 		DataDir:       dataDir,
@@ -79,17 +82,19 @@ func AppLayout(dataDir, id string) (WorkspaceLayout, error) {
 	}, nil
 }
 
-// appStateRoot creates and returns <dataDir>/apps/<id>.
-func appStateRoot(dataDir, id string) (string, error) {
-	apps, err := AppsRoot(dataDir)
-	if err != nil {
-		return "", err
+// AppStateRoot returns <dataDir>/apps/<id> without creating anything.
+// AppLayout is the creating caller; a reader that only needs to name
+// (or remove) an installed application's state — the registry's
+// uninstall path — asks for the path and touches nothing.
+func AppStateRoot(dataDir, id string) (string, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return "", fmt.Errorf("config: data dir is required")
 	}
-	root := filepath.Join(apps, id)
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", fmt.Errorf("config: create application root: %w", err)
+	if !ValidAppID(id) {
+		return "", fmt.Errorf(
+			"config: application id %q: want %s", id, appIDRe)
 	}
-	return root, nil
+	return filepath.Join(dataDir, appsDirName, id), nil
 }
 
 // ownsWorkDir reports whether WorkDir is a directory this layout owns

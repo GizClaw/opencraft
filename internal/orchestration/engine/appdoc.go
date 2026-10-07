@@ -15,18 +15,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
-// The application contract layer and the priority band its layers sit
-// in. The contract layer is the complete document (version and all), so
-// it has to be first; the application's layers follow in manifest
-// order; the inference overlay goes above every one of them, whatever
-// the manifest declares.
-const (
-	appContractAsset = "assets/app.yaml"
-
-	appLayerPriorityBase   = 10
-	appOverlayPriorityBase = 20
-)
-
 // AppDoc names the deployment content of one installed application: the
 // directory its layers were installed into, and the layers themselves in
 // ascending priority order. It is deliberately a plain value: the
@@ -68,12 +56,13 @@ func LoadAppDocument(
 		return deploy.Document{}, fmt.Errorf(
 			"engine: %s declares no deployment layers", appLabel(app))
 	}
-	layers := []deploy.Layer{{
-		Priority: 0,
-		Name:     "contract",
-		Source:   resource.Source{Embed: appContractAsset},
-		Embed:    config.FS(),
-	}}
+	// The contract layer is the complete document (version and all), so
+	// it has to be first; the application's layers follow it in manifest
+	// order; the inference overlay goes above every one of them, whatever
+	// the manifest declares. The layer and both bands come from
+	// foundation/config, which is also where the registry's preflight
+	// merges the same contract — see AppContractLayer.
+	layers := []deploy.Layer{config.AppContractLayer()}
 	for index, name := range app.Layers {
 		// A manifest's layer list is validated on import, but this is
 		// the join onto the content root: a layer name that could walk
@@ -85,7 +74,7 @@ func LoadAppDocument(
 				appLabel(app), name)
 		}
 		layers = append(layers, deploy.Layer{
-			Priority: appLayerPriorityBase + index,
+			Priority: config.AppLayerPriorityBase + index,
 			Name:     name,
 			Source:   resource.Source{File: name},
 			BaseDir:  app.ContentDir,
@@ -97,7 +86,7 @@ func LoadAppDocument(
 	}
 	if ok {
 		layers = append(layers, deploy.Layer{
-			Priority: appOverlayPriorityBase + len(app.Layers),
+			Priority: config.AppOverlayPriorityBase + len(app.Layers),
 			Name:     "inference",
 			Source:   resource.Source{Inline: overlay},
 		})
