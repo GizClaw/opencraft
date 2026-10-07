@@ -207,6 +207,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest's own references (relative, inside, a regular file, not a
   symbolic link — including a directory on the way that is one, which is
   the case a lexical check misses), with a 32 MiB ceiling.
+- The application page has its Go half. `bindings/app.go` is the App
+  service: the registry (`List`, `Inspect`, `Install`, `InstallZip`,
+  `SetEnabled`, `Uninstall`), one application's runtime state
+  (`Status`, `Reload`) and the reads the page does (`Asset`, `ListFiles`,
+  `ReadFile`, `Reveal`). Every method answers for one installed
+  application rather than for the window — an application owns its own
+  Host, state root and conversation ids — and a launch without an app
+  home refuses every call as the kind it cannot resolve rather than
+  guessing a root. Enabling is where "installed but broken" is caught:
+  the preflight runs over the application as it sits on disk now, then
+  the host is really assembled once, so a package that cannot serve a
+  turn fails at the card with the reason instead of at the first
+  message. A failed enable — either pass — writes the disabled state,
+  because an install arrives enabled and the flag has to be turned back
+  off; the page hears about it, and the page hears about every registry
+  change (`app_changed`, naming the application) so a card re-reads what
+  it renders. `Reload` is the update, rollback and development-loop
+  path: the retired generation drains first when it has work in flight,
+  and the successor is assembled when the drain ends — announced as
+  `app_status`, which is a runtime coming back rather than a registry
+  change. The pool's replacement policy now speaks for both scopes:
+  `Wanted` answers per target kind (a workspace while the window is on
+  it, an application while the registry still has it enabled and
+  installed), and `Installed` announces an application as `app_status`
+  instead of `ready`, which is the window's own view and the wrong
+  deployment. `App.Status` separates the two questions a card asks: a
+  reload with a turn in flight leaves a generation that keeps serving
+  (so `serving` stays true) while a rebuild is pending behind it
+  (`retiring`), which is the state a single "is it closing" flag reads
+  as "down". `config.AppWorkDir` and `Store.{StateRoot,WorkDir}` name an
+  installed application's directories without creating them, so the
+  page can show and browse them (the private workspace, never the state
+  root beside it where sessions, cache and audit live).
 
 ### Changed
 

@@ -208,3 +208,28 @@ type SessionUpdatedEvent struct {
 	AppID string `json:"app_id,omitempty"`
 	ID    string `json:"id"`
 }
+
+// AppChangedEvent reports that one installed application changed — it
+// was installed, enabled, disabled, updated or removed — so the page
+// reloads the list and the card it renders from it. A change that is not
+// about one application (a registry-wide reload) leaves ID empty.
+type AppChangedEvent struct {
+	ID string `json:"id,omitempty"`
+}
+
+// AppStatusEvent reports that one application's runtime came up or went
+// away: the pool assembled it now, or assembled its successor once the
+// generation a reload retired finished draining. It is what the card's
+// status dot listens to, because a status change is not a registry
+// change — nothing was installed or enabled, a Host was.
+type AppStatusEvent struct {
+	ID string `json:"id"`
+	// Serving and Retiring are the application's status as of this
+	// event, read the same way App.Status reads them (see AppStatus):
+	// an arrival reports serving, and a reload in flight reports both,
+	// because the retired generation keeps taking turns until it
+	// drains. Today only arrivals are announced; a page that hears one
+	// has a runtime again.
+	Serving  bool `json:"serving"`
+	Retiring bool `json:"retiring"`
+}

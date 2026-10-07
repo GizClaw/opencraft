@@ -41,23 +41,6 @@ func (c *Core) ActiveHost() *host.Host {
 	return c.Runtime.HostFor(host.WorkspaceTarget(c.ActiveWorkDir()))
 }
 
-// replacementWanted is the adapter's half of the pool's deferred
-// replacement policy: rebuild the assembly a reload retired, but only
-// for the workspace the window is on. A workspace the user has left is
-// not rebuilt behind their back — and neither is an installed
-// application, whose runtime is not the window's workspace and whose
-// page answers for its own. An open window with no workspace refuses
-// every target: an unnamed target matches nothing, so it is never
-// rebuilt either.
-//
-// The comparison is the pool's own (host.SameTarget), so a target this
-// accepts is also the one the pool keys as the window's workspace: a
-// second, hand-rolled comparison could accept a spelling the pool keeps
-// a separate Host for.
-func (c *Core) replacementWanted(t host.Target) bool {
-	return host.SameTarget(t, host.WorkspaceTarget(c.ActiveWorkDir()))
-}
-
 // RecordWorkspace persists one workspace open. Failures are best-effort.
 func (c *Core) RecordWorkspace(path string) {
 	path = strings.TrimSpace(path)

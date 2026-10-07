@@ -150,14 +150,14 @@ func NewCoreWithPaths(p Paths) *Core {
 	)
 	// The pool owns when a retired assembly is replaced (see
 	// host.Manager.ScheduleReplacement); this is the adapter's half of
-	// that policy: a workspace the window has left is not rebuilt
-	// behind the user's back, and a replacement that lands refreshes
-	// everything the UI renders out of the document. An application's
-	// runtime is not the window's workspace, so this half speaks only
-	// for workspace targets; the application page answers for its own.
+	// that policy, per scope: a workspace the window has left is not
+	// rebuilt behind the user's back, a disabled application stays
+	// gone, and a replacement that lands refreshes what the UI renders
+	// out of the document — the workspace's own view for a workspace,
+	// the application's card for an application (see replacement.go).
 	runtime.Manager().SetReplacementHooks(host.ReplacementHooks{
 		Wanted:    c.replacementWanted,
-		Installed: func(host.Target) { c.EmitReady() },
+		Installed: c.replacementInstalled,
 	})
 	plugin.Kraft.SetOpenURL(c.Shell.OpenURL)
 	defaultMode, defaultThink := c.Shell.SessionDefaults()

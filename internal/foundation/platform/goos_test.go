@@ -111,6 +111,13 @@ var goosAllowlist = map[string]goosSite{
 		reason: "RequestNotificationAuthorization only prompts on " +
 			"macOS (§4 row '系统通知授权弹窗').",
 	},
+	// Application file hand-off: the reveal goes through the same
+	// argv table as any other path the UI hands the host.
+	"internal/adapters/desktop/bindings/app.go": {
+		max: 1,
+		reason: "App.Reveal hands one application workspace path to " +
+			"the same open.go argv table file.go uses (W1.3).",
+	},
 	// The diagnostics report answers about this machine: goos, the
 	// host shell, the backend in force.
 	"internal/adapters/desktop/bindings/diagnostics.go": {

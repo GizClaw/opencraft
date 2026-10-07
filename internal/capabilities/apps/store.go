@@ -459,6 +459,34 @@ func (s *Store) stateRoot(id string) (string, error) {
 	return config.AppStateRoot(s.dataDir, id)
 }
 
+// StateRoot returns the state root of one installed application: the
+// tree its runtime may write — sessions, the private workspace, cache,
+// audit — and the one `purge` removes. It creates nothing and refuses an
+// id no content root holds, so a caller that names a state root has an
+// installed application behind it.
+func (s *Store) StateRoot(id string) (string, error) {
+	if _, _, err := s.contentDir(id); err != nil {
+		return "", err
+	}
+	return s.stateRoot(id)
+}
+
+// WorkDir returns the private workspace of one installed application:
+// the one directory its runtime reads and writes, and the tree the page
+// browses. It is named, not created — the application's own assembly is
+// what ensures the state directories exist.
+func (s *Store) WorkDir(id string) (string, error) {
+	if _, _, err := s.contentDir(id); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(s.dataDir) == "" {
+		// The single-root layout: the store root is the data dir, so the
+		// layout's reader takes it as one (see config.AppWorkDir).
+		return config.AppWorkDir(s.root, id)
+	}
+	return config.AppWorkDir(s.dataDir, id)
+}
+
 // readManifest reads and parses app.yaml out of one content root. id is
 // the expected id ("" while installing, where the manifest is what names
 // it), so a manifest that was edited into a different identity is

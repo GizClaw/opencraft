@@ -26,6 +26,11 @@ var appIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // an app home) that holds installed applications: <root>/apps/<id>.
 const appsDirName = "apps"
 
+// appWorkspaceDirName is the one spelling of an application's private
+// workspace below its state root. It is named here so nothing else has to
+// know it: AppLayout and AppWorkDir are the two readers.
+const appWorkspaceDirName = "workspace"
+
 // ValidAppID reports whether id is a well-formed application id: the
 // name a manifest declares, the name of the install directory under the
 // content root, and the last segment of the state root all at once.
@@ -84,7 +89,7 @@ func AppLayout(dataDir, id string) (WorkspaceLayout, error) {
 	}
 	return WorkspaceLayout{
 		DataDir:       dataDir,
-		WorkDir:       filepath.Join(root, "workspace"),
+		WorkDir:       filepath.Join(root, appWorkspaceDirName),
 		ID:            "app:" + id,
 		Root:          root,
 		ApprovalsFile: filepath.Join(root, "approvals.yaml"),
@@ -94,6 +99,18 @@ func AppLayout(dataDir, id string) (WorkspaceLayout, error) {
 		AuditDir:      filepath.Join(root, "audit"),
 		ExportsDir:    filepath.Join(root, "exports"),
 	}, nil
+}
+
+// AppWorkDir returns the private workspace of one installed application
+// — the one directory its runtime reads and writes — without creating
+// anything. The page that browses an application's files reads it
+// through here, and the layout that creates it spells the same name.
+func AppWorkDir(dataDir, id string) (string, error) {
+	root, err := AppStateRoot(dataDir, id)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, appWorkspaceDirName), nil
 }
 
 // AppStateRoot returns <dataDir>/apps/<id> without creating anything.
