@@ -1131,6 +1131,207 @@ func TestAppReadOutlivesTheHostItSharesWith(t *testing.T) {
 	}
 }
 
+// startAppTurn sends one message to an application and waits for the
+// turn to end. What an application's turn answers is read off the
+// provider that served it (Calls), so a test can tell which deployment
+// the turn ran on.
+func startAppTurn(
+	t *testing.T,
+	f *appBindingFixture,
+	seen func() []uiEvent,
+	id, conversation, text string,
+) {
+	t.Helper()
+	start, err := f.binding.StartTurn(AppTurnRequest{
+		ID:             id,
+		ConversationID: conversation,
+		Message:        message.NewTextMessage(message.RoleUser, text),
+	})
+	if err != nil {
+		t.Fatalf("start turn: %v", err)
+	}
+	if end := waitForTurnEnd(t, seen, start.RunID); end.Status != "completed" {
+		t.Fatalf("turn %s ended %+v", start.RunID, end)
+	}
+}
+
+// saveInstancesAt is the settings page's inference save, pointed at one
+// provider: the same row shape the fixture seeded, with the endpoint
+// moved. The credential is the environment's, which keeps the save off
+// the OS credential store.
+func saveInstancesAt(t *testing.T, f *appBindingFixture, endpoint string) {
+	t.Helper()
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	save := NewConfig(f.core)
+	if err := save.SaveInstances(InferenceRequest{Instances: []config.InstanceSpec{{
+		Type:      "openai",
+		Name:      "fake",
+		API:       "chat",
+		Endpoint:  endpoint,
+		KeySource: config.KeySourceEnvName,
+		Enabled:   boolPtr(true),
+		Models:    []config.ModelSpec{{Name: "fake-model"}},
+	}}}); err != nil {
+		t.Fatalf("save instances: %v", err)
+	}
+}
+
+// TestSettingsSaveReachesAnApplication pins the scope a settings save
+// reaches. An application carries no provider of its own — its document
+// is its layers with the user's inference wiring merged in as the
+// overlay — so a save that only reloaded the window's workspace leaves
+// every installed application on the provider set it was assembled with,
+// which is what the second half of this test would keep reporting.
+func TestSettingsSaveReachesAnApplication(t *testing.T) {
+	first := fakeprovider.New(t, fakeprovider.Reply{Text: "from A"})
+	second := fakeprovider.New(t, fakeprovider.Reply{Text: "from B"})
+	f := newAppBinding(t, first)
+	if _, err := f.binding.Install(writeAppBundle(t), AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if err := f.binding.SetEnabled("hello", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	seen := f.watch()
+	conversation, err := f.binding.NewSession("hello")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	startAppTurn(t, f, seen, "hello", conversation, "first")
+	before := first.Calls()
+	if before == 0 {
+		t.Fatal("the application's first turn never reached the seeded provider")
+	}
+
+	saveInstancesAt(t, f, second.URL())
+
+	startAppTurn(t, f, seen, "hello", conversation, "second")
+	if second.Calls() == 0 {
+		t.Fatal("the application did not reach the provider the save named")
+	}
+	if got := first.Calls(); got != before {
+		t.Fatalf("the application still ran on the pre-save provider (%d calls, want %d)", got, before)
+	}
+}
+
+// TestSettingsSaveKeepsTheWorkspaceAndRetiresTheApplications pins the
+// in-place branch: with a workspace open, a save swaps that Host's
+// document without tearing it down (the window keeps serving), and the
+// applications — the half an in-place swap cannot serve — are retired so
+// the next turn assembles against the new wiring. A rebuild here would
+// show up as a replaced workspace Host; a missing invalidation as a turn
+// that reaches the old provider.
+func TestSettingsSaveKeepsTheWorkspaceAndRetiresTheApplications(t *testing.T) {
+	first := fakeprovider.New(t, fakeprovider.Reply{Text: "from A"})
+	second := fakeprovider.New(t, fakeprovider.Reply{Text: "from B"})
+	f := newAppBinding(t, first)
+	ctx := host.WithAssemblyReason(context.Background(), host.ReasonWorkspaceOpen)
+	f.core.SetWorkDir(t.TempDir())
+	if err := f.core.RebuildRuntime(ctx); err != nil {
+		t.Fatalf("open the workspace: %v", err)
+	}
+	workspace := f.core.ActiveHost()
+	if workspace == nil {
+		t.Fatal("no Host assembled for the window's workspace")
+	}
+	if _, err := f.binding.Install(writeAppBundle(t), AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if err := f.binding.SetEnabled("hello", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	seen := f.watch()
+	conversation, err := f.binding.NewSession("hello")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	startAppTurn(t, f, seen, "hello", conversation, "first")
+	before := first.Calls()
+	if before == 0 {
+		t.Fatal("the application's first turn never reached the seeded provider")
+	}
+
+	saveInstancesAt(t, f, second.URL())
+
+	if f.core.ActiveHost() != workspace {
+		t.Fatal("the settings save replaced the window's workspace Host; want the in-place swap")
+	}
+	waitForRetirement(t, f, "hello")
+	startAppTurn(t, f, seen, "hello", conversation, "second")
+	if second.Calls() == 0 {
+		t.Fatal("the application's next turn did not assemble from the saved wiring")
+	}
+	if got := first.Calls(); got != before {
+		t.Fatalf("the application still ran on the pre-save provider (%d calls, want %d)", got, before)
+	}
+}
+
+// writeAppPlugin writes a minimal installable plugin package: the
+// manifest, and the bundle its entry names. Nothing in it has to run —
+// what the test needs is a mutation that moves the registry's revision.
+func writeAppPlugin(t *testing.T, id string) string {
+	t.Helper()
+	dir := t.TempDir()
+	manifest := `{"id": "` + id + `", "name": "` + id + `", ` +
+		`"version": "1.0.0", "entry": "dist/index.js", "permissions": []}`
+	files := map[string]string{
+		"plugin.json":   manifest,
+		"dist/index.js": "export const apply = () => {};\n",
+	}
+	for rel, data := range files {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// TestPluginMutationReachesAnApplication pins the other input both
+// deployments read. A plugin's providers land in the user's inference
+// wiring, which an application reads as the overlay under its layers, so
+// the refresh a mutation triggers has to reach the application scope. A
+// refresh that stopped at the workspace scope would leave this
+// application serving the Host it was assembled into, and the poll below
+// is what says so: nothing else would ever ask it for a new one.
+func TestPluginMutationReachesAnApplication(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "hi"})
+	f := newAppBinding(t, provider)
+	if _, err := f.binding.Install(writeAppBundle(t), AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if err := f.binding.SetEnabled("hello", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	seen := f.watch()
+	conversation, err := f.binding.NewSession("hello")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	startAppTurn(t, f, seen, "hello", conversation, "first")
+	// The retirement below is about a Host that exists: an application
+	// nobody assembled has nothing to retire.
+	st, err := f.binding.Status("hello")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !st.Serving {
+		t.Fatalf("the application is not being served: %+v", st)
+	}
+
+	if _, err := f.core.Plugin.Store.Install(writeAppPlugin(t, "providers")); err != nil {
+		t.Fatalf("install plugin: %v", err)
+	}
+	if err := f.core.RefreshPluginRuntime(context.Background()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	waitForRetirement(t, f, "hello")
+}
+
 // waitForRetirement waits until no Host serves the application any more:
 // neither the live generation nor one draining. The pool retires out of
 // band (a stale Host is closed once its last run ends), so this is a poll

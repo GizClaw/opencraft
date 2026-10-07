@@ -72,8 +72,10 @@ func (c *Core) replacementInstalled(t host.Target) {
 // ReloadApp invalidates one application's Host and brings the
 // application back from what its content root now holds: the next
 // generation serves whatever the layers say today. It is the
-// application half of RebuildRuntime — the update, rollback and
-// development-loop path — and it never touches the workspace scope.
+// application-scoped counterpart of the rebuilds above — the update,
+// rollback and development-loop path, which names the one application it
+// changed instead of retiring every one of them — and it never touches
+// the workspace scope.
 //
 // A Host with work in flight cannot be replaced until it drains (a
 // second one would serve the same conversations concurrently), so that

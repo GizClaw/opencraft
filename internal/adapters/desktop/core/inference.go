@@ -75,6 +75,12 @@ func (c *Core) wirePluginInference() {
 // runtime only when the previous rebuild succeeded and a current Host
 // still serves the active workspace; otherwise the rebuild runs so its
 // error reaches the plugin.
+//
+// The write is inference wiring, so the rebuild covers both scopes
+// (RebuildRuntimeAll): the rows a plugin declares are what an installed
+// application assembles its document from, and a workspace-scoped
+// rebuild would leave the application on the provider set it was
+// assembled with.
 func (c *Core) applyPluginInferenceWrite(changed bool) error {
 	if changed {
 		c.Shell.Emit(EventInferenceChanged, map[string]any{})
@@ -84,7 +90,7 @@ func (c *Core) applyPluginInferenceWrite(changed bool) error {
 	}
 	ctx := host.WithAssemblyReason(
 		c.Shell.Context(), host.ReasonInferenceChange)
-	err := c.RebuildRuntime(ctx)
+	err := c.RebuildRuntimeAll(ctx)
 	c.pluginWrites.markApplied(err)
 	return err
 }

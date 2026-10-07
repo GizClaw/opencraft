@@ -338,6 +338,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A settings save reaches installed applications. The user's inference
+  wiring has two readers — the window's workspace, which loads it inside
+  its own document, and an installed application, which reads it as the
+  overlay its layers are merged under — and the rebuild a save triggers
+  now covers both scopes: the workspace swaps its document in place (the
+  window keeps serving, the Host is not replaced), and every pooled
+  application is invalidated so its next turn assembles on the wiring
+  the save just wrote rather than the provider set it happened to be
+  assembled with. The launch's own reuse rule decides when that
+  invalidation runs: an idle application (its page open or not) is
+  closed on the spot and assembles again for its next turn or its next
+  page read, while one with a run in flight finishes that run on the old
+  wiring and is replaced when it ends. A plugin mutation and an
+  inference write made by a plugin take the same path for the same
+  reason — a plugin's providers are read by both deployments — while
+  `RebuildRuntime` (the workspace scope) is what a workspace's own
+  business keeps using: a switch, the startup assembly, and every change
+  that names its targets itself.
 - Plugin registry mutations rebuild the runtime once per revision, not
   once per call: `Core.RefreshPluginRuntime` measures the runtime
   against the registry's revision, serializes the rebuilds, and folds

@@ -22,6 +22,13 @@ import (
 // page's binding and the agent-authored install, so neither can stack a
 // redundant rebuild on top of the other.
 //
+// The rebuild is the both-scopes one (RebuildRuntimeAll): a plugin's
+// providers land in the user's inference wiring, which a workspace reads
+// through its document and an application through the overlay over its
+// layers. A rebuild that stopped at the workspace scope would leave every
+// installed application serving the provider set from before the
+// mutation.
+//
 // The trailing passes are capped at two: the rebuild that covers the
 // revision the caller saw, and one that folds in whatever landed while
 // it ran. Without the cap a registry under a continuous stream of
@@ -37,7 +44,7 @@ func (c *Core) RefreshPluginRuntime(ctx context.Context) error {
 	rev := c.pluginRegistryRevision()
 	for pass := 0; pass < maxPluginRefreshPasses && rev != c.pluginRefreshRev; pass++ {
 		rebuildCtx := host.WithAssemblyReason(ctx, host.ReasonPluginChange)
-		if err := c.RebuildRuntime(rebuildCtx); err != nil {
+		if err := c.RebuildRuntimeAll(rebuildCtx); err != nil {
 			return err
 		}
 		c.pluginRefreshRev = rev

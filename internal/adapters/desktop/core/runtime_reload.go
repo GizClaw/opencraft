@@ -14,10 +14,11 @@ import (
 
 // RebuildRuntime invalidates the pooled workspace Hosts and immediately
 // reassembles the active workspace's one when inference is configured.
-// Bindings use this when the reload changes engine assembly inputs
-// (plugin install/uninstall, workspace switch, startup). An installed
-// application's Host is not a workspace's and is left alone; whatever
-// reloads it says so on its own path.
+// Bindings use this when the reload is a workspace's own business — a
+// workspace switch, the startup assembly — or when the change names the
+// targets it reaches itself. An installed application's Host is not a
+// workspace's and is left alone; a change both deployments read goes
+// through RebuildRuntimeAll instead.
 //
 // A workspace whose old runtime still has live runs cannot be
 // reassembled yet — a second Host would serve the same conversations
@@ -27,9 +28,37 @@ import (
 // knows who is draining and who has already retired. This method only
 // decides what the UI has to hear.
 func (c *Core) RebuildRuntime(ctx context.Context) error {
+	return c.rebuildRuntime(ctx, c.Runtime.ReloadWorkspaces)
+}
+
+// RebuildRuntimeAll reassembles the runtime for an engine input every
+// deployment reads, invalidating both scopes. The user's inference
+// wiring is what makes the distinction necessary: a workspace loads it
+// inside its own document, an installed application as the overlay its
+// layers are merged under, and a plugin change reaches both through the
+// providers that wiring names. A settings save, an inference write and
+// a plugin mutation therefore come through here, so an application's
+// next turn runs on the new wiring instead of the one the process
+// happened to assemble first.
+//
+// Applications are invalidated rather than reassembled: nothing here
+// knows which of them a window is showing, and an application's page
+// assembles its own on the next open or turn — which is also what keeps
+// a disabled or uninstalled application's refusal on that page.
+func (c *Core) RebuildRuntimeAll(ctx context.Context) error {
+	return c.rebuildRuntime(ctx, c.Runtime.ReloadAll)
+}
+
+// rebuildRuntime is the one rebuild both scopes go through: reload is
+// the pool's answer for how far the change reaches (ReloadWorkspaces or
+// ReloadAll), and everything after it is the active workspace's.
+func (c *Core) rebuildRuntime(
+	ctx context.Context,
+	reload func(context.Context) error,
+) error {
 	c.reconcileProbe(ctx)
 	announced := c.readyWorkspace()
-	if err := c.Runtime.ReloadWorkspaces(ctx); err != nil {
+	if err := reload(ctx); err != nil {
 		return err
 	}
 	workDir := c.ActiveWorkDir()
@@ -85,7 +114,16 @@ func (c *Core) RebuildRuntime(ctx context.Context) error {
 // flowcraft's atomic generation swap, without tearing the runtime
 // down. When no Host is current or the in-place reload cannot serve
 // the document (validation failure, router unconfigured, sessions
-// implementation change), it falls back to a full RebuildRuntime.
+// implementation change), it falls back to a full RebuildRuntimeAll.
+//
+// Both deployments read these inputs, so both are covered, and the
+// half that is not the window's workspace is what the in-place swap
+// cannot serve: the pooled application Hosts are invalidated here and
+// reassemble on the application's next turn. An application carries no
+// provider of its own — its document is its layers with the user's
+// inference wiring merged in as the overlay — which is why a settings
+// save that skips this leaves an installed application talking to
+// whatever was configured when it was assembled.
 func (c *Core) ApplyDocumentReload(ctx context.Context) error {
 	// MCP servers arrive in the document, and an in-place swap rebuilds
 	// their clients, so the probe has to be reconciled before either
@@ -93,7 +131,7 @@ func (c *Core) ApplyDocumentReload(ctx context.Context) error {
 	c.reconcileProbe(ctx)
 	h := c.ActiveHost()
 	if h == nil {
-		return c.RebuildRuntime(ctx)
+		return c.RebuildRuntimeAll(ctx)
 	}
 	err := h.ReloadDocument(ctx)
 	if err == nil {
@@ -104,6 +142,13 @@ func (c *Core) ApplyDocumentReload(ctx context.Context) error {
 		// emits ready for exactly this reason; the in-place path has to
 		// signal the same way or the UI keeps the previous model list
 		// after a settings save.
+		//
+		// The applications are retired before that signal: their Hosts
+		// hold a document assembled from the wiring this save just
+		// replaced, and nothing else would ever ask them for a new one.
+		if err := c.Runtime.ReloadApps(ctx); err != nil {
+			return err
+		}
 		c.EmitReady()
 		return nil
 	}
@@ -117,7 +162,7 @@ func (c *Core) ApplyDocumentReload(ctx context.Context) error {
 		err,
 		otellog.String("reason", string(host.AssemblyReasonFrom(ctx))),
 		otellog.String("workspace", c.ActiveWorkDir()))
-	return c.RebuildRuntime(ctx)
+	return c.RebuildRuntimeAll(ctx)
 }
 
 // HTTPProbeState is the diagnostics view of the provider round-trip
