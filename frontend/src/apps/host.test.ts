@@ -24,6 +24,7 @@ const bundle = vi.hoisted(() => ({
 const apiMock = vi.hoisted(() => ({
   appManifest: vi.fn(),
   appAsset: vi.fn(),
+  appStartTurn: vi.fn(),
   version: vi.fn(),
 }));
 
@@ -217,6 +218,31 @@ describe('app scope lifetime', () => {
     // The disposal cannot take back a node it never saw; the load has to
     // notice that the scope is gone and stop before adding one.
     expect(stylesheets()).toHaveLength(0);
+  });
+
+  it('carries the agent a turn names to the wire', async () => {
+    // The bundle is where a multi-agent package drives its own agents,
+    // so the name has to survive the mapping to the request: a turn that
+    // quietly ran the entry agent instead would look like the named
+    // agent having nothing to say.
+    let ctx: AppContext | undefined;
+    bundle.apply.mockImplementation(async (c: AppContext) => {
+      ctx = c;
+    });
+    apiMock.appStartTurn.mockResolvedValue({ run_id: 'r-judge' });
+
+    await ensureAppScope('hello');
+    const run = await ctx!.app.send(
+      [{ type: 'text', text: 'who goes first?' }],
+      {
+        agentID: 'judge',
+      },
+    );
+
+    expect(run).toBe('r-judge');
+    expect(apiMock.appStartTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'hello', agent_id: 'judge' }),
+    );
   });
 });
 

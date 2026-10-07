@@ -181,6 +181,18 @@ export function mockBackend(cfg?: MockConfig) {
   // is the only proof it carried the turn's own message instead of a
   // synthetic prompt.
   const startTurnCalls: { contextID: string; text: string }[] = [];
+  // appTurnCalls records App.StartTurn's requests: which agent a turn
+  // named is only visible on the wire, so a spec that picks one reads it
+  // back here.
+  const appTurnCalls: {
+    agentID: string;
+    conversationID: string;
+    runID: string;
+    /** answerID is the conversation the start call answered with, which
+     *  is the one the next request carries. */
+    answerID: string;
+  }[] = [];
+  let appTurnSeq = 0;
   const recordPet = (method: string, args: unknown[]) => {
     petCalls.push({ method, args });
   };
@@ -304,6 +316,7 @@ export function mockBackend(cfg?: MockConfig) {
     name: appSummary.name,
     version: appSummary.version,
     agent: appSummary.agent,
+    agents: appSummary.agents,
     ui: config.appBundle
       ? { entry: config.appBundle.entry, style: config.appBundle.style }
       : undefined,
@@ -429,13 +442,26 @@ export function mockBackend(cfg?: MockConfig) {
         if (app) app.enabled = enabled;
         emit('opencraft:ui', { type: 'app_changed', data: { id } });
       },
-      StartTurn: async (req: { conversation_id?: string }) => ({
-        run_id: config.appTurn?.run_id ?? 'r-app-1',
-        conversation_id:
+      StartTurn: async (req: {
+        conversation_id?: string;
+        agent_id?: string;
+      }) => {
+        const runID = config.appTurn?.run_id ?? `r-app-${++appTurnSeq}`;
+        const answerID =
           req?.conversation_id ||
           config.appTurn?.conversation_id ||
-          `s-app-${++appSessionSeq}`,
-      }),
+          `s-app-${++appSessionSeq}`;
+        appTurnCalls.push({
+          agentID: req?.agent_id ?? '',
+          conversationID: req?.conversation_id ?? '',
+          runID,
+          answerID,
+        });
+        return {
+          run_id: runID,
+          conversation_id: answerID,
+        };
+      },
       Status: async (id: string) => appStatus(id),
       Turns: emptyList,
       Uninstall: noop,
@@ -1127,12 +1153,14 @@ export function mockBackend(cfg?: MockConfig) {
     __ocPetReports: typeof petReports;
     __ocSteerCalls: typeof steerCalls;
     __ocStartTurnCalls: typeof startTurnCalls;
+    __ocAppTurnCalls: typeof appTurnCalls;
   };
   exposed.__ocMockByModule = modules;
   exposed.__ocPetCalls = petCalls;
   exposed.__ocPetReports = petReports;
   exposed.__ocSteerCalls = steerCalls;
   exposed.__ocStartTurnCalls = startTurnCalls;
+  exposed.__ocAppTurnCalls = appTurnCalls;
   exposed.__ocCall = async (
     qualified: string,
     callArgs: unknown[],

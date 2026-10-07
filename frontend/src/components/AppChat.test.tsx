@@ -50,7 +50,14 @@ const manifest = {
   app: 'app: v1',
   id: 'hello',
   name: 'Hello',
+  agent: 'app',
   defaults: { model: 'test-model', think_level: 'low' },
+} as unknown as Manifest;
+
+/** twoAgents is a package that plays two roles: a judge, and the entry. */
+const twoAgents = {
+  ...manifest,
+  agents: ['judge'],
 } as unknown as Manifest;
 
 beforeEach(() => {
@@ -207,5 +214,51 @@ describe('AppChat event attribution', () => {
     // The strip is the turn's, so the files of the turn before it are not
     // still standing under the one that just started.
     expect(screen.queryByText('previous.txt')).toBeNull();
+  });
+});
+
+describe('AppChat agent choice', () => {
+  it('offers the agents a package declares and names the chosen one', async () => {
+    const user = userEvent.setup();
+    render(<AppChat appID="hello" manifest={twoAgents} />);
+    await waitFor(() => expect(apiMock.appSessions).toHaveBeenCalled());
+
+    // The picker exists because there is a choice: the entry agent a
+    // turn runs when it names none, and the one the manifest lists.
+    const picker = await screen.findByTestId('app-agent');
+    expect(screen.getByRole('option', { name: 'app' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'judge' })).toBeTruthy();
+
+    await user.selectOptions(picker, 'judge');
+    await user.type(screen.getByTestId('app-composer'), 'who wins?');
+    await user.click(screen.getByText('Send'));
+
+    // The name is what the host runs, so it has to reach the request:
+    // the built-in conversation of a multi-agent package is the one
+    // place a user can pick a role without the package shipping its
+    // own picker.
+    await waitFor(() =>
+      expect(apiMock.appStartTurn).toHaveBeenCalledWith(
+        expect.objectContaining({ agent_id: 'judge' }),
+      ),
+    );
+  });
+
+  it('asks for no agent when the package declares one', async () => {
+    const user = userEvent.setup();
+    render(<AppChat appID="hello" manifest={manifest} />);
+    await waitFor(() => expect(apiMock.appSessions).toHaveBeenCalled());
+
+    // A package with one agent has nothing to choose, and a send names
+    // none — the empty value is the entry agent, which is exactly what
+    // the Host runs for a turn that does not name one.
+    expect(screen.queryByTestId('app-agent')).toBeNull();
+    await user.type(screen.getByTestId('app-composer'), 'hi');
+    await user.click(screen.getByText('Send'));
+    await waitFor(() =>
+      expect(apiMock.appStartTurn).toHaveBeenCalledWith(
+        expect.objectContaining({ agent_id: '' }),
+      ),
+    );
   });
 });

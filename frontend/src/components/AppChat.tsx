@@ -97,6 +97,16 @@ export function AppChat({
   const [artifacts, setArtifacts] = useState<string[]>([]);
   const [model, setModel] = useState(manifest.defaults?.model ?? '');
   const [think, setThink] = useState(manifest.defaults?.think_level ?? '');
+  // The agents this package declares: what its manifest names as the
+  // entry (a turn that names none runs it) and the ones it lists. An
+  // application with one agent has nothing to pick, so it gets no
+  // picker; one with several is a package that plays several roles, and
+  // the same conversation can host all of them.
+  const agents = useMemo(() => {
+    const entry = manifest.agent || '';
+    return entry ? [entry, ...(manifest.agents ?? [])] : [];
+  }, [manifest.agent, manifest.agents]);
+  const [agent, setAgent] = useState('');
   const [draft, setDraft] = useState('');
   const convRef = useRef('');
   const runRef = useRef('');
@@ -241,6 +251,7 @@ export function AppChat({
         message: message as unknown as gen.AppTurnRequest['message'],
         model,
         think,
+        agent_id: agent,
       });
       setRunID(start.run_id);
       if (!conversationID) setConversationID(start.conversation_id);
@@ -248,7 +259,7 @@ export function AppChat({
       setPending(false);
       setEnd({ status: 'failed', error: String(err) });
     }
-  }, [appID, conversationID, draft, model, think]);
+  }, [appID, conversationID, draft, model, think, agent]);
 
   const stop = useCallback(async () => {
     if (!runID) return;
@@ -369,6 +380,30 @@ export function AppChat({
             }}
           />
           <div className="flex flex-col items-stretch gap-1">
+            {agents.length > 1 && (
+              <select
+                aria-label={t('apps.chat.agent')}
+                // The column's other controls label themselves with a
+                // placeholder; a select has none, so the hint says what
+                // the list is (the names are the package's own), through
+                // the skin's tooltip rather than the native one.
+                data-tip={t('apps.chat.agent')}
+                data-testid="app-agent"
+                className="w-36 rounded-control border border-edge bg-panel2 px-2 py-1 text-xs text-fg outline-none focus:border-accent"
+                value={agent}
+                onChange={(e) => setAgent(e.target.value)}
+              >
+                {/* The empty value is the entry agent: a turn that
+                    names none runs it, which is what an application
+                    with one agent always does. */}
+                <option value="">{agents[0]}</option>
+                {agents.slice(1).map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            )}
             <Input
               size="sm"
               surface="raised"

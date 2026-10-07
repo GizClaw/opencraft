@@ -21,7 +21,11 @@ version: v1
 #   - `agents.app` is a reserved slot; an application layer merges its
 #     card and its graph reference into it. `settings.graph` is
 #     intentionally unset: a missing graph must fail validation instead
-#     of silently pointing at a file that does not exist.
+#     of silently pointing at a file that does not exist. An application
+#     that plays more than one role lists its other agents in the
+#     manifest's `agents:` and declares each of them in its own layer —
+#     with a graph of its own, and with a committer, because a turn of
+#     one is still a turn of the conversation it ran in.
 #   - `infer` and `router` are referenced but not declared here: they
 #     arrive in the host-generated inference layer, which BuildRuntime
 #     reports as the settings page's business when it is absent.

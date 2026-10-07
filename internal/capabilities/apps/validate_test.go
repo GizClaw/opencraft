@@ -75,7 +75,9 @@ func newApp(t *testing.T) string {
 
 // appFor reads one written fixture the way the install path does: the
 // manifest decides the id, the content root, the layers and the entry
-// agent.
+// agent (the mapping is the registry's own, so a field the manifest
+// gains cannot be dropped here and quietly stay invisible to the
+// preflight).
 func appFor(t *testing.T, dir string) App {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(dir, ManifestFile))
@@ -86,19 +88,7 @@ func appFor(t *testing.T, dir string) App {
 	if err != nil {
 		t.Fatalf("parse manifest: %v", err)
 	}
-	app := App{
-		ID:         m.ID,
-		Name:       m.Name,
-		Version:    m.Version,
-		Icon:       m.Icon,
-		Agent:      m.Agent,
-		ContentDir: dir,
-		Layers:     append([]string(nil), m.Layers...),
-	}
-	if m.UI != nil {
-		app.UI = *m.UI
-	}
-	return app
+	return (&Store{}).appFromManifest(m, dir, true)
 }
 
 // validate refuses or accepts one written fixture.
@@ -304,10 +294,12 @@ agents:
 		"layer.yaml: runtime: the runtime section belongs to the contract layer")
 }
 
-// TestValidateRefusesAgentsOtherThanTheReservedSlot pins v1's single
-// agent: the contract layer's slot is the one that carries the
-// transcript path, so another agent would be a turn nobody records.
-func TestValidateRefusesAgentsOtherThanTheReservedSlot(t *testing.T) {
+// TestValidateRefusesAnAgentTheManifestDoesNotList pins where an
+// application's agents are named: a caller picks one by name, so the
+// manifest is the list of them — a layer that declares an agent nobody
+// can ask for is a file and a manifest disagreeing about what the
+// application runs.
+func TestValidateRefusesAnAgentTheManifestDoesNotList(t *testing.T) {
 	dir := newApp(t)
 	writeTestFile(t, dir, "layer.yaml", `agents:
   assistant:
@@ -328,27 +320,37 @@ func TestValidateRefusesAgentsOtherThanTheReservedSlot(t *testing.T) {
 		t.Fatalf("refusals = %d, want 2:\n%s", len(refusals.List), refusals.Error())
 	}
 	refusedEvery(t, refusals,
-		"layer.yaml: agents.assistant: v1 assembles exactly one agent",
-		"layer.yaml: agents.werewolf: v1 assembles exactly one agent")
+		`layer.yaml: agents.assistant: the manifest does not handle this agent: it names "app" as the entry agent and lists no other agents`,
+		`layer.yaml: agents.werewolf: the manifest does not handle this agent`)
 }
 
-// TestValidateRefusesAManifestAgentThatIsNotTheReservedSlot: the
-// manifest may name the entry agent, and in v1 the only name that works
-// is the contract's slot.
-func TestValidateRefusesAManifestAgentThatIsNotTheReservedSlot(t *testing.T) {
+// TestValidateAcceptsTheAgentsTheManifestLists is the other half: a
+// listed agent is an agent, with its own card, graph and turn pipeline.
+// Its hooks are its own — the entry's are the contract layer's, and a
+// second agent that wired none would answer the user and leave nothing
+// in the conversation the page reloads.
+func TestValidateAcceptsTheAgentsTheManifestLists(t *testing.T) {
 	dir := newApp(t)
 	writeTestFile(t, dir, ManifestFile, `app: v1
 id: hello
 name: Hello
 version: 0.1.0
-agent: werewolf
+agent: app
+agents:
+  - judge
 layers:
   - layer.yaml
 `)
 	writeTestFile(t, dir, "layer.yaml", `agents:
-  werewolf:
+  app:
     card:
-      name: Werewolf
+      name: Hello
+    engine:
+      settings:
+        graph: { file: graph.yaml }
+  judge:
+    card:
+      name: Judge
     engine:
       kind: agent.Engine
       impl: graph
@@ -359,11 +361,178 @@ layers:
         script_runtime: js
       settings:
         graph: { file: graph.yaml }
+    commit:
+      - type: opencraft.commit
+        deps:
+          memory: mem
+          sessions: sessions
+`)
+	if err := validate(t, dir); err != nil {
+		t.Fatalf("a manifest-listed agent was refused: %v", err)
+	}
+}
+
+// TestValidateRefusesAListedAgentWithoutAGraph: every agent the manifest
+// lists is an agent a caller may run, and an application deployment has
+// no graph to fall back on. A listed agent without one is a role the
+// page offers and the engine cannot play.
+func TestValidateRefusesAListedAgentWithoutAGraph(t *testing.T) {
+	dir := newApp(t)
+	writeTestFile(t, dir, ManifestFile, `app: v1
+id: hello
+name: Hello
+version: 0.1.0
+agent: app
+agents:
+  - judge
+layers:
+  - layer.yaml
+`)
+	writeTestFile(t, dir, "layer.yaml", `agents:
+  app:
+    card:
+      name: Hello
+    engine:
+      settings:
+        graph: { file: graph.yaml }
+  judge:
+    card:
+      name: Judge
+    engine:
+      kind: agent.Engine
+      impl: graph
+      deps:
+        inference: infer
+    commit:
+      - type: opencraft.commit
+        deps:
+          memory: mem
+          sessions: sessions
 `)
 	refusals := refusalsOf(t, validate(t, dir))
 	refusedEvery(t, refusals,
-		`app.yaml: agent: v1 assembles exactly one agent: the contract layer's "app" slot, which carries the transcript path (commit, observe); the manifest names "werewolf"`,
-		`agents.werewolf: v1 assembles exactly one agent`)
+		`layer.yaml: agents.judge.engine.settings.graph: agent "judge" declares no graph`)
+}
+
+// TestValidateRefusesAListedAgentWithoutACommitter: a listed agent's
+// turn is a turn of the conversation it ran in, so it has to write
+// itself there. Without a committer the page shows the reply as it
+// streams and the reload loses it — the user's own message included.
+func TestValidateRefusesAListedAgentWithoutACommitter(t *testing.T) {
+	dir := newApp(t)
+	writeTestFile(t, dir, ManifestFile, `app: v1
+id: hello
+name: Hello
+version: 0.1.0
+agent: app
+agents:
+  - judge
+layers:
+  - layer.yaml
+`)
+	writeTestFile(t, dir, "layer.yaml", `agents:
+  app:
+    card:
+      name: Hello
+    engine:
+      settings:
+        graph: { file: graph.yaml }
+  judge:
+    card:
+      name: Judge
+    engine:
+      settings:
+        graph: { file: graph.yaml }
+`)
+	refusals := refusalsOf(t, validate(t, dir))
+	refusedEvery(t, refusals,
+		"layer.yaml: agents.judge.commit: this agent declares no committer")
+	// The refusal says what to write, because the fix is a hook the
+	// author cannot copy from the entry slot (that one is the contract
+	// layer's and a layer may not declare it).
+	if !strings.Contains(refusals.Error(), "opencraft.commit") {
+		t.Errorf("the refusal does not name the hook to wire:\n%s", refusals.Error())
+	}
+}
+
+// TestValidateRefusesAListedAgentWhoseCommitterIsAnotherHook: the hook
+// types are the platform's and only one of them writes the conversation.
+// A commit slot holding some other hook reads like a committer in the
+// file and behaves like none at the reload.
+func TestValidateRefusesAListedAgentWhoseCommitterIsAnotherHook(t *testing.T) {
+	dir := newApp(t)
+	writeTestFile(t, dir, ManifestFile, `app: v1
+id: hello
+name: Hello
+version: 0.1.0
+agent: app
+agents:
+  - judge
+layers:
+  - layer.yaml
+`)
+	writeTestFile(t, dir, "layer.yaml", `agents:
+  app:
+    card:
+      name: Hello
+    engine:
+      settings:
+        graph: { file: graph.yaml }
+  judge:
+    card:
+      name: Judge
+    engine:
+      settings:
+        graph: { file: graph.yaml }
+    commit:
+      - type: opencraft.usageanchor
+        deps:
+          sessions: sessions
+`)
+	refusals := refusalsOf(t, validate(t, dir))
+	refusedEvery(t, refusals,
+		"layer.yaml: agents.judge.commit: this agent declares no committer")
+}
+
+// TestValidateRefusesAListedAgentNoLayerDeclares: the manifest names
+// what the application runs, so naming something no layer builds is a
+// typo the page would otherwise discover by offering a choice that
+// always fails.
+func TestValidateRefusesAListedAgentNoLayerDeclares(t *testing.T) {
+	dir := newApp(t)
+	writeTestFile(t, dir, ManifestFile, `app: v1
+id: hello
+name: Hello
+version: 0.1.0
+agent: app
+agents:
+  - judge
+layers:
+  - layer.yaml
+`)
+	refusals := refusalsOf(t, validate(t, dir))
+	refusedEvery(t, refusals,
+		`app.yaml: agents: "judge" is listed as an agent of this application but no layer declares it (the merged document has "app")`)
+}
+
+// TestValidateRefusesAManifestEntryThatIsNotTheReservedSlot: the entry
+// agent is the slot the contract layer carries the transcript path on,
+// so a manifest naming another one is naming an agent whose turns
+// nothing records. The other agents are declared and listed instead.
+func TestValidateRefusesAManifestEntryThatIsNotTheReservedSlot(t *testing.T) {
+	dir := newApp(t)
+	writeTestFile(t, dir, ManifestFile, `app: v1
+id: hello
+name: Hello
+version: 0.1.0
+agent: werewolf
+layers:
+  - layer.yaml
+`)
+	refusals := refusalsOf(t, validate(t, dir))
+	refusedEvery(t, refusals,
+		`app.yaml: agent: the entry agent is the contract layer's "app" slot, which carries the transcript path (commit, observe); the manifest names "werewolf"`,
+		`agents.werewolf: the manifest's entry agent is not declared by the merged document`)
 }
 
 // TestValidateRefusesHookSlotsAndToolsOnTheReservedAgent pins what a
@@ -450,7 +619,7 @@ func TestValidateRequiresTheEntryAgentsGraph(t *testing.T) {
 `)
 	refusals := refusalsOf(t, validate(t, dir))
 	refusedEvery(t, refusals,
-		"agents.app.engine.settings.graph: the entry agent declares no graph")
+		"agents.app.engine.settings.graph: agent \"app\" declares no graph")
 }
 
 // TestValidateFollowsAnInlineGraph: an application may inline its graph
@@ -648,7 +817,7 @@ agents:
 	// refusal closes the list: the whole verdict is one ordered list,
 	// not two reports.
 	if !strings.Contains(first.Error(),
-		"\n  - layer.yaml: agents.app.engine.settings.graph: the entry agent declares no graph") {
+		"\n  - layer.yaml: agents.app.engine.settings.graph: agent \"app\" declares no graph") {
 		t.Errorf("the list does not carry the document pass's refusal:\n%s", first.Error())
 	}
 	second := refusalsOf(t, validate(t, dir))

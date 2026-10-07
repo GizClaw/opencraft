@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -77,6 +78,49 @@ func (r Refusal) String() string {
 	default:
 		return r.Reason
 	}
+}
+
+// listed reports whether the manifest names this agent among the ones it
+// runs. The entry is not in that list (the manifest names it in the
+// agent field), which is why the check is separate from the slot rule.
+func (p *preflight) listed(name string) bool {
+	for _, candidate := range p.app.Agents {
+		if candidate == name {
+			return true
+		}
+	}
+	return false
+}
+
+// listedAgents renders the manifest's agent list for a refusal: a
+// message that says an agent is not named has to say what is.
+func listedAgents(app App) string {
+	if len(app.Agents) == 0 {
+		return "no other agents"
+	}
+	quoted := make([]string, len(app.Agents))
+	for i, name := range app.Agents {
+		quoted[i] = strconv.Quote(name)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// declaredAgents renders the agents a merged document declares, for a
+// refusal about a name none of them answers to.
+func declaredAgents(merged deploy.Document) string {
+	names := make([]string, 0, len(merged.Agents))
+	for name := range merged.Agents {
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return "none"
+	}
+	sort.Strings(names)
+	quoted := make([]string, len(names))
+	for i, name := range names {
+		quoted[i] = strconv.Quote(name)
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // Refusals is the preflight's verdict: the application it refused and
@@ -443,28 +487,46 @@ func (p *preflight) resourceKey(layer string, reserved map[string]bool, key, kin
 	p.kind(layer, where, kind)
 }
 
-// agentKey decides one agent an application layer declared. v1 assembles
-// exactly one agent — the contract layer's reserved slot, which carries
-// the transcript path — so a layer may merge into that slot and nothing
-// else.
+// agentKey decides one agent an application layer declared.
+//
+// Two kinds are allowed. The contract layer's reserved slot is the
+// application's entry agent: a layer merges into it, and the transcript
+// path stays the contract layer's. Every other agent has to be one the
+// manifest lists, because the manifest is what names the application's
+// agents to the rest of the platform — a caller picks one by name
+// (RunOptions.AgentID) — and a name that exists only inside a layer is a
+// name no caller can see.
+//
+// The listed agents wire their own hooks — they are their own agents —
+// but a turn of one is still a turn of the conversation it ran in: the
+// page reloads the transcript, so an agent without a committer answers
+// the user and leaves nothing behind. That is required rather than
+// merely allowed, and the refusal names the hook to write.
 func (p *preflight) agentKey(layer, name string, def agent.Definition) {
 	where := "agents." + name
-	// The comparison is against the slot itself, not against the name
-	// the manifest asked for: a manifest naming something else is its
-	// own refusal, and it must not turn a layer that declared the right
-	// slot into a second one.
-	if name != DefaultAgent {
+	entry := name == DefaultAgent
+	if !entry && !p.listed(name) {
 		p.refuse(layer, where, fmt.Sprintf(
-			"v1 assembles exactly one agent — the contract layer's %q slot, which carries the transcript path; this layer declares %q while the manifest names %q",
-			DefaultAgent, name, p.app.Agent))
+			"the manifest does not handle this agent: it names %q as the entry agent and lists %s; every agent an application runs is named there, so a layer and the manifest cannot disagree about what it runs",
+			p.app.Agent, listedAgents(p.app)))
 		return
 	}
-	for _, slot := range hookSlots(def) {
-		if len(slot.hooks) == 0 {
-			continue
+	// The entry slot's turn pipeline is the contract layer's: history,
+	// the transcript commit and the interrupted-run archive are what
+	// every application's entry agent runs, and a layer that rewired
+	// them would be replacing the platform's own path.
+	if entry {
+		for _, slot := range hookSlots(def) {
+			if len(slot.hooks) == 0 {
+				continue
+			}
+			p.refuse(layer, where+"."+slot.name,
+				"the transcript path (prepare, observe, commit) is the contract layer's; a layer may set the card, the graph, build and policy")
 		}
-		p.refuse(layer, where+"."+slot.name,
-			"the transcript path (prepare, observe, commit) is the contract layer's; a layer may set the card, the graph, build and policy")
+	} else if !commits(def.Commit) {
+		p.refuse(layer, where+".commit", fmt.Sprintf(
+			"this agent declares no committer: its turns would stream to the page and then be missing from the conversation the page reloads (the entry agent's own path is the contract layer's, so a listed agent wires the platform's committer itself: type %s with the contract's memory and sessions)",
+			CommitHookType))
 	}
 	if len(def.Tools) > 0 {
 		p.refuse(layer, where+".tools", "v1 gives applications no tools")
@@ -475,6 +537,23 @@ func (p *preflight) agentKey(layer, name string, def agent.Definition) {
 	for _, dep := range sortedDeps(def.Engine.Deps) {
 		p.depTarget(layer, fmt.Sprintf("%s.engine.deps.%s", where, dep), string(def.Engine.Deps[dep]))
 	}
+}
+
+// CommitHookType is the hook type that writes a turn to the transcript:
+// the contract layer's own committer, which a listed agent has to wire
+// the same way (same type, the contract's `mem` and `sessions`).
+const CommitHookType = "opencraft.commit"
+
+// commits reports whether an agent declares the transcript committer.
+// A committer of another type is not one — the types are the platform's,
+// and only this one writes the conversation.
+func commits(hooks []agent.Hook) bool {
+	for _, hook := range hooks {
+		if hook.Type == CommitHookType {
+			return true
+		}
+	}
+	return false
 }
 
 // hookSlot pairs one hook slot with its name, so a refusal can name it.
@@ -522,13 +601,13 @@ func (p *preflight) depTarget(layer, where, ref string) {
 }
 
 // document is the second pass: the checks that need the merged document
-// — the entry agent and its graph, the dependency targets, and every
-// {file:} reference the merged settings carry.
+// — the entry agent, the listed agents, their graphs, the dependency
+// targets, and every {file:} reference the merged settings carry.
 func (p *preflight) document(merged deploy.Document) {
 	agentName := p.app.Agent
 	if agentName != DefaultAgent {
 		p.refuse(ManifestFile, "agent", fmt.Sprintf(
-			"v1 assembles exactly one agent: the contract layer's %q slot, which carries the transcript path (commit, observe); the manifest names %q",
+			"the entry agent is the contract layer's %q slot, which carries the transcript path (commit, observe); the manifest names %q — another agent an application runs is listed in agents: and declared by a layer instead",
 			DefaultAgent, agentName))
 	}
 	definition, ok := merged.Agents[agentName]
@@ -538,6 +617,21 @@ func (p *preflight) document(merged deploy.Document) {
 			DefaultAgent))
 	} else {
 		p.graph(p.layerOfAgent(agentName), agentName, definition)
+	}
+	// The agents the manifest lists are held to what the entry agent is
+	// held to — declared, and with a graph to run — because the list is
+	// what the page offers a picker and what a turn may name. A listed
+	// agent no layer declares is a manifest typo, and the first turn
+	// naming it is a bad place to find out.
+	for _, name := range p.app.Agents {
+		definition, ok := merged.Agents[name]
+		if !ok {
+			p.refuse(ManifestFile, "agents", fmt.Sprintf(
+				"%q is listed as an agent of this application but no layer declares it (the merged document has %s)",
+				name, declaredAgents(merged)))
+			continue
+		}
+		p.graph(p.layerOfAgent(name), name, definition)
 	}
 
 	for _, dep := range p.deps {
@@ -558,11 +652,10 @@ func (p *preflight) document(merged deploy.Document) {
 	}
 }
 
-// graph checks the entry agent's engine.settings.graph: present, and
-// followed like any other reference (a graph document of its own may
-// reference node scripts). An application without a graph is refused
-// here rather than at assembly, where it would read as a missing file
-// nobody wrote.
+// graph checks one agent's engine.settings.graph: present, and followed
+// like any other reference (a graph document of its own may reference
+// node scripts). An application without a graph is refused here rather
+// than at assembly, where it would read as a missing file nobody wrote.
 func (p *preflight) graph(layer, agentName string, def agent.Definition) {
 	prefix := "agents." + agentName + ".engine.settings."
 	settings := map[string]json.RawMessage{}
@@ -574,8 +667,9 @@ func (p *preflight) graph(layer, agentName string, def agent.Definition) {
 	}
 	raw, ok := settings["graph"]
 	if !ok || len(raw) == 0 || string(raw) == "null" {
-		p.refuse(layer, prefix+"graph",
-			"the entry agent declares no graph; an application deployment has no default graph to fall back on")
+		p.refuse(layer, prefix+"graph", fmt.Sprintf(
+			"agent %q declares no graph; an application deployment has no default graph to fall back on",
+			agentName))
 	} else {
 		p.value(layer, prefix+"graph", raw)
 	}

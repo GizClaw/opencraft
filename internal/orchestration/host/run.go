@@ -78,9 +78,16 @@ type RunOptions struct {
 	// ContextID reuses an existing conversation when non-empty; empty
 	// mints a fresh one.
 	ContextID string
-	Mode      ocsessions.Mode
-	Think     string
-	Model     string
+	// AgentID names the agent this run answers as. Empty means the
+	// Host's entry agent — the assistant for a workspace, the agent an
+	// application's manifest names for an application. An application
+	// that declares more than one agent (its manifest lists them) uses
+	// this to run a specific one; a name the Host does not know is
+	// refused rather than silently running the entry.
+	AgentID string
+	Mode    ocsessions.Mode
+	Think   string
+	Model   string
 	// Origin names who asked for this run; empty means interactive (see
 	// RunOrigin). It decides what happens when ContextID already has a
 	// live run: interactive preempts it, everything else is refused
@@ -141,6 +148,17 @@ func (r *Run) ContextID() string {
 
 // RunID returns the engine run id.
 func (r *Run) RunID() string { return r.turn.RunID() }
+
+// AgentID returns the agent this run answers as (see RunOptions.AgentID).
+// Callers that report a terminal event about the run name it, so a turn
+// of an application with several agents is attributed to the one that
+// ran.
+func (r *Run) AgentID() string {
+	if r == nil || r.detail == nil {
+		return ""
+	}
+	return r.detail.agent
+}
 
 // FinishedTiming returns the Host-measured end time and run duration
 // in milliseconds once Wait has released the run. Callers that emit a
@@ -205,6 +223,30 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	if store == nil {
 		return nil, ErrSessionStoreNotReady
 	}
+	// The run identity is read once, before anything else in this turn
+	// decides: the agent the run answers as, the agents a caller may
+	// name, and the manifest defaults. All three come from the
+	// application's manifest and move together when an author edits it
+	// under a serving Host (ReloadDocument). Reading it here also means a
+	// name this Host does not have is refused before the turn has
+	// touched a conversation — no session minted for it, nothing
+	// persisted for it.
+	id := h.identity()
+	agentName := id.agent
+	if requested := strings.TrimSpace(opts.AgentID); requested != "" {
+		// A named agent is one this Host was told about — the entry, or
+		// one the application's manifest lists. An application's own
+		// frontend drives its agents by name, so a name that is not one
+		// of them is a bundle asking for something the package does not
+		// declare, and saying which names exist is what makes that
+		// legible.
+		if !id.allows(requested) {
+			return nil, fmt.Errorf(
+				"host: %s: agent %q is not one of this host's agents (%s)",
+				h.target, requested, strings.Join(id.agents, ", "))
+		}
+		agentName = requested
+	}
 
 	contextID := opts.ContextID
 	mode := opts.Mode
@@ -242,10 +284,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 			}
 		}
 	}
-	// The entry agent and the manifest run defaults are read together:
-	// both come from the application's manifest and both move when an
-	// author edits it under a serving Host (ReloadDocument).
-	agentName, appDefaults := h.identity()
+	appDefaults := id.defaults
 	// The manifest defaults come last, after the caller and after the
 	// conversation: a package declares what a *new* session starts with,
 	// never what an existing one is moved onto. They are applied here
@@ -386,6 +425,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	run.detail = &runDetail{
 		run:        run,
 		contextID:  contextID,
+		agent:      agentName,
 		usageHours: make(map[string]ocsessions.Usage),
 		notify:     opts.OnUsage,
 		onSteer:    opts.OnSteerPending,
@@ -831,11 +871,14 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 		h.clearDeleting(conv)
 		return fmt.Errorf("host: stop runs for session %q: %w", id, err)
 	}
-	entry, _ := h.identity()
-	key := coresession.Key{AgentID: entry, ContextID: id}
-	if err := ctrl.Runtime().Sessions().DeleteSession(drainCtx, key); err != nil {
-		h.clearDeleting(conv)
-		return fmt.Errorf("host: close runtime session %q: %w", id, err)
+	// Every agent of this Host, not just the entry (see
+	// engineSessionKeys): a conversation the user deleted must not leave
+	// an engine session behind holding it.
+	for _, key := range h.engineSessionKeys(id) {
+		if err := ctrl.Runtime().Sessions().DeleteSession(drainCtx, key); err != nil {
+			h.clearDeleting(conv)
+			return fmt.Errorf("host: close runtime session %s of %q: %w", key.AgentID, id, err)
+		}
 	}
 	if err := store.Remove(ctx, id); err != nil {
 		h.clearDeleting(conv)
@@ -847,6 +890,21 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 	delete(h.deleting, conv)
 	h.mu.Unlock()
 	return nil
+}
+
+// engineSessionKeys is the engine sessions one conversation occupies:
+// one per agent this Host may run, keyed the way a run keys its own. A
+// deletion closes every one of them: an application's agents answer in
+// one conversation, so it is one history to the user and one deletion
+// to the engine — and the list is the entry first, which is the order
+// the sessions were created in.
+func (h *Host) engineSessionKeys(conversationID string) []coresession.Key {
+	agents := h.identity().agents
+	keys := make([]coresession.Key, 0, len(agents))
+	for _, agent := range agents {
+		keys = append(keys, coresession.Key{AgentID: agent, ContextID: conversationID})
+	}
+	return keys
 }
 
 // waitConversationIdle blocks until the Host no longer owns a run for

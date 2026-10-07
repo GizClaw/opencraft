@@ -698,6 +698,11 @@ type AppTurnRequest struct {
 	// mints a fresh id here.
 	ConversationID string          `json:"conversation_id,omitempty"`
 	Message        message.Message `json:"message"`
+	// AgentID names which of the application's agents runs this turn,
+	// for a package that declares more than one (its manifest lists
+	// them). Empty runs the entry agent. A name the application does
+	// not declare is refused with the names it does.
+	AgentID string `json:"agent_id,omitempty"`
 	// Model and Think are the per-turn overrides the composer offers; an
 	// app's page defaults them from its manifest.
 	Model string `json:"model,omitempty"`
@@ -932,6 +937,7 @@ func (b *App) StartTurn(req AppTurnRequest) (TurnStart, error) {
 	opts := host.RunOptions{
 		Message:   req.Message,
 		ContextID: contextID,
+		AgentID:   strings.TrimSpace(req.AgentID),
 		Model:     req.Model,
 		Think:     req.Think,
 		Backend:   b.core.Prompt,
@@ -964,8 +970,15 @@ func (b *App) StartTurn(req AppTurnRequest) (TurnStart, error) {
 				StartedAt:      startedAt.Format(time.RFC3339),
 			}
 			// The turn's terminal event is emitted from here on its own
-			// goroutine, so the RPC returns as soon as the run started.
-			go finishTurn(ctx, b.core, run, app.ID, app.Agent, contextID)
+			// goroutine, so the RPC returns as soon as the run started. It
+			// names the agent that answered — a package with several agents
+			// runs one per turn — with the entry agent as the fallback for
+			// a handle that never recorded one.
+			agent := run.AgentID()
+			if agent == "" {
+				agent = app.Agent
+			}
+			go finishTurn(ctx, b.core, run, app.ID, agent, contextID)
 			return nil
 		},
 	)

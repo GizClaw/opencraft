@@ -26,9 +26,10 @@ type TurnEndEvent struct {
 	AppID          string `json:"app_id,omitempty"`
 	RunID          string `json:"run_id"`
 	ConversationID string `json:"conversation_id,omitempty"`
-	// AgentID identifies the agent that produced the run. Desktop UI
-	// and automation turns both execute as AssistantAgentID today;
-	// delegated subagent turns will carry their own id.
+	// AgentID identifies the agent that produced the run: a workspace
+	// turn executes as AssistantAgentID, an application's turn as
+	// whichever of its agents it named (its manifest's entry by
+	// default); delegated subagent turns will carry their own id.
 	AgentID string `json:"agent_id,omitempty"`
 	Status  string `json:"status"`
 	Error   string `json:"error,omitempty"`

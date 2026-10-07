@@ -159,6 +159,9 @@ type App struct {
 	Icon string
 	// Agent is the entry agent in the merged deployment document.
 	Agent string
+	// Agents are the application's other agents: every agent a run may
+	// name beyond the entry, in manifest order. See Manifest.Agents.
+	Agents []string
 	// ContentDir is the content root: the layers and every {file:}
 	// reference inside them resolve against it.
 	ContentDir string
@@ -391,6 +394,7 @@ func (s *Store) appFromManifest(m *Manifest, content string, enabled bool) App {
 		Description: m.Description,
 		Icon:        m.Icon,
 		Agent:       m.Agent,
+		Agents:      append([]string(nil), m.Agents...),
 		ContentDir:  content,
 		Layers:      append([]string(nil), m.Layers...),
 		Enabled:     enabled,

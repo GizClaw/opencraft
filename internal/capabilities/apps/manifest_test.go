@@ -55,6 +55,9 @@ description: a social deduction game
 version: 1.2.3-rc.1
 minHostVersion: 0.1.0
 icon: ui/icon.png
+agents:
+  - judge
+  - narrator
 layers:
   - base.yaml
   - game.yaml
@@ -82,6 +85,9 @@ generated: true
 	// manifest's order, which is their priority order.
 	if m.Agent != DefaultAgent {
 		t.Errorf("agent = %q, want %q", m.Agent, DefaultAgent)
+	}
+	if len(m.Agents) != 2 || m.Agents[0] != "judge" || m.Agents[1] != "narrator" {
+		t.Errorf("agents = %v, want the declared order", m.Agents)
 	}
 	if len(m.Layers) != 2 || m.Layers[0] != "base.yaml" || m.Layers[1] != "game.yaml" {
 		t.Errorf("layers = %v, want the declared order", m.Layers)
@@ -118,6 +124,22 @@ func TestParseManifestRefusesAPackageThatIsNotAManifest(t *testing.T) {
 	err := manifestRefusal(t, without(minimalManifest, "app:"))
 	if !strings.Contains(err, "not an application manifest (want app: v1)") {
 		t.Errorf("refusal %q does not name the marker", err)
+	}
+}
+
+// TestParseManifestTrimsTheAgentNames: an agent name is compared against
+// what a layer declared and against what a caller asks for by name, and
+// YAML keeps the surrounding space when the author quotes it. A package
+// that writes " judge " has to mean the same agent as one that writes
+// judge, or the file and its own layers disagree about a name neither of
+// them can see the whitespace in.
+func TestParseManifestTrimsTheAgentNames(t *testing.T) {
+	m, err := ParseManifest([]byte(minimalManifest + "agents:\n  - \" judge \"\n"))
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	if len(m.Agents) != 1 || m.Agents[0] != "judge" {
+		t.Errorf("agents = %q, want the trimmed name", m.Agents)
 	}
 }
 
@@ -165,6 +187,27 @@ func TestParseManifestRefusesOneFieldAtATime(t *testing.T) {
 			name: "minHostVersion that is not semver",
 			raw:  minimalManifest + "minHostVersion: x\n",
 			want: `minHostVersion: invalid version "x"`,
+		},
+		{
+			name: "agent name with an uppercase letter",
+			raw:  minimalManifest + "agents:\n  - Judge\n",
+			want: `agent "Judge" is not an agent name`,
+		},
+		{
+			name: "agent listed twice",
+			raw:  minimalManifest + "agents:\n  - judge\n  - judge\n",
+			want: `agent "judge" is listed twice`,
+		},
+		{
+			name: "agent that is the entry",
+			raw:  minimalManifest + "agent: judge\nagents:\n  - judge\n",
+			want: `agent "judge" is the entry agent`,
+		},
+		{
+			name: "agent list over the bound",
+			raw: minimalManifest + "agents:\n" +
+				strings.Repeat("  - judge\n", maxAgentCount+1),
+			want: "9 agents exceeds the 8",
 		},
 		{
 			name: "no layers",

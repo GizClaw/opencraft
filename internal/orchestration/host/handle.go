@@ -31,15 +31,13 @@ type Host struct {
 	target  Target
 	workDir string
 	userDir string
-	// agentID is the entry agent this target's runtime serves: the
-	// assistant for a user workspace, the manifest's own for an
-	// installed application (see agentName).
-	agentID string
-	// appDefaults are the application's manifest run defaults
-	// (app.yaml defaults), applied by StartRun where neither the caller
-	// nor the conversation named a value. Zero for a workspace, whose
-	// defaults belong to the user and arrive as request values.
-	appDefaults apps.Defaults
+	// id is this target's run identity — the entry agent, every agent a
+	// run may name, and the manifest run defaults (see identity). The
+	// three are one value because they come from one file: an author
+	// editing an application's manifest changes them under a serving
+	// Host, and a turn that read two generations of them would be a turn
+	// running an agent the manifest it obeyed no longer names.
+	id identity
 	// reloadDoc rebuilds this Host's own deployment document in place
 	// (ReloadDocument). It is set at assembly — a workspace loads the
 	// assistant's document, an application the merge of the layers its
@@ -52,7 +50,7 @@ type Host struct {
 	// read before the generation swaps and applied after, so a Host is
 	// never left on one generation's document with another's identity.
 	// Nil for a workspace, whose identity is fixed for the Host's life.
-	reloadIdentity func(ctx context.Context) (string, apps.Defaults, error)
+	reloadIdentity func(ctx context.Context) (identity, error)
 	workspaceID    string
 	store          *sessions.Store
 	ctrl           *engine.Controller
@@ -136,7 +134,12 @@ type runDetail struct {
 	run *Run
 
 	contextID string
-	usage     sessions.Usage
+	// agent is the agent this run answers as: the one its caller named,
+	// or the Host's entry agent. A Host with several agents runs one per
+	// turn, so the events a run emits (turn end, in particular) name the
+	// agent that actually ran rather than the entry.
+	agent string
+	usage sessions.Usage
 	// usageHours aggregates engine reports by model + UTC hour so a
 	// multi-model or long turn still lands in the right user-level
 	// statistics buckets.
@@ -367,29 +370,83 @@ func (h *Host) AppID() string {
 // workspace, or an application's own private workspace.
 func (h *Host) WorkDir() string { return h.workDir }
 
-// identity returns the entry agent this Host runs and the manifest run
-// defaults it applies, under the lock an in-place reload takes to move
-// them: both are read from the manifest at assembly, an author editing
-// that file changes them under a serving Host, and every engine session
-// key is built from the agent. A Host assembled without an agent — a
-// workspace's, whose identity is fixed — reads as the workspace one
-// instead of naming an agent no deployment declares.
-func (h *Host) identity() (string, apps.Defaults) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.agentID == "" {
-		return assistantAgent, h.appDefaults
-	}
-	return h.agentID, h.appDefaults
+// identity is one Host's run identity: the agent a run uses when its
+// caller names none, every agent a run may name, and the run defaults.
+// It is one value rather than three fields because all of it comes from
+// one file — an application's manifest — and an in-place reload moves it
+// together: a turn that read two generations of it would be a turn
+// running an agent the manifest it obeyed no longer names.
+type identity struct {
+	agent string
+	// agents is every name a run may name, the entry agent first: what
+	// a refusal reads back to a caller that named something else, and
+	// what a deletion closes in the engine. The entry is always in it —
+	// naming the entry is naming an agent this Host runs.
+	agents []string
+	// defaults are the manifest's run defaults; a workspace's are the
+	// user's own, and arrive as the page's request values instead.
+	defaults apps.Defaults
 }
 
-// setIdentity moves the entry agent and the run defaults onto a new
-// generation's values (see Host.reloadIdentity).
-func (h *Host) setIdentity(agentID string, defaults apps.Defaults) {
+// appIdentity is an installed application's identity, built from the two
+// halves its manifest states: the entry agent, and the others it lists.
+func appIdentity(agent string, others []string, defaults apps.Defaults) identity {
+	return identity{
+		agent:    agent,
+		agents:   append([]string{agent}, others...),
+		defaults: defaults,
+	}
+}
+
+// workspaceIdentity is the identity of a Host serving a user workspace:
+// the assistant, which is the only agent such a Host runs, and no
+// manifest defaults — the user's own arrive as the page's request
+// values.
+func workspaceIdentity() identity {
+	return identity{agent: assistantAgent, agents: []string{assistantAgent}}
+}
+
+// identity returns this Host's run identity. A Host built without one —
+// a zero value a unit test assembled — reads as a workspace's instead of
+// naming an agent no deployment declares.
+func (h *Host) identity() identity {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.agentID = agentID
-	h.appDefaults = defaults
+	if h.id.agent == "" {
+		id := workspaceIdentity()
+		id.defaults = h.id.defaults
+		return id
+	}
+	return identity{
+		agent:    h.id.agent,
+		agents:   append([]string(nil), h.id.agents...),
+		defaults: h.id.defaults,
+	}
+}
+
+// setIdentity moves the run identity onto a new generation's values (see
+// Host.reloadIdentity).
+func (h *Host) setIdentity(id identity) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.id = identity{
+		agent:    id.agent,
+		agents:   append([]string(nil), id.agents...),
+		defaults: id.defaults,
+	}
+}
+
+// allows reports whether a run may name this agent. Callers name one by
+// the name it was declared under, so the check is against the declared
+// set rather than against whatever the runtime happens to hold: a name
+// this Host does not know is a name its caller invented.
+func (i identity) allows(name string) bool {
+	for _, candidate := range i.agents {
+		if candidate == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Sessions returns the shared conversation store.

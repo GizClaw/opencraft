@@ -267,9 +267,12 @@ type hostPlan struct {
 	layout config.WorkspaceLayout
 	// doc is the merged deployment document the runtime builds from.
 	doc deploy.Document
-	// agentID is the agent the runtime serves; empty reads as the
-	// assistant (see Host.agentName).
-	agentID string
+	// identity is the runtime's run identity: the entry agent, every
+	// agent a run may name, and an application's manifest defaults (the
+	// assistant's for a user workspace, which has no others and no
+	// manifest — its defaults are the user's own and arrive as the
+	// page's request values).
+	identity identity
 	// fileBase anchors every {file:} reference inside doc. Empty keeps
 	// the config base — the assistant's single root; an application's
 	// layers resolve against its content root.
@@ -278,12 +281,6 @@ type hostPlan struct {
 	// store a first open migrates from. Empty skips that migration: an
 	// application never had a project-local store.
 	adoptWorkDir string
-	// appDefaults are an application's manifest run defaults
-	// (app.yaml defaults), applied to a turn that names neither a model
-	// nor a level and whose conversation has none either. Empty for a
-	// workspace, whose defaults are the user's own and arrive as the
-	// page's request values.
-	appDefaults apps.Defaults
 	// reloadDoc rebuilds this plan's document for an in-place swap
 	// (Host.ReloadDocument). It reads the same sources assembly did, so
 	// an edit to the file — or, for an application, to the manifest
@@ -291,7 +288,7 @@ type hostPlan struct {
 	reloadDoc func(ctx context.Context) (deploy.Document, error)
 	// reloadIdentity re-reads the plan's host-level values for a swap
 	// (see Host.reloadIdentity). Set for applications only.
-	reloadIdentity func(ctx context.Context) (string, apps.Defaults, error)
+	reloadIdentity func(ctx context.Context) (identity, error)
 }
 
 // buildWorkspaceHost builds one user workspace's Host without holding
@@ -323,7 +320,7 @@ func (m *Manager) buildWorkspaceHost(
 		target:       t,
 		layout:       layout,
 		doc:          doc,
-		agentID:      assistantAgent,
+		identity:     workspaceIdentity(),
 		adoptWorkDir: t.ID,
 		reloadDoc: func(ctx context.Context) (deploy.Document, error) {
 			return engine.LoadDocument(ctx, r.userDir)
@@ -389,13 +386,12 @@ func (m *Manager) buildAppHost(
 		return nil, err
 	}
 	return m.buildHost(ctx, hostPlan{
-		roots:       r,
-		target:      t,
-		layout:      layout,
-		doc:         doc,
-		agentID:     app.Agent,
-		fileBase:    app.ContentDir,
-		appDefaults: app.Defaults,
+		roots:    r,
+		target:   t,
+		layout:   layout,
+		doc:      doc,
+		identity: appIdentity(app.Agent, app.Agents, app.Defaults),
+		fileBase: app.ContentDir,
 		// The registry is consulted again on every reload: the layers
 		// list lives in the manifest, and an author who edits it (or
 		// the manifest itself) is asking for the document that file
@@ -420,12 +416,12 @@ func (m *Manager) buildAppHost(
 				Layers:     app.Layers,
 			}, r.userDir)
 		},
-		reloadIdentity: func(ctx context.Context) (string, apps.Defaults, error) {
+		reloadIdentity: func(ctx context.Context) (identity, error) {
 			app, err := registry.Get(t.ID)
 			if err != nil {
-				return "", apps.Defaults{}, err
+				return identity{}, err
 			}
-			return app.Agent, app.Defaults, nil
+			return appIdentity(app.Agent, app.Agents, app.Defaults), nil
 		},
 	}, fallback, resolver)
 }
@@ -446,8 +442,7 @@ func (m *Manager) buildHost(
 		target:         t,
 		workDir:        layout.WorkDir,
 		userDir:        r.userDir,
-		agentID:        plan.agentID,
-		appDefaults:    plan.appDefaults,
+		id:             plan.identity,
 		reloadDoc:      plan.reloadDoc,
 		reloadIdentity: plan.reloadIdentity,
 		workspaceID:    layout.ID,

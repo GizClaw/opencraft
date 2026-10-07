@@ -47,6 +47,7 @@ const (
 	maxDescriptionChars = 1024
 	maxIconChars        = 64
 	maxLayerCount       = 64
+	maxAgentCount       = 8
 	maxPathLen          = 256
 	maxDefaultsChars    = 128
 )
@@ -108,6 +109,13 @@ type Manifest struct {
 	// Agent names the entry agent in the merged deployment document.
 	// Empty means DefaultAgent.
 	Agent string `json:"agent,omitempty"`
+	// Agents lists the application's other agents: the ones a caller may
+	// name for a turn (host.RunOptions.AgentID) beyond the entry. Each
+	// has to be declared by a layer — this list is what the platform
+	// knows the application runs, so a layer and this file cannot
+	// disagree about it — and each is offered to the application's own
+	// frontend through the manifest it reads at load time.
+	Agents []string `json:"agents,omitempty"`
 	// Icon is either a glyph/emoji (shown as the card's icon) or a path
 	// to an image inside the content root. See iconIsPath.
 	Icon string `json:"icon,omitempty"`
@@ -197,6 +205,9 @@ func validateManifest(m *Manifest) error {
 			"apps: %s: agent %q is not an agent name (want %s)",
 			ManifestFile, m.Agent, `[a-z0-9][a-z0-9._-]{0,63}`)
 	}
+	if err := validateAgents(m); err != nil {
+		return err
+	}
 	if err := validateLayers(m.Layers); err != nil {
 		return err
 	}
@@ -255,6 +266,47 @@ func validateDefaults(d *Defaults) error {
 			"apps: %s: defaults.think_level %q is not a reasoning level "+
 				"(minimal, low, medium, high, xhigh)",
 			ManifestFile, d.ThinkLevel)
+	}
+	return nil
+}
+
+// validateAgents checks the manifest's other-agent list as a set of
+// names: each is an agent name, none repeats, none is the entry agent,
+// and the list stays within the bound. Whether a layer declares them is
+// the preflight's part — that check needs the merged document.
+//
+// The names are normalized in place, because the list is compared
+// against what a layer declared and against what a caller names: a
+// manifest that says " Referee " has to be the same agent as the one a
+// layer calls "referee".
+func validateAgents(m *Manifest) error {
+	if len(m.Agents) > maxAgentCount {
+		return fmt.Errorf(
+			"apps: %s: %d agents exceeds the %d an application may declare",
+			ManifestFile, len(m.Agents), maxAgentCount)
+	}
+	seen := make(map[string]bool, len(m.Agents)+1)
+	seen[m.Agent] = true
+	for index, name := range m.Agents {
+		trimmed := strings.TrimSpace(name)
+		switch {
+		case trimmed == "":
+			return fmt.Errorf(
+				"apps: %s: agents[%d] is empty", ManifestFile, index)
+		case !config.ValidAppID(trimmed):
+			return fmt.Errorf(
+				"apps: %s: agent %q is not an agent name (want %s)",
+				ManifestFile, trimmed, `[a-z0-9][a-z0-9._-]{0,63}`)
+		case trimmed == m.Agent:
+			return fmt.Errorf(
+				"apps: %s: agent %q is the entry agent; the entry is named by the agent field, not listed again",
+				ManifestFile, trimmed)
+		case seen[trimmed]:
+			return fmt.Errorf(
+				"apps: %s: agent %q is listed twice", ManifestFile, trimmed)
+		}
+		seen[trimmed] = true
+		m.Agents[index] = trimmed
 	}
 	return nil
 }

@@ -220,6 +220,93 @@ test("another conversation's events are not the page's", async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
 });
 
+// A package that plays more than one role names each agent in its
+// manifest, and the built-in conversation is where a user picks one: a
+// package shipping its own picker drives the same names through its own
+// code, so this is the path the platform owns end to end.
+test('a package with several agents is picked per turn', async ({ page }) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: '/workspace',
+    apps: [{ id: 'hello', name: 'Hello', version: '1.0.0', enabled: true }],
+    // The manifest the page reads: the entry agent, and one more.
+    appPackage: {
+      summary: { id: 'hello', name: 'Hello', agent: 'app', agents: ['judge'] },
+    },
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Applications' }).click();
+  await page.getByTestId('app-nav-hello').click();
+  await page.getByRole('tab', { name: 'Chat' }).click();
+
+  // The picker is the choice itself: the entry agent first (what a turn
+  // that names none runs) and the listed one after it.
+  const picker = page.getByTestId('app-agent');
+  await expect(picker).toBeVisible();
+  await expect(picker.locator('option')).toHaveText(['app', 'judge']);
+
+  const turns = () =>
+    page.evaluate(
+      () =>
+        (
+          window as never as {
+            __ocAppTurnCalls: {
+              agentID: string;
+              conversationID: string;
+              runID: string;
+              answerID: string;
+            }[];
+          }
+        ).__ocAppTurnCalls,
+    );
+  // One whole turn: send, see the message land, and end the run the
+  // start call answered with — a page waiting on a turn would refuse the
+  // next send.
+  const sendTurn = async (text: string) => {
+    await page.getByTestId('app-composer').fill(text);
+    await page.getByTestId('app-composer').press('Enter');
+    await expect(page.getByTestId('app-msg-user').last()).toHaveText(text);
+    const call = (await turns()).at(-1)!;
+    await emitEvent(page, {
+      type: 'turn_end',
+      data: {
+        app_id: 'hello',
+        conversation_id: call.conversationID,
+        run_id: call.runID,
+        status: 'completed',
+      },
+    });
+    await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
+    return call;
+  };
+
+  // Nothing picked yet is the entry agent: the picker opens on what the
+  // package would run without one, not on the choice it offers.
+  const entry = await sendTurn('who is there?');
+  expect(entry.agentID).toBe('');
+
+  await picker.selectOption('judge');
+  // The picker shows the choice it made: a control that keeps drawing
+  // the entry agent while the turns run as the judge is the page telling
+  // the user something untrue.
+  await expect(picker).toHaveValue('judge');
+  // The request is where the name lives: the page writes it, the host
+  // runs it, and nothing in between gets to quietly run the entry agent.
+  const judged = await sendTurn('who wins?');
+  expect(judged.agentID).toBe('judge');
+  // An agent is a choice of who answers, not a separate conversation:
+  // the judge's turn joins the one the entry agent's turn opened (the
+  // first request carried none, because the page mints it from the
+  // answer).
+  expect(entry.conversationID).toBe('');
+  expect(judged.conversationID).toBe(entry.answerID);
+
+  // Sending again without touching the picker keeps it: the choice is
+  // the conversation's, not one turn's.
+  const again = await sendTurn('and now?');
+  expect(again.agentID).toBe('judge');
+  expect(again.conversationID).toBe(entry.answerID);
+});
+
 test('an application that is switched off closes its page', async ({
   page,
 }) => {

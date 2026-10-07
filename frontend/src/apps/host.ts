@@ -333,7 +333,12 @@ function buildServices(
 ): AppServices {
   const send = async (
     parts: StreamPart[],
-    opts?: { conversationID?: string; model?: string; thinkLevel?: string },
+    opts?: {
+      conversationID?: string;
+      model?: string;
+      thinkLevel?: string;
+      agentID?: string;
+    },
   ): Promise<string> => {
     const start = await api.appStartTurn({
       id,
@@ -341,6 +346,7 @@ function buildServices(
       message: { role: 'user', content: { parts } },
       model: opts?.model ?? '',
       think: opts?.thinkLevel ?? '',
+      agent_id: opts?.agentID ?? '',
     } as unknown as gen.AppTurnRequest);
     return start.run_id;
   };

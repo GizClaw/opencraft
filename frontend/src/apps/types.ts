@@ -84,11 +84,19 @@ export interface AppServices {
   /**
    * send starts one turn. `parts` is the wire message content the
    * composer builds (text and images); the return value is the run id,
-   * and an empty session id mints one.
+   * and an empty session id mints one. `agentID` picks which of the
+   * package's agents answers — a manifest that lists several is an
+   * application driving more than one of them — and an empty one runs
+   * the entry agent.
    */
   send(
     parts: StreamPart[],
-    opts?: { conversationID?: string; model?: string; thinkLevel?: string },
+    opts?: {
+      conversationID?: string;
+      model?: string;
+      thinkLevel?: string;
+      agentID?: string;
+    },
   ): Promise<string>;
   /** cancel stops one running turn of this application. */
   cancel(runID: string): Promise<void>;

@@ -992,6 +992,81 @@ func TestAppManifestReadsWhatThePageAndTheBundleNeed(t *testing.T) {
 // application's turn belongs — streamed deltas and a terminal event
 // named with the application, and the transcript in the application's
 // own store rather than anywhere the window's workspace could see.
+// writeAppBundleWithAgents rewrites the fixture package into one that
+// plays two roles: the manifest lists a judge, and the layer declares it
+// with the contract's committer. The entry agent's own layer is
+// untouched, because that is the shape a real package has — the second
+// agent is a second block, not a second application.
+func writeAppBundleWithAgents(t *testing.T, dir string) {
+	t.Helper()
+	files := map[string]string{
+		apps.ManifestFile: `app: v1
+id: hello
+name: Hello
+version: 0.1.0
+agent: app
+agents:
+  - judge
+layers:
+  - layer.yaml
+`,
+		"layer.yaml": `version: v1
+agents:
+  app:
+    card:
+      name: Hello
+    engine:
+      settings:
+        graph: { file: graph.yaml }
+  judge:
+    card:
+      name: Judge
+      description: the second agent
+    engine:
+      kind: agent.Engine
+      impl: graph
+      deps:
+        inference: infer
+        router: router
+        workspace: ws
+        script_runtime: js
+      settings:
+        graph: { file: judge.yaml }
+    commit:
+      - type: opencraft.commit
+        deps:
+          memory: mem
+          sessions: sessions
+`,
+		"judge.yaml": `name: judge
+entry: verdict
+nodes:
+  - id: verdict
+    type: script
+    config:
+      runtime: js
+      source: { file: scripts/judge.js }
+  - id: llm
+    type: inference
+    config:
+      stream: true
+edges:
+  - { from: verdict, to: llm }
+  - { from: llm, to: __end__ }
+`,
+		"scripts/judge.js": `fs.write("verdict.txt", "judged\n");` + "\n",
+	}
+	for rel, data := range files {
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestAppStartTurnRunsInTheApplication(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "hello from the app"})
 	f := newAppBinding(t, provider)
@@ -1101,6 +1176,112 @@ func TestAppStartTurnRunsInTheApplication(t *testing.T) {
 	if entries, err := os.ReadDir(filepath.Join(f.dataDir, "workspaces")); err == nil &&
 		len(entries) > 0 {
 		t.Fatalf("an application turn wrote to the workspace root: %v", entries)
+	}
+}
+
+// TestAppStartTurnRunsTheAgentItNames: a package that plays two roles is
+// run one agent per turn, and the request is where the choice lives. The
+// turn has to be that agent's — its own graph, and a terminal event that
+// names it — while the conversation stays the one the caller named,
+// because whose turn it was is not which history it joined.
+func TestAppStartTurnRunsTheAgentItNames(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "the judge speaks"})
+	f := newAppBinding(t, provider)
+	pkg := writeAppBundle(t)
+	writeAppBundleWithAgents(t, pkg)
+	if _, err := f.binding.Install(pkg, AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if err := f.binding.SetEnabled("hello", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	seen := f.watch()
+
+	conversation, err := f.binding.NewSession("hello")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	start, err := f.binding.StartTurn(AppTurnRequest{
+		ID:             "hello",
+		ConversationID: conversation,
+		AgentID:        "judge",
+		Message:        message.NewTextMessage(message.RoleUser, "who wins?"),
+	})
+	if err != nil {
+		t.Fatalf("start turn: %v", err)
+	}
+	if start.ConversationID != conversation {
+		t.Fatalf("the named agent answered in another conversation: %+v", start)
+	}
+
+	end := waitForTurnEnd(t, seen, start.RunID)
+	if end.AgentID != "judge" {
+		t.Fatalf("turn_end agent_id = %q, want the agent the turn named", end.AgentID)
+	}
+	if status := end.Status; status != "completed" {
+		t.Fatalf("turn_end = %+v", end)
+	}
+	// The judge's graph ran: its script wrote its file into the
+	// application's private workspace, and the entry agent's graph — which
+	// writes hello.txt on every turn — did not.
+	status, err := f.binding.Status("hello")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(status.WorkDir, "verdict.txt")); err != nil {
+		t.Fatalf("the named agent's graph did not run: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(status.WorkDir, "hello.txt")); err == nil {
+		t.Fatalf("a turn naming the judge ran the entry agent's graph")
+	}
+	// One conversation, whichever agent answered: the page reloads its
+	// turns from the store, so the judge's turn has to be there.
+	turns, err := f.binding.Turns("hello", conversation, 0, 0)
+	if err != nil {
+		t.Fatalf("turns: %v", err)
+	}
+	if len(turns) != 1 || turns[0].Status != "completed" {
+		t.Fatalf("turns = %+v", turns)
+	}
+}
+
+// TestAppStartTurnRefusesAnAgentThePackageDoesNotHave: the names are the
+// package's, so a page asking for one the manifest does not list is
+// asking for something that does not exist. The refusal names the agents
+// it does have, which is what the page needs to correct itself.
+func TestAppStartTurnRefusesAnAgentThePackageDoesNotHave(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "ok"})
+	f := newAppBinding(t, provider)
+	pkg := writeAppBundle(t)
+	writeAppBundleWithAgents(t, pkg)
+	if _, err := f.binding.Install(pkg, AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if err := f.binding.SetEnabled("hello", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	_, err := f.binding.StartTurn(AppTurnRequest{
+		ID:      "hello",
+		AgentID: "referee",
+		Message: message.NewTextMessage(message.RoleUser, "who wins?"),
+	})
+	if err == nil {
+		t.Fatal("a turn naming an agent the package does not declare was accepted")
+	}
+	if !strings.Contains(err.Error(), `agent "referee"`) ||
+		!strings.Contains(err.Error(), "(app, judge)") {
+		t.Errorf("refusal %q does not name the agents the package has", err)
+	}
+	// The refusal came before anything was done for the turn: a
+	// conversation minted for a name that does not exist would be a row
+	// the page can open and no turn can ever fill.
+	metas, err := f.binding.Sessions("hello")
+	if err != nil {
+		t.Fatalf("sessions: %v", err)
+	}
+	if len(metas) != 0 {
+		t.Fatalf("a refused turn left sessions behind: %+v", metas)
 	}
 }
 

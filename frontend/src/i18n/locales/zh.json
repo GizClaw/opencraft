@@ -50,7 +50,8 @@
       "send": "发送",
       "reveal": "在文件管理器中显示",
       "model": "模型",
-      "think": "思考档位"
+      "think": "思考档位",
+      "agent": "智能体"
     },
     "diag": {
       "refresh": "刷新",

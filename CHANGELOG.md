@@ -44,6 +44,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An application can now play more than one role. Its manifest lists the
+  agents it runs besides the entry one (`agents:`), each of those
+  declared by a layer, and a caller picks one per turn by name
+  (`App.StartTurn`'s `agent_id`, or `ctx.app.send(parts, { agentID })`
+  from the package's own bundle). The platform checks the three halves
+  that can disagree: a layer may not declare an agent the manifest does
+  not list, the manifest may not list one no layer declares, and every
+  listed agent needs a graph to run and a committer to record itself —
+  a turn of a second agent is a turn of the same conversation, and the
+  page reloads turns from the transcript. The refusal names the agents
+  that do exist when a turn asks for one that does not, and the name is
+  the one the engine runs under, so a judge's turn is the judge's graph
+  in the same conversation and its `turn_end` says so (`Run.AgentID()`,
+  which the desktop's terminal event now reports instead of the entry
+  agent's name). The application's own conversation offers the choice
+  as a picker beside the composer when the package declares one.
 - An application's own files can be edited while it runs, and the next
   turn in the same conversation serves the edit. The development loop
   used to end at the watcher: a change under an application's content
