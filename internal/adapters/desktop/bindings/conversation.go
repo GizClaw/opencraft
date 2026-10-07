@@ -15,7 +15,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/capabilities/worldstate"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
@@ -301,52 +300,15 @@ func resultErr(res *agent.Result) error {
 	return res.Err
 }
 
+// waitTurn finishes the workspace turn it was started for: the window's
+// own scope, the desktop's assistant identity, the conversation the
+// frontend is showing.
 func (b *Conversation) waitTurn(
 	ctx context.Context,
 	run *host.Run,
 	contextID string,
 ) {
-	res, err := run.Wait(ctx)
-	status := "unknown"
-	var errText string
-	if res != nil {
-		status = string(res.Status)
-		if res.Err != nil {
-			errText = res.Err.Error()
-		}
-	}
-	if err != nil && errText == "" {
-		errText = err.Error()
-	}
-	finishedAt, durationMs := run.FinishedTiming()
-	requestID, responseID := run.FinishedIDs()
-	end := core.NewTurnEnd(
-		run.RunID(), "", contextID, status, errText,
-		requestID, responseID,
-		lastAssistantOutput(res), finishedAt, durationMs, res,
-	)
-	if end.SteerPending == nil {
-		flowtelemetry.Warn(context.WithoutCancel(ctx),
-			"conversation: undelivered steer count unreadable; "+
-				"the UI keeps every steered row",
-			otellog.String("run.id", run.RunID()))
-	}
-	if res != nil {
-		if report, ok := worldstate.CompactionReportFromBoard(res.LastBoard); ok &&
-			!report.Empty() {
-			end.Compaction = &core.CompactionEvent{
-				Folds:    report.Folds,
-				Failures: report.Failures,
-				Notified: report.Notified,
-			}
-		}
-	}
-	class := host.ClassifyRunError(resultErr(res), err)
-	end.InterruptCause = class.InterruptCause
-	end.ErrorKind = class.ErrorKind
-	end.AgentID = core.AssistantAgentID
-	b.core.Shell.Emit(core.EventTurnEnd, end)
-	b.core.Shell.Emit(core.EventStatus, core.StatusEvent{})
+	finishTurn(ctx, b.core, run, "", core.AssistantAgentID, contextID)
 }
 
 // agentIDOrAssistant returns the envelope agent header, falling back to

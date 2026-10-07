@@ -3,6 +3,7 @@ package bindings
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -796,4 +797,353 @@ func waitForAppHost(t *testing.T, f *appBindingFixture, old *host.Host) *host.Ho
 	}
 	t.Fatal("the drained application was never replaced")
 	return nil
+}
+
+// TestAppStartTurnRunsInTheApplication is the built-in chat surface's
+// path: mint a conversation, send one message, and find the turn where an
+// application's turn belongs — streamed deltas and a terminal event
+// named with the application, and the transcript in the application's
+// own store rather than anywhere the window's workspace could see.
+func TestAppStartTurnRunsInTheApplication(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "hello from the app"})
+	f := newAppBinding(t, provider)
+	if _, err := f.binding.Install(writeAppBundle(t), AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if err := f.binding.SetEnabled("hello", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	seen := f.watch()
+
+	conversation, err := f.binding.NewSession("hello")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	if !strings.HasPrefix(conversation, "s-") {
+		t.Fatalf("conversation id = %q, want an s- session", conversation)
+	}
+	start, err := f.binding.StartTurn(AppTurnRequest{
+		ID:             "hello",
+		ConversationID: conversation,
+		Message:        message.NewTextMessage(message.RoleUser, "hi"),
+	})
+	if err != nil {
+		t.Fatalf("start turn: %v", err)
+	}
+	if start.RunID == "" || start.ConversationID != conversation {
+		t.Fatalf("turn start = %+v", start)
+	}
+
+	end := waitForTurnEnd(t, seen, start.RunID)
+	if end.AppID != "hello" {
+		t.Fatalf("turn_end app_id = %q, want hello", end.AppID)
+	}
+	if end.AgentID != "app" {
+		t.Fatalf("turn_end agent_id = %q, want the manifest's app", end.AgentID)
+	}
+	if end.Status != "completed" {
+		t.Fatalf("turn_end = %+v", end)
+	}
+	// The deltas were named with the application as well: the page
+	// routes on app_id, and a workspace stream with the same ids must
+	// never merge into it.
+	var streamed bool
+	for _, e := range seen() {
+		if e.typ != core.EventStream {
+			continue
+		}
+		payload, ok := e.data.(map[string]any)
+		if !ok || payload["app_id"] != "hello" || payload["conversation_id"] != conversation {
+			t.Fatalf("stream payload = %#v", e.data)
+		}
+		streamed = true
+	}
+	if !streamed {
+		t.Fatalf("no stream deltas for the application turn: %v", eventNames(seen()))
+	}
+	// Everything else the turn reports is named too: the usage stays in
+	// the application's own bucket, and the turn does not touch the
+	// window's busy flag — an application's spinner is the page's, and
+	// clearing the composer's here would end a workspace turn's.
+	var usage core.UsageEvent
+	for _, e := range seen() {
+		switch e.typ {
+		case core.EventUsage:
+			usage, _ = e.data.(core.UsageEvent)
+		case core.EventStatus:
+			t.Fatalf("an application turn cleared the window's status: %v", e.data)
+		}
+	}
+	if usage.AppID != "hello" {
+		t.Fatalf("usage event = %+v, want it attributed to hello", usage)
+	}
+
+	// The turn is archived in the application's own store, and the
+	// page's own reads find it.
+	metas, err := f.binding.Sessions("hello")
+	if err != nil {
+		t.Fatalf("sessions: %v", err)
+	}
+	if len(metas) != 1 || metas[0].ID != conversation {
+		t.Fatalf("sessions = %+v", metas)
+	}
+	turns, err := f.binding.Turns("hello", conversation, 0, 0)
+	if err != nil {
+		t.Fatalf("turns: %v", err)
+	}
+	if len(turns) != 1 || turns[0].Status != "completed" {
+		t.Fatalf("turns = %+v", turns)
+	}
+	if got := f.binding.ActiveRun("hello", conversation); got != "" {
+		t.Fatalf("active run after the turn = %q", got)
+	}
+	// Isolation, in the one direction a workspace-shaped bug would show:
+	// the conversation lives under the application's state root, and no
+	// workspace was opened or written to for it.
+	st, err := f.binding.Status("hello")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if st.StateRoot != filepath.Join(f.dataDir, "apps", "hello") {
+		t.Fatalf("state root = %q", st.StateRoot)
+	}
+	if st.WorkDir != filepath.Join(st.StateRoot, "workspace") {
+		t.Fatalf("work dir = %q", st.WorkDir)
+	}
+	if entries, err := os.ReadDir(filepath.Join(f.dataDir, "workspaces")); err == nil &&
+		len(entries) > 0 {
+		t.Fatalf("an application turn wrote to the workspace root: %v", entries)
+	}
+}
+
+// TestAppTurnCanBeStopped pins the stop path the chat surface offers:
+// while the provider holds the turn, the page's cancel reaches the run,
+// the terminal event says so in the terms the transcript branches on —
+// `canceled`, and not a timeout, which is the classification the
+// frontend's isUserStop reads (store.ts: a canceled turn whose errorKind
+// is not a timeout stays a user stop even when the engine reports the
+// cancellation in its own words, which here is the context error) — and
+// the conversation is still usable afterwards.
+func TestAppTurnCanBeStopped(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "on the second try"})
+	f := newAppBinding(t, provider)
+	if _, err := f.binding.Install(writeAppBundle(t), AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if err := f.binding.SetEnabled("hello", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	seen := f.watch()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	gate := provider.HoldNext()
+	t.Cleanup(gate.Release)
+	conversation, err := f.binding.NewSession("hello")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	start, err := f.binding.StartTurn(AppTurnRequest{
+		ID:             "hello",
+		ConversationID: conversation,
+		Message:        message.NewTextMessage(message.RoleUser, "hi"),
+	})
+	if err != nil {
+		t.Fatalf("start turn: %v", err)
+	}
+	select {
+	case <-gate.Ready():
+	case <-ctx.Done():
+		t.Fatal("the turn never reached the provider")
+	}
+	if got := f.binding.ActiveRun("hello", conversation); got != start.RunID {
+		t.Fatalf("active run = %q, want %q", got, start.RunID)
+	}
+	if err := f.binding.Cancel("hello", start.RunID); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	gate.Release()
+
+	end := waitForTurnEnd(t, seen, start.RunID)
+	if end.Status != "canceled" {
+		t.Fatalf("turn_end = %+v, want a canceled turn", end)
+	}
+	if end.ErrorKind == "timeout" {
+		t.Fatalf("a stop was reported as a timeout: %+v", end)
+	}
+
+	// The stop freed the run and left the conversation usable: the page
+	// can send again, and both turns are in the transcript.
+	if got := f.binding.ActiveRun("hello", conversation); got != "" {
+		t.Fatalf("active run after the stop = %q", got)
+	}
+	second, err := f.binding.StartTurn(AppTurnRequest{
+		ID:             "hello",
+		ConversationID: conversation,
+		Message:        message.NewTextMessage(message.RoleUser, "again"),
+	})
+	if err != nil {
+		t.Fatalf("start turn after the stop: %v", err)
+	}
+	if again := waitForTurnEnd(t, seen, second.RunID); again.Status != "completed" {
+		t.Fatalf("second turn_end = %+v", again)
+	}
+	turns, err := f.binding.Turns("hello", conversation, 0, 0)
+	if err != nil {
+		t.Fatalf("turns: %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("the stopped turn was not archived beside the second: %+v", turns)
+	}
+}
+
+// TestAppReadsWorkWithoutARuntime pins what a disabled application's page
+// still does: it lists, reads and deletes conversations — the store is a
+// file and rendering history needs no engine — while a turn is refused
+// with the registry's own answer instead of a runtime failure.
+func TestAppReadsWorkWithoutARuntime(t *testing.T) {
+	f := newAppBinding(t, nil)
+	if _, err := f.binding.Install(writeAppBundle(t), AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if err := f.binding.SetEnabled("hello", false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if got, err := f.binding.Sessions("hello"); err != nil || len(got) != 0 {
+		t.Fatalf("sessions = %+v (%v)", got, err)
+	}
+	conversation, err := f.binding.NewSession("hello")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	if got, err := f.binding.Turns("hello", conversation, 0, 0); err != nil || len(got) != 0 {
+		t.Fatalf("turns = %+v (%v)", got, err)
+	}
+	if got := f.binding.ActiveRun("hello", conversation); got != "" {
+		t.Fatalf("active run of a disabled application = %q", got)
+	}
+	_, err = f.binding.StartTurn(AppTurnRequest{
+		ID:             "hello",
+		ConversationID: conversation,
+		Message:        message.NewTextMessage(message.RoleUser, "hi"),
+	})
+	if !errors.Is(err, host.ErrAppNotEnabled) {
+		t.Fatalf("start of a disabled application = %v, want ErrAppNotEnabled", err)
+	}
+	// A refusal hands the page nothing to hold on to: no conversation
+	// id, no run id.
+	if start, err := f.binding.StartTurn(AppTurnRequest{
+		ID:      "hello",
+		Message: message.NewTextMessage(message.RoleUser, "hi"),
+	}); err == nil || start.ConversationID != "" || start.RunID != "" {
+		t.Fatalf("a refused turn returned %+v (%v)", start, err)
+	}
+	// Deleting it does not need the runtime either.
+	if err := f.binding.DeleteSession("hello", conversation); err != nil {
+		t.Fatalf("delete session: %v", err)
+	}
+	if got, err := f.binding.Sessions("hello"); err != nil || len(got) != 0 {
+		t.Fatalf("sessions after delete = %+v (%v)", got, err)
+	}
+	// The reads refuse an application that is not installed at all.
+	if _, err := f.binding.Sessions("gone"); err == nil {
+		t.Fatal("listing conversations of an uninstalled application succeeded")
+	}
+	if _, err := f.binding.NewSession("gone"); err == nil {
+		t.Fatal("minting a conversation for an uninstalled application succeeded")
+	}
+}
+
+// TestAppReadOutlivesTheHostItSharesWith pins the pooling rule the
+// page's reads rest on. A read of an application's conversations takes a
+// reference on the pool's store — the same handle the serving Host uses,
+// one open database per root — so a Host that retires mid-read cannot
+// close the database under it, and a page that reads while the runtime
+// is coming or going sees a working store rather than whichever side of
+// the close it landed on.
+func TestAppReadOutlivesTheHostItSharesWith(t *testing.T) {
+	f := newAppBinding(t, nil)
+	if _, err := f.binding.Install(writeAppBundle(t), AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if err := f.binding.SetEnabled("hello", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	hosted := f.core.Runtime.HostFor(host.AppTarget("hello"))
+	if hosted == nil || hosted.Sessions() == nil {
+		t.Fatal("enabling the application assembled no Host")
+	}
+
+	ctx := context.Background()
+	store, release, err := f.binding.appSessions(ctx, "hello")
+	if err != nil {
+		t.Fatalf("open the page's read handle: %v", err)
+	}
+	defer release()
+	if store != hosted.Sessions() {
+		t.Fatal("the page's read opened a second database for one root")
+	}
+
+	// Disable it: the Host retires and closes its own reference, and the
+	// read's handle must survive that.
+	if err := f.binding.SetEnabled("hello", false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	waitForRetirement(t, f, "hello")
+	if store.Closed() {
+		t.Fatal("the retiring Host closed the database a page read holds")
+	}
+	if _, err := store.List(); err != nil {
+		t.Fatalf("reading through the held handle: %v", err)
+	}
+	release()
+	// And with the handle given back, the page reads again: the store is
+	// reopened from the file, runtime or no runtime.
+	if got, err := f.binding.Sessions("hello"); err != nil || got == nil {
+		t.Fatalf("sessions after the release = %+v (%v)", got, err)
+	}
+}
+
+// waitForRetirement waits until no Host serves the application any more:
+// neither the live generation nor one draining. The pool retires out of
+// band (a stale Host is closed once its last run ends), so this is a poll
+// on the same status the page's card shows.
+func waitForRetirement(t *testing.T, f *appBindingFixture, id string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		st, err := f.binding.Status(id)
+		if err != nil {
+			t.Fatalf("status: %v", err)
+		}
+		if !st.Serving && !st.Retiring {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	st, _ := f.binding.Status(id)
+	t.Fatalf("the retired Host never left; status = %+v", st)
+}
+
+// waitForTurnEnd waits for the terminal event of one run and returns it.
+// The turn ends on the Host's goroutine, so this is a poll rather than a
+// call; the run id is the key rather than the conversation, because a
+// conversation that was stopped and then used again has two ends.
+func waitForTurnEnd(t *testing.T, seen func() []uiEvent, runID string) core.TurnEndEvent {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, e := range seen() {
+			if e.typ != core.EventTurnEnd {
+				continue
+			}
+			end, ok := e.data.(core.TurnEndEvent)
+			if ok && end.RunID == runID {
+				return end
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("run %s never ended; events = %v", runID, eventNames(seen()))
+	return core.TurnEndEvent{}
 }

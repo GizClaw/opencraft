@@ -11,12 +11,22 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/event"
+	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/apps"
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
+	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
 // App exposes the application platform to the application page: the
@@ -455,6 +465,301 @@ func (b *App) Reveal(id, rel string) error {
 		return err
 	}
 	return openWith(b.core.Shell.Context(), runtime.GOOS, reveal, full)
+}
+
+// ---- conversations -------------------------------------------------
+//
+// An application's conversations live in its own state root and are
+// served by its own Host, so none of the workspace-scoped Conversation
+// or Session methods can answer for them. What is the same is the
+// shape of a turn: a message in, streamed deltas out, a terminal
+// turn_end the transcript renders from. These methods reuse that shape
+// and change the scope.
+
+// AppTurnRequest is one turn an application page starts: the built-in
+// chat surface and an application's own views send through the same
+// call, so both produce the same events.
+type AppTurnRequest struct {
+	// ID is the application the turn belongs to.
+	ID string `json:"id"`
+	// ConversationID names the conversation, or is empty for a new
+	// one. An application has no registry of "the current
+	// conversation" the host keeps — the page holds the selection — so
+	// every turn names the conversation it writes to, and an empty one
+	// mints a fresh id here.
+	ConversationID string          `json:"conversation_id,omitempty"`
+	Message        message.Message `json:"message"`
+	// Model and Think are the per-turn overrides the composer offers; an
+	// app's page defaults them from its manifest.
+	Model string `json:"model,omitempty"`
+	Think string `json:"think,omitempty"`
+}
+
+// appSessionWindow is how many released store handles the page's reads
+// keep alive before the pool may close the store. It matches the
+// workspace listing's window: a page that lists, opens and deletes in a
+// row holds no more than one at a time.
+const appSessionWindow = 40
+
+// app returns one installed application from the registry. Every method
+// that names an application starts here, so an id no content root holds
+// is refused by the registry's own answer rather than creating a state
+// root for a typo.
+func (b *App) app(id string) (apps.App, error) {
+	store, err := b.store()
+	if err != nil {
+		return apps.App{}, err
+	}
+	return store.Get(id)
+}
+
+// appSessions returns a handle on one installed application's session
+// store plus the function that releases it.
+//
+// Always through the pool, never by borrowing the serving Host's store:
+// a host that is retiring still answers HostFor, and its close would
+// then shut the database under a read this method handed out. The pool
+// hands back the very store the host holds — one open handle per root,
+// reference-counted — so a page read keeps it alive for as long as it
+// reads, whether the runtime exists, is draining, or never started.
+//
+// Going through the pool is also what lets the page show a conversation
+// before the runtime exists (a disabled application) or after it
+// retired: the store is a file, and rendering history needs no engine.
+func (b *App) appSessions(
+	ctx context.Context, id string,
+) (*sessions.Store, func(), error) {
+	mgr := b.core.Runtime.Manager()
+	if mgr == nil {
+		return nil, nil, errNotReady("app")
+	}
+	layout, err := config.AppLayout(b.core.DataDir, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	// An empty work dir: an application's state root never had a
+	// project-local predecessor, so the opened store skips adoption
+	// entirely (see host.Manager.acquireStore).
+	store, err := mgr.OpenSessions(ctx, "", layout, appSessionWindow)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, func() { mgr.ReleaseSessions(store) }, nil
+}
+
+// NewSession mints the id of a new conversation for one application. The
+// id is minted here rather than in a per-window registry because an
+// application has no "current conversation" the host tracks: the page
+// holds the selection, and every turn names the session it belongs to.
+func (b *App) NewSession(id string) (string, error) {
+	if _, err := b.app(id); err != nil {
+		return "", err
+	}
+	return ids.NewSession(), nil
+}
+
+// Sessions lists one application's stored conversations, newest first.
+func (b *App) Sessions(id string) ([]SessionMeta, error) {
+	if _, err := b.app(id); err != nil {
+		return nil, err
+	}
+	store, release, err := b.appSessions(b.core.Shell.Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return listStoredMetas(store)
+}
+
+// History returns the most recent n archived messages of one
+// conversation.
+func (b *App) History(
+	id, conversationID string, n int,
+) ([]message.Message, error) {
+	if _, err := b.app(id); err != nil {
+		return nil, err
+	}
+	store, release, err := b.appSessions(b.core.Shell.Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return store.History(b.core.Shell.Context(), conversationID, n)
+}
+
+// Turns returns archived turns of one conversation, oldest first. limit
+// <= 0 reads every turn.
+func (b *App) Turns(
+	id, conversationID string, limit int, beforeSeq int64,
+) ([]SessionTurnDTO, error) {
+	if _, err := b.app(id); err != nil {
+		return nil, err
+	}
+	ctx := b.core.Shell.Context()
+	store, release, err := b.appSessions(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	turns, err := store.TurnsPage(ctx, conversationID, limit, beforeSeq)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SessionTurnDTO, 0, len(turns))
+	for _, turn := range turns {
+		out = append(out, toSessionTurnDTO(ctx, conversationID, turn))
+	}
+	return out, nil
+}
+
+// ActiveRun reports the run serving one conversation right now, or "".
+// The page reads it after a reload or a reopen to pick up a turn that is
+// still running: an application's runs outlive its page.
+func (b *App) ActiveRun(id, conversationID string) string {
+	h := b.core.Runtime.HostFor(host.AppTarget(id))
+	if h == nil {
+		return ""
+	}
+	for _, run := range h.ActiveRuns() {
+		if run.ConversationID == conversationID {
+			return run.RunID
+		}
+	}
+	return ""
+}
+
+// StartTurn starts one turn in an installed, enabled application and
+// returns immediately; the deltas and the terminal event arrive on the
+// event bus, named with the application they belong to.
+//
+// The turn always runs in the application it names — an application owns
+// its Host, its session store and its private workspace, and the window's
+// active workspace has no part in it. A Host rebuild between the page's
+// send and the run (an enable, an update, a settings save) is absorbed
+// the way a workspace send absorbs one: wait for the replacement and
+// retry inside this one call, so the page never re-sends the message.
+func (b *App) StartTurn(req AppTurnRequest) (TurnStart, error) {
+	app, err := b.app(req.ID)
+	if err != nil {
+		return TurnStart{}, err
+	}
+	// The registry's answer comes first: a disabled application is
+	// refused here, without asking the pool to assemble anything. The
+	// builder refuses it too — this is the cheap, named path to the
+	// same answer, and it hands the page nothing to hold on to.
+	if !app.Enabled {
+		return TurnStart{}, host.ErrAppNotEnabled
+	}
+	ctx := b.core.Shell.Context()
+	contextID := strings.TrimSpace(req.ConversationID)
+	if contextID == "" {
+		contextID = ids.NewSession()
+	} else if !ids.IsSession(contextID) {
+		return TurnStart{}, fmt.Errorf(
+			"apps: invalid session id %q", contextID)
+	}
+	requestedAt := time.Now().UTC()
+	sink := agent.StreamSinkFunc(func(
+		_ context.Context,
+		env event.Envelope,
+		delta agent.StreamDeltaPayload,
+	) error {
+		if !agent.IsStreamDelta(env.Subject) {
+			return nil
+		}
+		b.core.Shell.EmitStream(core.StreamEvent{
+			AppID:          app.ID,
+			RunID:          interact.StreamRunID(env.Subject),
+			ConversationID: contextID,
+			AgentID:        agentIDOrAssistant(env),
+			ParentRunID:    env.ParentRunID(),
+			Delta:          delta,
+		})
+		return nil
+	})
+	opts := host.RunOptions{
+		Message:   req.Message,
+		ContextID: contextID,
+		Model:     req.Model,
+		Think:     req.Think,
+		Backend:   b.core.Prompt,
+		Sink:      sink,
+		QueueSize: 256,
+		// A person pressed send in the application's page, so the turn
+		// may preempt a live one on the same conversation the way a
+		// composer send does.
+		Origin: host.OriginInteractive,
+		OnUsage: func(_ context.Context, usage inference.Usage) {
+			ev := core.NewUsageEvent(usage)
+			ev.AppID = app.ID
+			b.core.Shell.Emit(core.EventUsage, ev)
+		},
+	}
+	var start TurnStart
+	err = b.core.Runtime.Do(
+		host.WithAssemblyReason(ctx, host.ReasonAppTurn),
+		host.AppTarget(app.ID), nil,
+		func(h *host.Host) error {
+			run, err := h.StartRun(ctx, opts)
+			if err != nil {
+				return err
+			}
+			startedAt := time.Now().UTC()
+			start = TurnStart{
+				RunID:          run.RunID(),
+				ConversationID: contextID,
+				RequestedAt:    requestedAt.Format(time.RFC3339),
+				StartedAt:      startedAt.Format(time.RFC3339),
+			}
+			// The turn's terminal event is emitted from here on its own
+			// goroutine, so the RPC returns as soon as the run started.
+			go finishTurn(ctx, b.core, run, app.ID, app.Agent, contextID)
+			return nil
+		},
+	)
+	if err != nil {
+		return TurnStart{}, err
+	}
+	return start, nil
+}
+
+// Cancel stops one running turn of one application. The run is looked up
+// on the application's Host — the live generation or the one retiring
+// while its last runs drain — and an application with no Host has no run
+// to stop.
+func (b *App) Cancel(id, runID string) error {
+	if _, err := b.app(id); err != nil {
+		return err
+	}
+	h := b.core.Runtime.HostFor(host.AppTarget(id))
+	if h == nil {
+		return errNotReady("app")
+	}
+	return h.CancelRun(runID)
+}
+
+// DeleteSession removes one conversation of one application. A live run
+// keeps the Host's delete path (it stops the run and waits for the
+// terminal persistence before the rows go away); an application with no
+// runtime deletes through the store directly, because "delete this
+// conversation" must not require starting an engine.
+func (b *App) DeleteSession(id, conversationID string) error {
+	if _, err := b.app(id); err != nil {
+		return err
+	}
+	if !ids.IsSession(conversationID) {
+		return fmt.Errorf("apps: invalid conversation id %q", conversationID)
+	}
+	ctx := b.core.Shell.Context()
+	if h := b.core.Runtime.HostFor(host.AppTarget(id)); h != nil {
+		return h.DeleteConversation(ctx, conversationID)
+	}
+	store, release, err := b.appSessions(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return store.Remove(ctx, conversationID)
 }
 
 // changed tells the page that one application was installed, enabled,
