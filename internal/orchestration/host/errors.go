@@ -37,6 +37,14 @@ var (
 	// retry window. Its message names the target, and the pool never
 	// falls back to another scope's builder to answer it.
 	ErrNoAssembly = errors.New("host: no assembly for this target kind")
+	// ErrAppNotEnabled reports an application assembly refused because
+	// the registry says the application is disabled. Enablement is
+	// checked where the runtime would be built — not only where the
+	// choice was made — so "disabled" holds for every path that asks
+	// for the application's Host, including one that asks before the
+	// page invalidated it. It is not a retryable lifecycle error: no
+	// replacement Host appears while the choice stands.
+	ErrAppNotEnabled = errors.New("host: application is disabled")
 )
 
 // IsRetryableStartError reports whether err is one of the host

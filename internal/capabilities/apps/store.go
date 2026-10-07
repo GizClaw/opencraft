@@ -17,6 +17,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/semver"
+	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
 
 // The application registry: one directory per installed application
@@ -87,6 +88,28 @@ func NewStore(o Options) *Store {
 		builtin:     o.Builtin,
 		hostVersion: o.HostVersion,
 	}
+}
+
+// NewRegistry builds the registry one launch serves: content roots under
+// <appHome>/apps, state roots under <dataDir>/apps (the same tree in the
+// single-root layout), the read-only built-ins beside the running
+// executable, and this build's version as the one a manifest's
+// minHostVersion is checked against. The launch paths are the ones
+// config.ResolveLaunch resolved, so a composition root that has them
+// builds one registry and hands that instance to everything that reads
+// it — the pool that assembles an application and the page that installs
+// one — instead of each half deriving its own roots.
+func NewRegistry(appHome, dataDir string) (*Store, error) {
+	root, err := config.AppsContentDir(appHome)
+	if err != nil {
+		return nil, err
+	}
+	return NewStore(Options{
+		Root:        root,
+		DataDir:     dataDir,
+		Builtin:     BuiltinAppRoot(),
+		HostVersion: version.ServiceVersion,
+	}), nil
 }
 
 // BuiltinAppRoot returns the read-only, app-bundled application

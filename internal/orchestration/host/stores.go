@@ -87,7 +87,10 @@ func (m *Manager) ReleaseSessions(store *sessions.Store) {
 
 // acquireStore opens one Store per root and reference-counts it.
 // workDir supplies the v0.1.x project-local session location that is
-// adopted into the new layout on first open.
+// adopted into the new layout on first open. An empty workDir skips
+// that adoption: an application's state root never had a
+// project-local predecessor, and its content root is not a place to
+// go looking for one (the app platform plan, §3.1).
 func (m *Manager) acquireStore(
 	ctx context.Context, workDir, root string, window int,
 ) (*sessions.Store, error) {
@@ -115,10 +118,12 @@ func (m *Manager) acquireStore(
 	}
 	m.mu.Unlock()
 
-	if err := compat.AdoptLegacySessions(
-		ctx, compat.LegacySessionsDir(workDir), root,
-	); err != nil {
-		return nil, err
+	if workDir != "" {
+		if err := compat.AdoptLegacySessions(
+			ctx, compat.LegacySessionsDir(workDir), root,
+		); err != nil {
+			return nil, err
+		}
 	}
 
 	store, err := sessions.New(root, window)

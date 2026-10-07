@@ -46,6 +46,17 @@ const (
 	// ReasonConversation is a turn acquiring the Host of the workspace
 	// that owns its conversation.
 	ReasonConversation AssemblyReason = "conversation"
+	// ReasonAppTurn is a turn in an installed application acquiring the
+	// application's Host.
+	ReasonAppTurn AssemblyReason = "app_turn"
+	// ReasonAppEnable is an application being enabled (or started
+	// again): the page assembles it once so a broken application is
+	// reported there instead of inside the first turn.
+	ReasonAppEnable AssemblyReason = "app_enable"
+	// ReasonAppReload is an application reload: its content changed
+	// under the registry (update, rollback, an edited layer) or the
+	// page asked for a fresh assembly.
+	ReasonAppReload AssemblyReason = "app_reload"
 )
 
 type assemblyReasonKey struct{}

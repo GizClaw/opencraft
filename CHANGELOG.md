@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   In-tree callers are updated; a fork or a self-fork that calls these
   recompiles with the target at the call site. `internal/` is not an API,
   so the migration is the compile error, not a runtime one.
+- An application target is only buildable where an application registry
+  was wired: `host.Manager.SetAppRegistry` is what the desktop's
+  `NewRuntime` and `opencraft run`'s assembly call, and a manager
+  without one refuses an application target as an unbuildable kind
+  (`ErrNoAssembly`) rather than assembling a workspace for it. The
+  desktop's reload surface is now three calls by scope —
+  `ReloadWorkspaces`, `ReloadApps(ctx, ids…)`, `ReloadAll` — and a
+  caller that changes something both scopes read (the inference wiring
+  most of all) wants `ReloadAll`; the pool's two scopes never
+  invalidate each other.
 - A kraft that calls the `secret.*` primitives must declare
   `secrets:auth` in its manifest. The gate was documented since those
   primitives landed and never checked, so a plugin could reach its
@@ -136,6 +146,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names a directory, a symbolic link or a file that is not there.
   `config.AppStateRoot` names that state root without creating it, which
   is what lets the uninstall path remove it.
+- An installed application runs. `host.Manager.SetAppRegistry` wires the
+  registry an application assembly reads, and `Acquire` (or `Ensure`)
+  with an application target builds that application's Host from it:
+  `buildAppHost` is the four differences the plan counted and nothing
+  else — the application's own layout (`<dataDir>/apps/<id>`, its
+  private workspace inside it), its own document (contract layer, the
+  installed layers, the user's inference overlay, every `{file:}`
+  reference resolved against the content root), its own entry agent, and
+  no project-local session adoption — over the same runtime, brokers and
+  cross-cutting wiring a workspace's Host gets, because none of that is
+  about which directory the turns belong to. The registry is consulted
+  at assembly rather than earlier: an application uninstalled or
+  disabled between the page's decision and this call is refused there
+  (`ErrNoAssembly`, `ErrAppNotEnabled` — neither is a retryable
+  lifecycle error, and neither falls back to the workspace builder).
+  Four facts an application turn gets from being one: it archives no
+  background title (the page shows the conversation's own name), it
+  reports usage under the key `app:<id>` rather than a path hash, its
+  artifacts belong to its private workspace, and deleting one of its
+  conversations leaves the state root as clean as a workspace's. New
+  assembly reasons `ReasonAppTurn`/`ReasonAppEnable`/`ReasonAppReload`
+  answer "why did this application rebuild" in the same log lines a
+  workspace uses. The desktop and `opencraft run` both build their
+  registry from the resolved launch paths (`capabilities/apps`
+  `NewRegistry`), so "installed applications" is one set of content
+  roots and one enable/disable record for the whole process; the
+  desktop's runtime grows the matching scope API (`Apps()`,
+  `ReloadApps(ctx, ids…)`, `ReloadAll(ctx)`), where `ReloadApps` names
+  the applications a change touched and `ReloadAll` is what an input
+  every deployment reads — the user's inference wiring — asks for.
 
 ### Changed
 

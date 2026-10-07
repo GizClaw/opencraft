@@ -23,6 +23,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/apps"
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
@@ -105,6 +106,17 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	hostMgr := host.NewManagerAt(dataDir, configDir)
 	hostMgr.SetAppHome(appHome)
 	hostMgr.SetLeaseKind("headless")
+	// Applications are a side of this process whether or not this run
+	// names one: wiring the registry keeps "installed applications" one
+	// thing — the same content roots and the same enable/disable
+	// choices the desktop reads — instead of a second, run-local view.
+	if registry, err := apps.NewRegistry(appHome, dataDir); err == nil {
+		hostMgr.SetAppRegistry(registry)
+	} else {
+		telemetry.WarnErr(ctx,
+			"headless: application registry unavailable; app targets stay unbuildable",
+			err)
+	}
 	// Usage accounting is best-effort: the headless run itself must
 	// not fail because the user database is unavailable.
 	if usageErr := hostMgr.OpenUserDB(ctx); usageErr != nil {

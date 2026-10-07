@@ -12,6 +12,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/delegation"
 	"github.com/GizClaw/flowcraft/core/inference"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/apps"
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
@@ -48,9 +49,14 @@ type Manager struct {
 	openMu sync.Mutex
 	// hosts holds the pooled Hosts by Target.Key(): one entry per
 	// workspace and per application.
-	hosts          map[string]*hostRef
-	stores         map[string]*storeRef
-	engineOptFunc  func() []engine.Option
+	hosts         map[string]*hostRef
+	stores        map[string]*storeRef
+	engineOptFunc func() []engine.Option
+	// appRegistry is what an application assembly reads: the content
+	// root, the layers and the entry agent of the target it was asked
+	// for, plus whether the user has it enabled (SetAppRegistry).
+	// Nil means this manager cannot build app targets at all.
+	appRegistry    *apps.Store
 	pluginStore    *plugins.Store
 	pluginKraft    *kraft.Manager
 	pluginInstall  plugininstalltool.Installer

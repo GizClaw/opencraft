@@ -46,6 +46,20 @@ func AppsRoot(dataDir string) (string, error) {
 	return dir, nil
 }
 
+// AppsContentDir returns <appHome>/apps — the directory the registry
+// installs one content root per application under. It creates nothing:
+// an install creates the root it needs, and a machine that never
+// installed an application reads an empty directory. The state half is
+// <dataDir>/apps (AppsRoot); the two are the same directory in the
+// single-root layout, which is why the content root sits one level
+// further down (see the app platform plan, §0.3).
+func AppsContentDir(appHome string) (string, error) {
+	if strings.TrimSpace(appHome) == "" {
+		return "", fmt.Errorf("config: app home is required")
+	}
+	return filepath.Join(appHome, appsDirName), nil
+}
+
 // AppLayout builds the path layout for one installed application under
 // dataDir. It creates the application root directory but no
 // subdirectories; Ensure creates the rest, the private workspace

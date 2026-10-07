@@ -26,9 +26,13 @@ import (
 // Host is one shared runtime: one target's engine deployment, session
 // store and run bookkeeping.
 type Host struct {
-	target      Target
-	workDir     string
-	userDir     string
+	target  Target
+	workDir string
+	userDir string
+	// agentID is the entry agent this target's runtime serves: the
+	// assistant for a user workspace, the manifest's own for an
+	// installed application (see agentName).
+	agentID     string
 	workspaceID string
 	store       *sessions.Store
 	ctrl        *engine.Controller
@@ -100,6 +104,12 @@ type RunID string
 
 // ConversationID identifies one conversation inside a Host.
 type ConversationID string
+
+// assistantAgent is the agent a user workspace's runtime serves: the
+// name the assistant documents declare, and the one every engine
+// session key of a workspace host names. An application names its own
+// (see agentName).
+const assistantAgent = "assistant"
 
 // runDetail is the internal per-run state owned by Host.
 type runDetail struct {
@@ -336,6 +346,17 @@ func (h *Host) AppID() string {
 // WorkDir returns the directory this Host's runtime works in: the user
 // workspace, or an application's own private workspace.
 func (h *Host) WorkDir() string { return h.workDir }
+
+// agentName returns the agent this Host runs. Every engine session key
+// is built from it, so a Host assembled without the field — a test
+// fixture, or a Host built before the field existed — reads as the
+// workspace one instead of naming an agent no deployment declares.
+func (h *Host) agentName() string {
+	if h.agentID == "" {
+		return assistantAgent
+	}
+	return h.agentID
+}
 
 // Sessions returns the shared conversation store.
 func (h *Host) Sessions() *sessions.Store { return h.store }

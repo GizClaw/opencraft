@@ -105,7 +105,11 @@ type RunOptions struct {
 	Backend interact.Backend
 	// SkipAutoTitle disables the post-run background title generation
 	// for one-off callers (for example headless runs) that do not need
-	// a title and should not pay an extra model call.
+	// a title and should not pay an extra model call. An application's
+	// turns skip it whatever this says: the session keeps the fallback
+	// title seeded from the first user message, which is what the
+	// application's page lists, so a background inference call would
+	// buy the application nothing.
 	SkipAutoTitle bool
 }
 
@@ -275,7 +279,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 
 	requestedAt := time.Now().UTC()
 
-	key := coresession.Key{AgentID: "assistant", ContextID: contextID}
+	key := coresession.Key{AgentID: h.agentName(), ContextID: contextID}
 	lease, err := ctrl.Runtime().Sessions().Open(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("host: open session: %w", err)
@@ -360,7 +364,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		host:          h,
 		lease:         lease,
 		turn:          turn,
-		skipAutoTitle: opts.SkipAutoTitle,
+		skipAutoTitle: opts.SkipAutoTitle || h.AppID() != "",
 		startedAt:     startedAt,
 	}
 	run.detail = &runDetail{
@@ -811,7 +815,7 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 		h.clearDeleting(conv)
 		return fmt.Errorf("host: stop runs for session %q: %w", id, err)
 	}
-	key := coresession.Key{AgentID: "assistant", ContextID: id}
+	key := coresession.Key{AgentID: h.agentName(), ContextID: id}
 	if err := ctrl.Runtime().Sessions().DeleteSession(drainCtx, key); err != nil {
 		h.clearDeleting(conv)
 		return fmt.Errorf("host: close runtime session %q: %w", id, err)

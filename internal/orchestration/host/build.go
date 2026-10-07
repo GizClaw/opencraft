@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/deploy"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
+	"github.com/GizClaw/opencraft/internal/capabilities/apps"
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
@@ -35,6 +37,26 @@ func (m *Manager) SetHostConfigurator(fn func(*Host)) {
 	m.mu.Lock()
 	m.hostConfigurator = fn
 	m.mu.Unlock()
+}
+
+// SetAppRegistry wires the application registry every application
+// assembly reads: the content root a target's layers are installed
+// into, the layers themselves, the entry agent, and whether the user
+// has the application enabled. Call it before the first Acquire for an
+// application; a manager without one refuses app targets the way it
+// refuses any kinds it cannot build (ErrNoAssembly) instead of
+// assembling a workspace's runtime for them.
+func (m *Manager) SetAppRegistry(store *apps.Store) {
+	m.mu.Lock()
+	m.appRegistry = store
+	m.mu.Unlock()
+}
+
+// appRegistryStore returns the configured registry, if any.
+func (m *Manager) appRegistryStore() *apps.Store {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.appRegistry
 }
 
 // configureHost applies the host configurator once per pooled Host, on
@@ -139,6 +161,8 @@ func (m *Manager) assemble(
 	switch t.Kind {
 	case TargetWorkspace:
 		h, err = m.buildWorkspaceHost(ctx, t, fallback, resolver)
+	case TargetApp:
+		h, err = m.buildAppHost(ctx, t, fallback, resolver)
 	default:
 		err = fmt.Errorf("%w: %s", ErrNoAssembly, t)
 	}
@@ -181,6 +205,83 @@ func (m *Manager) logAssembled(
 		otellog.String("host_ptr", fmt.Sprintf("%p", h)))
 }
 
+// roots are the process-wide values every assembly resolves against,
+// read once so a concurrent SetAppHome/SetEngineOptionsFunc cannot
+// change the answer mid-build.
+type roots struct {
+	userDir       string
+	dataDir       string
+	appHome       string
+	usageObserver func(context.Context, inference.Usage)
+	usageRecorder UsageRecorder
+	engineOptions []engine.Option
+}
+
+// resolveRoots reads the manager's configured roots, defaulting the
+// config and state directories the way an unconfigured manager always
+// has, and snapshots the late-bound engine options an assembly runs
+// with.
+func (m *Manager) resolveRoots(ctx context.Context) (roots, error) {
+	r := roots{userDir: m.userDir, dataDir: m.dataDir}
+	m.mu.Lock()
+	r.appHome = m.appHome
+	r.usageObserver = m.usageObserver
+	r.usageRecorder = m.usageRecorder
+	engineOptFunc := m.engineOptFunc
+	m.mu.Unlock()
+	if engineOptFunc != nil {
+		r.engineOptions = engineOptFunc()
+	}
+	if r.userDir == "" {
+		var err error
+		r.userDir, err = config.UserConfigDir()
+		if err != nil {
+			return roots{}, err
+		}
+		telemetry.Info(ctx, "host: config dir defaulted",
+			otellog.String("config_dir", r.userDir))
+	}
+	if r.dataDir == "" {
+		var err error
+		r.dataDir, err = config.UserDataDir()
+		if err != nil {
+			telemetry.WarnErr(ctx, "host: resolve user data dir failed", err)
+		}
+		if r.dataDir != "" {
+			telemetry.Info(ctx, "host: state root defaulted",
+				otellog.String("state_root", r.dataDir))
+		}
+	}
+	return r, nil
+}
+
+// hostPlan is what one assembly is for: the values that differ between
+// a user workspace and an installed application. Everything past it —
+// building the runtime, attaching the brokers, extracting the
+// resources, the recovery pass, the reload observer, the delegation
+// reflow — is the same for both, because none of it is about which
+// directory the turns belong to.
+type hostPlan struct {
+	roots  roots
+	target Target
+	// layout is the target's state layout: the workspace's own, or the
+	// application's root with its private workspace inside it.
+	layout config.WorkspaceLayout
+	// doc is the merged deployment document the runtime builds from.
+	doc deploy.Document
+	// agentID is the agent the runtime serves; empty reads as the
+	// assistant (see Host.agentName).
+	agentID string
+	// fileBase anchors every {file:} reference inside doc. Empty keeps
+	// the config base — the assistant's single root; an application's
+	// layers resolve against its content root.
+	fileBase string
+	// adoptWorkDir is the work dir whose v0.1.x project-local session
+	// store a first open migrates from. Empty skips that migration: an
+	// application never had a project-local store.
+	adoptWorkDir string
+}
+
 // buildWorkspaceHost builds one user workspace's Host without holding
 // the manager lock. t is a workspace target, and its ID — the cleaned
 // work dir — is what the runtime, the state root and the session store
@@ -191,57 +292,108 @@ func (m *Manager) buildWorkspaceHost(
 	fallback interact.Backend,
 	resolver func(runID string) interact.Backend,
 ) (*Host, error) {
-	workDir := t.ID
-	userDir := m.userDir
-	dataDir := m.dataDir
-	m.mu.Lock()
-	appHome := m.appHome
-	engineOptFunc := m.engineOptFunc
-	usageObserver := m.usageObserver
-	usageRecorder := m.usageRecorder
-	m.mu.Unlock()
-	var engineOptions []engine.Option
-	if engineOptFunc != nil {
-		engineOptions = engineOptFunc()
+	r, err := m.resolveRoots(ctx)
+	if err != nil {
+		return nil, err
 	}
-	if userDir == "" {
-		var err error
-		userDir, err = config.UserConfigDir()
-		if err != nil {
-			return nil, err
-		}
-		telemetry.Info(ctx, "host: config dir defaulted",
-			otellog.String("config_dir", userDir))
-	}
-	if dataDir == "" {
-		var err error
-		dataDir, err = config.UserDataDir()
-		if err != nil {
-			telemetry.WarnErr(ctx, "host: resolve user data dir failed", err)
-		}
-		if dataDir != "" {
-			telemetry.Info(ctx, "host: state root defaulted",
-				otellog.String("state_root", dataDir))
-		}
-	}
-	layout, err := config.ResolveWorkspace(dataDir, workDir)
+	layout, err := config.ResolveWorkspace(r.dataDir, t.ID)
 	if err != nil {
 		return nil, err
 	}
 	telemetry.WarnErr(ctx, "host: ensure workspace layout failed",
 		layout.Ensure())
-	doc, err := engine.LoadDocument(ctx, userDir)
+	doc, err := engine.LoadDocument(ctx, r.userDir)
 	if err != nil {
 		return nil, err
 	}
+	return m.buildHost(ctx, hostPlan{
+		roots:        r,
+		target:       t,
+		layout:       layout,
+		doc:          doc,
+		agentID:      assistantAgent,
+		adoptWorkDir: t.ID,
+	}, fallback, resolver)
+}
+
+// buildAppHost builds one installed application's Host: the same
+// runtime, brokers and cross-cutting wiring as a workspace's, over the
+// application's own document, state root and private workspace. The
+// four differences the plan spells out live here — the layout, the
+// document, the file base and the identity — and nothing else does.
+//
+// The registry is consulted at assembly rather than anywhere earlier:
+// the content root it names is the one the layers were installed into,
+// and the two refusals below are the ones that keep a pool entry from
+// outliving the application it serves — an application that was
+// uninstalled or disabled between the page's decision and this call is
+// refused here instead of running on.
+func (m *Manager) buildAppHost(
+	ctx context.Context,
+	t Target,
+	fallback interact.Backend,
+	resolver func(runID string) interact.Backend,
+) (*Host, error) {
+	registry := m.appRegistryStore()
+	if registry == nil {
+		return nil, fmt.Errorf("%w: %s", ErrNoAssembly, t)
+	}
+	app, err := registry.Get(t.ID)
+	if err != nil {
+		return nil, fmt.Errorf("host: %s: %w", t, err)
+	}
+	if !app.Enabled {
+		return nil, fmt.Errorf("%w: %s", ErrAppNotEnabled, t)
+	}
+	r, err := m.resolveRoots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	layout, err := config.AppLayout(r.dataDir, t.ID)
+	if err != nil {
+		return nil, err
+	}
+	telemetry.WarnErr(ctx, "host: ensure application layout failed",
+		layout.Ensure())
+	doc, err := engine.LoadAppDocument(ctx, engine.AppDoc{
+		ID:         app.ID,
+		ContentDir: app.ContentDir,
+		Layers:     app.Layers,
+	}, r.userDir)
+	if err != nil {
+		return nil, err
+	}
+	return m.buildHost(ctx, hostPlan{
+		roots:    r,
+		target:   t,
+		layout:   layout,
+		doc:      doc,
+		agentID:  app.Agent,
+		fileBase: app.ContentDir,
+	}, fallback, resolver)
+}
+
+// buildHost builds one Host from a plan: the one assembly path every
+// target kind goes through, so a capability that lands here lands for
+// workspaces and applications together.
+func (m *Manager) buildHost(
+	ctx context.Context,
+	plan hostPlan,
+	fallback interact.Backend,
+	resolver func(runID string) interact.Backend,
+) (*Host, error) {
+	r := plan.roots
+	layout := plan.layout
+	t := plan.target
 	h := &Host{
 		target:        t,
-		workDir:       workDir,
-		userDir:       userDir,
+		workDir:       layout.WorkDir,
+		userDir:       r.userDir,
+		agentID:       plan.agentID,
 		workspaceID:   layout.ID,
 		manager:       m,
-		usage:         usageObserver,
-		usageRecorder: usageRecorder,
+		usage:         r.usageObserver,
+		usageRecorder: r.usageRecorder,
 		runs:          make(map[RunID]*runDetail),
 		startGates:    make(map[ConversationID]*sync.Mutex),
 		rollouts:      make(map[ConversationID]*rollout.Recorder),
@@ -253,14 +405,15 @@ func (m *Manager) buildWorkspaceHost(
 	h.runsCond = sync.NewCond(&h.mu)
 	var sessionStore *sessions.Store
 	buildOpts := append([]engine.Option{
-		engine.WithConfigBase(userDir),
-		engine.WithAppHome(appHome),
-		engine.WithWorkBase(workDir),
+		engine.WithConfigBase(r.userDir),
+		engine.WithAppHome(r.appHome),
+		engine.WithWorkBase(layout.WorkDir),
 		engine.WithWorkspaceLayout(&layout),
 		engine.WithSessionStore(func(
 			ctx context.Context, root string, window int,
 		) (*sessions.Store, error) {
-			store, err := m.acquireStore(ctx, workDir, root, window)
+			store, err := m.acquireStore(
+				ctx, plan.adoptWorkDir, root, window)
 			if err == nil {
 				sessionStore = store
 			}
@@ -275,8 +428,11 @@ func (m *Manager) buildWorkspaceHost(
 				h.usage(ctx, usage)
 			}
 		}),
-	}, engineOptions...)
-	rt, err := engine.BuildRuntime(ctx, doc, buildOpts...)
+	}, r.engineOptions...)
+	if plan.fileBase != "" {
+		buildOpts = append(buildOpts, engine.WithFileBase(plan.fileBase))
+	}
+	rt, err := engine.BuildRuntime(ctx, plan.doc, buildOpts...)
 	if err != nil {
 		if sessionStore != nil {
 			m.releaseStore(sessionStore)

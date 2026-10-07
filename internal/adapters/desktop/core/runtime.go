@@ -7,6 +7,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
+	"github.com/GizClaw/opencraft/internal/capabilities/apps"
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
@@ -42,6 +45,12 @@ type Runtime struct {
 	manager *host.Manager
 
 	automationManager *automations.Manager
+	// apps is the one application registry this process serves: the
+	// pool assembles from it and the application page installs into
+	// it, so the two cannot disagree about what is installed or
+	// enabled. Nil when the launch did not name an app home, which
+	// leaves app targets unbuildable.
+	apps *apps.Store
 
 	// ensureHost resolves the Host that serves one target. It
 	// defaults to EnsureHost and is swappable in tests so the retry
@@ -87,6 +96,25 @@ func NewRuntime(dataDir, userDir, appHome string) *Runtime {
 	r := &Runtime{
 		manager: manager,
 	}
+	// Applications live under the app home and the state root of this
+	// launch. A launch without an app home keeps the historical
+	// fallback (the config dir's parent) for its documents, and no
+	// registry: a target nothing can resolve is refused, not guessed.
+	if appHome != "" {
+		registry, err := apps.NewRegistry(appHome, dataDir)
+		if err != nil {
+			// The page reads Apps() == nil and reports it. This line is
+			// for the log: with a registry missing, every application
+			// target is refused as unbuildable, and "why" is otherwise
+			// only visible as that refusal.
+			telemetry.WarnErr(context.Background(),
+				"desktop: application registry unavailable; app targets stay unbuildable",
+				err)
+		} else {
+			r.apps = registry
+			manager.SetAppRegistry(registry)
+		}
+	}
 	r.ensureHost = r.EnsureHost
 	return r
 }
@@ -120,6 +148,14 @@ func (r *Runtime) HostFor(t host.Target) *host.Host {
 // Usage returns the user-level usage store after OpenUserDB.
 func (r *Runtime) Usage() *usage.Store {
 	return r.manager.UsageStore()
+}
+
+// Apps returns the application registry this process serves, or nil
+// when the launch named no app home. The application page installs
+// into this instance and the pool assembles from it, so both halves
+// read one set of content roots and one enable/disable record.
+func (r *Runtime) Apps() *apps.Store {
+	return r.apps
 }
 
 // Automations returns the automation store after OpenUserDB.
@@ -288,13 +324,46 @@ func (r *Runtime) ensure(
 
 // ReloadWorkspaces invalidates the pooled workspace hosts so the next
 // EnsureHost rebuilds from the current configuration. Applications
-// assemble from their own documents and are left alone — that is what
-// makes this the reload a settings save, a plugin write and a workspace
-// switch want. A caller that needs both scopes says so by name
-// (ReloadAll, with the application page).
+// assemble from their own documents and are left alone: the pool's two
+// scopes never invalidate each other. This is the workspace half of
+// every engine-input change — a settings save, a plugin write, a
+// workspace switch — and the half an application needs is asked for by
+// name (ReloadAll, from the paths the application page wires).
 func (r *Runtime) ReloadWorkspaces(ctx context.Context) error {
 	if r.manager != nil {
 		r.manager.InvalidateWorkspaces(ctx)
+	}
+	return nil
+}
+
+// ReloadApps invalidates the pooled application hosts — all of them
+// when ids is empty, the named ones otherwise — so the next EnsureHost
+// assembles them from what the registry now holds. Enabling, updating,
+// rolling back and uninstalling an application each name the one
+// application they changed; a content root that changed under the
+// registry (a development loop, an edited layer) names the same one.
+//
+// Workspaces are left alone: an application's document, state root and
+// private workspace are its own, and nothing in this call changes what
+// a workspace assembles from.
+func (r *Runtime) ReloadApps(ctx context.Context, ids ...string) error {
+	if r.manager != nil {
+		r.manager.InvalidateApps(ctx, ids...)
+	}
+	return nil
+}
+
+// ReloadAll invalidates both scopes: the one reload for an engine input
+// every deployment reads. The user's inference wiring is the case that
+// makes it necessary — it reaches applications as the overlay a
+// deployment carries and workspaces as the document they load — so a
+// settings save, an inference write and a plugin change (whose
+// providers appear in that same wiring) take this one *instead of*
+// ReloadWorkspaces. A workspace switch does not: nothing an
+// application reads changes when the user moves between projects.
+func (r *Runtime) ReloadAll(ctx context.Context) error {
+	if r.manager != nil {
+		r.manager.InvalidateAll(ctx)
 	}
 	return nil
 }
