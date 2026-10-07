@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/GizClaw/flowcraft/core/deploy"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
@@ -39,13 +40,26 @@ type Host struct {
 	// nor the conversation named a value. Zero for a workspace, whose
 	// defaults belong to the user and arrive as request values.
 	appDefaults apps.Defaults
-	workspaceID string
-	store       *sessions.Store
-	ctrl        *engine.Controller
-	broker      *interact.Broker
-	manager     *Manager
-	agents      atomic.Pointer[ocsagents.Lifecycle]
-	hooks       atomic.Pointer[hooks.Manager]
+	// reloadDoc rebuilds this Host's own deployment document in place
+	// (ReloadDocument). It is set at assembly — a workspace loads the
+	// assistant's document, an application the merge of the layers its
+	// registry currently holds — so the two kinds differ in what they
+	// read and nowhere else in the swap.
+	reloadDoc func(ctx context.Context) (deploy.Document, error)
+	// reloadIdentity reads the host-level values a swap moves with the
+	// document: an application's entry agent and run defaults live in
+	// its manifest, so an edit there is part of the same reload. It is
+	// read before the generation swaps and applied after, so a Host is
+	// never left on one generation's document with another's identity.
+	// Nil for a workspace, whose identity is fixed for the Host's life.
+	reloadIdentity func(ctx context.Context) (string, apps.Defaults, error)
+	workspaceID    string
+	store          *sessions.Store
+	ctrl           *engine.Controller
+	broker         *interact.Broker
+	manager        *Manager
+	agents         atomic.Pointer[ocsagents.Lifecycle]
+	hooks          atomic.Pointer[hooks.Manager]
 	// procs is the current generation's sandbox process feed (the
 	// conversation-scoped tap the activity card reads back). Rebound on
 	// every runtime reload; nil when the deployment has no feed.
@@ -353,15 +367,29 @@ func (h *Host) AppID() string {
 // workspace, or an application's own private workspace.
 func (h *Host) WorkDir() string { return h.workDir }
 
-// agentName returns the agent this Host runs. Every engine session key
-// is built from it, so a Host assembled without the field — a test
-// fixture, or a Host built before the field existed — reads as the
-// workspace one instead of naming an agent no deployment declares.
-func (h *Host) agentName() string {
+// identity returns the entry agent this Host runs and the manifest run
+// defaults it applies, under the lock an in-place reload takes to move
+// them: both are read from the manifest at assembly, an author editing
+// that file changes them under a serving Host, and every engine session
+// key is built from the agent. A Host assembled without an agent — a
+// workspace's, whose identity is fixed — reads as the workspace one
+// instead of naming an agent no deployment declares.
+func (h *Host) identity() (string, apps.Defaults) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.agentID == "" {
-		return assistantAgent
+		return assistantAgent, h.appDefaults
 	}
-	return h.agentID
+	return h.agentID, h.appDefaults
+}
+
+// setIdentity moves the entry agent and the run defaults onto a new
+// generation's values (see Host.reloadIdentity).
+func (h *Host) setIdentity(agentID string, defaults apps.Defaults) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.agentID = agentID
+	h.appDefaults = defaults
 }
 
 // Sessions returns the shared conversation store.

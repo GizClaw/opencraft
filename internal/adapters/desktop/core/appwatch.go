@@ -88,10 +88,12 @@ func (c *Core) applyAppContentChange(ctx context.Context, ch apps.WatchChange) {
 		c.Shell.Emit(EventAppChanged, AppChangedEvent{ID: ch.ID, Assets: true})
 		return
 	}
-	// The runtime's inputs changed: retire the Host so the next turn
-	// assembles the document the edit wrote, and tell the page either
-	// way — it has a bundle to reload and a card to re-read.
-	if err := c.ReloadApp(ctx, ch.ID); err != nil {
+	// The runtime's inputs changed: apply the edit to the Host already
+	// serving the application (an in-place document swap keeps its
+	// conversations and its session), falling back to retiring it when
+	// the swap cannot serve the new document. Either way the page hears
+	// about it — it has a bundle to reload and a card to re-read.
+	if err := c.ReloadAppDocument(ctx, ch.ID); err != nil {
 		// Nobody asked for this reload; an author's edit did. So the
 		// failure is a log line here and the application's own answer
 		// everywhere else: the next turn that needs this Host reports

@@ -242,17 +242,21 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 			}
 		}
 	}
-	// An application's manifest defaults come last, after the caller and
-	// after the conversation: a package declares what a *new* session
-	// starts with, never what an existing one is moved onto. They are
-	// applied here rather than by each caller because every way an
-	// application's session starts — the page, the application's own
-	// frontend bundle, a script — has to get the same answer.
+	// The entry agent and the manifest run defaults are read together:
+	// both come from the application's manifest and both move when an
+	// author edits it under a serving Host (ReloadDocument).
+	agentName, appDefaults := h.identity()
+	// The manifest defaults come last, after the caller and after the
+	// conversation: a package declares what a *new* session starts with,
+	// never what an existing one is moved onto. They are applied here
+	// rather than by each caller because every way an application's
+	// session starts — the page, the application's own frontend bundle,
+	// a script — has to get the same answer.
 	if model == "" {
-		model = h.appDefaults.Model
+		model = appDefaults.Model
 	}
 	if think == "" {
-		think = h.appDefaults.ThinkLevel
+		think = appDefaults.ThinkLevel
 	}
 	// The yoloonly build rejects confined modes at the persistence
 	// boundary, so force the requested mode here before any caller
@@ -291,7 +295,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 
 	requestedAt := time.Now().UTC()
 
-	key := coresession.Key{AgentID: h.agentName(), ContextID: contextID}
+	key := coresession.Key{AgentID: agentName, ContextID: contextID}
 	lease, err := ctrl.Runtime().Sessions().Open(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("host: open session: %w", err)
@@ -827,7 +831,8 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 		h.clearDeleting(conv)
 		return fmt.Errorf("host: stop runs for session %q: %w", id, err)
 	}
-	key := coresession.Key{AgentID: h.agentName(), ContextID: id}
+	entry, _ := h.identity()
+	key := coresession.Key{AgentID: entry, ContextID: id}
 	if err := ctrl.Runtime().Sessions().DeleteSession(drainCtx, key); err != nil {
 		h.clearDeleting(conv)
 		return fmt.Errorf("host: close runtime session %q: %w", id, err)

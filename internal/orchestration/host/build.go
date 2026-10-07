@@ -284,6 +284,14 @@ type hostPlan struct {
 	// workspace, whose defaults are the user's own and arrive as the
 	// page's request values.
 	appDefaults apps.Defaults
+	// reloadDoc rebuilds this plan's document for an in-place swap
+	// (Host.ReloadDocument). It reads the same sources assembly did, so
+	// an edit to the file — or, for an application, to the manifest
+	// that names the layers — is what the next generation serves.
+	reloadDoc func(ctx context.Context) (deploy.Document, error)
+	// reloadIdentity re-reads the plan's host-level values for a swap
+	// (see Host.reloadIdentity). Set for applications only.
+	reloadIdentity func(ctx context.Context) (string, apps.Defaults, error)
 }
 
 // buildWorkspaceHost builds one user workspace's Host without holding
@@ -317,6 +325,9 @@ func (m *Manager) buildWorkspaceHost(
 		doc:          doc,
 		agentID:      assistantAgent,
 		adoptWorkDir: t.ID,
+		reloadDoc: func(ctx context.Context) (deploy.Document, error) {
+			return engine.LoadDocument(ctx, r.userDir)
+		},
 	}, fallback, resolver)
 }
 
@@ -349,6 +360,16 @@ func (m *Manager) buildAppHost(
 	if !app.Enabled {
 		return nil, fmt.Errorf("%w: %s", ErrAppNotEnabled, t)
 	}
+	// The preflight runs here as well as at install, update and enable,
+	// because this is where "valid where it lives now" is decided: the
+	// files an application was installed from are the files an author
+	// can edit, and every generation a Host is built from is a
+	// generation that has to pass the same policy — a restricted kind
+	// declared in a layer is not less restricted for having been typed
+	// after the install.
+	if err := apps.Validate(ctx, app); err != nil {
+		return nil, fmt.Errorf("host: %s: %w", t, err)
+	}
 	r, err := m.resolveRoots(ctx)
 	if err != nil {
 		return nil, err
@@ -375,6 +396,37 @@ func (m *Manager) buildAppHost(
 		agentID:     app.Agent,
 		fileBase:    app.ContentDir,
 		appDefaults: app.Defaults,
+		// The registry is consulted again on every reload: the layers
+		// list lives in the manifest, and an author who edits it (or
+		// the manifest itself) is asking for the document that file
+		// now describes, not the one assembly read.
+		reloadDoc: func(ctx context.Context) (deploy.Document, error) {
+			app, err := registry.Get(t.ID)
+			if err != nil {
+				return deploy.Document{}, err
+			}
+			// An in-place swap is a new generation like any other, so
+			// it passes the preflight assembly just passed: what a
+			// reload swaps to is what the next assembly would have
+			// built. A refusal is a swap that could not serve the
+			// edit, which is the answer a document that cannot be
+			// loaded gets too.
+			if err := apps.Validate(ctx, app); err != nil {
+				return deploy.Document{}, err
+			}
+			return engine.LoadAppDocument(ctx, engine.AppDoc{
+				ID:         app.ID,
+				ContentDir: app.ContentDir,
+				Layers:     app.Layers,
+			}, r.userDir)
+		},
+		reloadIdentity: func(ctx context.Context) (string, apps.Defaults, error) {
+			app, err := registry.Get(t.ID)
+			if err != nil {
+				return "", apps.Defaults{}, err
+			}
+			return app.Agent, app.Defaults, nil
+		},
 	}, fallback, resolver)
 }
 
@@ -391,22 +443,24 @@ func (m *Manager) buildHost(
 	layout := plan.layout
 	t := plan.target
 	h := &Host{
-		target:        t,
-		workDir:       layout.WorkDir,
-		userDir:       r.userDir,
-		agentID:       plan.agentID,
-		appDefaults:   plan.appDefaults,
-		workspaceID:   layout.ID,
-		manager:       m,
-		usage:         r.usageObserver,
-		usageRecorder: r.usageRecorder,
-		runs:          make(map[RunID]*runDetail),
-		startGates:    make(map[ConversationID]*sync.Mutex),
-		rollouts:      make(map[ConversationID]*rollout.Recorder),
-		titling:       make(map[ConversationID]bool),
-		deleting:      make(map[ConversationID]bool),
-		deleted:       make(map[ConversationID]bool),
-		closeDone:     make(chan struct{}),
+		target:         t,
+		workDir:        layout.WorkDir,
+		userDir:        r.userDir,
+		agentID:        plan.agentID,
+		appDefaults:    plan.appDefaults,
+		reloadDoc:      plan.reloadDoc,
+		reloadIdentity: plan.reloadIdentity,
+		workspaceID:    layout.ID,
+		manager:        m,
+		usage:          r.usageObserver,
+		usageRecorder:  r.usageRecorder,
+		runs:           make(map[RunID]*runDetail),
+		startGates:     make(map[ConversationID]*sync.Mutex),
+		rollouts:       make(map[ConversationID]*rollout.Recorder),
+		titling:        make(map[ConversationID]bool),
+		deleting:       make(map[ConversationID]bool),
+		deleted:        make(map[ConversationID]bool),
+		closeDone:      make(chan struct{}),
 	}
 	h.runsCond = sync.NewCond(&h.mu)
 	var sessionStore *sessions.Store

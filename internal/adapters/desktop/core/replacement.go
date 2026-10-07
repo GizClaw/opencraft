@@ -3,6 +3,9 @@ package core
 import (
 	"context"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
+
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
@@ -112,4 +115,43 @@ func (c *Core) ReloadApp(ctx context.Context, id string) error {
 	}
 	c.Shell.Emit(EventAppStatus, AppStatusEvent{ID: id, Serving: true})
 	return nil
+}
+
+// ReloadAppDocument applies an edit under one application's content root
+// to the Host already serving it, in place: the same Host, the same
+// conversations, the same engine sessions, one new document. It is the
+// development loop's path — an author edits a layer, a graph or a script
+// while the application is running, and the next turn reads what they
+// wrote instead of what the process assembled first.
+//
+// It is not the install/update path: a package that was swapped on disk
+// is reassembled (ReloadApp), because a new generation of the content
+// deserves the checks assembly runs. Here nothing was installed — one
+// file changed under a package that already assembled once — so the
+// cheap swap is the right one, and its failure falls back to the
+// expensive path rather than surfacing on a card: an edit the swap
+// cannot serve — a sessions implementation change, a document that does
+// not load, a layer the preflight refuses — is one the Host should not
+// be left running on either, and retiring it is what puts the refusal
+// where the author reads it (the next assembly's record, and the card).
+//
+// An application with no Host has nothing to swap — the next turn
+// assembles the file the edit wrote — and a retiring Host is being
+// replaced by an assembly that reads the same file, so neither pays for
+// a reload here.
+func (c *Core) ReloadAppDocument(ctx context.Context, id string) error {
+	h := c.Runtime.HostFor(host.AppTarget(id))
+	if h == nil || h.IsStale() {
+		return nil
+	}
+	err := h.ReloadDocument(ctx)
+	if err == nil {
+		return nil
+	}
+	telemetry.WarnErr(ctx,
+		"desktop: in-place application document reload unavailable; rebuilding",
+		err,
+		otellog.String("app_id", id),
+		otellog.String("reason", string(host.AssemblyReasonFrom(ctx))))
+	return c.ReloadApp(ctx, id)
 }

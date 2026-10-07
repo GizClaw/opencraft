@@ -13,11 +13,11 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
+	"github.com/GizClaw/opencraft/internal/capabilities/apps"
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/orchestration/engine"
 )
 
 // ReloadDocument applies document-only configuration changes (memory,
@@ -34,10 +34,25 @@ func (h *Host) ReloadDocument(ctx context.Context) error {
 	if h == nil || h.ctrl == nil {
 		return ErrRuntimeNotReady
 	}
+	if h.reloadDoc == nil {
+		return errors.New("host: this Host was assembled without a document loader")
+	}
 	started := time.Now()
-	doc, err := engine.LoadDocument(ctx, h.userDir)
+	doc, err := h.reloadDoc(ctx)
 	if err != nil {
 		return fmt.Errorf("host: load document: %w", err)
+	}
+	// Read the identity the document moves with before anything is
+	// swapped: a manifest that cannot be read is a reload that did not
+	// happen, not a generation serving one document under another
+	// application's entry agent.
+	var agentID string
+	var defaults apps.Defaults
+	if h.reloadIdentity != nil {
+		agentID, defaults, err = h.reloadIdentity(ctx)
+		if err != nil {
+			return fmt.Errorf("host: read identity: %w", err)
+		}
 	}
 	configured, err := config.RouterConfigured(doc)
 	if err != nil {
@@ -64,12 +79,22 @@ func (h *Host) ReloadDocument(ctx context.Context) error {
 	// onRuntimeReload serializes both paths and is idempotent.
 	h.onRuntimeReload(context.Background(),
 		runtimecore.RuntimeRebuildEvent{GenerationID: result.GenerationID})
+	// The document is not the whole of what a reload can move: an
+	// application's entry agent and run defaults live in its manifest,
+	// and the generation that just went live was built from the layers
+	// that manifest names. They were read above, so this is the commit
+	// half — the swap already landed.
+	if h.reloadIdentity != nil {
+		h.setIdentity(agentID, defaults)
+	}
 	// The counterpart of "host: runtime assembled": an in-place swap is
 	// the cheap path, and this line is what tells the two apart when a
 	// review asks why a settings save rebuilt the whole runtime.
 	telemetry.Info(ctx, "host: document reloaded in place",
 		otellog.String("reason", string(AssemblyReasonFrom(ctx))),
 		otellog.String("workspace", h.workDir),
+		otellog.String("app_id", h.AppID()),
+		otellog.String("target", h.Target().Key()),
 		otellog.Int64("duration_ms", time.Since(started).Milliseconds()),
 		otellog.Int64("generation", int64(result.GenerationID)),
 		otellog.Bool("in_turn", h.hasActiveRuns()),

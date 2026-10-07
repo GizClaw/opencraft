@@ -177,11 +177,12 @@ func TestBundleEditLeavesTheRuntimeStanding(t *testing.T) {
 	}
 }
 
-// TestRuntimeEditRetiresTheHost is the other half: a layer (or the
-// manifest, or a script) changed, so the application's next turn has to
-// assemble the document the edit wrote rather than the one the pooled
-// Host was built from.
-func TestRuntimeEditRetiresTheHost(t *testing.T) {
+// TestRuntimeEditSwapsTheDocumentInPlace is the other half: a layer (or
+// the manifest, or a script) changed, and the Host already serving the
+// application takes the new document in place. The same Host, not
+// closing — retiring it would kill the page's turns and start a second
+// runtime for a document that differs in one file.
+func TestRuntimeEditSwapsTheDocumentInPlace(t *testing.T) {
 	f := newWatchCore(t)
 	target := host.AppTarget("hello")
 	before := f.core.Runtime.HostFor(target)
@@ -196,11 +197,11 @@ func TestRuntimeEditRetiresTheHost(t *testing.T) {
 	if after == nil {
 		t.Fatal("no Host serves the application after the reload")
 	}
-	if after == before {
-		t.Fatal("the reload handed back the generation the edit retired")
+	if after != before {
+		t.Fatal("an edit the Host could serve in place retired it instead")
 	}
-	if !before.IsClosing() {
-		t.Error("the retired Host is not closing")
+	if before.IsClosing() {
+		t.Error("the Host is closing after an in-place document reload")
 	}
 	changes := appChanges(f.events())[seenBefore:]
 	if len(changes) != 1 || changes[0].Assets || changes[0].ID != "hello" {
@@ -232,9 +233,35 @@ func TestRuntimeEditOfABrokenApplicationStillReachesThePage(t *testing.T) {
 	}
 }
 
+// TestRuntimeEditWithoutAHostBuildsNothing pins what an edit to an
+// application nobody has open does: nothing. The watcher reports the
+// change and the page re-reads its card, but no runtime is assembled for
+// an application no window is showing — assembly is the first turn's or
+// the page's business, and a development loop that edited a package ten
+// times would otherwise build ten generations of a runtime nobody used.
+func TestRuntimeEditWithoutAHostBuildsNothing(t *testing.T) {
+	f := newWatchCore(t)
+	target := host.AppTarget("hello")
+	if err := f.core.Runtime.ReloadApps(context.Background(), "hello"); err != nil {
+		t.Fatalf("retire the fixture application: %v", err)
+	}
+	if h := f.core.Runtime.HostFor(target); h != nil {
+		t.Fatalf("the fixture application is still assembled: %v", h)
+	}
+
+	f.core.applyAppContentChange(context.Background(), apps.WatchChange{ID: "hello"})
+
+	if h := f.core.Runtime.HostFor(target); h != nil {
+		t.Fatalf("an edit assembled a runtime no page was showing: %v", h)
+	}
+	if changes := appChanges(f.events()); len(changes) != 1 || changes[0].Assets {
+		t.Fatalf("the page heard %+v, want one runtime change for hello", changes)
+	}
+}
+
 // TestStartAndStopAppWatch drives the wiring the desktop actually runs:
 // the watcher reads the registry's content roots, an edit settles into a
-// reload through the pool, and StopAppWatch returns instead of leaving a
+// document reload, and StopAppWatch returns instead of leaving a
 // goroutine behind. It is the one test here that waits on real ticks.
 func TestStartAndStopAppWatch(t *testing.T) {
 	f := newWatchCore(t)
@@ -260,17 +287,18 @@ func TestStartAndStopAppWatch(t *testing.T) {
 	// on the next: two ticks, plus the reload itself.
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if after := f.core.Runtime.HostFor(target); after != nil && after != before {
+		if got := appChanges(f.events()); len(got) > 0 && !got[len(got)-1].Assets {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	after := f.core.Runtime.HostFor(target)
-	if after == before || after == nil {
-		t.Fatal("the watcher never reloaded the edited application")
-	}
 	if got := appChanges(f.events()); len(got) == 0 || got[len(got)-1].Assets {
-		t.Fatalf("the page heard %+v, want a runtime change for hello", got)
+		t.Fatalf("the watcher never reported the edited application: %+v", got)
+	}
+	// The edit landed on the Host that was already serving it: the
+	// watcher did not pay for a second assembly of one changed file.
+	if after := f.core.Runtime.HostFor(target); after != before {
+		t.Fatalf("the watcher replaced the Host instead of reloading its document: %v", after)
 	}
 	f.core.StopAppWatch()
 	// The stop waited for the poll in flight: nothing is left to report

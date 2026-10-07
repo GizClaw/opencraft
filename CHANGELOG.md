@@ -44,6 +44,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An application's own files can be edited while it runs, and the next
+  turn in the same conversation serves the edit. The development loop
+  used to end at the watcher: a change under an application's content
+  root retired the runtime and the next turn paid for a whole new
+  assembly. Now the reload goes to the Host that is already serving it —
+  the same Host, the same conversation, the same engine session, one new
+  document — and a swap that cannot serve the edit falls back to the
+  retire-and-rebuild path it used before, which is what puts the refusal
+  on the card. Nothing of the runtime is restarted for a graph, a script
+  or a layer; an installed application's page keeps its state through an
+  author's edit. The same reload moves the half of a package that is not
+  the document: `agent` and `defaults` live in the manifest, so an edit
+  there reaches the next turn too — in the same conversation, at the
+  next new session's values, exactly as the manifest's word on a fresh
+  install would.
+- Editing an application is held to the same checks an install is. The
+  document preflight (what a layer may declare, which keys the contract
+  layer reserves, which kinds an application is allowed) now runs
+  wherever a generation is made from the files on disk — assembly and
+  the in-place swap alike — so a reserved key or a restricted kind typed
+  in after the install is refused in the platform's own words instead of
+  surfacing later as a runtime error about a resource with no factory.
+
 - The diagnostics panel also shows what the page itself has heard. A
   backend that says it noticed an edit and a page that shows nothing
   are two different failures, and only the receiver can tell them
