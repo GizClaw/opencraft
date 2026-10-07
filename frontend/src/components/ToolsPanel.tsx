@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType, MouseEvent } from 'react';
 import {
   Bot,
+  Boxes,
   Check,
   ChevronDown,
   ChevronRight,
@@ -50,8 +51,11 @@ const AgentGraphEditor = lazy(() =>
 const AutomationsView = lazy(() =>
   import('./AutomationsView').then((m) => ({ default: m.AutomationsView })),
 );
+const AppPage = lazy(() =>
+  import('./AppPage').then((m) => ({ default: m.AppPage })),
+);
 
-export type ToolPage = 'agents' | 'skills' | 'plugins' | 'automations';
+export type ToolPage = 'agents' | 'skills' | 'plugins' | 'automations' | 'apps';
 
 // MCPLogo renders the official Model Context Protocol mark (cropped from
 // the modelcontextprotocol.io brand logo) as inline SVG so it inherits
@@ -1725,6 +1729,7 @@ const VIEW_META: {
     icon: Clock,
     label: (t) => t('sidebar.automations'),
   },
+  { id: 'apps', icon: Boxes, label: (t) => t('sidebar.apps') },
 ];
 
 // ToolsPanel is the right-side page shown when one of the sidebar tool
@@ -1766,46 +1771,60 @@ export function ToolsPanel() {
           </button>
         </div>
       </header>
-      <div
-        className={
-          view === 'agents' && editingAgent
-            ? 'min-h-0 flex-1 p-4'
-            : 'flex-1 overflow-y-auto px-5 py-4'
-        }
-      >
-        {view === 'agents' && editingAgent ? (
-          <Suspense
-            fallback={
-              <div className="grid h-full place-items-center text-dim text-sm">
-                {t('app.starting')}
-              </div>
-            }
-          >
-            <AgentGraphEditor
-              agentName={editingAgent}
-              onClose={() => setEditingAgent(null)}
-              onSaved={() => void refreshAgents()}
-            />
-          </Suspense>
-        ) : (
-          <>
-            {view === 'agents' && <AgentsSection onEdit={setEditingAgent} />}
-            {view === 'skills' && <SkillsSection />}
-            {view === 'plugins' && <PluginManager showTitle={false} />}
-            {view === 'automations' && (
-              <Suspense
-                fallback={
-                  <div className="grid h-full place-items-center text-dim text-sm">
-                    {t('app.starting')}
-                  </div>
-                }
-              >
-                <AutomationsView />
-              </Suspense>
-            )}
-          </>
-        )}
-      </div>
+      {view === 'apps' ? (
+        // The applications page brings its own columns and scrolling, so
+        // it is not wrapped in the padded scroll box the sections use.
+        <Suspense
+          fallback={
+            <div className="grid flex-1 place-items-center text-dim text-sm">
+              {t('app.starting')}
+            </div>
+          }
+        >
+          <AppPage />
+        </Suspense>
+      ) : (
+        <div
+          className={
+            view === 'agents' && editingAgent
+              ? 'min-h-0 flex-1 p-4'
+              : 'flex-1 overflow-y-auto px-5 py-4'
+          }
+        >
+          {view === 'agents' && editingAgent ? (
+            <Suspense
+              fallback={
+                <div className="grid h-full place-items-center text-dim text-sm">
+                  {t('app.starting')}
+                </div>
+              }
+            >
+              <AgentGraphEditor
+                agentName={editingAgent}
+                onClose={() => setEditingAgent(null)}
+                onSaved={() => void refreshAgents()}
+              />
+            </Suspense>
+          ) : (
+            <>
+              {view === 'agents' && <AgentsSection onEdit={setEditingAgent} />}
+              {view === 'skills' && <SkillsSection />}
+              {view === 'plugins' && <PluginManager showTitle={false} />}
+              {view === 'automations' && (
+                <Suspense
+                  fallback={
+                    <div className="grid h-full place-items-center text-dim text-sm">
+                      {t('app.starting')}
+                    </div>
+                  }
+                >
+                  <AutomationsView />
+                </Suspense>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </main>
   );
 }

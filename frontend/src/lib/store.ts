@@ -42,6 +42,7 @@ import type {
 import type { ToolPage } from '../components/ToolsPanel';
 import { routeBackendEvent, type EventDataSink } from '../state/eventRouter';
 import { stateRoot } from '../state/app';
+import { eventAppID, useAppsStore } from '../apps/store';
 
 export interface ToolView {
   id: string;
@@ -1567,6 +1568,11 @@ interface StoreState {
   toggleShortcuts: () => void;
   openTools: (view: ToolPage) => void;
   closeTools: () => void;
+  // The applications page is a tool page too (its view id is 'apps');
+  // these two are the sidebar's toggle written by name, so the entry
+  // does not have to spell the tools view union at the call site.
+  openApps: () => void;
+  closeApps: () => void;
   openFiles: () => void;
   closeFiles: () => void;
   // openFileTarget is the single link/file opening router: URL
@@ -2965,6 +2971,22 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     handleEvent: (ev) => {
+      // An application's events never reach the assistant's state, and
+      // the split is made here rather than inside the routing below.
+      // Every event an application causes carries `app_id` (its turns,
+      // its artifacts, its usage) or is one of the two lifecycle events
+      // (`app_changed` / `app_status`, which name the application in
+      // `id`); the routing below assumes a workspace — it would file an
+      // application's turn under a conversation id the sidebar has
+      // never heard of and leave a spinner running for it.
+      if (
+        ev.type === UIEventType.appChanged ||
+        ev.type === UIEventType.appStatus ||
+        eventAppID(ev)
+      ) {
+        useAppsStore.getState().handleEvent(ev);
+        return;
+      }
       if (ev.type === UIEventType.stream) {
         pendingStreamEvents.push(ev);
         scheduleStreamFlush();
@@ -3296,6 +3318,8 @@ export const useStore = create<StoreState>((set, get) => {
 
     openTools: (view) => set({ toolsView: view, configOpen: false }),
     closeTools: () => set({ toolsView: null }),
+    openApps: () => set({ toolsView: 'apps', configOpen: false }),
+    closeApps: () => set({ toolsView: null }),
 
     openFiles: () => viewerPatch(activeConversationID(), { filesOpen: true }),
     closeFiles: () => viewerPatch(activeConversationID(), { filesOpen: false }),

@@ -8,11 +8,76 @@
     "surfaceFailed": "这个面板加载失败",
     "reload": "重新加载"
   },
+  "apps": {
+    "import": "导入应用",
+    "installed": "已安装应用",
+    "empty": {
+      "title": "还没有应用",
+      "hint": "应用是一个目录或 zip：里面有 app.yaml 清单、它的部署层，以及可选的前端 bundle。"
+    },
+    "open": "打开",
+    "enable": "启用",
+    "disable": "禁用",
+    "reload": "重启运行时",
+    "reveal": "打开内容目录",
+    "uninstall": "卸载",
+    "builtin": "内置",
+    "back": "返回应用列表",
+    "diagnostics": "诊断",
+    "tabs": "应用视图",
+    "viewFailed": "这个视图加载失败",
+    "removeTitle": "卸载 {{name}}？",
+    "removeBody": "应用自己的文件会被删除。它的会话与私有工作区会留在磁盘上，除非你另外勾选。",
+    "removePurge": "同时删除它的数据（会话与私有工作区）",
+    "state": {
+      "running": "运行中",
+      "idle": "空闲",
+      "retiring": "重载中",
+      "disabled": "已禁用",
+      "error": "读不出清单"
+    },
+    "chat": {
+      "tab": "对话",
+      "empty": "发第一条消息，开始这个应用的对话。",
+      "placeholder": "给这个应用发消息",
+      "thinking": "思考中…",
+      "reasoning": "思考过程",
+      "send": "发送",
+      "reveal": "在文件管理器中显示",
+      "model": "模型",
+      "think": "思考档位"
+    },
+    "diag": {
+      "refresh": "刷新",
+      "contentRoot": "内容目录",
+      "stateRoot": "数据目录",
+      "workDir": "工作区",
+      "files": "私有工作区",
+      "up": "上一层",
+      "emptyDir": "这个目录是空的。"
+    },
+    "wizard": {
+      "title": "导入应用",
+      "hint": "选择应用所在的目录或 zip。校验通过之前不会安装任何东西。",
+      "chooseFolder": "选择目录…",
+      "chooseZip": "选择 zip…",
+      "install": "安装",
+      "unreadable": "这个来源里没有可用的应用清单",
+      "layers": "部署层",
+      "noLayers": "这个包没有自带部署层。",
+      "refused_one": "还有 1 项检查需要处理才能安装",
+      "refused_other": "还有 {{count}} 项检查需要处理才能安装",
+      "id": "应用 id",
+      "name": "名称",
+      "icon": "图标"
+    }
+  },
   "sidebar": {
     "newChat": "新会话",
     "subagents": "子代理",
     "skills": "技能",
     "automations": "定时任务",
+    "apps": "应用",
     "sessions": "会话",
     "history": "历史",
     "newSession": "新会话",

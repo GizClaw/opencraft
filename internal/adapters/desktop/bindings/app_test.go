@@ -799,6 +799,33 @@ func waitForAppHost(t *testing.T, f *appBindingFixture, old *host.Host) *host.Ho
 	return nil
 }
 
+// TestAppManifestReadsWhatThePageAndTheBundleNeed pins the read the
+// composer's defaults and the application's own bundle come from: the
+// manifest as the content root holds it, and a refusal — not an empty
+// manifest — for an id nothing is installed under.
+func TestAppManifestReadsWhatThePageAndTheBundleNeed(t *testing.T) {
+	f := newAppBinding(t, nil)
+	if _, err := f.binding.Install(writeAppBundle(t), AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	m, err := f.binding.Manifest("hello")
+	if err != nil {
+		t.Fatalf("manifest: %v", err)
+	}
+	if m.ID != "hello" || m.Name != "Hello" || m.Version != "0.1.0" {
+		t.Fatalf("manifest = %+v", m)
+	}
+	if len(m.Layers) != 1 || m.Layers[0] != "layer.yaml" {
+		t.Fatalf("layers = %v", m.Layers)
+	}
+	if m.UI == nil || m.UI.Entry != "ui/dist/index.js" {
+		t.Fatalf("ui = %+v", m.UI)
+	}
+	if _, err := f.binding.Manifest("gone"); err == nil {
+		t.Fatal("the manifest of an uninstalled application was returned")
+	}
+}
+
 // TestAppStartTurnRunsInTheApplication is the built-in chat surface's
 // path: mint a conversation, send one message, and find the turn where an
 // application's turn belongs — streamed deltas and a terminal event

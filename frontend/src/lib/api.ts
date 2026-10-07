@@ -1,6 +1,7 @@
 // Typed wrappers over the Wails v3 desktop services.
 import i18n from '../i18n';
 import * as Agent from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/agent';
+import * as App from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/app';
 import * as Automation from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/automation';
 import * as Config from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/config';
 import * as Conversation from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/conversation';
@@ -567,6 +568,55 @@ export const api = {
     Diagnostics.RepairConfigCompat() as unknown as Promise<ConfigCompatRepair>,
   chooseWorkspace: () =>
     Workspace.ChooseWorkspace(i18n.t('sidebar.chooseWorkspaceTitle')),
+  // Applications. The page's whole backend surface: the registry (what is
+  // installed, what is enabled), the content and state roots, the private
+  // workspace an application reads, and its own turn channel. The two
+  // pickers the import wizard uses are the generic file dialogs, because
+  // a package is a directory or a zip like anything else on disk.
+  appList: async () => (await App.List()) ?? [],
+  appInspect: (path: string) => App.Inspect(path),
+  appInstall: (src: string, opts: gen.AppInstallOptions) =>
+    App.Install(src, opts),
+  appInstallZip: (zip: string, opts: gen.AppInstallOptions) =>
+    App.InstallZip(zip, opts),
+  appSetEnabled: (id: string, enabled: boolean) => App.SetEnabled(id, enabled),
+  appUninstall: (id: string, purge: boolean) => App.Uninstall(id, purge),
+  appReload: (id: string) => App.Reload(id),
+  appStatus: (id: string) => App.Status(id),
+  appManifest: (id: string) => App.Manifest(id),
+  appAsset: (id: string, rel: string) => App.Asset(id, rel),
+  appFiles: async (id: string, rel: string) =>
+    (await App.ListFiles(id, rel)) ?? [],
+  appReadFile: (id: string, rel: string) => App.ReadFile(id, rel),
+  appReveal: (id: string, rel: string) => App.Reveal(id, rel),
+  appNewSession: (id: string) => App.NewSession(id),
+  appSessions: async (id: string) => (await App.Sessions(id)) ?? [],
+  appHistory: async (id: string, conversationID: string, n = 200) =>
+    (await App.History(id, conversationID, n)) ?? [],
+  appTurns: async (
+    id: string,
+    conversationID: string,
+    limit = 50,
+    beforeSeq = 0,
+  ) => (await App.Turns(id, conversationID, limit, beforeSeq)) ?? [],
+  appActiveRun: (id: string, conversationID: string) =>
+    App.ActiveRun(id, conversationID),
+  // appStartTurn is the application's own turn channel: the same
+  // engine, the same stream, but every event it produces carries the
+  // application's id, so the page routes it without guessing.
+  appStartTurn: (req: gen.AppTurnRequest) =>
+    App.StartTurn(req) as unknown as Promise<TurnStart>,
+  appCancel: (id: string, runID: string) => App.Cancel(id, runID),
+  appDeleteSession: (id: string, conversationID: string) =>
+    App.DeleteSession(id, conversationID),
+  // The application's own key/value storage (its bundle's ctx.storage).
+  // It lives in the application's state root, so an uninstall with purge
+  // takes it and nothing else does.
+  appKVGet: (id: string, key: string) => App.KVGet(id, key),
+  appKVList: async (id: string) => (await App.KVList(id)) ?? [],
+  appKVSet: (id: string, key: string, value: string) =>
+    App.KVSet(id, key, value),
+  appKVDelete: (id: string, key: string) => App.KVDelete(id, key),
   pluginList: async () => ((await Plugin.List()) ?? []).map(pluginSummaryOf),
   pluginTools: (id: string) =>
     Plugin.Tools(id) as unknown as Promise<PluginToolDTO[]>,

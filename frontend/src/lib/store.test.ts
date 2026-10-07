@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { COMPACT_SUMMARY_PREFIX } from './compact';
 import { flushCommitStats, setPerfMetricsEnabled } from './perfMetrics';
 import type { MessageView } from './store';
-import type { WorkspaceMeta } from './types';
+import type { UIEvent, WorkspaceMeta } from './types';
 import i18n from '../i18n';
 import { stateRoot } from '../state/app';
+import { useAppsStore } from '../apps/store';
 import {
   firstMessageTitle,
   friendlyFailure,
@@ -4146,5 +4147,90 @@ describe('store: transcript tail sync', () => {
       { id: 'h-2', start: 2, seq: 2 },
       { id: 'h-3', start: 3, seq: 3 },
     ]);
+  });
+});
+
+// An application's turn traffic and the assistant's share one event
+// stream, so the split has to happen before the routing that assumes a
+// workspace. These cases all send the same shape twice: once with the
+// application that owns it, once as the assistant's own.
+describe('application events', () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  it('routes every application event to the application store', async () => {
+    const seen: UIEvent[] = [];
+    const original = useAppsStore.getState().handleEvent;
+    useAppsStore.setState({
+      handleEvent: (ev) => {
+        seen.push(ev);
+      },
+    });
+    try {
+      // One of each shape the split has to recognize: a turn event of an
+      // application (named by `app_id`), the two registry events (named
+      // by `id`, no `app_id` at all), and one event of the assistant's
+      // own, which must stay here.
+      useStore.getState().handleEvent({
+        type: 'turn_end',
+        data: { app_id: 'hello', conversation_id: 'a-1', run_id: 'r-app' },
+      });
+      useStore.getState().handleEvent({
+        type: 'app_changed',
+        data: { id: 'hello' },
+      });
+      useStore.getState().handleEvent({
+        type: 'app_status',
+        data: { id: 'hello', serving: false },
+      });
+      useStore.getState().handleEvent({
+        type: 'turn_end',
+        data: { conversation_id: 's-1', run_id: 'r-ws' },
+      });
+      expect(seen.map((ev) => ev.type)).toEqual([
+        'turn_end',
+        'app_changed',
+        'app_status',
+      ]);
+    } finally {
+      useAppsStore.setState({ handleEvent: original });
+    }
+  });
+
+  it('does not fold an application usage into the workspace readout', () => {
+    useStore.getState().handleEvent({
+      type: 'usage',
+      data: { app_id: 'hello', total_tokens: 4321 },
+    });
+
+    // The readout under the composer is the workspace's. An
+    // application's tokens are its own — they are attributed to
+    // `app:<id>` on the backend — and folding them here would report
+    // somebody else's spending as this conversation's.
+    expect(useStore.getState().lastUsage).toBeNull();
+  });
+
+  it('still folds the workspace usage', () => {
+    useStore.getState().handleEvent({
+      type: 'usage',
+      data: { total_tokens: 4321 },
+    });
+
+    expect(useStore.getState().lastUsage).toMatchObject({
+      total_tokens: 4321,
+    });
+  });
+
+  it('does not reconcile the transcript of an application session', async () => {
+    useStore.getState().handleEvent({
+      type: 'session_updated',
+      data: { app_id: 'hello', id: 'a-1' },
+    });
+
+    // The assistant's tail sync reads the workspace's session store and
+    // patches the conversation the sidebar is showing. An application's
+    // id names neither.
+    expect(apiMock.sessionTurns).not.toHaveBeenCalled();
   });
 });

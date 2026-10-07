@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import {
   BarChart3,
   Bot,
+  Boxes,
   CalendarClock,
   Copy,
   Cpu,
@@ -102,6 +103,11 @@ const TOOL_PAGES: { id: ToolPage; labelKey: string; keywords: string }[] = [
     id: 'automations',
     labelKey: 'sidebar.automations',
     keywords: 'automations schedule cron 自动化 定时',
+  },
+  {
+    id: 'apps',
+    labelKey: 'sidebar.apps',
+    keywords: 'apps applications install import 应用 安装 导入',
   },
 ];
 
@@ -258,6 +264,7 @@ const ToolIcons: Record<ToolPage, Command['icon']> = {
   skills: Sparkles,
   plugins: Package,
   automations: CalendarClock,
+  apps: Boxes,
 };
 
 /**

@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/apps"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
@@ -41,11 +43,17 @@ import (
 // active workspace.
 type App struct {
 	core *core.Core
+	// kvMu guards kvStores: one KV store per application, cached so
+	// concurrent writes serialize on the same mutex (a fresh store per
+	// call would give each caller its own lock and let two writers
+	// interleave read-modify-write).
+	kvMu     sync.Mutex
+	kvStores map[string]*plugins.KVStore
 }
 
 // NewAppBinding wires the application binding.
 func NewAppBinding(c *core.Core) *App {
-	return &App{core: c}
+	return &App{core: c, kvStores: map[string]*plugins.KVStore{}}
 }
 
 // store returns the registry this launch built. A launch without an app
@@ -312,6 +320,23 @@ func (b *App) Status(id string) (AppStatus, error) {
 		out.Retiring = h.IsStale()
 	}
 	return out, nil
+}
+
+// Manifest returns one installed application's parsed manifest: the
+// layers in order, the entry agent, the frontend entry and the run
+// defaults. The application's own bundle reads it at scope setup (its
+// defaults decide the composer's model and thinking level), and the
+// page reads `defaults` for the same reason.
+func (b *App) Manifest(id string) (apps.Manifest, error) {
+	store, err := b.store()
+	if err != nil {
+		return apps.Manifest{}, err
+	}
+	m, err := store.Manifest(id)
+	if err != nil {
+		return apps.Manifest{}, err
+	}
+	return *m, nil
 }
 
 // AppAsset is one file out of an application's content root as the page
@@ -766,6 +791,73 @@ func (b *App) DeleteSession(id, conversationID string) error {
 // disabled or removed, so the list and the card reload.
 func (b *App) changed(id string) {
 	b.core.Shell.Emit(core.EventAppChanged, core.AppChangedEvent{ID: id})
+}
+
+// appKVNamespace is the namespace one application's key/value file lives
+// under inside its state root. The reused plugin store lays a namespace
+// out as `.data/<namespace>/kv.json`; an application gets exactly one, so
+// a write from its bundle and a read of the same key can never land in
+// two places. The isolation is the state root itself: two applications
+// have two roots, and `purge` on uninstall takes the file with it.
+const appKVNamespace = "kv"
+
+// kv returns the cached key/value store of one installed application.
+func (b *App) kv(id string) (*plugins.KVStore, error) {
+	store, err := b.store()
+	if err != nil {
+		return nil, err
+	}
+	root, err := store.StateRoot(id)
+	if err != nil {
+		return nil, err
+	}
+	b.kvMu.Lock()
+	defer b.kvMu.Unlock()
+	if kv, ok := b.kvStores[id]; ok {
+		return kv, nil
+	}
+	kv := plugins.NewKVStore(root)
+	b.kvStores[id] = kv
+	return kv, nil
+}
+
+// KVGet returns one entry of an application's own storage. It is what the
+// application's frontend bundle reads through ctx.storage, and the only
+// store it can reach: the namespace is the application's state root and
+// the caller never names it.
+func (b *App) KVGet(id, key string) (plugins.KVEntry, error) {
+	kv, err := b.kv(id)
+	if err != nil {
+		return plugins.KVEntry{}, err
+	}
+	return kv.Get(appKVNamespace, key)
+}
+
+// KVList returns every entry of an application's own storage.
+func (b *App) KVList(id string) ([]plugins.KVEntry, error) {
+	kv, err := b.kv(id)
+	if err != nil {
+		return nil, err
+	}
+	return kv.List(appKVNamespace)
+}
+
+// KVSet stores one entry of an application's own storage.
+func (b *App) KVSet(id, key, value string) error {
+	kv, err := b.kv(id)
+	if err != nil {
+		return err
+	}
+	return kv.Set(appKVNamespace, key, value)
+}
+
+// KVDelete removes one entry of an application's own storage.
+func (b *App) KVDelete(id, key string) error {
+	kv, err := b.kv(id)
+	if err != nil {
+		return err
+	}
+	return kv.Delete(appKVNamespace, key)
 }
 
 // resolveInWorkDir resolves one slash-spelled relative reference inside

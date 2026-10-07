@@ -1,5 +1,6 @@
 import {
   Bot,
+  Boxes,
   ChevronDown,
   Clock,
   Download,
@@ -180,6 +181,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const resume = useStore((s) => s.resume);
   const toolsView = useStore((s) => s.toolsView);
   const openTools = useStore((s) => s.openTools);
+  const openApps = useStore((s) => s.openApps);
+  const closeApps = useStore((s) => s.closeApps);
   const closeTools = useStore((s) => s.closeTools);
   const deleteSession = useStore((s) => s.deleteSession);
   const pendingPromptConvs = useStore((s) => s.pendingPromptConvs);
@@ -321,6 +324,13 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       active: toolsView === 'automations',
       onClick: () =>
         toolsView === 'automations' ? closeTools() : openTools('automations'),
+    },
+    {
+      id: 'apps',
+      label: t('sidebar.apps'),
+      icon: Boxes,
+      active: toolsView === 'apps',
+      onClick: () => (toolsView === 'apps' ? closeApps() : openApps()),
     },
   ];
 

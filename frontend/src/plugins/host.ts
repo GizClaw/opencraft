@@ -1,4 +1,5 @@
 import { UIEventChannel } from '../lib/events';
+import { defaultName, loadModule, resolveApply } from './module';
 import * as React from 'react';
 import { Context } from '@cordisjs/core';
 import { Events } from '@wailsio/runtime';
@@ -278,39 +279,29 @@ export function getContributions(): ContributionState {
   return contributions;
 }
 
-function loadPluginModule(id: string, src: string): Promise<PluginModule> {
-  const url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
-  return import(/* @vite-ignore */ url)
-    .then((ns) => {
-      const apply = ns.apply ?? defaultApply(ns.default);
-      if (typeof apply !== 'function') {
-        throw new Error('bundle must export apply(ctx)');
-      }
-      return {
-        name: (ns.name as string | undefined) ?? defaultName(ns.default),
-        inject: normalizeInject(id, ns.inject ?? defaultInject(ns.default)),
-        apply: apply as PluginModule['apply'],
-      };
-    })
-    .catch((err) => {
-      throw new Error(`plugin ${id}: failed to load bundle: ${String(err)}`);
-    })
-    .finally(() => URL.revokeObjectURL(url));
-}
-
-function defaultApply(mod: unknown): unknown {
-  if (typeof mod === 'function') return mod;
-  if (mod && typeof mod === 'object') return (mod as PluginModule).apply;
-  return undefined;
+// loadPluginModule evaluates one plugin bundle and reads the three
+// fields the plugin protocol adds to a module: the name, the inject list
+// (normalized against the known services) and the entry point. The
+// mechanics of turning source text into a module live in ./module, which
+// the application scope in ../apps/host.ts shares.
+async function loadPluginModule(
+  id: string,
+  src: string,
+): Promise<PluginModule> {
+  const ns = await loadModule('plugin', id, src);
+  const apply = resolveApply(ns);
+  if (!apply) {
+    throw new Error(`plugin ${id}: bundle must export apply(ctx)`);
+  }
+  return {
+    name: defaultName(ns),
+    inject: normalizeInject(id, ns.inject ?? defaultInject(ns.default)),
+    apply: apply as PluginModule['apply'],
+  };
 }
 
 function defaultInject(mod: unknown): unknown {
   if (mod && typeof mod === 'object') return (mod as PluginModule).inject;
-  return undefined;
-}
-
-function defaultName(mod: unknown): string | undefined {
-  if (mod && typeof mod === 'object') return (mod as PluginModule).name;
   return undefined;
 }
 

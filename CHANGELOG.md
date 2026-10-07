@@ -240,6 +240,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed application's directories without creating them, so the
   page can show and browse them (the private workspace, never the state
   root beside it where sessions, cache and audit live).
+- The applications page is there to open: a sidebar entry under
+  Automations, the tools page id `apps`, a palette row, and the page
+  itself — a column of what is installed, a gallery of cards when
+  nothing is open, and one application's surface when something is.
+  Opening is the only thing that evaluates application code. The
+  gallery, the cards' actions (enable, disable, reload, reveal the
+  content folder, uninstall) and the import wizard are all registry and
+  pool calls: a package is read, validated, copied in and assembled
+  without its bundle running, which is what keeps a broken bundle a
+  problem for its author's views and not for the page. The wizard's
+  three steps share that order — pick a directory or a zip, read the
+  preflight, then confirm the identity it installs under — and the
+  refusals are rows, one per problem, because the fix is per-row: a
+  reserved key in one layer, a `{file:}` reference that leaves the
+  content root in another. An install enables what it installed, so the
+  wizard opens the new application instead of leaving the user on the
+  gallery to find it, and an install is what runs the enable preflight
+  for the first time.
+- An application's frontend runs in a scope of its own
+  (`frontend/src/apps/{types,host}.ts`). The bundle is one self-contained
+  ES module read out of the content root and evaluated with a Blob URL in
+  the window (`frontend/src/plugins/module.ts`, the loader the plugin host
+  now shares), and what it gets is `ctx`: the host's React instance,
+  `ctx.app` for its own metadata, views, sessions, turns, files and
+  reveal, `ctx.storage` for a key/value space namespaced to it, and
+  `ctx.effect` for teardown. Every service is bound to the application id
+  the host picked, so a bundle cannot name another application. What it
+  registers is undone in one place: `disposeAppScope` removes its views,
+  runs its effects in reverse, removes the `<style data-app>` node it
+  injected and drops its error. When that runs is the page's decision, and
+  it is one rule: a bundle is unloaded when the page stops showing the
+  application — switching to another one, stepping back to the gallery,
+  the tool page closing — and when a registry change under an open page
+  makes the loaded bundle the changed install's predecessor (the page
+  unloads it and loads what the registry holds now; an application that
+  was removed or switched off closes instead, because a page whose turns
+  would be refused is a composer that cannot send). Leaving the page
+  behind is not a reason to keep an application's stylesheet in the
+  document, and a bundle disposed while it was still loading is not
+  applied into a scope nothing can reach. Loading is once per application
+  (a StrictMode double-apply would register every view twice), a bundle
+  that fails to evaluate or throws while applying is reported in the scope
+  rather than thrown into the page (the conversation is untouched by a
+  frontend failure), and each of its views renders inside its own error
+  boundary, so a view that throws on render shows its error in place of
+  its tab instead of taking the window's tree down.
+- The page's built-in conversation is the floor of the application
+  surface rather than a view an application registers (`AppChat`): the same
+  engine, the same stream and the same terminal-event vocabulary as the
+  assistant's, scoped to the application — its Host, its session store, its
+  private workspace, its manifest's model and thinking defaults. It is
+  deliberately not the main chat with an id swapped in: an application's
+  turn takes text, so its composer is a text box (no attachments, no file
+  mentions, no steering queue) rather than the Affordances the main
+  composer would promise. The turn notice, the reasoning disclosure and
+  the timeout-versus-stop distinction are the assistant's, because
+  reading a status alone reports a deadline as the user's own stop. The
+  strip under it is the turn's, built from the `artifact` events that name
+  the conversation being shown, and it starts empty on the next send. The
+  conversation is also one of several an application can have, all on the
+  same stream, so a delta, a file or a turn end that names another one is
+  not this page's — except when this page's own send has not answered yet
+  and names nothing, in which case the event is let through rather than
+  dropped: a fast turn can end before its start call does, and a dropped
+  end leaves a spinner running forever. The diagnostics panel beside it
+  is the page a broken application sends you
+  to: the three roots (content, data, private workspace), the assembly
+  state, the raw error and a read-only browse of the private workspace
+  with a preview — the document the host refused is the only copy of that
+  refusal, and the files a script wrote are the fastest answer to "did it
+  run".
+- An application's events are routed to it before anything reads them.
+  Every event an application causes carries `app_id` (its turns, its
+  artifacts, its usage, its own bus) or is one of the two registry events
+  `app_changed` / `app_status`, which name it in `id`; the conversation
+  store hands all of them to the application store and returns before its
+  own routing — the routing below assumes a workspace, and an
+  application's turn files under a conversation id the sidebar has never
+  heard of, reports somebody else's tokens under the composer and leaves a
+  spinner running for a conversation this window is not showing. The
+  registry events re-read what they name (a removal takes the open page
+  with it, and the list is the fact, not the payload), and a turn event is
+  delivered only to the subscribers of the application it names. What the
+  application's views and the page's conversation render therefore comes
+  from the same one stream, filtered once.
+- Two more reads the page and a bundle need joined the App service:
+  `Manifest`, the parsed `app.yaml` as the content root holds it (the
+  composer's defaults and the frontend entry come from it), and one
+  application's own key/value storage (`KVGet`, `KVList`, `KVSet`,
+  `KVDelete`) — `ctx.storage`, laid out inside that application's state
+  root (`<state root>/.data/kv/kv.json`, the namespace the plugin store
+  already uses), so the same key under two installations holds two values
+  and `purge` on uninstall is what takes it. The store is cached per
+  application, because a fresh one per call would give each caller its own
+  lock and let two writers interleave read-modify-write.
 
 ### Changed
 
