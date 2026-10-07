@@ -106,6 +106,14 @@ export interface MockConfig {
   // appTurn is App.StartTurn's answer. The conversation id is what the
   // page's events must name to be read as its own.
   appTurn?: { run_id: string; conversation_id: string };
+  /**
+   * appUpdateError / appRollbackError are what App.Update / App.Rollback
+   * throw after the registry accepted the change: the host's "the content
+   * is the new version, the assembly refused it" answer, which is the case
+   * a page has to keep the rollback within reach for.
+   */
+  appUpdateError?: string;
+  appRollbackError?: string;
   // Per-application reads behind one conversation: the sessions the page
   // opens on and the archived messages it loads.
   appSessions?: unknown[];
@@ -342,6 +350,37 @@ export function mockBackend(cfg?: MockConfig) {
     });
     return summary;
   };
+  // recordUpdate is App.Update: the installed application takes the
+  // package's version and keeps the one it replaced — one version of
+  // history, which is what the card's rollback button is about — and the
+  // registry change is announced the way the host announces it (the
+  // reload the real backend then runs is what app_status reports).
+  const recordUpdate = (id: string) => {
+    const app = installedApps.find((a) => a.id === id);
+    if (!app) throw new Error(`apps: no such application: ${id}`);
+    app.previousVersion = app.version;
+    app.version = appSummary.version;
+    app.canRollback = true;
+    emit('opencraft:ui', { type: 'app_changed', data: { id } });
+    emit('opencraft:ui', { type: 'app_status', data: { id, serving: true } });
+    if (config.appUpdateError) throw new Error(config.appUpdateError);
+    return app;
+  };
+  // recordRollback is App.Rollback: the snapshot is consumed, so the
+  // version it held is live and there is nothing left to go back to.
+  const recordRollback = (id: string) => {
+    const app = installedApps.find((a) => a.id === id);
+    if (!app) throw new Error(`apps: no such application: ${id}`);
+    if (!app.canRollback) {
+      throw new Error(`apps: ${id} has no update to roll back to`);
+    }
+    app.version = app.previousVersion;
+    app.canRollback = false;
+    emit('opencraft:ui', { type: 'app_changed', data: { id } });
+    emit('opencraft:ui', { type: 'app_status', data: { id, serving: true } });
+    if (config.appRollbackError) throw new Error(config.appRollbackError);
+    return app;
+  };
 
   const defaults: Record<string, Record<string, Handler>> = {
     App: {
@@ -370,6 +409,7 @@ export function mockBackend(cfg?: MockConfig) {
       ReadFile: async () => '',
       Reload: noop,
       Reveal: noop,
+      Rollback: async (id: string) => recordRollback(id),
       Sessions: async () => config.appSessions ?? [],
       SetEnabled: async (id: string, enabled: boolean) => {
         const app = installedApps.find((a) => a.id === id);
@@ -386,6 +426,8 @@ export function mockBackend(cfg?: MockConfig) {
       Status: async (id: string) => appStatus(id),
       Turns: emptyList,
       Uninstall: noop,
+      Update: async (id: string) => recordUpdate(id),
+      UpdateZip: async (id: string) => recordUpdate(id),
     },
     Agent: {
       Detail: async () => null,

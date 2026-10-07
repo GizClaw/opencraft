@@ -5,14 +5,17 @@ import {
   Blocks,
   FolderOpen,
   Loader2,
+  PackagePlus,
   Play,
   RefreshCw,
   Square,
   Stethoscope,
   Trash2,
+  Undo2,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAppsStore } from '../apps/store';
+import { useStore } from '../lib/store';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { ConfirmDialog } from './ui/ConfirmDialog';
@@ -149,10 +152,13 @@ function StatusDot({ app }: { app: AppSummary }) {
  */
 export function AppGallery({
   onOpen,
+  onUpdate,
   onDiagnostics,
   onImport,
 }: {
   onOpen: (id: string) => void;
+  /** onUpdate starts the import wizard over an installed application. */
+  onUpdate: (app: AppSummary) => void;
   onDiagnostics: (id: string) => void;
   onImport: () => void;
 }) {
@@ -161,10 +167,15 @@ export function AppGallery({
   const busy = useAppsStore((s) => s.busy);
   const setEnabled = useAppsStore((s) => s.setEnabled);
   const reloadApp = useAppsStore((s) => s.reloadApp);
+  const rollbackApp = useAppsStore((s) => s.rollbackApp);
   const revealApp = useAppsStore((s) => s.revealApp);
   const uninstall = useAppsStore((s) => s.uninstall);
+  const toast = useStore((s) => s.toast);
   const { t } = useTranslation();
   const [confirmRemove, setConfirmRemove] = useState<AppSummary | null>(null);
+  const [confirmRollback, setConfirmRollback] = useState<AppSummary | null>(
+    null,
+  );
   const [purge, setPurge] = useState(false);
 
   if (loading && apps.length === 0) {
@@ -195,6 +206,18 @@ export function AppGallery({
     // unload: the registry change the call produces does that, and the
     // page that is showing the bundle is what runs the cleanup.
     await setEnabled(app.id, !app.enabled);
+  };
+
+  // A rollback is the one card action with a snapshot behind it, and the
+  // only thing that can fail after it starts is the assembly of the
+  // version being restored. The card cannot show that (the registry is
+  // fine), so the notice goes where the user is looking.
+  const rollback = async (app: AppSummary) => {
+    try {
+      await rollbackApp(app.id);
+    } catch (err) {
+      toast(String(err), 'warning');
+    }
   };
 
   return (
@@ -273,6 +296,36 @@ export function AppGallery({
               >
                 <RefreshCw size={ICON.sm} />
               </Button>
+              {/* The update path is the import wizard with the target
+                  decided, so a package the preflight refuses is read
+                  there, one row per problem. A built-in application has
+                  no content root of its own to replace. */}
+              {!app.builtin && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  data-tip={t('apps.update')}
+                  data-testid={`app-update-${app.id}`}
+                  onClick={() => onUpdate(app)}
+                >
+                  <PackagePlus size={ICON.sm} />
+                </Button>
+              )}
+              {/* Only an update leaves a snapshot, so this is the button
+                  that is absent rather than disabled almost always. */}
+              {app.canRollback && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  loading={!!busy[app.id]}
+                  onClick={() => setConfirmRollback(app)}
+                  data-tip={t('apps.rollbackTip')}
+                  data-testid={`app-rollback-${app.id}`}
+                >
+                  <Undo2 size={ICON.sm} />
+                  {t('apps.rollback')}
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="ghost"
@@ -307,6 +360,22 @@ export function AppGallery({
           </section>
         ))}
       </div>
+      <ConfirmDialog
+        open={confirmRollback !== null}
+        tone="warning"
+        title={t('apps.rollbackTitle', {
+          name: confirmRollback?.name || confirmRollback?.id || '',
+        })}
+        body={t('apps.rollbackBody')}
+        confirmLabel={t('apps.rollback')}
+        onCancel={() => setConfirmRollback(null)}
+        onConfirm={() => {
+          const app = confirmRollback;
+          setConfirmRollback(null);
+          if (!app) return;
+          void rollback(app);
+        }}
+      />
       <ConfirmDialog
         open={confirmRemove !== null}
         tone="danger"

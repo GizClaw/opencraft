@@ -435,3 +435,115 @@ test('a bundle-only change reloads the module and leaves the list alone', async 
     )
     .toBeGreaterThan(0);
 });
+
+test('an update lands on the card, and the rollback puts the old version back', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: '/workspace',
+    apps: [{ id: 'hello', name: 'Hello', version: '1.0.0', enabled: true }],
+    appPackage: {
+      summary: { id: 'hello', name: 'Hello', version: '2.0.0', agent: 'hello' },
+      path: '/tmp/hello-2',
+    },
+    appBundle: { entry: 'ui/dist/index.js', source: bundle },
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Applications' }).click();
+  await expect(page.getByTestId('app-card-hello')).toContainText('v1.0.0');
+  // Nothing has been updated yet, so there is nothing to go back to.
+  await expect(page.getByTestId('app-rollback-hello')).toHaveCount(0);
+
+  // The update is the import wizard with the target decided: it reads the
+  // package, names the version it replaces, and takes no identity form.
+  await page.getByTestId('app-update-hello').click();
+  await page.getByTestId('app-pick-folder').click();
+  await expect(page.getByText('hello · 1.0.0 → 2.0.0 · hello')).toBeVisible();
+  await expect(page.getByTestId('app-install-confirm')).toHaveText('Update');
+  await expect(page.getByLabel('Application id')).toHaveCount(0);
+  await page.getByTestId('app-install-confirm').click();
+
+  // The wizard hands the application it updated back to the page, and the
+  // card behind it reads the version the registry now holds.
+  await expect(page.getByTestId('app-tab-notes')).toBeVisible();
+  await page.getByTestId('app-back').click();
+  await expect(page.getByTestId('app-card-hello')).toContainText('v2.0.0');
+
+  // The way back is on the card. It is a content swap that cannot be
+  // undone the other way, so it asks first.
+  await page.getByTestId('app-rollback-hello').click();
+  const rollbackConfirm = page.getByRole('alertdialog');
+  await expect(rollbackConfirm).toContainText('Roll back Hello?');
+  await rollbackConfirm.getByRole('button', { name: 'Roll back' }).click();
+  await expect(page.getByTestId('app-card-hello')).toContainText('v1.0.0');
+  await expect(page.getByTestId('app-rollback-hello')).toHaveCount(0);
+});
+
+test('an update that cannot be served keeps its rollback within reach', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: '/workspace',
+    apps: [{ id: 'hello', name: 'Hello', version: '1.0.0', enabled: true }],
+    appPackage: {
+      summary: { id: 'hello', name: 'Hello', version: '2.0.0', agent: 'hello' },
+      path: '/tmp/hello-2',
+    },
+    appBundle: { entry: 'ui/dist/index.js', source: bundle },
+    appUpdateError:
+      '"hello" is updated but cannot be served: graph.yaml is invalid',
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Applications' }).click();
+
+  await page.getByTestId('app-update-hello').click();
+  await page.getByTestId('app-pick-folder').click();
+  await page.getByTestId('app-install-confirm').click();
+
+  // The wizard keeps the half that failed in front of the user, and the
+  // card behind it is already the new version: the registry took it.
+  await expect(page.getByText(/cannot be served/)).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByTestId('app-card-hello')).toContainText('v2.0.0');
+
+  // The wizard hands the target back to a card whose bundle is the one
+  // that failed, so the way out is the rollback.
+  await page.getByTestId('app-rollback-hello').click();
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Roll back' })
+    .click();
+  await expect(page.getByTestId('app-card-hello')).toContainText('v1.0.0');
+});
+
+test('a rollback that cannot assemble says so where the user is looking', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: '/workspace',
+    apps: [
+      {
+        id: 'hello',
+        name: 'Hello',
+        version: '2.0.0',
+        enabled: true,
+        canRollback: true,
+        previousVersion: '1.0.0',
+      },
+    ],
+    appBundle: { entry: 'ui/dist/index.js', source: bundle },
+    appRollbackError: '"hello" is restored but cannot be served: no inference',
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Applications' }).click();
+
+  await page.getByTestId('app-rollback-hello').click();
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Roll back' })
+    .click();
+  // The card cannot show this one — the registry is fine, the restored
+  // version is what is installed — so it goes to the notice layer.
+  await expect(page.getByRole('alert')).toContainText('cannot be served');
+  await expect(page.getByTestId('app-card-hello')).toContainText('v1.0.0');
+});

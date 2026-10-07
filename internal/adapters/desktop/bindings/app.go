@@ -143,6 +143,76 @@ func (b *App) InstallZip(
 	return sum, nil
 }
 
+// Update replaces an installed application's content with a newer package
+// and serves it: the registry swaps the content root (the previous version
+// is snapshotted, so Rollback is one click away), and the application is
+// assembled again on the new bytes.
+//
+// A version the host cannot serve fails here rather than at the first
+// message — the package passed the preflight, so what is left to fail is
+// the assembly — and the message says which half happened: the content is
+// the new version from the moment the registry accepted it, and the way
+// out is the rollback the update left behind.
+func (b *App) Update(id, src string) (apps.Summary, error) {
+	store, err := b.store()
+	if err != nil {
+		return apps.Summary{}, err
+	}
+	ctx := b.core.Shell.Context()
+	sum, err := store.Update(ctx, id, src)
+	if err != nil {
+		return apps.Summary{}, err
+	}
+	return sum, b.applySwap(ctx, id)
+}
+
+// UpdateZip updates an application from a zip package, with the same
+// entry-point rules Update has.
+func (b *App) UpdateZip(id, zipPath string) (apps.Summary, error) {
+	store, err := b.store()
+	if err != nil {
+		return apps.Summary{}, err
+	}
+	ctx := b.core.Shell.Context()
+	sum, err := store.UpdateZip(ctx, id, zipPath)
+	if err != nil {
+		return apps.Summary{}, err
+	}
+	return sum, b.applySwap(ctx, id)
+}
+
+// Rollback puts back the version the last update replaced and serves it,
+// consuming the snapshot: the application is where it was before that
+// update, with its sessions and its workspace untouched.
+func (b *App) Rollback(id string) (apps.Summary, error) {
+	store, err := b.store()
+	if err != nil {
+		return apps.Summary{}, err
+	}
+	ctx := b.core.Shell.Context()
+	sum, err := store.Rollback(ctx, id)
+	if err != nil {
+		return apps.Summary{}, err
+	}
+	return sum, b.applySwap(ctx, id)
+}
+
+// applySwap is the runtime half of a content swap: the page is told
+// the application changed either way, and an application that is wanted is
+// assembled on the bytes that just landed — a reload with work in flight
+// retires the old generation and lets it drain, which is why an update
+// never interrupts a turn. A failure is the caller's to report: the
+// content is already the new version, so what the message describes is an
+// application that is installed and cannot be served.
+func (b *App) applySwap(ctx context.Context, id string) error {
+	err := b.core.ReloadApp(ctx, id)
+	b.changed(id)
+	if err != nil {
+		return fmt.Errorf("%q is updated but cannot be served: %w", id, err)
+	}
+	return nil
+}
+
 // SetEnabled turns one application on or off, and is where "installed but
 // broken" is caught.
 //

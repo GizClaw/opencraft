@@ -11,6 +11,11 @@ import { AppViewHost } from './AppViewHost';
 import { Badge } from './ui/Badge';
 import { ICON } from './ui/icon';
 import type { LiveAppScope } from '../apps/host';
+import type { AppSummary } from '../apps/store';
+
+/** WizardTarget is which wizard is open, if any: an import of a new
+ *  package, or the update of one installed application. */
+type WizardTarget = { kind: 'install' } | { kind: 'update'; app: AppSummary };
 
 /**
  * AppPage is the applications page: the left column lists what is
@@ -40,7 +45,7 @@ export function AppPage() {
   const [scope, setScope] = useState<LiveAppScope | null>(null);
   const [tab, setTab] = useState('chat');
   const [diagnostics, setDiagnostics] = useState(false);
-  const [importing, setImporting] = useState(false);
+  const [wizard, setWizard] = useState<WizardTarget | null>(null);
 
   useEffect(() => {
     void load();
@@ -134,11 +139,12 @@ export function AppPage() {
           <div className="min-h-0 flex-1 overflow-y-auto">
             <AppGallery
               onOpen={open}
+              onUpdate={(app) => setWizard({ kind: 'update', app })}
               onDiagnostics={(id) => {
                 open(id);
                 setDiagnostics(true);
               }}
-              onImport={() => setImporting(true)}
+              onImport={() => setWizard({ kind: 'install' })}
             />
           </div>
         ) : (
@@ -190,13 +196,16 @@ export function AppPage() {
         )}
       </div>
       <AppImportWizard
-        open={importing}
-        onClose={() => setImporting(false)}
-        onInstalled={(id) => {
-          setImporting(false);
+        open={wizard !== null}
+        update={wizard?.kind === 'update' ? wizard.app : null}
+        onClose={() => setWizard(null)}
+        onDone={(id) => {
+          setWizard(null);
           // The install enabled the application, so its page is what the
           // user asked for: open it rather than leaving them on the
-          // gallery to find the new card.
+          // gallery to find the new card. An update of an application
+          // that was already open lands on the same page, which the
+          // registry change has already reloaded onto the new bundle.
           open(id);
         }}
       />

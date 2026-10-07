@@ -335,6 +335,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `purge` on uninstall is what takes it. The store is cached per
   application, because a fresh one per call would give each caller its own
   lock and let two writers interleave read-modify-write.
+- An installed application can be updated and rolled back, the way a
+  plugin can. `Store.Update` / `UpdateZip` / `Rollback` swap the content
+  root and nothing else: the version being replaced is snapshotted under
+  `<root>/.backups/<id>` first (so a failed swap still has the installed
+  version on disk), the incoming package is staged and validated *there* —
+  on the bytes that would land, at the same two-pass preflight an install
+  runs — before anything moves, and the state root (sessions, private
+  workspace, KV) plus the enable state are never part of either
+  operation. An update is forward-only: the package has to declare the id
+  it replaces and a version newer than the installed one, and the one
+  exception is an install whose manifest cannot be read any more — there
+  is no version to compare and nothing to keep, so an update over it is
+  the repair. A rollback validates the snapshot where it lies, consumes
+  it, and answers `ErrNotInstalled`-style refusals for a built-in (whose
+  content is a read-only bundle), for an id nothing is installed under,
+  and for an application with nothing behind it; a snapshot whose manifest
+  is missing is not a version anyone can run, which is what the list's
+  new `canRollback` reports.
+- The applications page drives both. A card with a snapshot offers Roll
+  back — a confirmation first, because the swap cannot be undone the other
+  way, and a notice when the restored version assembles but cannot be
+  served — and the update path is the import wizard opened over an
+  installed application: the same preflight rows, no identity form (the
+  id is the target's, and a package for another application is refused
+  before the call), the version it replaces in the header. The binding
+  runs the same reload an enable does, so a version the host cannot serve
+  fails at the wizard — with a message that says which half happened, the
+  content is already the new version — instead of at the first message,
+  and an application with a turn in flight drains first: an update never
+  interrupts one.
 
 ### Changed
 

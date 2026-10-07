@@ -16,6 +16,11 @@
       "hint": "An application is a directory or a zip with an app.yaml manifest, its deployment layers and an optional frontend bundle."
     },
     "open": "Open",
+    "update": "Update from a package",
+    "rollback": "Roll back",
+    "rollbackTip": "Put back the version the last update replaced",
+    "rollbackTitle": "Roll back {{name}}?",
+    "rollbackBody": "Restores the version the last update replaced. The version installed now is discarded; the application's enable state, conversations and private workspace are kept.",
     "enable": "Enable",
     "disable": "Disable",
     "reload": "Reload the runtime",
@@ -69,7 +74,12 @@
       "refused_other": "{{count}} checks have to be fixed before this can be installed",
       "id": "Application id",
       "name": "Name",
-      "icon": "Icon"
+      "icon": "Icon",
+      "updateTitle": "Update {{name}}",
+      "update": "Update",
+      "updateHint": "Pick the directory or the zip of the new version. The package has to declare the id it replaces, and a version newer than the installed one.",
+      "fromTo": "{{from}} → {{to}}",
+      "idMismatch": "This package is \"{{got}}\", but the update replaces \"{{want}}\". Install it instead, or pick the right package."
     }
   },
   "sidebar": {

@@ -8,6 +8,7 @@ const apiMock = vi.hoisted(() => ({
   appStatus: vi.fn(),
   appSetEnabled: vi.fn(),
   appUninstall: vi.fn(),
+  appRollback: vi.fn(),
   appReload: vi.fn(),
   appReveal: vi.fn(),
 }));
@@ -133,6 +134,29 @@ describe('useAppsStore registry actions', () => {
 
     expect(apiMock.appReload).toHaveBeenCalledWith('one');
     expect(useAppsStore.getState().status['one']?.serving).toBe(true);
+  });
+
+  it('re-reads the registry even when a rollback fails', async () => {
+    apiMock.appList.mockResolvedValue([
+      summary({ id: 'one', version: '1.0.0' }),
+    ]);
+    // The failure the card has to survive: the registry moved — the
+    // snapshot is consumed and the version it held is installed — and the
+    // assembly of that version refused. The store cannot tell the two
+    // apart from the call, so it re-reads on the way out either way.
+    apiMock.appRollback.mockRejectedValue(
+      new Error('"one" is restored but cannot be served: no inference'),
+    );
+
+    await expect(useAppsStore.getState().rollbackApp('one')).rejects.toThrow(
+      /cannot be served/,
+    );
+
+    expect(apiMock.appRollback).toHaveBeenCalledWith('one');
+    expect(apiMock.appList).toHaveBeenCalledTimes(1);
+    expect(apiMock.appStatus).toHaveBeenCalledWith('one');
+    expect(useAppsStore.getState().apps[0]?.version).toBe('1.0.0');
+    expect(useAppsStore.getState().busy['one']).toBe(false);
   });
 });
 

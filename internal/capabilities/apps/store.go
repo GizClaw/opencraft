@@ -183,6 +183,11 @@ type Summary struct {
 	// the page knows whether it has views beyond the built-in
 	// conversation.
 	HasUI bool `json:"hasUi,omitempty"`
+	// CanRollback reports whether the last update left the version it
+	// replaced behind (update.go). It stays true through a failed
+	// assembly — the snapshot is on disk either way — and goes false
+	// once a rollback consumes it.
+	CanRollback bool `json:"canRollback,omitempty"`
 	// Error is the reason a manifest could not be read: the install is
 	// there, it is just unusable until the file is fixed.
 	Error string `json:"error,omitempty"`
@@ -227,6 +232,10 @@ func (s *Store) List() ([]Summary, error) {
 			}
 			seen[id] = true
 			summary := Summary{ID: id, Enabled: s.enabled(state, id), Builtin: root.builtin}
+			// A snapshot is a user-root thing: a built-in application's
+			// content comes from the read-only bundle and is never
+			// updated in place.
+			summary.CanRollback = !root.builtin && s.canRollback(id)
 			m, err := s.readManifest(content, id)
 			if err != nil {
 				summary.Error = err.Error()
@@ -350,6 +359,12 @@ func (s *Store) Uninstall(id string, purge bool) error {
 			return fmt.Errorf("apps: remove %q state: %w", id, err)
 		}
 	}
+	// The snapshot is the version of the content that just went away, so
+	// it goes with it: unloading an application must not leave a version
+	// of it on disk that nothing can ever restore.
+	telemetry.WarnErr(context.Background(),
+		"apps: remove rollback snapshot failed",
+		os.RemoveAll(s.backupDir(id)))
 	// The application directory itself goes only when nothing is left in
 	// it: with a state root of its own, the sessions and the private
 	// workspace stay (the state root, not the content root, is where an

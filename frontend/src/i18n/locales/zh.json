@@ -16,6 +16,11 @@
       "hint": "应用是一个目录或 zip：里面有 app.yaml 清单、它的部署层，以及可选的前端 bundle。"
     },
     "open": "打开",
+    "update": "用包更新",
+    "rollback": "回退",
+    "rollbackTip": "恢复上一次更新替换掉的版本",
+    "rollbackTitle": "回退 {{name}}？",
+    "rollbackBody": "恢复上一次更新替换掉的版本。当前版本会被丢弃；应用的启用状态、会话与私有工作区保留。",
     "enable": "启用",
     "disable": "禁用",
     "reload": "重启运行时",
@@ -69,7 +74,12 @@
       "refused_other": "还有 {{count}} 项检查需要处理才能安装",
       "id": "应用 id",
       "name": "名称",
-      "icon": "图标"
+      "icon": "图标",
+      "updateTitle": "更新 {{name}}",
+      "update": "更新",
+      "updateHint": "选择新版本的目录或 zip。包必须声明它所替换的 id，且版本要新于已安装的版本。",
+      "fromTo": "{{from}} → {{to}}",
+      "idMismatch": "这个包的 id 是「{{got}}」，而更新要替换的是「{{want}}」。请改用安装，或换一个包。"
     }
   },
   "sidebar": {

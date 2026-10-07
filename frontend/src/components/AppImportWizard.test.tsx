@@ -6,6 +6,8 @@ const apiMock = vi.hoisted(() => ({
   appInspect: vi.fn(),
   appInstall: vi.fn(),
   appInstallZip: vi.fn(),
+  appUpdate: vi.fn(),
+  appUpdateZip: vi.fn(),
   pickFolder: vi.fn(),
   pickFile: vi.fn(),
 }));
@@ -42,12 +44,29 @@ beforeEach(() => {
   apiMock.appInspect.mockResolvedValue(inspection());
   apiMock.appInstall.mockResolvedValue(summary);
   apiMock.appInstallZip.mockResolvedValue(summary);
+  apiMock.appUpdate.mockResolvedValue({
+    ...summary,
+    version: '2.0.0',
+    canRollback: true,
+  });
+  apiMock.appUpdateZip.mockResolvedValue({
+    ...summary,
+    version: '2.0.0',
+    canRollback: true,
+  });
   storeMock.load.mockResolvedValue(undefined);
 });
 
 describe('AppImportWizard', () => {
   it('reads the package before anything is copied', async () => {
-    render(<AppImportWizard open onClose={() => {}} onInstalled={() => {}} />);
+    render(
+      <AppImportWizard
+        open
+        update={null}
+        onClose={() => {}}
+        onDone={() => {}}
+      />,
+    );
 
     fireEvent.click(screen.getByTestId('app-pick-folder'));
 
@@ -77,7 +96,14 @@ describe('AppImportWizard', () => {
         ],
       }),
     );
-    render(<AppImportWizard open onClose={() => {}} onInstalled={() => {}} />);
+    render(
+      <AppImportWizard
+        open
+        update={null}
+        onClose={() => {}}
+        onDone={() => {}}
+      />,
+    );
 
     fireEvent.click(screen.getByTestId('app-pick-folder'));
 
@@ -93,7 +119,14 @@ describe('AppImportWizard', () => {
 
   it('installs through the zip binding when the source is a zip', async () => {
     const installed = vi.fn();
-    render(<AppImportWizard open onClose={() => {}} onInstalled={installed} />);
+    render(
+      <AppImportWizard
+        open
+        update={null}
+        onClose={() => {}}
+        onDone={installed}
+      />,
+    );
 
     fireEvent.click(screen.getByTestId('app-pick-zip'));
     await waitFor(() =>
@@ -114,7 +147,14 @@ describe('AppImportWizard', () => {
   });
 
   it('leaves an untouched icon to the manifest and sends an edited one', async () => {
-    render(<AppImportWizard open onClose={() => {}} onInstalled={() => {}} />);
+    render(
+      <AppImportWizard
+        open
+        update={null}
+        onClose={() => {}}
+        onDone={() => {}}
+      />,
+    );
 
     fireEvent.click(screen.getByTestId('app-pick-folder'));
     await waitFor(() =>
@@ -147,11 +187,104 @@ describe('AppImportWizard', () => {
     });
   });
 
+  it('updates the application it names, through the directory binding', async () => {
+    const done = vi.fn();
+    render(
+      <AppImportWizard
+        open
+        update={{ ...summary, version: '1.0.0', canRollback: false }}
+        onClose={() => {}}
+        onDone={done}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('app-pick-folder'));
+    await waitFor(() =>
+      expect(screen.getByTestId('app-install-confirm')).toBeTruthy(),
+    );
+    // The identity is the installed application's, so there is nothing
+    // to edit: the form is the import wizard's, not the update's.
+    expect(screen.queryByLabelText('Application id')).toBeNull();
+    expect(screen.getByTestId('app-install-confirm').textContent).toBe(
+      'Update',
+    );
+    fireEvent.click(screen.getByTestId('app-install-confirm'));
+
+    await waitFor(() => expect(apiMock.appUpdate).toHaveBeenCalledTimes(1));
+    // The id is the wizard's target, not the form's, and the version it
+    // installs is the package's.
+    expect(apiMock.appUpdate).toHaveBeenCalledWith('hello', '/tmp/hello');
+    expect(apiMock.appInstall).not.toHaveBeenCalled();
+    await waitFor(() => expect(done).toHaveBeenCalledWith('hello'));
+  });
+
+  it('refuses a package meant for another application', async () => {
+    apiMock.appInspect.mockResolvedValue(
+      inspection({ Summary: { ...summary, id: 'other' } }),
+    );
+    render(
+      <AppImportWizard
+        open
+        update={summary}
+        onClose={() => {}}
+        onDone={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('app-pick-folder'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('app-update-mismatch')).toBeTruthy(),
+    );
+    expect(screen.getByTestId('app-update-mismatch').textContent).toMatch(
+      /other/,
+    );
+    expect(screen.getByTestId('app-install-confirm')).toBeDisabled();
+    expect(apiMock.appUpdate).not.toHaveBeenCalled();
+  });
+
+  it('keeps the error of an update that landed without serving', async () => {
+    apiMock.appUpdate.mockRejectedValue(
+      new Error(
+        '"hello" is updated but cannot be served: graph.yaml is invalid',
+      ),
+    );
+    render(
+      <AppImportWizard
+        open
+        update={summary}
+        onClose={() => {}}
+        onDone={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('app-pick-folder'));
+    await waitFor(() =>
+      expect(screen.getByTestId('app-install-confirm')).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId('app-install-confirm'));
+
+    await waitFor(() =>
+      expect(screen.getByText(/cannot be served/)).toBeTruthy(),
+    );
+    // The registry moved even though the call failed, so the cards behind
+    // the wizard are re-read: the new version is what is installed, and
+    // the rollback the update left behind is on the card.
+    expect(storeMock.load).toHaveBeenCalled();
+  });
+
   it('reports a package it cannot read a manifest out of', async () => {
     apiMock.appInspect.mockRejectedValue(
       new Error('apps: no manifest in /tmp/not-an-app'),
     );
-    render(<AppImportWizard open onClose={() => {}} onInstalled={() => {}} />);
+    render(
+      <AppImportWizard
+        open
+        update={null}
+        onClose={() => {}}
+        onDone={() => {}}
+      />,
+    );
 
     fireEvent.click(screen.getByTestId('app-pick-folder'));
 

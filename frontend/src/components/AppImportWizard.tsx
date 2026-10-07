@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useAppsStore } from '../apps/store';
+import type { AppSummary } from '../apps/store';
 import { AppIcon } from './AppGallery';
 import { Button } from './ui/Button';
 import { Modal } from './ui/Modal';
@@ -29,7 +30,7 @@ interface Candidate {
 }
 
 /**
- * AppImportWizard installs one application package.
+ * AppImportWizard installs or updates one application package.
  *
  * Three steps, and nothing is copied before the last one: pick a source
  * (a directory or a zip), read the preflight's verdict over it, then
@@ -38,16 +39,25 @@ interface Candidate {
  * per-row — a reserved key in one layer, a reference that leaves the
  * content root in another — and the wizard is the only place with room
  * to show them all.
+ *
+ * An update is the same wizard with the identity decided: the package
+ * has to declare the id it replaces (the registry refuses anything else),
+ * so the form is not shown — what the user is picking is a version, and
+ * the version rule itself is the backend's to apply.
  */
 export function AppImportWizard({
   open,
+  update,
   onClose,
-  onInstalled,
+  onDone,
 }: {
   open: boolean;
+  /** update is the installed application an update targets; null means
+   *  the wizard is importing a new one. */
+  update: AppSummary | null;
   onClose: () => void;
-  /** onInstalled opens the application the wizard just installed. */
-  onInstalled: (id: string) => void;
+  /** onDone opens the application the wizard just installed or updated. */
+  onDone: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const load = useAppsStore((s) => s.load);
@@ -56,6 +66,7 @@ export function AppImportWizard({
   const [error, setError] = useState('');
   const [form, setForm] = useState({ id: '', name: '', icon: '' });
   const [iconTouched, setIconTouched] = useState(false);
+  const updating = update !== null;
 
   // A reopened wizard starts where a fresh one does: the previous
   // package is not still being considered.
@@ -107,26 +118,37 @@ export function AppImportWizard({
     }
   };
 
-  const install = async () => {
+  const submit = async () => {
     if (!candidate?.inspection) return;
     setBusy(true);
     setError('');
     try {
-      const opts: gen.AppInstallOptions = {
-        id: form.id.trim(),
-        name: form.name.trim(),
-      };
-      // An icon field the user never touched is left as the manifest
-      // wrote it; one they cleared is an install without an icon, which
-      // the null says explicitly.
-      if (iconTouched) opts.icon = form.icon.trim();
-      const summary = candidate.zip
-        ? await api.appInstallZip(candidate.src, opts)
-        : await api.appInstall(candidate.src, opts);
+      let summary: genApps.Summary;
+      if (update) {
+        summary = candidate.zip
+          ? await api.appUpdateZip(update.id, candidate.src)
+          : await api.appUpdate(update.id, candidate.src);
+      } else {
+        const opts: gen.AppInstallOptions = {
+          id: form.id.trim(),
+          name: form.name.trim(),
+        };
+        // An icon field the user never touched is left as the manifest
+        // wrote it; one they cleared is an install without an icon, which
+        // the null says explicitly.
+        if (iconTouched) opts.icon = form.icon.trim();
+        summary = candidate.zip
+          ? await api.appInstallZip(candidate.src, opts)
+          : await api.appInstall(candidate.src, opts);
+      }
       await load();
-      onInstalled(summary.id);
+      onDone(summary.id);
     } catch (err) {
       setError(String(err));
+      // A failed update may still have landed the new version — the
+      // registry swapped it, the assembly refused it — so the cards
+      // behind the wizard are re-read either way.
+      if (updating) await load();
     } finally {
       setBusy(false);
     }
@@ -134,13 +156,25 @@ export function AppImportWizard({
 
   const refusals = candidate?.inspection?.Refusals ?? [];
   const layers = candidate?.inspection?.Layers ?? [];
-  const installable = !!candidate?.inspection && refusals.length === 0;
+  // The one thing the wizard can decide that the registry cannot: an
+  // update replaces a named application, so a package for another one is
+  // the wrong pick rather than a new install.
+  const mismatch =
+    updating && !!candidate?.inspection
+      ? candidate.inspection.Summary.id !== update.id
+      : false;
+  const installable =
+    !!candidate?.inspection && refusals.length === 0 && !mismatch;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title={t('apps.wizard.title')}
+      title={
+        update
+          ? t('apps.wizard.updateTitle', { name: update.name || update.id })
+          : t('apps.wizard.title')
+      }
       icon={PackageSearch}
       width="42rem"
       footer={
@@ -151,10 +185,10 @@ export function AppImportWizard({
           <Button
             disabled={!installable || busy}
             loading={busy}
-            onClick={() => void install()}
+            onClick={() => void submit()}
             data-testid="app-install-confirm"
           >
-            {t('apps.wizard.install')}
+            {update ? t('apps.wizard.update') : t('apps.wizard.install')}
           </Button>
         </div>
       }
@@ -208,6 +242,18 @@ export function AppImportWizard({
           </div>
         )}
 
+        {mismatch && candidate?.inspection && update && (
+          <p
+            className="break-words rounded-card border border-err/40 bg-err/5 px-3 py-2 text-xs text-err"
+            data-testid="app-update-mismatch"
+          >
+            {t('apps.wizard.idMismatch', {
+              want: update.id,
+              got: candidate.inspection.Summary.id,
+            })}
+          </p>
+        )}
+
         {candidate?.inspection && (
           <>
             <section className="flex items-center gap-2 rounded-card border border-edge bg-panel2 p-3">
@@ -223,7 +269,12 @@ export function AppImportWizard({
                 </div>
                 <div className="truncate text-xs text-faint">
                   {candidate.inspection.Summary.id} ·{' '}
-                  {candidate.inspection.Summary.version}
+                  {update
+                    ? t('apps.wizard.fromTo', {
+                        from: update.version || '—',
+                        to: candidate.inspection.Summary.version,
+                      })
+                    : candidate.inspection.Summary.version}
                   {candidate.inspection.Summary.agent
                     ? ` · ${candidate.inspection.Summary.agent}`
                     : ''}
@@ -281,40 +332,47 @@ export function AppImportWizard({
               </section>
             )}
 
-            <section className="grid gap-2 sm:grid-cols-2">
-              <label className="flex flex-col gap-1 text-xs">
-                <span className="text-faint">{t('apps.wizard.id')}</span>
-                <input
-                  className="rounded-control border border-edge bg-panel2 px-2 py-1 text-sm"
-                  value={form.id}
-                  onChange={(e) => setForm({ ...form, id: e.target.value })}
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-xs">
-                <span className="text-faint">{t('apps.wizard.name')}</span>
-                <input
-                  className="rounded-control border border-edge bg-panel2 px-2 py-1 text-sm"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-xs sm:col-span-2">
-                <span className="text-faint">{t('apps.wizard.icon')}</span>
-                <input
-                  className="rounded-control border border-edge bg-panel2 px-2 py-1 text-sm"
-                  value={form.icon}
-                  onChange={(e) => {
-                    setIconTouched(true);
-                    setForm({ ...form, icon: e.target.value });
-                  }}
-                />
-              </label>
-            </section>
+            {/* An update replaces a named application, so its identity is
+                the package's: there is nothing to edit, and the id the
+                manifest declares is the one the registry checks. */}
+            {!updating && (
+              <section className="grid gap-2 sm:grid-cols-2">
+                <label className="flex flex-col gap-1 text-xs">
+                  <span className="text-faint">{t('apps.wizard.id')}</span>
+                  <input
+                    className="rounded-control border border-edge bg-panel2 px-2 py-1 text-sm"
+                    value={form.id}
+                    onChange={(e) => setForm({ ...form, id: e.target.value })}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs">
+                  <span className="text-faint">{t('apps.wizard.name')}</span>
+                  <input
+                    className="rounded-control border border-edge bg-panel2 px-2 py-1 text-sm"
+                    value={form.name}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs sm:col-span-2">
+                  <span className="text-faint">{t('apps.wizard.icon')}</span>
+                  <input
+                    className="rounded-control border border-edge bg-panel2 px-2 py-1 text-sm"
+                    value={form.icon}
+                    onChange={(e) => {
+                      setIconTouched(true);
+                      setForm({ ...form, icon: e.target.value });
+                    }}
+                  />
+                </label>
+              </section>
+            )}
           </>
         )}
 
         {!candidate && (
-          <p className="text-xs text-faint">{t('apps.wizard.hint')}</p>
+          <p className="text-xs text-faint">
+            {update ? t('apps.wizard.updateHint') : t('apps.wizard.hint')}
+          </p>
         )}
       </div>
     </Modal>

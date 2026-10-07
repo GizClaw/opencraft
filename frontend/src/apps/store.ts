@@ -51,6 +51,7 @@ interface AppsState {
   close: () => void;
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
   uninstall: (id: string, purge: boolean) => Promise<void>;
+  rollbackApp: (id: string) => Promise<void>;
   reloadApp: (id: string) => Promise<void>;
   revealApp: (id: string, rel?: string) => Promise<void>;
   handleEvent: (ev: UIEvent) => void;
@@ -135,6 +136,29 @@ export const useAppsStore = create<AppsState>((set, get) => ({
       return { status };
     });
     await get().load();
+  },
+
+  // rollbackApp puts back the version the application's last update
+  // replaced. The snapshot it consumes is the registry's, so this is a
+  // registry write like the install that produced it — the page only
+  // decides to ask. An update that lands is what puts a card in the
+  // state this action is for; a rollback whose assembly fails (the
+  // restored version needs an inference wiring the user has since
+  // changed) rejects, and the caller has a card to put it on.
+  rollbackApp: async (id) => {
+    set((state) => ({ busy: { ...state.busy, [id]: true } }));
+    try {
+      await api.appRollback(id);
+    } finally {
+      set((state) => ({ busy: { ...state.busy, [id]: false } }));
+      // A rollback whose assembly failed still moved the registry — the
+      // snapshot is consumed and the version it held is what is
+      // installed — so the card is re-read on the way out either way.
+      await get()
+        .load()
+        .catch(() => undefined);
+      await get().refreshStatus(id);
+    }
   },
 
   reloadApp: async (id) => {

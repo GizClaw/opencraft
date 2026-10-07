@@ -18,8 +18,7 @@
 // What is not here yet, and is deliberately not half-built: the import
 // adapter that normalizes a foreign flowcraft document (dropping the
 // keys the contract layer provides, the provider declarations and the
-// restricted kinds, and reporting every removal), and the zip/update/
-// rollback paths the plugin registry has. Both read the tables and the
-// preflight in this package rather than re-deciding what an application
-// may contain.
+// restricted kinds, and reporting every removal). It reads the tables and
+// the preflight in this package rather than re-deciding what an
+// application may contain.
 package apps
