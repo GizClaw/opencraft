@@ -35,6 +35,11 @@ interface AppsState {
   openID: string;
   /** status caches App.Status per id (the card's dot and diagnostics). */
   status: Record<string, gen.AppStatus>;
+  /** events is the last few events this page received per application,
+   *  newest first: the diagnostics panel's own record, which is what a
+   *  user debugging a page that did not react needs ("the backend says
+   *  it happened — did anything arrive?"). */
+  events: Record<string, AppRecentEvent[]>;
   /** busy marks an application with a registry write in flight. */
   busy: Record<string, boolean>;
   /**
@@ -69,12 +74,98 @@ export function eventAppID(ev: UIEvent): string {
   return data?.app_id ?? '';
 }
 
+/**
+ * appEventScope reads which application an event belongs to, over every
+ * event the page can receive about one: the two lifecycle events name
+ * it in `id`, and everything an application causes carries `app_id`.
+ * Empty means the event is not one application's — a registry-wide
+ * reload, or the assistant's own business.
+ */
+export function appEventScope(ev: UIEvent): string {
+  if (ev.type === UIEventType.appChanged || ev.type === UIEventType.appStatus) {
+    const data = ev.data as { id?: string } | null | undefined;
+    return data?.id ?? '';
+  }
+  return eventAppID(ev);
+}
+
+/**
+ * AppRecentEvent is one event the page received about one application:
+ * what arrived, the payload's own word for it, and when.
+ */
+export interface AppRecentEvent {
+  type: string;
+  /** detail is the payload field that changes what the row means —
+   *  `assets` for an edit that touched only the bundle, the path an
+   *  artifact landed on, the topic an application published. Empty when
+   *  the type already says everything. */
+  detail: string;
+  /** at is when the page received it, in ms since epoch. */
+  at: number;
+}
+
+// recentEventLimit bounds one application's ring. A page left open all
+// day must not grow with every turn of a chatty application, and the
+// tail of the stream is the part a person reads.
+const recentEventLimit = 10;
+
+/**
+ * recordAppEvent folds one event into an application's ring: newest
+ * first, bounded, and copied rather than mutated, because the store's
+ * subscribers compare by reference.
+ */
+export function recordAppEvent(
+  rings: Record<string, AppRecentEvent[]>,
+  id: string,
+  ev: AppRecentEvent,
+): Record<string, AppRecentEvent[]> {
+  return {
+    ...rings,
+    [id]: [ev, ...(rings[id] ?? [])].slice(0, recentEventLimit),
+  };
+}
+
+/** appEventDetail names what the payload adds to the type: the fields
+ *  that change the meaning of a row. A stream's deltas are not among
+ *  them — see the filter in handleEvent. */
+function appEventDetail(ev: UIEvent): string {
+  const data = ev.data as {
+    assets?: boolean;
+    serving?: boolean;
+    retiring?: boolean;
+    subject?: string;
+    status?: string;
+    path?: string;
+    model?: string;
+  } | null;
+  if (!data) return '';
+  switch (ev.type) {
+    case UIEventType.appChanged:
+      // A bundle-only edit is the one change the page acts on without
+      // re-reading the registry, so it is the one worth spelling out.
+      return data.assets ? 'assets' : '';
+    case UIEventType.appStatus:
+      return data.retiring ? 'retiring' : data.serving ? 'serving' : 'idle';
+    case UIEventType.appEvent:
+      return data.subject ?? '';
+    case UIEventType.turnEnd:
+      return data.status ?? '';
+    case UIEventType.artifact:
+      return data.path ?? '';
+    case UIEventType.usage:
+      return data.model ?? '';
+    default:
+      return '';
+  }
+}
+
 export const useAppsStore = create<AppsState>((set, get) => ({
   apps: [],
   loading: false,
   error: '',
   openID: '',
   status: {},
+  events: {},
   busy: {},
   revisions: {},
 
@@ -133,7 +224,12 @@ export const useAppsStore = create<AppsState>((set, get) => ({
     set((state) => {
       const status = { ...state.status };
       delete status[id];
-      return { status };
+      // The ring goes with it: what the page heard is about the install
+      // that just left, and a reinstalled id is a different application
+      // whose panel would otherwise open on someone else's history.
+      const events = { ...state.events };
+      delete events[id];
+      return { status, events };
     });
     await get().load();
   },
@@ -171,6 +267,21 @@ export const useAppsStore = create<AppsState>((set, get) => ({
   },
 
   handleEvent: (ev) => {
+    // Every event this store sees is about one application, and the
+    // panel shows the page's own record of them. Stream deltas are the
+    // exception they are everywhere else: a reply arrives as hundreds
+    // of them, they say one thing while they do it, and the row that
+    // matters — that the turn ended — follows as its own event.
+    const scope = appEventScope(ev);
+    if (scope && ev.type !== UIEventType.stream) {
+      set((state) => ({
+        events: recordAppEvent(state.events, scope, {
+          type: ev.type,
+          detail: appEventDetail(ev),
+          at: Date.now(),
+        }),
+      }));
+    }
     switch (ev.type) {
       case UIEventType.appChanged: {
         // The registry changed. The list is the thing to re-read — what

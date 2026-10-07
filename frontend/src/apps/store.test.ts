@@ -46,6 +46,7 @@ beforeEach(() => {
     error: '',
     openID: '',
     status: {},
+    events: {},
     busy: {},
     revisions: {},
   });
@@ -62,6 +63,104 @@ describe('eventAppID', () => {
     // assistant's side.
     expect(eventAppID({ type: UIEventType.stream, data: {} })).toBe('');
     expect(eventAppID({ type: UIEventType.stream, data: null })).toBe('');
+  });
+});
+
+// The panel's recent-events list is the page's own record, so what it
+// holds is what the page heard: every event that names an application,
+// under the application it names, newest first.
+describe('recent events', () => {
+  const ring = (id: string) => useAppsStore.getState().events[id] ?? [];
+
+  it('records the events one application caused, newest first', () => {
+    const store = useAppsStore.getState();
+    store.handleEvent({
+      type: UIEventType.appChanged,
+      data: { id: 'one' },
+    });
+    store.handleEvent({
+      type: UIEventType.appStatus,
+      data: { id: 'one', serving: true },
+    });
+    store.handleEvent({
+      type: UIEventType.artifact,
+      data: { app_id: 'one', run_id: 'r1', path: 'out/hello.txt' },
+    });
+
+    expect(ring('one').map((e) => [e.type, e.detail])).toEqual([
+      [UIEventType.artifact, 'out/hello.txt'],
+      [UIEventType.appStatus, 'serving'],
+      [UIEventType.appChanged, ''],
+    ]);
+    expect(ring('one')[0]?.at).toBeGreaterThan(0);
+  });
+
+  it('spells out the two things a payload decides', () => {
+    const store = useAppsStore.getState();
+    store.handleEvent({
+      type: UIEventType.appChanged,
+      data: { id: 'one', assets: true },
+    });
+    store.handleEvent({
+      type: UIEventType.appEvent,
+      data: { app_id: 'one', subject: 'app.one.turn', payload: {} },
+    });
+    store.handleEvent({
+      type: UIEventType.appStatus,
+      data: { id: 'one', serving: false, retiring: true },
+    });
+
+    expect(ring('one').map((e) => e.detail)).toEqual([
+      'retiring',
+      'app.one.turn',
+      'assets',
+    ]);
+  });
+
+  it('keeps one ring per application and bounds it', () => {
+    const store = useAppsStore.getState();
+    store.handleEvent({
+      type: UIEventType.turnEnd,
+      data: { app_id: 'two', run_id: 'r1', status: 'completed' },
+    });
+    for (let i = 0; i < 14; i += 1) {
+      store.handleEvent({
+        type: UIEventType.appStatus,
+        data: { id: 'one', serving: true },
+      });
+    }
+
+    // The other application's event is its own: a page showing one
+    // application must not read another's history as its own.
+    expect(ring('two')).toHaveLength(1);
+    expect(ring('two')[0]?.detail).toBe('completed');
+    // Ten rows is the whole ring, and the newest is the one kept.
+    expect(ring('one')).toHaveLength(10);
+    expect(ring('one').every((e) => e.type === UIEventType.appStatus)).toBe(
+      true,
+    );
+  });
+
+  it('leaves a stream out of the ring', () => {
+    const store = useAppsStore.getState();
+    store.handleEvent({
+      type: UIEventType.stream,
+      data: { app_id: 'one', run_id: 'r1' },
+    });
+    store.handleEvent({
+      type: UIEventType.turnEnd,
+      data: { app_id: 'one', run_id: 'r1', status: 'completed' },
+    });
+
+    // A reply's deltas are hundreds of rows saying one thing; the event
+    // that says it stopped is the one worth keeping.
+    expect(ring('one').map((e) => e.type)).toEqual([UIEventType.turnEnd]);
+    // The delta still reached the application's scope, which is what
+    // the page's chat renders from.
+    expect(hostMock.dispatchAppEvent).toHaveBeenCalledWith(
+      'one',
+      expect.objectContaining({ type: UIEventType.stream }),
+    );
   });
 });
 
@@ -119,15 +218,21 @@ describe('useAppsStore registry actions', () => {
       apps: [summary({ id: 'one' })],
       openID: 'one',
       status: { one: status('one') },
+      events: {
+        one: [{ type: UIEventType.appChanged, detail: '', at: 1 }],
+      },
     });
 
     await useAppsStore.getState().uninstall('one', true);
 
     expect(apiMock.appUninstall).toHaveBeenCalledWith('one', true);
     // An uninstalled application has no runtime and no page to show; a
-    // status left behind would keep drawing its card as if it did.
+    // status left behind would keep drawing its card as if it did, and
+    // a ring left behind would open the panel of a reinstalled id on
+    // the history of the install that left.
     expect(useAppsStore.getState().openID).toBe('');
     expect(useAppsStore.getState().status).toEqual({});
+    expect(useAppsStore.getState().events).toEqual({});
     expect(useAppsStore.getState().busy['one']).toBe(false);
   });
 

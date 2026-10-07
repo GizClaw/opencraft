@@ -23,6 +23,7 @@ import type * as gen from '../../bindings/github.com/GizClaw/opencraft/internal/
 export function AppDiagnostics({ appID }: { appID: string }) {
   const { t } = useTranslation();
   const status = useAppsStore((s) => s.status[appID]);
+  const events = useAppsStore((s) => s.events[appID]) ?? [];
   const icon = useAppsStore((s) => s.apps.find((a) => a.id === appID)?.icon);
   const refresh = useAppsStore((s) => s.refreshStatus);
   const [dir, setDir] = useState('');
@@ -144,6 +145,38 @@ export function AppDiagnostics({ appID }: { appID: string }) {
             </dd>
           </div>
         </dl>
+      </section>
+
+      <section className="rounded-card border border-edge bg-panel2 p-3">
+        <h3 className="text-sm font-semibold">{t('apps.diag.events')}</h3>
+        {events.length === 0 ? (
+          <p className="mt-1 text-xs text-faint" data-testid="app-events-none">
+            {t('apps.diag.eventsNone')}
+          </p>
+        ) : (
+          <ul className="mt-1 grid gap-0.5" data-testid="app-events">
+            {events.map((ev) => (
+              <li
+                key={`${ev.type}-${ev.at}`}
+                className="flex items-baseline gap-2 text-xs"
+              >
+                <span className="shrink-0 font-mono text-dim">{ev.type}</span>
+                {ev.detail && (
+                  <span
+                    className="min-w-0 truncate text-fg"
+                    data-tip={ev.detail}
+                  >
+                    {ev.detail}
+                  </span>
+                )}
+                <span className="flex-1" />
+                <span className="shrink-0 text-faint">
+                  {new Date(ev.at).toLocaleTimeString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="min-h-0 flex-1 rounded-card border border-edge bg-panel2 p-3">

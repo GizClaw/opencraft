@@ -70,7 +70,9 @@
       "assemblyNone": "No runtime has been assembled in this process yet.",
       "assemblyCount_one": "Assembled once, most recently by {{reason}} at {{at}}.",
       "assemblyCount_other": "Assembled {{count}} times, most recently by {{reason}} at {{at}}.",
-      "assemblyRefused": "Last refusal — {{reason}} at {{at}}"
+      "assemblyRefused": "Last refusal — {{reason}} at {{at}}",
+      "events": "Recent events",
+      "eventsNone": "This page has not heard anything about this application yet."
     },
     "wizard": {
       "title": "Import application",

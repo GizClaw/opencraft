@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppDiagnostics } from './AppDiagnostics';
 import { useAppsStore } from '../apps/store';
+import type { AppRecentEvent } from '../apps/store';
 import type * as gen from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/models';
 
 // The panel is where a broken application sends you, so what it says
@@ -44,6 +45,10 @@ function seed(recovery: gen.AppRecovery, assembly?: gen.AppAssembly) {
     apps: [{ id: 'hello', name: 'Hello', enabled: true }],
     status: { hello: status(recovery, assembly) },
   });
+}
+
+function seedEvents(events: AppRecentEvent[]) {
+  useAppsStore.setState({ events: { hello: events } });
 }
 
 beforeEach(() => {
@@ -168,5 +173,51 @@ describe('AppDiagnostics assembly row', () => {
     expect(refusal).toHaveTextContent(
       'layer.yaml: agents: app: graph.yaml: no such file',
     );
+  });
+});
+
+// The events list is the page's own record of what reached it, which is
+// the half a user cannot see anywhere else: the backend can say it
+// happened while the page shows nothing, and this is where that
+// difference becomes readable.
+describe('AppDiagnostics recent events', () => {
+  const live: gen.AppRecovery = {
+    ran: true,
+    at: '2026-09-21T10:00:00Z',
+    recovered: 0,
+  };
+
+  it('says nothing has arrived yet', async () => {
+    seed(live);
+    seedEvents([]);
+
+    render(<AppDiagnostics appID="hello" />);
+
+    expect(await screen.findByTestId('app-events-none')).toHaveTextContent(
+      'This page has not heard anything about this application yet.',
+    );
+    expect(screen.queryByTestId('app-events')).not.toBeInTheDocument();
+  });
+
+  it('lists the newest event first, with the payload that identifies it', async () => {
+    seed(live);
+    const at = new Date('2026-09-21T10:04:05Z').getTime();
+    seedEvents([
+      { type: 'artifact', detail: 'out/hello.txt', at: at + 1000 },
+      { type: 'app_changed', detail: 'assets', at },
+    ]);
+
+    render(<AppDiagnostics appID="hello" />);
+
+    const rows = await screen.findAllByRole('listitem');
+    const list = screen.getByTestId('app-events');
+    expect(list.children).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent('artifact');
+    expect(rows[0]).toHaveTextContent('out/hello.txt');
+    expect(rows[1]).toHaveTextContent('app_changed');
+    expect(rows[1]).toHaveTextContent('assets');
+    // The moment is the page's own clock, which is the question the
+    // list answers ("did that just arrive?").
+    expect(rows[1]).toHaveTextContent(new Date(at).toLocaleTimeString());
   });
 });

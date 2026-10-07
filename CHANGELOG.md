@@ -44,6 +44,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The diagnostics panel also shows what the page itself has heard. A
+  backend that says it noticed an edit and a page that shows nothing
+  are two different failures, and only the receiver can tell them
+  apart, so the applications store now rings every app-scoped event it
+  routes — `app_changed`, `app_status`, the application's own
+  `app_event`, and its turns' `turn_end`/`artifact`/`usage`/
+  `session_updated` — ten per application, newest first, each with the
+  payload field that identifies it (`assets` for an edit that touched
+  only the frontend bundle, the path an artifact landed on, the topic
+  an application published) and the page's own clock. Stream deltas
+  stay out: a reply arrives as hundreds of them saying one thing while
+  they do it, and the row that matters — that the turn ended — follows
+  as its own event. The ring is per install and goes away with the
+  card: an uninstall drops it, so a reinstalled id does not open on the
+  history of the install that left.
 - The diagnostics panel says how an application's runtime has been
   behaving, not just that it is not there: `host.Manager` keeps one
   assembly record per target — how many assemblies completed, what

@@ -70,7 +70,9 @@
       "assemblyNone": "本进程还没有组装过这里的运行时。",
       "assemblyCount_one": "组装过 1 次，最近一次由 {{reason}} 在 {{at}} 发起。",
       "assemblyCount_other": "组装过 {{count}} 次，最近一次由 {{reason}} 在 {{at}} 发起。",
-      "assemblyRefused": "上次被拒绝 —— {{reason}}，{{at}}"
+      "assemblyRefused": "上次被拒绝 —— {{reason}}，{{at}}",
+      "events": "最近事件",
+      "eventsNone": "这个页面还没有收到关于这个应用的任何事件。"
     },
     "wizard": {
       "title": "导入应用",

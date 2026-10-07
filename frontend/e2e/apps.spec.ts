@@ -395,6 +395,43 @@ test('the diagnostics panel keeps the refusal of a broken assembly', async ({
   );
 });
 
+// The panel's other question, and the one the backend cannot answer:
+// what has this page actually heard? A development loop is the case
+// that needs it — the file was written, the backend says it noticed,
+// and the row on this list is the page's own evidence.
+test('the diagnostics panel records the events the page receives', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: '/workspace',
+    apps: [{ id: 'hello', name: 'Hello', version: '1.0.0', enabled: true }],
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Applications' }).click();
+  await page.getByTestId('app-nav-hello').click();
+  await page.getByTestId('app-diagnostics-toggle').click();
+  await expect(page.getByTestId('app-events-none')).toBeVisible();
+
+  // Two events: the bundle-only change the watcher reports for an edit
+  // to the frontend, and a runtime arriving. Nothing is re-read for the
+  // first — which is why the list is the only place it is visible.
+  await emitEvent(page, {
+    type: 'app_changed',
+    data: { id: 'hello', assets: true },
+  });
+  await emitEvent(page, {
+    type: 'app_status',
+    data: { id: 'hello', serving: true, retiring: false },
+  });
+
+  const rows = page.getByTestId('app-events').getByRole('listitem');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText('app_status');
+  await expect(rows.nth(0)).toContainText('serving');
+  await expect(rows.nth(1)).toContainText('app_changed');
+  await expect(rows.nth(1)).toContainText('assets');
+});
+
 // The development loop's page half: the backend edits the application's
 // frontend bundle, announces it as a bundle-only change, and the page has
 // to be running the module that was just written — without re-reading a
