@@ -98,11 +98,13 @@ type Manager struct {
 		interact.Backend,
 		func(string) interact.Backend,
 	) (*Host, error)
-	// assemblies counts one target's runtime assemblies in this
-	// process. A rebuild storm is visible as this number climbing: a
-	// single target is supposed to assemble once per engine-input
-	// change, not once per turn.
-	assemblies map[string]int
+	// assemblies records one target's runtime assemblies in this
+	// process: the count (a rebuild storm is visible as this number
+	// climbing — a single target is supposed to assemble once per
+	// engine-input change, not once per turn) and the last failure,
+	// which is the only copy of a refused document that reaches the
+	// page. See AssemblyStats.
+	assemblies map[string]*AssemblyStats
 	// recovered records, by session root, what this process's
 	// crash-recovery pass did. Recovery is idempotent by itself; the
 	// guard keeps a runtime reload from re-scanning, and the stored

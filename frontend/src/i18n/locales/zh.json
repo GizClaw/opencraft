@@ -65,7 +65,12 @@
       "recoveryClean": "本进程运行过恢复，没有发现未归档的轮次。",
       "recoveryRecovered_other": "本进程把 {{count}} 个未归档的轮次恢复成了中断状态。",
       "recoveryRecovered_one": "本进程把 {{count}} 个未归档的轮次恢复成了中断状态。",
-      "recoveryHeld": "这个应用由另一个活进程持有（{{holder}}），本进程没有运行恢复。"
+      "recoveryHeld": "这个应用由另一个活进程持有（{{holder}}），本进程没有运行恢复。",
+      "assembly": "组装",
+      "assemblyNone": "本进程还没有组装过这里的运行时。",
+      "assemblyCount_one": "组装过 1 次，最近一次由 {{reason}} 在 {{at}} 发起。",
+      "assemblyCount_other": "组装过 {{count}} 次，最近一次由 {{reason}} 在 {{at}} 发起。",
+      "assemblyRefused": "上次被拒绝 —— {{reason}}，{{at}}"
     },
     "wizard": {
       "title": "导入应用",

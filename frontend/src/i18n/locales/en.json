@@ -65,7 +65,12 @@
       "recoveryClean": "This process ran a crash pass and found no unarchived turns.",
       "recoveryRecovered_one": "This process recovered {{count}} unfinished turn as interrupted.",
       "recoveryRecovered_other": "This process recovered {{count}} unfinished turns as interrupted.",
-      "recoveryHeld": "Another live process owns this application ({{holder}}); this process ran no recovery."
+      "recoveryHeld": "Another live process owns this application ({{holder}}); this process ran no recovery.",
+      "assembly": "Assemblies",
+      "assemblyNone": "No runtime has been assembled in this process yet.",
+      "assemblyCount_one": "Assembled once, most recently by {{reason}} at {{at}}.",
+      "assemblyCount_other": "Assembled {{count}} times, most recently by {{reason}} at {{at}}.",
+      "assemblyRefused": "Last refusal — {{reason}} at {{at}}"
     },
     "wizard": {
       "title": "Import application",

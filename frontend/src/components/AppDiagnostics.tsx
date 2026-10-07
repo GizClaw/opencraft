@@ -117,6 +117,32 @@ export function AppDiagnostics({ appID }: { appID: string }) {
               {recoveryLine(t, status?.recovery)}
             </dd>
           </div>
+          <div className="flex items-start gap-2">
+            <dt className="w-28 shrink-0 text-faint">
+              {t('apps.diag.assembly')}
+            </dt>
+            <dd className="min-w-0 flex-1">
+              <div
+                className={assemblyTone(status?.assembly)}
+                data-testid="app-assembly"
+              >
+                {assemblyLine(t, status?.assembly)}
+              </div>
+              {status?.assembly?.last_error && (
+                <div className="mt-0.5" data-testid="app-assembly-error">
+                  <span className="text-faint">
+                    {t('apps.diag.assemblyRefused', {
+                      reason: status.assembly.last_error_reason,
+                      at: status.assembly.last_error_at,
+                    })}
+                  </span>
+                  <pre className="whitespace-pre-wrap break-words font-mono text-xs text-warn">
+                    {status.assembly.last_error}
+                  </pre>
+                </div>
+              )}
+            </dd>
+          </div>
         </dl>
       </section>
 
@@ -240,4 +266,32 @@ function recoveryLine(
 function recoveryTone(recovery?: gen.AppRecovery): string {
   if (!recovery?.at) return 'text-faint';
   return recovery.holder || recovery.recovered > 0 ? 'text-warn' : 'text-dim';
+}
+
+/**
+ * assemblyLine renders the pool's assembly record: how many times this
+ * process built the application's runtime, and what asked for the last
+ * one. The reason is the host's own vocabulary (`app_read`, `app_turn`,
+ * `app_reload`) rather than a translated word, and the moment is the
+ * host's own RFC3339 stamp: this row exists so that the panel and the
+ * log line agree, which a localized phrase would undo.
+ */
+function assemblyLine(
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  assembly?: gen.AppAssembly,
+): string {
+  if (!assembly?.last_reason) return t('apps.diag.assemblyNone');
+  return t('apps.diag.assemblyCount', {
+    count: assembly.count,
+    reason: assembly.last_reason,
+    at: assembly.last_at ?? '',
+  });
+}
+
+// assemblyTone marks the row a user came for: a runtime that was refused
+// is the page's reason to exist, and a target nothing has assembled is
+// an answer too ("this application never started"), not a blank.
+function assemblyTone(assembly?: gen.AppAssembly): string {
+  if (assembly?.last_error) return 'text-warn';
+  return assembly?.last_reason ? 'text-dim' : 'text-faint';
 }

@@ -34,6 +34,7 @@ function status(id: string) {
     state_root: `/data/apps/${id}`,
     work_dir: `/data/apps/${id}/workspace`,
     recovery: { ran: true, recovered: 0 },
+    assembly: { count: 1, last_reason: 'app_enable' },
   };
 }
 

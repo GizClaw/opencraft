@@ -630,6 +630,165 @@ func TestAppReloadRefusesAPackageThatNoLongerAssembles(t *testing.T) {
 	}
 }
 
+// TestAppStatusCarriesTheAssemblyRecord pins the two halves of the
+// panel's assembly row: the pool's counting and naming, and the wire
+// shape the row reads. The count is what turns "this application is
+// slow" into "it was rebuilt eleven times since you opened it", the
+// reason is which caller did it, and the refusal is the text a user
+// with the YAML open needs — so a rename of any of these fields would
+// silently blank the one copy of a broken package's error.
+func TestAppStatusCarriesTheAssemblyRecord(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "hi"})
+	f := newAppBinding(t, provider)
+	pkg := writeAppBundle(t)
+	if _, err := f.binding.Install(pkg, AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	// Nothing has assembled it yet: the page says so instead of
+	// claiming a runtime that was never built, and the empty fields
+	// stay off the wire (the row tests them for content, not presence).
+	status, err := f.binding.Status("hello")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if status.Assembly != (AppAssembly{}) {
+		t.Fatalf("an application nothing assembled = %+v", status.Assembly)
+	}
+	if raw, err := json.Marshal(status); err != nil {
+		t.Fatalf("marshal: %v", err)
+	} else {
+		var wire map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		assembly, ok := wire["assembly"]
+		if !ok {
+			t.Fatalf("the status carries no assembly: %s", raw)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(assembly, &fields); err != nil {
+			t.Fatalf("unmarshal assembly: %v", err)
+		}
+		if _, ok := fields["count"]; !ok {
+			t.Fatalf("the assembly record has no count: %s", assembly)
+		}
+		for _, key := range []string{"last_reason", "last_at"} {
+			if _, ok := fields[key]; ok {
+				t.Fatalf("an unattempted assembly carries %s: %s", key, assembly)
+			}
+		}
+	}
+
+	// The enable is the first assembly, and the record names it as
+	// such: the page's "why did this happen" answer.
+	if err := f.binding.SetEnabled("hello", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	status, err = f.binding.Status("hello")
+	if err != nil {
+		t.Fatalf("status after the enable: %v", err)
+	}
+	if status.Assembly.Count != 1 || status.Assembly.LastReason != "app_enable" {
+		t.Fatalf("after the enable: %+v", status.Assembly)
+	}
+	if _, err := time.Parse(time.RFC3339, status.Assembly.LastAt); err != nil {
+		t.Fatalf("the assembly moment is not a time the page can render: %q",
+			status.Assembly.LastAt)
+	}
+	if status.Assembly.LastError != "" || status.Assembly.LastErrorReason != "" {
+		t.Fatalf("a clean enable recorded a refusal: %+v", status.Assembly)
+	}
+
+	// A read that finds no runtime assembles one, and says that is what
+	// asked: the panel distinguishes a page read from a turn.
+	f.core.Runtime.Manager().InvalidateApps(context.Background(), "hello")
+	if _, err := f.binding.Sessions("hello"); err != nil {
+		t.Fatalf("sessions: %v", err)
+	}
+	status, err = f.binding.Status("hello")
+	if err != nil {
+		t.Fatalf("status after the read: %v", err)
+	}
+	if status.Assembly.Count != 2 || status.Assembly.LastReason != "app_read" {
+		t.Fatalf("after the read's assembly: %+v", status.Assembly)
+	}
+
+	// The breakage an author hits: a file the layer points at is gone,
+	// so the reload refuses. The refusal is now the record's last
+	// attempt — with the reason that asked for it — while the count
+	// stays where it was: a package that will not assemble is not a
+	// runtime the page can talk to.
+	content := filepath.Join(f.dataDir, "apps", "hello", "content")
+	if err := os.Remove(filepath.Join(content, "graph.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	err = f.binding.Reload("hello")
+	if err == nil || !strings.Contains(err.Error(), "graph.yaml") {
+		t.Fatalf("reload of a broken application = %v", err)
+	}
+	status, err = f.binding.Status("hello")
+	if err != nil {
+		t.Fatalf("status after the refusal: %v", err)
+	}
+	if status.Assembly.Count != 2 {
+		t.Fatalf("a refusal counted as an assembly: %+v", status.Assembly)
+	}
+	if status.Assembly.LastReason != "app_reload" ||
+		status.Assembly.LastErrorReason != "app_reload" {
+		t.Fatalf("the refusal does not name what asked for it: %+v",
+			status.Assembly)
+	}
+	if !strings.Contains(status.Assembly.LastError, "graph.yaml") {
+		t.Fatalf("the refusal does not carry the assembly's own words: %+v",
+			status.Assembly)
+	}
+	if _, err := time.Parse(time.RFC3339, status.Assembly.LastErrorAt); err != nil {
+		t.Fatalf("the refusal has no renderable moment: %q",
+			status.Assembly.LastErrorAt)
+	}
+	if raw, err := json.Marshal(status); err != nil {
+		t.Fatalf("marshal: %v", err)
+	} else {
+		for _, key := range []string{
+			"count", "last_reason", "last_at",
+			"last_error", "last_error_reason", "last_error_at",
+		} {
+			if !strings.Contains(string(raw), `"`+key+`"`) {
+				t.Fatalf("the refused status carries no %s: %s", key, raw)
+			}
+		}
+	}
+
+	// Fixing the file brings the application back, and the refusal
+	// stays readable: the page that just started serving again is
+	// exactly where someone looks to find out what was wrong.
+	original, err := os.ReadFile(filepath.Join(pkg, "graph.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(content, "graph.yaml"), original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.binding.Reload("hello"); err != nil {
+		t.Fatalf("reload after the repair: %v", err)
+	}
+	status, err = f.binding.Status("hello")
+	if err != nil {
+		t.Fatalf("status after the repair: %v", err)
+	}
+	if status.Assembly.Count != 3 || status.Assembly.LastReason != "app_reload" {
+		t.Fatalf("after the repair: %+v", status.Assembly)
+	}
+	if !strings.Contains(status.Assembly.LastError, "graph.yaml") {
+		t.Fatalf("the repair cleared what was wrong: %+v", status.Assembly)
+	}
+	if status.Assembly.LastErrorReason != "app_reload" {
+		t.Fatalf("the standing refusal lost the reason that asked for it: %+v",
+			status.Assembly)
+	}
+}
+
 // TestAppReloadOfADisabledApplicationOnlyInvalidates pins the other half
 // of the same decision: there is no runtime to bring back, so a reload
 // succeeds and assembles nothing. An id no content root holds is still

@@ -103,6 +103,11 @@ export interface MockConfig {
   // names and the module source App.Asset serves for it. A spec that
   // leaves it out installs a conversation-only application.
   appBundle?: { entry: string; source: string; style?: string };
+  // appAssembly overrides App.Status's assembly record — the count, the
+  // caller that asked for the last assembly, and the refusal of the last
+  // one that failed — so a spec can walk the diagnostics row a broken
+  // package leaves behind.
+  appAssembly?: Record<string, unknown>;
   // appTurn is App.StartTurn's answer. The conversation id is what the
   // page's events must name to be read as its own.
   appTurn?: { run_id: string; conversation_id: string };
@@ -313,6 +318,14 @@ export function mockBackend(cfg?: MockConfig) {
     content_root: `/apps/${id}/content`,
     state_root: `/apps/${id}`,
     work_dir: `/apps/${id}/workspace`,
+    // appAssembly is App.Status's assembly record. A spec that cares
+    // about the diagnostics row names one; the default is the shape a
+    // serving application has right after its first read assembled it.
+    assembly: config.appAssembly ?? {
+      count: 1,
+      last_reason: 'app_read',
+      last_at: '2026-09-21T10:00:00Z',
+    },
   });
   const appAsset = (rel: string) => {
     const bundle = config.appBundle;

@@ -350,8 +350,49 @@ test('the diagnostics panel shows the three roots and the workspace', async ({
   await expect(
     page.getByText('/apps/hello/workspace', { exact: true }),
   ).toBeVisible();
+  // The runtime's own record: how often this process assembled it and
+  // who asked, read off App.Status the way the log line reports it.
+  await expect(page.getByTestId('app-assembly')).toHaveText(
+    'Assembled once, most recently by app_read at 2026-09-21T10:00:00Z.',
+  );
   await page.getByRole('button', { name: 'hello.txt' }).click();
   await expect(page.getByText('written by the app')).toBeVisible();
+});
+
+// The panel a refused assembly sends a user to: the package is broken,
+// the host's refusal is the only copy of what is wrong, and it has to
+// stay readable while the application serves again — the repair is not
+// the moment to forget the error that led to it.
+test('the diagnostics panel keeps the refusal of a broken assembly', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: '/workspace',
+    apps: [{ id: 'hello', name: 'Hello', version: '1.0.0', enabled: true }],
+    appAssembly: {
+      count: 2,
+      last_reason: 'app_reload',
+      last_at: '2026-09-21T10:10:00Z',
+      last_error: 'layer.yaml: agents: app: graph.yaml: no such file',
+      last_error_reason: 'app_reload',
+      last_error_at: '2026-09-21T10:05:00Z',
+    },
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Applications' }).click();
+  await page.getByTestId('app-nav-hello').click();
+  await page.getByTestId('app-diagnostics-toggle').click();
+
+  await expect(page.getByTestId('app-assembly')).toHaveText(
+    'Assembled 2 times, most recently by app_reload at 2026-09-21T10:10:00Z.',
+  );
+  const refusal = page.getByTestId('app-assembly-error');
+  await expect(refusal).toContainText(
+    'Last refusal — app_reload at 2026-09-21T10:05:00Z',
+  );
+  await expect(refusal).toContainText(
+    'layer.yaml: agents: app: graph.yaml: no such file',
+  );
 });
 
 // The development loop's page half: the backend edits the application's

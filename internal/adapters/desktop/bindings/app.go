@@ -256,7 +256,10 @@ func (b *App) SetEnabled(id string, enabled bool) error {
 	if err := store.SetEnabled(id, true); err != nil {
 		return err
 	}
-	if _, err := b.core.Runtime.EnsureHost(ctx, host.AppTarget(id)); err != nil {
+	if _, err := b.core.Runtime.EnsureHost(
+		host.WithAssemblyReason(ctx, host.ReasonAppEnable),
+		host.AppTarget(id),
+	); err != nil {
 		return b.refuseEnable(ctx, store, id, err)
 	}
 	b.changed(id)
@@ -357,6 +360,53 @@ type AppRecovery struct {
 	Holder string `json:"holder,omitempty"`
 }
 
+// AppAssembly is one application's assembly record as the diagnostics
+// panel renders it: how many times this process assembled the
+// application's runtime, and — when an attempt was refused — exactly
+// what it said, with the reason that asked for it.
+//
+// The error text is the point. An application that will not assemble is
+// almost always a document layer the host refused, the refusal is the
+// only copy of what is wrong, and the person who can fix the YAML is the
+// one reading this. The counts answer the other question the same panel
+// gets: how often the runtime has been rebuilt under them.
+type AppAssembly struct {
+	// Count is how many assemblies completed in this process (0 also
+	// means "none yet", which is what LastReason distinguishes).
+	Count int `json:"count"`
+	// LastReason is why the most recent attempt ran — a `host.ReasonApp*`
+	// name, or `unknown` for an untagged caller — and LastAt when it
+	// ended, in RFC3339 UTC. Both empty when nothing has been assembled.
+	LastReason string `json:"last_reason,omitempty"`
+	LastAt     string `json:"last_at,omitempty"`
+	// LastError is the refusal of the most recent failed attempt, with
+	// the reason that asked for it and when. Empty when none failed. A
+	// later success does not clear it: a page that is serving again is
+	// exactly when someone wants to read what was wrong.
+	LastError       string `json:"last_error,omitempty"`
+	LastErrorReason string `json:"last_error_reason,omitempty"`
+	LastErrorAt     string `json:"last_error_at,omitempty"`
+}
+
+// appAssembly reads the pool's record of one application's assemblies in
+// the shape the panel renders. An empty pool (no runtime yet) reports
+// the zero value, which the page shows as "nothing has been assembled".
+func appAssembly(stats host.AssemblyStats) AppAssembly {
+	out := AppAssembly{
+		Count:           stats.Count,
+		LastReason:      string(stats.Last.Reason),
+		LastError:       stats.LastFailure.Err,
+		LastErrorReason: string(stats.LastFailure.Reason),
+	}
+	if !stats.Last.At.IsZero() {
+		out.LastAt = stats.Last.At.UTC().Format(time.RFC3339)
+	}
+	if !stats.LastFailure.At.IsZero() {
+		out.LastErrorAt = stats.LastFailure.At.UTC().Format(time.RFC3339)
+	}
+	return out
+}
+
 // AppStatus is what the page's card and the diagnostics view read about
 // one application's runtime: the state it is in, whether a Host serves
 // it right now, the three roots involved, and what recovery did for it.
@@ -383,6 +433,10 @@ type AppStatus struct {
 	// nothing known" — the page then says so instead of claiming a
 	// clean pass.
 	Recovery AppRecovery `json:"recovery"`
+	// Assembly is what this process's pool remembers about assembling
+	// the application's runtime: the count, and the last refusal with
+	// the reason it was asked for.
+	Assembly AppAssembly `json:"assembly"`
 }
 
 // Status reports one installed application's runtime state. It is the
@@ -412,6 +466,9 @@ func (b *App) Status(id string) (AppStatus, error) {
 		ContentRoot: app.ContentDir,
 		StateRoot:   stateRoot,
 		WorkDir:     workDir,
+		Assembly: appAssembly(
+			b.core.Runtime.Manager().AssemblyStats(host.AppTarget(id)),
+		),
 	}
 	h := b.core.Runtime.HostFor(host.AppTarget(id))
 	if h != nil {
@@ -687,6 +744,11 @@ func (b *App) ensureServing(ctx context.Context, id string) {
 	if b.core.Runtime.HostFor(host.AppTarget(id)) != nil {
 		return
 	}
+	// A read assembling the runtime is a distinct reason from a turn's
+	// or a reload's: it is what the diagnostics panel is looking at when
+	// an application that was serving a moment ago refuses to assemble
+	// after an edit.
+	ctx = host.WithAssemblyReason(ctx, host.ReasonAppRead)
 	if _, err := b.core.Runtime.EnsureHost(ctx, host.AppTarget(id)); err != nil {
 		flowtelemetry.WarnErr(ctx,
 			"desktop: assembling an application for a read failed", err)

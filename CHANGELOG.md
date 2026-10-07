@@ -44,6 +44,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The diagnostics panel says how an application's runtime has been
+  behaving, not just that it is not there: `host.Manager` keeps one
+  assembly record per target — how many assemblies completed, what
+  asked for the last attempt, and the text of the last refusal — and
+  `App.Status` carries it to the page as `assembly`. The error text is
+  the point: an application that will not assemble is almost always a
+  document layer the host refused, and that sentence used to exist only
+  as a log line, so the person who can fix the YAML had nothing to read
+  from the page that was broken. The refusal is kept apart from the last
+  attempt instead of being overwritten by it — a package that assembles
+  again after a repair does not stop being worth reading, and the
+  moment it serves again is exactly when someone opens the panel — and
+  a refused attempt is not counted as an assembly, so the count stays
+  the number the `assembly_seq` log line reports while `serving` keeps
+  answering "is one live now". The row prints the host's own words and
+  RFC3339 stamps for the same reason: the panel and the log have to
+  agree. The four application callers that assemble name themselves —
+  a turn, an enable, a page read, a reload — which is what turns "it
+  rebuilt again" into "the page's own read did it".
 - Installing an application refuses a package whose files cannot land
   where it would put them. Windows with long-path support off takes
   MAX_PATH — 260 characters including the terminating NUL — and refuses

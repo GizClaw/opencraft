@@ -57,6 +57,11 @@ const (
 	// under the registry (update, rollback, an edited layer) or the
 	// page asked for a fresh assembly.
 	ReasonAppReload AssemblyReason = "app_reload"
+	// ReasonAppRead is a page read assembling the application so the
+	// transcript it renders is the one the runtime would serve: recovery
+	// runs at assembly, and a read that precedes it would show a crashed
+	// turn "appearing" a moment later.
+	ReasonAppRead AssemblyReason = "app_read"
 )
 
 type assemblyReasonKey struct{}

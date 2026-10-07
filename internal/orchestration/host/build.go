@@ -168,6 +168,7 @@ func (m *Manager) assemble(
 	}
 	duration := time.Since(started)
 	if err != nil {
+		m.recordAssembly(t, AssemblyReasonFrom(ctx), time.Now().UTC(), err)
 		telemetry.WarnErr(ctx, "host: runtime assembly failed", err,
 			otellog.String("reason", string(AssemblyReasonFrom(ctx))),
 			otellog.String("target", t.String()),
@@ -178,21 +179,18 @@ func (m *Manager) assemble(
 	return h, nil
 }
 
-// logAssembled reports one completed assembly. assembly_seq counts the
-// workspace's assemblies in this process: the line that turns "turns
-// feel slow" into "this workspace was assembled 33 times in a minute".
+// logAssembled records one completed assembly and reports it.
+// assembly_seq counts the target's assemblies in this process: the line
+// that turns "turns feel slow" into "this workspace was assembled 33
+// times in a minute".
 func (m *Manager) logAssembled(
 	ctx context.Context,
 	h *Host,
 	duration time.Duration,
 ) {
-	m.mu.Lock()
-	if m.assemblies == nil {
-		m.assemblies = make(map[string]int)
-	}
-	m.assemblies[h.target.Key()]++
-	seq := m.assemblies[h.target.Key()]
-	m.mu.Unlock()
+	stats := m.recordAssembly(
+		h.target, AssemblyReasonFrom(ctx), time.Now().UTC(), nil,
+	)
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -201,7 +199,7 @@ func (m *Manager) logAssembled(
 		otellog.String("workspace", h.workDir),
 		otellog.Int64("duration_ms", duration.Milliseconds()),
 		otellog.Bool("in_turn", m.anyActiveRuns()),
-		otellog.Int("assembly_seq", seq),
+		otellog.Int("assembly_seq", stats.Count),
 		otellog.String("host_ptr", fmt.Sprintf("%p", h)))
 }
 

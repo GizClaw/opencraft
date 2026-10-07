@@ -92,7 +92,9 @@ func (c *Core) ReloadApp(ctx context.Context, id string) error {
 		return nil
 	}
 	target := host.AppTarget(id)
-	h, err := c.Runtime.EnsureHost(ctx, target)
+	h, err := c.Runtime.EnsureHost(
+		host.WithAssemblyReason(ctx, host.ReasonAppReload), target,
+	)
 	if err != nil {
 		// The application is enabled but cannot be served as it stands
 		// (a layer edited into an invalid document, a graph that does
