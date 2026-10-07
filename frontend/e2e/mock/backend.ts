@@ -83,6 +83,33 @@ export interface MockConfig {
   petRuntimeStatusFreezePoll?: boolean;
   assistantCharacter?: string;
   petsEnabled?: boolean;
+  // Installed applications the page lists (App.List), as the registry
+  // would report them. The wizard's install appends to this list inside
+  // the page, so a spec that starts empty can watch one appear.
+  apps?: unknown[];
+  // appPackage is what App.Inspect reads for the import wizard: the
+  // summary installing the picked source would produce, its layers, and
+  // the preflight refusals (empty for a package the checks pass).
+  appPackage?: {
+    summary: Record<string, unknown>;
+    layers?: string[];
+    refusals?: unknown[];
+    // path and zip are what File.PickFolder / File.PickFile answer with,
+    // so the wizard's two buttons have a source to read.
+    path?: string;
+    zip?: string;
+  };
+  // appBundle is the application's frontend: the entry App.Manifest
+  // names and the module source App.Asset serves for it. A spec that
+  // leaves it out installs a conversation-only application.
+  appBundle?: { entry: string; source: string; style?: string };
+  // appTurn is App.StartTurn's answer. The conversation id is what the
+  // page's events must name to be read as its own.
+  appTurn?: { run_id: string; conversation_id: string };
+  // Per-application reads behind one conversation: the sessions the page
+  // opens on and the archived messages it loads.
+  appSessions?: unknown[];
+  appHistory?: unknown[];
   /**
    * Per-method overrides, e.g. { 'File.ReadFile': async () => '...' }.
    *
@@ -119,6 +146,13 @@ export function mockBackend(cfg?: MockConfig) {
   let newChatSeq = 0;
   let startTurnSeq = 0;
   let forkSeq = 0;
+  let appSessionSeq = 0;
+  // The registry the page sees: seeded from the config, appended to by
+  // the wizard's install (an install arrives enabled) and toggled by the
+  // card's enable/disable.
+  const installedApps: Array<Record<string, unknown>> = (config.apps ?? []).map(
+    (app) => ({ ...(app as Record<string, unknown>) }),
+  );
   // Pet call log: the pet surface is driven by events, so the only way a
   // spec can see "the drag called SetPosition" is this recording.
   const petCalls: { method: string; args: unknown[] }[] = [];
@@ -237,7 +271,122 @@ export function mockBackend(cfg?: MockConfig) {
     targets_available: true,
   });
 
+  // The application platform's fixtures. One package, one installed
+  // application and one frontend bundle are enough for the page's loop:
+  // the wizard reads the package, the install lands in the registry the
+  // page lists, and opening the application evaluates the bundle the
+  // asset channel serves.
+  const appSummary: Record<string, unknown> = {
+    id: 'hello',
+    name: 'Hello',
+    version: '1.0.0',
+    enabled: true,
+    agent: 'hello',
+    hasUi: true,
+    ...(config.appPackage?.summary ?? {}),
+  };
+  const appManifest = () => ({
+    app: 'v1',
+    id: appSummary.id,
+    name: appSummary.name,
+    version: appSummary.version,
+    agent: appSummary.agent,
+    ui: config.appBundle
+      ? { entry: config.appBundle.entry, style: config.appBundle.style }
+      : undefined,
+  });
+  const appStatus = (id: string) => ({
+    id,
+    name: String(installedApps.find((a) => a.id === id)?.name ?? id),
+    enabled: installedApps.find((a) => a.id === id)?.enabled !== false,
+    builtin: false,
+    serving: true,
+    retiring: false,
+    content_root: `/apps/${id}/content`,
+    state_root: `/apps/${id}`,
+    work_dir: `/apps/${id}/workspace`,
+  });
+  const appAsset = (rel: string) => {
+    const bundle = config.appBundle;
+    if (!bundle) throw new Error(`apps: no asset ${rel}`);
+    if (rel === bundle.entry) {
+      return {
+        data: btoa(bundle.source),
+        media_type: 'application/javascript',
+        size: bundle.source.length,
+      };
+    }
+    if (bundle.style && rel === bundle.style) {
+      return {
+        data: btoa(bundle.style),
+        media_type: 'text/css',
+        size: bundle.style.length,
+      };
+    }
+    throw new Error(`apps: no asset ${rel}`);
+  };
+  // recordInstall is App.Install: the package the wizard read becomes an
+  // installed, enabled application (the fields the user edited on top),
+  // and the registry change is announced the way the host announces it.
+  const recordInstall = (opts: Record<string, unknown>) => {
+    const summary = {
+      ...appSummary,
+      ...(opts?.id ? { id: opts.id } : {}),
+      ...(opts?.name ? { name: opts.name } : {}),
+      enabled: true,
+    };
+    installedApps.push(summary);
+    emit('opencraft:ui', {
+      type: 'app_changed',
+      data: { id: String(summary.id) },
+    });
+    return summary;
+  };
+
   const defaults: Record<string, Record<string, Handler>> = {
+    App: {
+      ActiveRun: async () => '',
+      Asset: async (_id: string, rel: string) => appAsset(rel),
+      Cancel: noop,
+      DeleteSession: noop,
+      History: async () => config.appHistory ?? [],
+      Inspect: async () => ({
+        Summary: { ...appSummary, enabled: true },
+        Layers: config.appPackage?.layers ?? ['layer.yaml'],
+        Refusals: config.appPackage?.refusals ?? [],
+      }),
+      Install: async (_src: string, opts: Record<string, unknown>) =>
+        recordInstall(opts),
+      InstallZip: async (_zip: string, opts: Record<string, unknown>) =>
+        recordInstall(opts),
+      KVDelete: noop,
+      KVGet: async () => ({ key: '', value: '' }),
+      KVList: emptyList,
+      KVSet: noop,
+      List: async () => installedApps,
+      ListFiles: emptyList,
+      Manifest: async () => appManifest(),
+      NewSession: async () => `s-app-${++appSessionSeq}`,
+      ReadFile: async () => '',
+      Reload: noop,
+      Reveal: noop,
+      Sessions: async () => config.appSessions ?? [],
+      SetEnabled: async (id: string, enabled: boolean) => {
+        const app = installedApps.find((a) => a.id === id);
+        if (app) app.enabled = enabled;
+        emit('opencraft:ui', { type: 'app_changed', data: { id } });
+      },
+      StartTurn: async (req: { conversation_id?: string }) => ({
+        run_id: config.appTurn?.run_id ?? 'r-app-1',
+        conversation_id:
+          req?.conversation_id ||
+          config.appTurn?.conversation_id ||
+          `s-app-${++appSessionSeq}`,
+      }),
+      Status: async (id: string) => appStatus(id),
+      Turns: emptyList,
+      Uninstall: noop,
+    },
     Agent: {
       Detail: async () => null,
       List: emptyList,
@@ -535,8 +684,10 @@ export function mockBackend(cfg?: MockConfig) {
         (globalThis as { __extUrl?: string }).__extUrl = String(url);
       },
       OpenPath: noop,
-      PickFile: async () => '',
-      PickFolder: async () => '',
+      // The import wizard's two pickers answer from the app fixtures, so
+      // a spec can install a directory or a zip without a dialog.
+      PickFile: async () => config.appPackage?.zip ?? '',
+      PickFolder: async () => config.appPackage?.path ?? '',
       ReadAttachment: async () => null,
       ReadPreview: async () =>
         config.viewerFile
