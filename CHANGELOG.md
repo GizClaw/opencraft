@@ -338,6 +338,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A content root is watched. An application's tree is what its author
+  edits, and the layout is built around that — "open the directory,
+  edit, reassemble" — so the desktop now notices instead of waiting for
+  someone to click reload: every enabled application's content root is
+  polled once a second, and a change that holds still for one interval
+  is reported once. What the report says is the one distinction the host
+  acts on: a change inside the frontend bundle (the tree the manifest's
+  `ui.entry` lives in, plus the two files `ui` names) reloads the page's
+  module and leaves the runtime standing, while anything else — the
+  manifest, a layer, a script the graph names — retires the Host so the
+  next turn assembles the document the edit wrote. A burst of writes
+  (an editor's save, a bundler's output) settles into one reload; the
+  manifest and the layers are never mistaken for the bundle however they
+  are named; a broken manifest keeps being watched, because the edit
+  that fixes it is a change like any other. Dot-prefixed entries are
+  ignored (the installer's rule), a tree past 20,000 files is skipped
+  with one log line rather than walked every second, and a disabled or
+  built-in application is not polled at all. The page learns about it
+  through the existing `app_changed` event, which now carries `assets`
+  when the edit was the bundle's — the list is not re-read for those,
+  because a bundle edit cannot have changed it. A headless run polls
+  nothing: there is no one editing content roots under it.
 - A settings save reaches installed applications. The user's inference
   wiring has two readers — the window's workspace, which loads it inside
   its own document, and an installed application, which reads it as the

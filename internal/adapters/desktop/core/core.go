@@ -65,6 +65,9 @@ type Core struct {
 	// stream sinks delegated runs deliver into (see streams.go).
 	streamTargetsOnce sync.Once
 	streamTargets     *subagents.StreamTargets
+	// appWatchRun is the content-root watcher's lifecycle, nil while no
+	// watcher runs (see appwatch.go). It is guarded by mu.
+	appWatchRun *appWatch
 
 	UserDir string
 	DataDir string

@@ -210,11 +210,19 @@ type SessionUpdatedEvent struct {
 }
 
 // AppChangedEvent reports that one installed application changed — it
-// was installed, enabled, disabled, updated or removed — so the page
-// reloads the list and the card it renders from it. A change that is not
-// about one application (a registry-wide reload) leaves ID empty.
+// was installed, enabled, disabled, updated or removed, or its content
+// root was edited under the registry (the development loop) — so the
+// page reloads the list and the card it renders from it. A change that
+// is not about one application (a registry-wide reload) leaves ID empty.
+//
+// Assets narrows that to the one change the registry knows nothing
+// about: the application's frontend bundle was edited and its runtime
+// was deliberately left standing, so the page's job is to load the
+// module again. The list is unchanged by such an edit, and a page that
+// re-read it would be reading the same answer.
 type AppChangedEvent struct {
-	ID string `json:"id,omitempty"`
+	ID     string `json:"id,omitempty"`
+	Assets bool   `json:"assets,omitempty"`
 }
 
 // AppStatusEvent reports that one application's runtime came up or went

@@ -471,6 +471,18 @@ func (s *Store) StateRoot(id string) (string, error) {
 	return s.stateRoot(id)
 }
 
+// ContentRoot returns the content-root directory of one installed
+// application without reading its manifest: the tree an install, an
+// update and an uninstall move, and the one an author edits. A manifest
+// that no longer parses leaves this answer standing — unlike Get, which
+// reads it — which is what a development loop needs: the file that has
+// to be repaired is inside the directory this returns, and the watcher
+// over it (watch.go) keeps watching a root whose manifest is broken.
+func (s *Store) ContentRoot(id string) (string, error) {
+	content, _, err := s.contentDir(id)
+	return content, err
+}
+
 // WorkDir returns the private workspace of one installed application:
 // the one directory its runtime reads and writes, and the tree the page
 // browses. It is named, not created — the application's own assembly is

@@ -154,7 +154,7 @@ export const useAppsStore = create<AppsState>((set, get) => ({
         // application's own page has to unload: an update replaced the
         // bundle it is showing, and a disable or a removal means the
         // runtime that answers its calls is going away.
-        const data = ev.data as { id?: string } | null;
+        const data = ev.data as { id?: string; assets?: boolean } | null;
         const id = data?.id ?? '';
         if (id) {
           set((state) => ({
@@ -163,6 +163,15 @@ export const useAppsStore = create<AppsState>((set, get) => ({
               [id]: (state.revisions[id] ?? 0) + 1,
             },
           }));
+        }
+        if (data?.assets) {
+          // Only its bundle changed: the backend edited the application's
+          // content root for the frontend's half and left the runtime
+          // standing. Nothing about the registry moved, so the list would
+          // read the answer it already has; the revision above is the
+          // whole job, and the page's effect on it is what loads the
+          // module that was just written.
+          return;
         }
         void get()
           .load()

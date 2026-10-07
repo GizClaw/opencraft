@@ -334,6 +334,10 @@ func (d *Desktop) Startup(ctx context.Context) {
 			}
 		})
 	}
+	// An application's content root is editable at any moment (the whole
+	// layout is built for it, see capabilities/apps). The watcher is what
+	// turns that edit into a reload instead of a stale runtime.
+	d.core.StartAppWatch()
 	if err := d.core.RebuildRuntime(
 		host.WithAssemblyReason(ctx, host.ReasonStartup)); err != nil {
 		d.core.Shell.Emit(core.EventFatal, map[string]any{"error": err.Error()})
@@ -394,6 +398,10 @@ func (d *Desktop) hasScheduledTasks(ctx context.Context) bool {
 // Shutdown releases runtime-owned resources. Runtime service teardown
 // is added as the runtime domain migrates.
 func (d *Desktop) Shutdown(ctx context.Context) {
+	// The watcher goes first: a settled edit reloads an application,
+	// which assembles a Host, and that must not happen beside the
+	// teardown below. Stopping waits for the poll in flight.
+	d.core.StopAppWatch()
 	d.stopPet()
 	d.stopRuntimeMetrics()
 	d.media.Close()

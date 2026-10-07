@@ -213,6 +213,25 @@ describe('useAppsStore.handleEvent', () => {
     expect(useAppsStore.getState().openID).toBe('one');
   });
 
+  it('reloads the bundle without re-reading the registry for an asset edit', () => {
+    useAppsStore.setState({ openID: 'one' });
+
+    useAppsStore.getState().handleEvent({
+      type: UIEventType.appChanged,
+      data: { id: 'one', assets: true },
+    });
+
+    // The backend edited the application's bundle and deliberately left
+    // its runtime standing: the page reloads the module (the revision),
+    // and the list — which such an edit cannot have changed — is not
+    // read again. A page whose application is switched off stays open
+    // for the same reason: nothing about the registry moved.
+    expect(useAppsStore.getState().revisions['one']).toBe(1);
+    expect(apiMock.appList).not.toHaveBeenCalled();
+    expect(apiMock.appStatus).not.toHaveBeenCalled();
+    expect(useAppsStore.getState().openID).toBe('one');
+  });
+
   it('refreshes one status on app_status', () => {
     useAppsStore.getState().handleEvent({
       type: UIEventType.appStatus,

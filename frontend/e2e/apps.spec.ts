@@ -353,3 +353,85 @@ test('the diagnostics panel shows the three roots and the workspace', async ({
   await page.getByRole('button', { name: 'hello.txt' }).click();
   await expect(page.getByText('written by the app')).toBeVisible();
 });
+
+// The development loop's page half: the backend edits the application's
+// frontend bundle, announces it as a bundle-only change, and the page has
+// to be running the module that was just written — without re-reading a
+// registry nothing about it moved.
+test('a bundle-only change reloads the module and leaves the list alone', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: '/workspace',
+    apps: [{ id: 'hello', name: 'Hello', version: '1.0.0', enabled: true }],
+    appBundle: { entry: 'ui/dist/index.js', source: bundle },
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Applications' }).click();
+  await page.getByTestId('app-nav-hello').click();
+  await expect(page.getByTestId('app-view')).toHaveText('the bundle is live');
+
+  // The wiring the spec needs and the page cannot see: the entry the host
+  // would serve is swapped for the rebuilt module, and every List call is
+  // counted. Both are the *backend's* side of a save, which is why they
+  // are installed as handlers rather than driven through the UI.
+  await page.evaluate(
+    (rebuilt) => {
+      const win = window as never as {
+        __ocMockByModule: Record<
+          string,
+          Record<string, (...a: unknown[]) => unknown>
+        >;
+      };
+      const handlers = win.__ocMockByModule.App;
+      const realAsset = handlers.Asset;
+      handlers.Asset = async (id: string, rel: string) =>
+        rel === 'ui/dist/index.js'
+          ? {
+              data: btoa(rebuilt),
+              media_type: 'application/javascript',
+              size: rebuilt.length,
+            }
+          : realAsset(id, rel);
+      const realList = handlers.List;
+      const counts = window as never as { __ocAppListCalls: number };
+      counts.__ocAppListCalls = 0;
+      handlers.List = async (...args: unknown[]) => {
+        counts.__ocAppListCalls += 1;
+        return realList(...args);
+      };
+    },
+    bundle.replace('the bundle is live', 'the bundle was rebuilt'),
+  );
+
+  await emitEvent(page, {
+    type: 'app_changed',
+    data: { id: 'hello', assets: true },
+  });
+
+  // The open page reloaded the module: the view is the one the rebuilt
+  // bundle renders, which is the whole point of watching a content root.
+  await expect(page.getByTestId('app-view')).toHaveText(
+    'the bundle was rebuilt',
+  );
+  // And the registry was not read again: an edit to the bundle cannot
+  // have changed what it holds, and a page that re-read it on every
+  // rebuild would be reading the same answer.
+  const listCalls = await page.evaluate(
+    () => (window as never as { __ocAppListCalls: number }).__ocAppListCalls,
+  );
+  expect(listCalls).toBe(0);
+
+  // A *runtime* change (the other half of the backend's decision) goes
+  // back to reading the list: the manifest, a layer or a script moved,
+  // and the card has to re-read what the registry now holds.
+  await emitEvent(page, { type: 'app_changed', data: { id: 'hello' } });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as never as { __ocAppListCalls: number }).__ocAppListCalls,
+      ),
+    )
+    .toBeGreaterThan(0);
+});
