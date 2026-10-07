@@ -7,6 +7,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/utils"
 
+	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/semver"
@@ -65,8 +66,22 @@ type UI struct {
 // Defaults are the per-application run defaults a new session starts
 // with. Both fields are model/level names the user can override in the
 // page; an empty value means "whatever the host's own default is".
+//
+// The host applies them where a turn starts rather than writing them
+// into a document, which is what makes them reach every way an
+// application's session gets started: the built-in chat surface, the
+// application's own frontend bundle, a script that starts a turn of its
+// own. A turn runs on what its caller named, else on what the
+// conversation already carries, else on these — and because a session
+// keeps the values it started on, a later change of the package's mind
+// is not retroactive.
 type Defaults struct {
-	Model      string `json:"model,omitempty"`
+	// Model is a deployment hint, "<deployment-id>/<model-name>", the
+	// same string the page's picker sends.
+	Model string `json:"model,omitempty"`
+	// ThinkLevel is a reasoning level the session store accepts
+	// (validateDefaults refuses one it would not, because every new
+	// session would then fail on the way to persisting it).
 	ThinkLevel string `json:"think_level,omitempty"`
 }
 
@@ -191,21 +206,55 @@ func validateManifest(m *Manifest) error {
 		}
 	}
 	if m.Defaults != nil {
-		for name, value := range map[string]string{
-			"model":       m.Defaults.Model,
-			"think_level": m.Defaults.ThinkLevel,
-		} {
-			if len(value) > maxDefaultsChars {
-				return fmt.Errorf(
-					"apps: %s: defaults.%s exceeds %d characters",
-					ManifestFile, name, maxDefaultsChars)
-			}
+		trimDefaults(m.Defaults)
+		if err := validateDefaults(m.Defaults); err != nil {
+			return err
 		}
 	}
 	if len(m.Permissions) > 0 {
 		return fmt.Errorf(
 			"apps: %s: permissions are not available yet (declared: %s)",
 			ManifestFile, strings.Join(m.Permissions, ", "))
+	}
+	return nil
+}
+
+// trimDefaults strips the surrounding space off the run defaults in
+// place. Both values are names — a router hint and a reasoning level —
+// that the host's readers compare as written, and YAML gives an author
+// no way to see a trailing space, so a padded value must mean the value
+// it looks like rather than a lookup that misses.
+func trimDefaults(d *Defaults) {
+	d.Model = strings.TrimSpace(d.Model)
+	d.ThinkLevel = strings.TrimSpace(d.ThinkLevel)
+}
+
+// validateDefaults checks the run defaults a manifest declares: short
+// enough to be a name, and — for the reasoning level — a value the
+// session store will accept when the host applies it to a new session.
+//
+// The check is here rather than at the point of use because the host has
+// no way to report it that helps: an application whose manifest names a
+// level the store refuses would fail every new session it starts, and
+// the person who can fix it is the one who wrote (or can rewrite) the
+// package. The vocabulary is the store's own, so a level it gains or
+// drops moves here with it.
+func validateDefaults(d *Defaults) error {
+	for name, value := range map[string]string{
+		"model":       d.Model,
+		"think_level": d.ThinkLevel,
+	} {
+		if len(value) > maxDefaultsChars {
+			return fmt.Errorf(
+				"apps: %s: defaults.%s exceeds %d characters",
+				ManifestFile, name, maxDefaultsChars)
+		}
+	}
+	if d.ThinkLevel != "" && !ocsessions.ThinkLevel(d.ThinkLevel).Valid() {
+		return fmt.Errorf(
+			"apps: %s: defaults.think_level %q is not a reasoning level "+
+				"(minimal, low, medium, high, xhigh)",
+			ManifestFile, d.ThinkLevel)
 	}
 	return nil
 }

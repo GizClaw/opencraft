@@ -177,6 +177,27 @@ func (s *Server) MessagesForCalls() ([][]map[string]any, error) {
 	return out, nil
 }
 
+// RequestField returns the top-level field `name` of every completion
+// request received so far, oldest first, as the request wrote it — nil
+// for a request that did not carry the field. A test reads it to assert
+// what the host actually put on the wire (the router's resolved model,
+// the reasoning effort it sent) rather than what it recorded locally.
+func (s *Server) RequestField(name string) ([]any, error) {
+	s.mu.Lock()
+	bodies := make([][]byte, len(s.bodies))
+	copy(bodies, s.bodies)
+	s.mu.Unlock()
+	out := make([]any, 0, len(bodies))
+	for _, body := range bodies {
+		var req map[string]any
+		if err := json.Unmarshal(body, &req); err != nil {
+			return nil, err
+		}
+		out = append(out, req[name])
+	}
+	return out, nil
+}
+
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/v1/chat/completions" {
 		http.NotFound(w, r)

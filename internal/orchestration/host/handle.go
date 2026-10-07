@@ -15,6 +15,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
+	"github.com/GizClaw/opencraft/internal/capabilities/apps"
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
@@ -32,7 +33,12 @@ type Host struct {
 	// agentID is the entry agent this target's runtime serves: the
 	// assistant for a user workspace, the manifest's own for an
 	// installed application (see agentName).
-	agentID     string
+	agentID string
+	// appDefaults are the application's manifest run defaults
+	// (app.yaml defaults), applied by StartRun where neither the caller
+	// nor the conversation named a value. Zero for a workspace, whose
+	// defaults belong to the user and arrive as request values.
+	appDefaults apps.Defaults
 	workspaceID string
 	store       *sessions.Store
 	ctrl        *engine.Controller

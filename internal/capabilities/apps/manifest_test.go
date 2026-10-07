@@ -94,6 +94,23 @@ generated: true
 	}
 }
 
+// TestParseManifestTrimsTheRunDefaults: both default values are names a
+// router and a session store compare as written, and YAML writes them
+// with surrounding space only when the author quotes them — which is the
+// shape that would otherwise miss the deployment or fail every session
+// the package starts.
+func TestParseManifestTrimsTheRunDefaults(t *testing.T) {
+	m, err := ParseManifest([]byte(minimalManifest +
+		"defaults:\n  model: \" openai-1/fake-model \"\n  think_level: \" high \"\n"))
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	if m.Defaults == nil ||
+		m.Defaults.Model != "openai-1/fake-model" || m.Defaults.ThinkLevel != "high" {
+		t.Errorf("defaults = %+v, want the values without their surrounding space", m.Defaults)
+	}
+}
+
 // TestParseManifestRefusesAPackageThatIsNotAManifest: the `app:` marker
 // is what tells a manifest from a deployment layer in a directory that
 // holds both, so a file without it is refused instead of half-read.
@@ -229,6 +246,11 @@ func TestParseManifestRefusesOneFieldAtATime(t *testing.T) {
 			name: "defaults value too long",
 			raw:  minimalManifest + "defaults:\n  model: " + strings.Repeat("x", maxDefaultsChars+1) + "\n",
 			want: "defaults.model exceeds 128 characters",
+		},
+		{
+			name: "defaults think level the session store would refuse",
+			raw:  minimalManifest + "defaults:\n  think_level: extreme\n",
+			want: "defaults.think_level \"extreme\" is not a reasoning level",
 		},
 		{
 			name: "permissions",

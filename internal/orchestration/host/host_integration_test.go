@@ -23,7 +23,21 @@ import (
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
+// writeFakeConfig seeds the inference configuration every Host fixture
+// runs on: one instance named "fake" pointing at the given provider,
+// serving the single "fake-model" the fake provider answers as.
 func writeFakeConfig(t *testing.T, configDir, baseURL string) {
+	t.Helper()
+	writeFakeConfigModels(t, configDir, baseURL, config.Model{Name: "fake-model"})
+}
+
+// writeFakeConfigModels is writeFakeConfig with the served model list
+// spelled out, for a test that needs more than one to tell a caller's
+// choice from the router's default target (the first text-serving model
+// of the first enabled instance) or that needs a reasoning-capable one.
+func writeFakeConfigModels(
+	t *testing.T, configDir, baseURL string, models ...config.Model,
+) {
 	t.Helper()
 	seed := []byte("version: v1\nresources:\n  box:\n    settings:\n      remote: false\n")
 	if err := os.WriteFile(filepath.Join(configDir, "opencraft.yaml"), seed, 0o600); err != nil {
@@ -38,7 +52,7 @@ func writeFakeConfig(t *testing.T, configDir, baseURL string) {
 			Enabled:   true,
 			KeySource: config.KeyLiteral,
 			KeyValue:  "test-key",
-			Models:    []config.Model{{Name: "fake-model"}},
+			Models:    models,
 		}},
 	}
 	if err := configseed.Write(configDir, cfg); err != nil {

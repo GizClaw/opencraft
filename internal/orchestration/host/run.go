@@ -242,6 +242,18 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 			}
 		}
 	}
+	// An application's manifest defaults come last, after the caller and
+	// after the conversation: a package declares what a *new* session
+	// starts with, never what an existing one is moved onto. They are
+	// applied here rather than by each caller because every way an
+	// application's session starts — the page, the application's own
+	// frontend bundle, a script — has to get the same answer.
+	if model == "" {
+		model = h.appDefaults.Model
+	}
+	if think == "" {
+		think = h.appDefaults.ThinkLevel
+	}
 	// The yoloonly build rejects confined modes at the persistence
 	// boundary, so force the requested mode here before any caller
 	// (including legacy automation tasks) reaches Store.SetMode.

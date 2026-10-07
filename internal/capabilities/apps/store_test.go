@@ -145,6 +145,34 @@ func TestInstallLaysOutTheContentRootUnderTheRegistry(t *testing.T) {
 	}
 }
 
+// TestInstalledAppCarriesTheManifestsRunDefaults: the registry is where
+// an assembly reads an application from, so the defaults a manifest
+// declares have to be on the App the host gets — the host applies them
+// where a turn starts, and an App without them would leave every session
+// starting on the host's own defaults instead.
+func TestInstalledAppCarriesTheManifestsRunDefaults(t *testing.T) {
+	store, _, _ := newStore(t)
+	src := newApp(t)
+	writeTestFile(t, src, ManifestFile, fixtureManifest+
+		"defaults:\n  model: openai-1/fake-model\n  think_level: high\n")
+	install(t, store, src)
+
+	app, err := store.Get("hello")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if app.Defaults.Model != "openai-1/fake-model" || app.Defaults.ThinkLevel != "high" {
+		t.Errorf("Defaults = %+v, want the manifest's own", app.Defaults)
+	}
+	m, err := store.Manifest("hello")
+	if err != nil {
+		t.Fatalf("Manifest: %v", err)
+	}
+	if m.Defaults == nil || m.Defaults.Model != app.Defaults.Model {
+		t.Errorf("Manifest defaults = %+v, want the same as App's", m.Defaults)
+	}
+}
+
 // TestListOnAStoreThatWasNeverWritten stays empty: a read of a machine
 // that installed nothing is a read of an empty registry, not an error
 // and not a directory this code creates.

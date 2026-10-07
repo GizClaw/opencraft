@@ -167,6 +167,11 @@ type App struct {
 	Layers []string
 	// UI is the optional frontend bundle, relative to ContentDir.
 	UI UI
+	// Defaults are the manifest's run defaults, carried here because
+	// the host that assembles the application is the one that applies
+	// them: a turn naming neither a model nor a level takes them from
+	// the manifest (see Defaults).
+	Defaults Defaults
 	// Enabled reports the registry's enable/disable choice.
 	Enabled bool
 	// Builtin reports a read-only, app-bundled application.
@@ -280,21 +285,8 @@ func (s *Store) Get(id string) (App, error) {
 	if err != nil {
 		return App{}, err
 	}
-	app := App{
-		ID:          m.ID,
-		Name:        m.Name,
-		Version:     m.Version,
-		Description: m.Description,
-		Icon:        m.Icon,
-		Agent:       m.Agent,
-		ContentDir:  content,
-		Layers:      append([]string(nil), m.Layers...),
-		Enabled:     s.enabled(state, id),
-		Builtin:     builtin,
-	}
-	if m.UI != nil {
-		app.UI = *m.UI
-	}
+	app := s.appFromManifest(m, content, s.enabled(state, id))
+	app.Builtin = builtin
 	return app, nil
 }
 
@@ -405,6 +397,9 @@ func (s *Store) appFromManifest(m *Manifest, content string, enabled bool) App {
 	}
 	if m.UI != nil {
 		app.UI = *m.UI
+	}
+	if m.Defaults != nil {
+		app.Defaults = *m.Defaults
 	}
 	return app
 }

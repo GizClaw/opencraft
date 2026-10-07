@@ -407,6 +407,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An application's manifest defaults reach the turn. `defaults.model`
+  and `defaults.think_level` were parsed, validated, and read by
+  nothing, so a session no caller named a model for — an application's
+  own frontend bundle, a script that starts a turn of its own, the
+  page's empty composer — ran on the router's policy target whatever
+  the package declared. The host applies them where a turn starts,
+  which is the one place every caller shares: what the caller named
+  wins, then what the conversation already carries, and only a session
+  with neither takes the package's. They stay what they say they are —
+  what a *new* session starts with: the values are persisted into the
+  session that started on them, so a later change of the package's mind
+  is not retroactive, and a level named for a model with no reasoning
+  capability is dropped the way a picked one is. The values travel as
+  run inputs and the graph decides what to do with them, exactly as it
+  does for a caller's choice: an inference node binds `model_hint:
+  ${board:model:}` and `intent.text.reasoning_effort:
+  ${board:think_level:}` (the assistant graph binds both) or it never
+  asks. A manifest's level is now checked against the session store's
+  own vocabulary while the package is parsed — an install whose every
+  session would fail on the way to persisting it is refused while its
+  author can still fix it — and a default written with surrounding
+  space is read as the value it looks like rather than as a lookup that
+  misses.
 - A content root is watched. An application's tree is what its author
   edits, and the layout is built around that — "open the directory,
   edit, reassemble" — so the desktop now notices instead of waiting for

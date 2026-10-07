@@ -206,8 +206,9 @@ func TestInvalidateWorkspacesLeavesApplicationsAlone(t *testing.T) {
 // InvalidateApps means and the named form's two directions: naming one
 // application spares the others, naming none drops all of them and no
 // workspace, and naming one the pool does not hold drops nothing at all.
-// InvalidateApps is the one invalidation entry point production has no
-// caller for yet, so this test is its only contract.
+// The two shapes are what production asks of it: the settings save (and
+// anything else both scopes read) invalidates every application with no
+// name, and the application page names the one it changed.
 func TestInvalidateAppsSelectsByName(t *testing.T) {
 	t.Run("one named", func(t *testing.T) {
 		f := newScopeFixture(t)

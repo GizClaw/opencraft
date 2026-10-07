@@ -9,10 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/apps"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
@@ -26,7 +28,10 @@ import (
 // through the workspace binding (the only write surface v1 gives an
 // application; see the plan's appendix A), and the inference node after
 // it is what makes the turn report usage.
-func writeAppPackage(t *testing.T) string {
+//
+// manifestExtra appends to the manifest, which is how a test declares
+// what the smallest package does not carry (the run defaults).
+func writeAppPackage(t *testing.T, manifestExtra string) string {
 	t.Helper()
 	dir := t.TempDir()
 	files := map[string]string{
@@ -38,7 +43,7 @@ minHostVersion: 0.1.0
 agent: app
 layers:
   - layer.yaml
-`,
+` + manifestExtra,
 		"layer.yaml": `version: v1
 agents:
   app:
@@ -61,6 +66,17 @@ nodes:
     type: inference
     config:
       stream: true
+      # A turn's model choice and reasoning level reach a graph as board
+      # inputs, and the graph decides what to do with them — the
+      # assistant graph binds them exactly like this (see
+      # config/assets/graphs/assistant.yaml). The fixture binds them too:
+      # without it a package's run defaults would be recorded and passed
+      # but never asked for, which is a wiring an application author
+      # would notice only in production.
+      model_hint: ${board:model:}
+      intent:
+        text:
+          reasoning_effort: ${board:think_level:}
 edges:
   - { from: write, to: llm }
   - { from: llm, to: __end__ }
@@ -108,7 +124,19 @@ type appFixture struct {
 // the fixture package into it. The registry is wired the way a
 // composition root wires it (apps.NewRegistry over the resolved launch
 // paths), so the assembly reads exactly what an install wrote.
-func newAppFixture(t *testing.T, provider *fakeprovider.Server) *appFixture {
+//
+// manifestExtra is appended to the fixture manifest — how a test
+// declares what the smallest package does not carry — and models
+// overrides the seeded provider's model list (the default is the single
+// "fake-model" the fake provider answers as), which is how a test that
+// cares about a model hint gets both a default target and a second
+// model to name.
+func newAppFixture(
+	t *testing.T,
+	provider *fakeprovider.Server,
+	manifestExtra string,
+	models ...config.Model,
+) *appFixture {
 	t.Helper()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))
@@ -116,13 +144,17 @@ func newAppFixture(t *testing.T, provider *fakeprovider.Server) *appFixture {
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	writeFakeConfig(t, configDir, provider.URL())
+	if len(models) > 0 {
+		writeFakeConfigModels(t, configDir, provider.URL(), models...)
+	} else {
+		writeFakeConfig(t, configDir, provider.URL())
+	}
 
 	registry, err := apps.NewRegistry(dataDir, dataDir)
 	if err != nil {
 		t.Fatalf("app registry: %v", err)
 	}
-	if _, err := registry.Install(context.Background(), writeAppPackage(t), apps.InstallOptions{}); err != nil {
+	if _, err := registry.Install(context.Background(), writeAppPackage(t, manifestExtra), apps.InstallOptions{}); err != nil {
 		t.Fatalf("install fixture application: %v", err)
 	}
 	mgr := host.NewManagerAt(dataDir, configDir)
@@ -167,7 +199,7 @@ func (f *appFixture) appStateRoot() string {
 // behind once the conversation is deleted.
 func TestAppHostRunsATurnInItsOwnState(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "hello from the app"})
-	f := newAppFixture(t, provider)
+	f := newAppFixture(t, provider, "")
 	ctx := host.WithAssemblyReason(context.Background(), host.ReasonAppTurn)
 
 	h, err := f.mgr.Acquire(ctx, host.AppTarget("hello"), interact.Auto{}, nil)
@@ -299,6 +331,155 @@ func TestAppHostRunsATurnInItsOwnState(t *testing.T) {
 	}
 }
 
+// requestModel returns the model the nth completion request asked for,
+// failing the test when the provider never saw that request. It is what
+// makes a model assertion about the turn rather than about a stored
+// value: what the router resolved is what the provider was asked for.
+func requestModel(t *testing.T, provider *fakeprovider.Server, n int) string {
+	t.Helper()
+	models, err := provider.RequestField("model")
+	if err != nil {
+		t.Fatalf("read request models: %v", err)
+	}
+	if n >= len(models) {
+		t.Fatalf("provider saw %d completion requests, want at least %d", len(models), n+1)
+	}
+	name, _ := models[n].(string)
+	return name
+}
+
+// TestAppHostAppliesTheManifestsRunDefaults: an application's manifest
+// can declare the model and the reasoning level its sessions start on,
+// and the defaults have to reach every way a session gets started — the
+// built-in chat surface, the application's own bundle, a script — so the
+// host applies them where a turn starts rather than leaving them to the
+// caller that happens to be a page.
+//
+// The seeded provider serves two models, which is what makes the answer
+// readable: "fake-model" is the router's default text target (the first
+// model of the first enabled instance) and the manifest names the second
+// one, so the request body says whether the turn ran on the default the
+// package declared or on the policy target it would have fallen back to.
+func TestAppHostAppliesTheManifestsRunDefaults(t *testing.T) {
+	const (
+		defaultModel = "openai-1/fake-model-thinks"
+		plainModel   = "openai-1/fake-model"
+	)
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "ok"})
+	// The second model declares reasoning, because the host only sends a
+	// reasoning level for a model that has the capability: a level named
+	// for a plain model is dropped, and this test would then be pinning
+	// the drop instead of the default.
+	f := newAppFixture(t, provider,
+		"defaults:\n  model: "+defaultModel+"\n  think_level: high\n",
+		config.Model{Name: "fake-model"},
+		config.Model{
+			Name: "fake-model-thinks",
+			Capabilities: model.ModelCapabilities{
+				Reasoning: model.ReasoningCapability{Kind: model.ReasoningToggle},
+			},
+		},
+	)
+	ctx := host.WithAssemblyReason(context.Background(), host.ReasonAppTurn)
+	h, err := f.mgr.Acquire(ctx, host.AppTarget("hello"), interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire application host: %v", err)
+	}
+	defer func() {
+		if err := h.Close(); err != nil {
+			t.Errorf("close application host: %v", err)
+		}
+	}()
+
+	// (1) A caller that names nothing starts on the manifest's defaults,
+	// and the session keeps them: the reasoning level rides the request
+	// as the effort knob, which is the only way to tell "the host handed
+	// the graph a level" from "the host wrote one down".
+	run, err := h.StartRun(ctx, host.RunOptions{
+		Message: message.NewTextMessage(message.RoleUser, "hi"),
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if _, err := run.Wait(ctx); err != nil {
+		t.Fatalf("wait run: %v", err)
+	}
+	conversationID := run.ContextID()
+	if got := requestModel(t, provider, 0); got != "fake-model-thinks" {
+		t.Errorf("first turn ran on %q, want the manifest's default model", got)
+	}
+	efforts, err := provider.RequestField("reasoning_effort")
+	if err != nil {
+		t.Fatalf("read request efforts: %v", err)
+	}
+	if len(efforts) == 0 || efforts[0] != "high" {
+		t.Errorf("first turn asked for reasoning effort %v, want the manifest's high", efforts)
+	}
+	store := h.Sessions()
+	if got, err := store.Model(ctx, conversationID); err != nil || got != defaultModel {
+		t.Errorf("session model = %q (%v), want the manifest's default %q", got, err, defaultModel)
+	}
+	if got, err := store.Think(ctx, conversationID); err != nil || got != ocsessions.ThinkHigh {
+		t.Errorf("session think = %q (%v), want high", got, err)
+	}
+
+	// (2) What a caller names wins: the page's picker, an application's
+	// own bundle and a script all pass their choice through the same
+	// field, and none of them is overridden by the package's opinion.
+	run, err = h.StartRun(ctx, host.RunOptions{
+		Message:   message.NewTextMessage(message.RoleUser, "again"),
+		ContextID: conversationID,
+		Model:     plainModel,
+	})
+	if err != nil {
+		t.Fatalf("start run with a named model: %v", err)
+	}
+	if _, err := run.Wait(ctx); err != nil {
+		t.Fatalf("wait run: %v", err)
+	}
+	if got := requestModel(t, provider, 1); got != "fake-model" {
+		t.Errorf("second turn ran on %q, want the model the caller named", got)
+	}
+
+	// (3) A session that has its own value keeps it. This is what makes
+	// the manifest's defaults what they say they are — what a new
+	// session starts with — rather than a model the package forces on a
+	// session someone already runs: the value is persisted into the
+	// session that started on it, and the defaults are only consulted
+	// when the session has none.
+	//
+	// The session here is one *another* caller picked a model for on its
+	// first turn (the picker's own path, which is the only way a session
+	// ever comes to carry a value the package did not declare).
+	picked, err := h.StartRun(ctx, host.RunOptions{
+		Message: message.NewTextMessage(message.RoleUser, "a session of my own"),
+		Model:   plainModel,
+	})
+	if err != nil {
+		t.Fatalf("start run in a new session: %v", err)
+	}
+	if _, err := picked.Wait(ctx); err != nil {
+		t.Fatalf("wait run: %v", err)
+	}
+	pickedID := picked.ContextID()
+	if got, err := store.Model(ctx, pickedID); err != nil || got != plainModel {
+		t.Errorf("session model = %q (%v), want the caller's %q", got, err, plainModel)
+	}
+	run, err = h.StartRun(ctx, host.RunOptions{
+		Message:   message.NewTextMessage(message.RoleUser, "and on"),
+		ContextID: pickedID,
+	})
+	if err != nil {
+		t.Fatalf("start run on that session: %v", err)
+	}
+	if _, err := run.Wait(ctx); err != nil {
+		t.Fatalf("wait run: %v", err)
+	}
+	if got := requestModel(t, provider, 3); got != "fake-model" {
+		t.Errorf("turn on a session with its own model ran on %q, want the session's %q (not the manifest's default)", got, plainModel)
+	}
+}
+
 // TestAppHostRefusesWhatTheRegistryDoesNotOffer pins the two refusals an
 // assembly makes before it builds anything: an id nothing installed, and
 // an application the user disabled. Neither is retryable — waiting for a
@@ -306,7 +487,7 @@ func TestAppHostRunsATurnInItsOwnState(t *testing.T) {
 // serve a turn — and neither may fall back to a workspace runtime.
 func TestAppHostRefusesWhatTheRegistryDoesNotOffer(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "unused"})
-	f := newAppFixture(t, provider)
+	f := newAppFixture(t, provider, "")
 	ctx := listContext()
 
 	if _, err := f.mgr.Acquire(ctx, host.AppTarget("not-installed"), interact.Auto{}, nil); err == nil {
@@ -345,7 +526,7 @@ func TestAppHostRefusesWhatTheRegistryDoesNotOffer(t *testing.T) {
 // can run their passes without reading each other's leftovers.
 func TestAppHostRecoversItsOwnCrashedTurn(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "hello from the app"})
-	f := newAppFixture(t, provider)
+	f := newAppFixture(t, provider, "")
 	ctx := context.Background()
 	workDir := t.TempDir()
 
@@ -489,7 +670,7 @@ func TestWorkspaceTargetsKeepTheWorkspaceBuilder(t *testing.T) {
 // failure is invisible here: everything else about the Host works.
 func TestAppHostIsConfiguredOnTheHandoffPath(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "unused"})
-	f := newAppFixture(t, provider)
+	f := newAppFixture(t, provider, "")
 	var configured []host.Target
 	f.mgr.SetHostConfigurator(func(h *host.Host) {
 		configured = append(configured, h.Target())
@@ -535,7 +716,7 @@ func TestAppHostIsConfiguredOnTheHandoffPath(t *testing.T) {
 // none.
 func TestAppHostAdoptsNoLegacyStore(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "unused"})
-	f := newAppFixture(t, provider)
+	f := newAppFixture(t, provider, "")
 
 	// A decoy legacy tree exactly where an unguarded implementation
 	// would look for one: the process's working directory.

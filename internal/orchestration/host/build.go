@@ -280,6 +280,12 @@ type hostPlan struct {
 	// store a first open migrates from. Empty skips that migration: an
 	// application never had a project-local store.
 	adoptWorkDir string
+	// appDefaults are an application's manifest run defaults
+	// (app.yaml defaults), applied to a turn that names neither a model
+	// nor a level and whose conversation has none either. Empty for a
+	// workspace, whose defaults are the user's own and arrive as the
+	// page's request values.
+	appDefaults apps.Defaults
 }
 
 // buildWorkspaceHost builds one user workspace's Host without holding
@@ -364,12 +370,13 @@ func (m *Manager) buildAppHost(
 		return nil, err
 	}
 	return m.buildHost(ctx, hostPlan{
-		roots:    r,
-		target:   t,
-		layout:   layout,
-		doc:      doc,
-		agentID:  app.Agent,
-		fileBase: app.ContentDir,
+		roots:       r,
+		target:      t,
+		layout:      layout,
+		doc:         doc,
+		agentID:     app.Agent,
+		fileBase:    app.ContentDir,
+		appDefaults: app.Defaults,
 	}, fallback, resolver)
 }
 
@@ -390,6 +397,7 @@ func (m *Manager) buildHost(
 		workDir:       layout.WorkDir,
 		userDir:       r.userDir,
 		agentID:       plan.agentID,
+		appDefaults:   plan.appDefaults,
 		workspaceID:   layout.ID,
 		manager:       m,
 		usage:         r.usageObserver,
