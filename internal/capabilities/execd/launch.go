@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const (
@@ -245,8 +245,8 @@ func forwardChildStderr(
 			tail.add(line + "\n")
 		}
 		telemetry.Warn(ctx, "execd stderr",
-			otellog.Int("execd.pid", pid),
-			otellog.String("execd.line", line))
+			attribute.Int("execd.pid", pid),
+			attribute.String("execd.line", line))
 	}
 	if err := scanner.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
 		telemetry.WarnErr(ctx, "execd: drain child stderr failed", err)

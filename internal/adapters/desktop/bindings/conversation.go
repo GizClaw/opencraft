@@ -11,7 +11,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -85,9 +85,9 @@ func (b *Conversation) StartTurn(
 		}
 		if !core.SameWorkspace(owner, workDir) {
 			flowtelemetry.Warn(ctx, "conversation: start workspace corrected",
-				otellog.String("conversation.id", contextID),
-				otellog.String("workspace.stated", workDir),
-				otellog.String("workspace.owner", owner))
+				attribute.String("conversation.id", contextID),
+				attribute.String("workspace.stated", workDir),
+				attribute.String("workspace.owner", owner))
 			workDir = owner
 		}
 	}
@@ -321,7 +321,7 @@ func (b *Conversation) waitTurn(
 		flowtelemetry.Warn(context.WithoutCancel(ctx),
 			"conversation: undelivered steer count unreadable; "+
 				"the UI keeps every steered row",
-			otellog.String("run.id", run.RunID()))
+			attribute.String("run.id", run.RunID()))
 	}
 	if res != nil {
 		if report, ok := worldstate.CompactionReportFromBoard(res.LastBoard); ok &&

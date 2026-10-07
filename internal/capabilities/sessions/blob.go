@@ -9,7 +9,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 )
@@ -96,8 +96,8 @@ func (s *Store) ReadStateStrict(id, name string, v any) error {
 		// row instead of a span.
 		telemetry.WarnErr(context.Background(),
 			"sessions: conversation state document is unreadable", err,
-			otellog.String("conversation.id", id),
-			otellog.String("document", name))
+			attribute.String("conversation.id", id),
+			attribute.String("document", name))
 	}
 	return err
 }

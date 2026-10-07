@@ -18,7 +18,6 @@ import (
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
@@ -425,8 +424,8 @@ func (b *Diagnostics) ReportFrontendPerf(samples []FrontendPerfSample) {
 	}
 	if report.Len() > 0 {
 		flowtelemetry.Info(ctx, "frontend rum: report",
-			log.String("samples", report.String()),
-			log.Int("count", len(batch)))
+			attribute.String("samples", report.String()),
+			attribute.Int("count", len(batch)))
 	}
 	if mgr := b.core.Runtime.Manager(); mgr != nil && len(batch) > 0 {
 		mgr.RecordMetrics(ctx, batch)
@@ -454,8 +453,8 @@ func (b *Diagnostics) CaptureHeapProfile() (HeapProfileResult, error) {
 		return HeapProfileResult{}, err
 	}
 	flowtelemetry.Info(b.core.Shell.Context(), "diagnostics: heap profile captured",
-		log.String("path", result.Path),
-		log.Int64("bytes", result.Bytes))
+		attribute.String("path", result.Path),
+		attribute.Int64("bytes", result.Bytes))
 	return result, nil
 }
 
@@ -989,6 +988,6 @@ func escapeLogLine(s string) string {
 // diagnostics.
 func (b *Diagnostics) ReportFrontendError(source, message, stack string) {
 	flowtelemetry.Error(b.core.Shell.Context(), "frontend: "+source,
-		log.String("message", escapeLogLine(clipFrontendErrorDetail(message))),
-		log.String("stack", escapeLogLine(clipFrontendErrorDetail(stack))))
+		attribute.String("message", escapeLogLine(clipFrontendErrorDetail(message))),
+		attribute.String("stack", escapeLogLine(clipFrontendErrorDetail(stack))))
 }

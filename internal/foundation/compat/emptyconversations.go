@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
@@ -62,8 +62,8 @@ func purgeEmptyConversations(ctx context.Context, handle *db.DB) error {
 	if len(ids) > 0 {
 		telemetry.Info(ctx,
 			"compat: removing conversations a late usage write resurrected",
-			otellog.Int("conversations", len(ids)),
-			otellog.String("sample", strings.Join(sampleIDs(ids), ", ")))
+			attribute.Int("conversations", len(ids)),
+			attribute.String("sample", strings.Join(sampleIDs(ids), ", ")))
 	}
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {

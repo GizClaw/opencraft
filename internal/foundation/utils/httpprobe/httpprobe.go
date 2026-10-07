@@ -52,7 +52,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -116,14 +116,14 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return t.base.RoundTrip(req)
 	}
 	ctx := req.Context()
-	attrs := []otellog.KeyValue{
-		otellog.String("http.method", req.Method),
-		otellog.String("http.host", req.URL.Host),
-		otellog.String("http.path", req.URL.Path),
-		otellog.Int64("request_bytes", requestBytes(req)),
+	attrs := []attribute.KeyValue{
+		attribute.String("http.method", req.Method),
+		attribute.String("http.host", req.URL.Host),
+		attribute.String("http.path", req.URL.Path),
+		attribute.Int64("request_bytes", requestBytes(req)),
 	}
 	if id := traceID(ctx); id != "" {
-		attrs = append(attrs, otellog.String("trace_id", id))
+		attrs = append(attrs, attribute.String("trace_id", id))
 	}
 	telemetry.Info(ctx, "httpprobe: request dispatched", attrs...)
 
@@ -137,10 +137,10 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	telemetry.Info(ctx, "httpprobe: response headers received",
-		otellog.String("http.status", strconv.Itoa(resp.StatusCode)),
-		otellog.Int64("wait_ms", waited.Milliseconds()),
-		otellog.Bool("content_length_known", resp.ContentLength >= 0),
-		otellog.String("content_type", resp.Header.Get("Content-Type")))
+		attribute.String("http.status", strconv.Itoa(resp.StatusCode)),
+		attribute.Int64("wait_ms", waited.Milliseconds()),
+		attribute.Bool("content_length_known", resp.ContentLength >= 0),
+		attribute.String("content_type", resp.Header.Get("Content-Type")))
 	return resp, nil
 }
 

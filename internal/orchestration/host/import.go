@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
@@ -83,7 +83,7 @@ func (h *Host) recordImportUsage(
 	outcome, err := h.store.RecordUsageIfEmpty(ctx, id, *usage)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: record imported session usage failed", err,
-			otellog.String("conversation.id", id))
+			attribute.String("conversation.id", id))
 		return
 	}
 	switch outcome {

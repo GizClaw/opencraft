@@ -5,7 +5,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
@@ -31,9 +31,9 @@ func BufferObservedArtifact(
 	}
 	telemetry.WarnErr(ctx, "host: buffer observed artifact failed",
 		store.BufferArtifact(conversationID, runID, path, len(data)),
-		otellog.String("conversation.id", conversationID),
-		otellog.String("run.id", runID),
-		otellog.String("path", path))
+		attribute.String("conversation.id", conversationID),
+		attribute.String("run.id", runID),
+		attribute.String("path", path))
 }
 
 // artifactOwner returns the conversation and the run that buffer

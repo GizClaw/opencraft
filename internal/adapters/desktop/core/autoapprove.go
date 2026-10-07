@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/confirm"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
@@ -65,9 +65,9 @@ func (c *Core) autoApproveConfirm(
 		return "", false
 	}
 	telemetry.Info(ctx, "confirm auto-approved in yolo conversation",
-		otellog.String("conversation", conversationID),
-		otellog.String("run", spec.RunID),
-		otellog.String("title", spec.Title))
+		attribute.String("conversation", conversationID),
+		attribute.String("run", spec.RunID),
+		attribute.String("title", spec.Title))
 	return confirm.OptionYes, true
 }
 

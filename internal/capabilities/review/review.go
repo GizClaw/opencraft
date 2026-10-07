@@ -31,7 +31,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
@@ -167,8 +167,8 @@ func (o *Observer) OnRunEnd(
 		defer cancel()
 		if err := o.review(runCtx, id, turn); err != nil {
 			telemetry.WarnErr(runCtx, "review: post-turn review failed", err,
-				otellog.String("conversation.id", id.ConversationID),
-				otellog.String("run.id", id.RunID))
+				attribute.String("conversation.id", id.ConversationID),
+				attribute.String("run.id", id.RunID))
 		}
 	}()
 }
@@ -275,8 +275,8 @@ func (o *Observer) review(
 		// at least its user request, so this is the degenerate shape
 		// (neither a board nor a tail): say so instead of vanishing.
 		telemetry.Debug(ctx, "review: turn has no reviewable text; skipping",
-			otellog.String("conversation.id", id.ConversationID),
-			otellog.String("run.id", id.RunID))
+			attribute.String("conversation.id", id.ConversationID),
+			attribute.String("run.id", id.RunID))
 		return nil
 	}
 	facts, err := o.existingFacts(ctx)
@@ -477,7 +477,7 @@ func (o *Observer) queueCandidates(
 		normalized, err := userstore.Validate(fact)
 		if err != nil {
 			telemetry.Info(ctx, "review: suggestion rejected",
-				otellog.String("reason", err.Error()))
+				attribute.String("reason", err.Error()))
 			continue
 		}
 		if known[normalized.DedupeKey] {
@@ -517,10 +517,10 @@ func (o *Observer) queueCandidates(
 	}
 	if queued > 0 {
 		telemetry.Info(ctx, "review: suggestions queued",
-			otellog.Int("count", queued),
-			otellog.String("conversation.id", id.ConversationID),
-			otellog.String("run.id", id.RunID),
-			otellog.String("status", turn.Status))
+			attribute.Int("count", queued),
+			attribute.String("conversation.id", id.ConversationID),
+			attribute.String("run.id", id.RunID),
+			attribute.String("status", turn.Status))
 	}
 	return nil
 }
@@ -546,7 +546,7 @@ func (o *Observer) reportUsage(
 	}
 	if err := o.sessions.AddUsage(ctx, id.ConversationID, delta); err != nil {
 		telemetry.WarnErr(ctx, "review: record review usage failed", err,
-			otellog.String("conversation.id", id.ConversationID))
+			attribute.String("conversation.id", id.ConversationID))
 	}
 }
 

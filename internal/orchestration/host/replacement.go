@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ReplacementHooks are the adapter's half of the deferred rebuild. The
@@ -127,7 +127,7 @@ func (m *Manager) replaceAfterDrain(ctx context.Context, workDir string) {
 	h, err := m.Ensure(ctx, workDir)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: deferred rebuild failed", err,
-			otellog.String("workspace", workDir))
+			attribute.String("workspace", workDir))
 		return
 	}
 	if h == nil {

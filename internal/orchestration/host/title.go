@@ -14,7 +14,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -83,13 +83,13 @@ func (h *Host) autoTitle(ctx context.Context, contextID string) {
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		telemetry.WarnErr(ctx, "host: read custom title failed", err,
-			otellog.String("session", contextID))
+			attribute.String("session", contextID))
 	}
 	first, err := store.FirstUserMessage(contextID)
 	if err != nil {
 		telemetry.Warn(ctx, "host: auto title history load failed",
-			otellog.String("session", contextID),
-			otellog.String("error", err.Error()))
+			attribute.String("session", contextID),
+			attribute.String("error", err.Error()))
 		return
 	}
 	first = strings.TrimSpace(first)
@@ -128,7 +128,7 @@ func (h *Host) autoTitle(ctx context.Context, contextID string) {
 	})
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: auto title generation failed", err,
-			otellog.String("session", contextID))
+			attribute.String("session", contextID))
 		return
 	}
 	if h.usage != nil {
@@ -160,13 +160,13 @@ func (h *Host) autoTitle(ctx context.Context, contextID string) {
 	}
 	if err := store.WriteState(contextID, sessions.DocumentTitle, title); err != nil {
 		telemetry.WarnErr(ctx, "host: persist auto title failed", err,
-			otellog.String("session", contextID))
+			attribute.String("session", contextID))
 		return
 	}
 	h.notifySessionUpdated(ctx, contextID)
 	telemetry.Info(ctx, "host: auto title generated",
-		otellog.String("session", contextID),
-		otellog.Int("title_chars", len(title)))
+		attribute.String("session", contextID),
+		attribute.Int("title_chars", len(title)))
 }
 
 func titleSystemContent() message.Content {

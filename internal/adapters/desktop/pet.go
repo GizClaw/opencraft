@@ -6,7 +6,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	desktopcore "github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	petfeed "github.com/GizClaw/opencraft/internal/adapters/desktop/pet"
@@ -416,10 +416,10 @@ func (d *Desktop) keepPetOnScreen(
 		win.SetPosition(x, y)
 		telemetry.Info(context.Background(),
 			"desktop: pet pulled back onto a display",
-			otellog.Int64("from_x", int64(osX)),
-			otellog.Int64("from_y", int64(osY)),
-			otellog.Int64("to_x", int64(x)),
-			otellog.Int64("to_y", int64(y)))
+			attribute.Int64("from_x", int64(osX)),
+			attribute.Int64("from_y", int64(osY)),
+			attribute.Int64("to_x", int64(x)),
+			attribute.Int64("to_y", int64(y)))
 	}
 	d.petMu.Lock()
 	d.petX, d.petY = x, y

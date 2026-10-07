@@ -14,7 +14,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 	toolmiddleware "github.com/GizClaw/flowcraft/core/tool/middleware"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // AuditSettings enables the append-only tool-call audit trail. Dir is
@@ -153,17 +153,17 @@ func (s *fileAuditSink) Record(ctx context.Context, rec toolmiddleware.AuditReco
 	if !s.dirOK {
 		if err := os.MkdirAll(s.dir, 0o700); err != nil {
 			telemetry.WarnErr(ctx, "opencraft audit: create directory failed", err,
-				otellog.String("dir", s.dir))
+				attribute.String("dir", s.dir))
 			return
 		}
 		telemetry.WarnErr(ctx, "opencraft audit: secure audit directory failed",
 			os.Chmod(s.dir, 0o700),
-			otellog.String("dir", s.dir))
+			attribute.String("dir", s.dir))
 		s.dirOK = true
 	}
 	if err := s.write(data); err != nil {
 		telemetry.WarnErr(ctx, "opencraft audit: write record failed", err,
-			otellog.String("path", s.path))
+			attribute.String("path", s.path))
 	}
 }
 

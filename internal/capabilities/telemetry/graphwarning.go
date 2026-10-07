@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
@@ -62,7 +63,7 @@ func (f *graphWarningFilter) repeat(record *sdklog.Record) bool {
 		return false
 	}
 	var graph, kind, node, message string
-	record.WalkAttributes(func(kv log.KeyValue) bool {
+	record.WalkAttributes(func(kv attribute.KeyValue) bool {
 		switch kv.Key {
 		case "graph.name":
 			graph = kv.Value.String()
@@ -98,9 +99,9 @@ func (f *graphWarningFilter) Shutdown(ctx context.Context) error {
 		var record sdklog.Record
 		record.SetTimestamp(time.Now())
 		record.SetSeverity(log.SeverityInfo)
-		record.SetBody(log.StringValue(
+		record.SetBody(attribute.StringValue(
 			"graph build findings: repeated warnings suppressed"))
-		record.AddAttributes(log.Int("count", suppressed))
+		record.AddAttributes(attribute.Int("count", suppressed))
 		if err := f.inner.OnEmit(ctx, &record); err != nil {
 			return err
 		}

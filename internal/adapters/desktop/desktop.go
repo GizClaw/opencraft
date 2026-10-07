@@ -18,7 +18,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/bindings"
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
@@ -185,12 +185,12 @@ func New(opts Options) (*Desktop, error) {
 	// resolves this pipeline per call, so it can be attached here.
 	c.Telemetry = pipeline
 	telemetry.Info(c.Shell.Context(), "desktop: instance resolved",
-		otellog.String("profile", opts.Profile),
-		otellog.String("state_root", stateRoot),
-		otellog.String("app_home", opts.AppHome),
-		otellog.String("config_dir", opts.UserDir),
-		otellog.String("instance_id", opts.InstanceID),
-		otellog.String("defaulted", strings.Join(defaults, ", ")))
+		attribute.String("profile", opts.Profile),
+		attribute.String("state_root", stateRoot),
+		attribute.String("app_home", opts.AppHome),
+		attribute.String("config_dir", opts.UserDir),
+		attribute.String("instance_id", opts.InstanceID),
+		attribute.String("defaulted", strings.Join(defaults, ", ")))
 	// Resolve PATH once the log sink exists (the line below is the record
 	// of what the app runs with) but before anything can spawn: a
 	// Finder/Dock launch inherits launchd's minimal PATH, so without this
@@ -242,14 +242,14 @@ func resolveProcessPath(c *core.Core) {
 	}
 	c.SetPathReport(resolved)
 	telemetry.Info(ctx, "envpath: process PATH resolved",
-		otellog.String("path", resolved.Path),
-		otellog.Bool("changed", resolved.Changed),
-		otellog.String("prepend", strings.Join(
+		attribute.String("path", resolved.Path),
+		attribute.Bool("changed", resolved.Changed),
+		attribute.String("prepend", strings.Join(
 			resolved.Dirs(envpath.SourcePrepend), ", ")),
-		otellog.String("appended", strings.Join(
+		attribute.String("appended", strings.Join(
 			resolved.Dirs(envpath.SourceCandidate), ", ")),
-		otellog.String("missing", strings.Join(resolved.Missing, ", ")),
-		otellog.String("rejected", strings.Join(resolved.Rejected, ", ")),
+		attribute.String("missing", strings.Join(resolved.Missing, ", ")),
+		attribute.String("rejected", strings.Join(resolved.Rejected, ", ")),
 	)
 }
 

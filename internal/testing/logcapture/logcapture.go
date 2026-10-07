@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	coretelemetry "github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
 
@@ -76,8 +76,8 @@ func (r *Recorder) Bodies() []string {
 // int64 pid reads the same way as a string.
 func Attribute(record sdklog.Record, key string) string {
 	value := ""
-	record.WalkAttributes(func(kv otellog.KeyValue) bool {
-		if kv.Key == key {
+	record.WalkAttributes(func(kv attribute.KeyValue) bool {
+		if string(kv.Key) == key {
 			value = kv.Value.String()
 		}
 		return true

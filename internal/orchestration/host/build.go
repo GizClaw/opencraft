@@ -24,7 +24,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/engine"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // SetHostConfigurator installs a callback applied once to every Host
@@ -119,9 +119,9 @@ func (m *Manager) assemble(
 	duration := time.Since(started)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: runtime assembly failed", err,
-			otellog.String("reason", string(AssemblyReasonFrom(ctx))),
-			otellog.String("workspace", workDir),
-			otellog.Int64("duration_ms", duration.Milliseconds()))
+			attribute.String("reason", string(AssemblyReasonFrom(ctx))),
+			attribute.String("workspace", workDir),
+			attribute.Int64("duration_ms", duration.Milliseconds()))
 		return nil, err
 	}
 	m.logAssembled(ctx, h, duration)
@@ -147,12 +147,12 @@ func (m *Manager) logAssembled(
 		ctx = context.Background()
 	}
 	telemetry.Info(ctx, "host: runtime assembled",
-		otellog.String("reason", string(AssemblyReasonFrom(ctx))),
-		otellog.String("workspace", h.workDir),
-		otellog.Int64("duration_ms", duration.Milliseconds()),
-		otellog.Bool("in_turn", m.anyActiveRuns()),
-		otellog.Int("assembly_seq", seq),
-		otellog.String("host_ptr", fmt.Sprintf("%p", h)))
+		attribute.String("reason", string(AssemblyReasonFrom(ctx))),
+		attribute.String("workspace", h.workDir),
+		attribute.Int64("duration_ms", duration.Milliseconds()),
+		attribute.Bool("in_turn", m.anyActiveRuns()),
+		attribute.Int("assembly_seq", seq),
+		attribute.String("host_ptr", fmt.Sprintf("%p", h)))
 }
 
 // buildHost builds one Host without holding the manager lock.
@@ -181,7 +181,7 @@ func (m *Manager) buildHost(
 			return nil, err
 		}
 		telemetry.Info(ctx, "host: config dir defaulted",
-			otellog.String("config_dir", userDir))
+			attribute.String("config_dir", userDir))
 	}
 	if dataDir == "" {
 		var err error
@@ -191,7 +191,7 @@ func (m *Manager) buildHost(
 		}
 		if dataDir != "" {
 			telemetry.Info(ctx, "host: state root defaulted",
-				otellog.String("state_root", dataDir))
+				attribute.String("state_root", dataDir))
 		}
 	}
 	layout, err := config.ResolveWorkspace(dataDir, workDir)

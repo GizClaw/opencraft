@@ -6,7 +6,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/delegation/kanban"
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // ObserverResourceKind is the deploy resource kind of the subagent
@@ -37,8 +37,8 @@ func (o *Observer) loop(ctx context.Context, ch <-chan event.Envelope) {
 			var ev kanban.CardEvent
 			if err := env.Decode(&ev); err != nil {
 				telemetry.Warn(ctx, "opencraft hooks observer: decode card event failed",
-					otellog.String("subject", string(env.Subject)),
-					otellog.String("error", err.Error()))
+					attribute.String("subject", string(env.Subject)),
+					attribute.String("error", err.Error()))
 				continue
 			}
 			switch ev.Status {

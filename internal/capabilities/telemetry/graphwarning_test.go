@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
@@ -97,12 +98,12 @@ func (e *warningEmitter) warn(t *testing.T, node, message string) {
 	var record log.Record
 	record.SetTimestamp(time.Now())
 	record.SetSeverity(log.SeverityWarn)
-	record.SetBody(log.StringValue(graphWarningBody))
+	record.SetBody(attribute.StringValue(graphWarningBody))
 	record.AddAttributes(
-		log.String("graph.name", "opencraft-assistant"),
-		log.String("graph.warning.kind", "unresolved_reference"),
-		log.String("node.id", node),
-		log.String("graph.warning.message", message),
+		attribute.String("graph.name", "opencraft-assistant"),
+		attribute.String("graph.warning.kind", "unresolved_reference"),
+		attribute.String("node.id", node),
+		attribute.String("graph.warning.message", message),
 	)
 	e.logger.Emit(context.Background(), record)
 }
@@ -113,7 +114,7 @@ func (e *warningEmitter) info(t *testing.T, body string) {
 	var record log.Record
 	record.SetTimestamp(time.Now())
 	record.SetSeverity(log.SeverityInfo)
-	record.SetBody(log.StringValue(body))
+	record.SetBody(attribute.StringValue(body))
 	e.logger.Emit(context.Background(), record)
 }
 
@@ -171,7 +172,7 @@ func TestGraphWarningFilterKeepsFirstFinding(t *testing.T) {
 		found = true
 		// The count is an int64 attribute: strings set on a record built
 		// outside a provider would be truncated to nothing.
-		record.WalkAttributes(func(kv log.KeyValue) bool {
+		record.WalkAttributes(func(kv attribute.KeyValue) bool {
 			if kv.Key == "count" && kv.Value.AsInt64() != 2*(assemblies-1) {
 				t.Fatalf("suppressed count = %d, want %d",
 					kv.Value.AsInt64(), 2*(assemblies-1))

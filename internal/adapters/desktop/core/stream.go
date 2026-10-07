@@ -7,7 +7,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Stream coalescing bounds what a token stream costs the desktop: the
@@ -250,10 +250,10 @@ func (s *Shell) heartbeatLocked() {
 	}
 	if b.deltasIn > 0 || b.boundaries > 0 || b.eventsOut > 0 {
 		telemetry.Info(s.Context(), "stream: coalesced",
-			otellog.Int("deltas", b.deltasIn),
-			otellog.Int("boundaries", b.boundaries),
-			otellog.Int("events", b.eventsOut),
-			otellog.Int("buffered_bytes_max", b.maxBytes),
+			attribute.Int("deltas", b.deltasIn),
+			attribute.Int("boundaries", b.boundaries),
+			attribute.Int("events", b.eventsOut),
+			attribute.Int("buffered_bytes_max", b.maxBytes),
 		)
 	}
 	b.deltasIn, b.boundaries, b.eventsOut, b.maxBytes = 0, 0, 0, 0

@@ -21,7 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -294,7 +294,7 @@ func (s *Service) RecordUsage(ctx context.Context, event skillusage.Event) {
 	}
 	if err := s.lifecycle.Record(ctx, event); err != nil {
 		telemetry.WarnErr(ctx, "skills: record usage failed", err,
-			otellog.String("skill", event.Name))
+			attribute.String("skill", event.Name))
 	}
 }
 

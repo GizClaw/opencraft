@@ -177,6 +177,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fail closed; and a run whose Host or conversation mode cannot be
   read falls back to the card — the check is fail-closed.
 
+- flowcraft core moves to v0.4.9 (`driver/openai` v0.3.4) with the
+  OpenTelemetry modules at v1.45.0 / v0.21.0, clearing GO-2026-6505 —
+  endpoint URLs in the OTLP trace exporter's info logs — and
+  GO-2026-6615 — the `sdk/log` batch processor busy-spinning when its
+  export buffer is full. The database published both against the
+  versions core v0.4.8 resolved to; the release's log API is
+  `attribute.KeyValue` end to end, so the telemetry facade, the
+  graph-warning filter and the test log capture build their records
+  through it — the keys and values they carry are unchanged.
+
 ### Removed
 
 - Three plugin permissions are retired: `events:subscribe`,

@@ -8,7 +8,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // PoolSettings are the user-visible pool knobs.
@@ -248,7 +248,7 @@ func (p *Pool) acquire(ctx context.Context) (*idleChild, bool, error) {
 		p.mu.Unlock()
 		telemetry.Warn(ctx,
 			"execd: pool at capacity; using a dedicated child for this workspace",
-			otellog.Int("execd.max_active", maxActive))
+			attribute.Int("execd.max_active", maxActive))
 		client, stop, err := launcher(ctx)
 		if err != nil {
 			return nil, false, err

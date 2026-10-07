@@ -25,7 +25,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
@@ -283,7 +283,7 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 			t.store.WriteState(args.ConversationID, sessions.DocumentCompact, artifact{
 				Covered: merged,
 				Summary: summary,
-			}), otellog.String("conversation.id", args.ConversationID))
+			}), attribute.String("conversation.id", args.ConversationID))
 	}
 	return encodePatch(summary)
 }
@@ -559,10 +559,10 @@ func (t *Tool) condenseFold(ctx context.Context, in condenseInput) string {
 	}
 	shards := shardMessages(in.fresh, maxCondenseChars)
 	telemetry.Info(ctx, "compact: condensing a large fold in shards",
-		otellog.String("conversation.id", in.conversationID),
-		otellog.Int("fold.chars", len(raw)),
-		otellog.Int("fold.shards", len(shards)),
-		otellog.Int("fold.parallel", maxCondenseParallel))
+		attribute.String("conversation.id", in.conversationID),
+		attribute.Int("fold.chars", len(raw)),
+		attribute.Int("fold.shards", len(shards)),
+		attribute.Int("fold.parallel", maxCondenseParallel))
 	inputs := make([]condenseInput, 0, len(shards))
 	for i, shard := range shards {
 		// A shard that does not fit is one message larger than the cap: a
@@ -588,11 +588,11 @@ func (t *Tool) condenseFold(ctx context.Context, in condenseInput) string {
 	// carry the summary), so its duration is the number that says whether
 	// sharding is paying for itself.
 	telemetry.Info(ctx, "compact: fold condensed",
-		otellog.String("conversation.id", in.conversationID),
-		otellog.Int("fold.chars", len(raw)),
-		otellog.Int("fold.shards", len(shards)),
-		otellog.Int("fold.requests", len(inputs)),
-		otellog.Int64("fold.ms", time.Since(started).Milliseconds()))
+		attribute.String("conversation.id", in.conversationID),
+		attribute.Int("fold.chars", len(raw)),
+		attribute.Int("fold.shards", len(shards)),
+		attribute.Int("fold.requests", len(inputs)),
+		attribute.Int64("fold.ms", time.Since(started).Milliseconds()))
 	merged := strings.Join(partials, "\n\n")
 	for round := 0; round < maxCondenseRounds && len(merged) > maxCondenseChars; round++ {
 		chunks := splitText(merged, maxCondenseChars)
@@ -719,7 +719,7 @@ func (t *Tool) condenseText(ctx context.Context, in condenseInput) string {
 	base, err := condenseRequest(in.raw)
 	if err != nil {
 		telemetry.WarnErr(ctx, "compact: render condensation request failed",
-			err, otellog.String("conversation.id", in.conversationID))
+			err, attribute.String("conversation.id", in.conversationID))
 		return summarytext.MechanicalSummary(
 			in.fresh, in.prevSummary, in.budget)
 	}
@@ -737,10 +737,10 @@ func (t *Tool) condenseText(ctx context.Context, in condenseInput) string {
 			// fold still has to happen: fold mechanically and report it.
 			telemetry.WarnErr(ctx, "compact: condensation call failed",
 				err,
-				otellog.String("conversation.id", in.conversationID),
-				otellog.Int("condense.attempt", attempt),
-				otellog.Int("condense.max_output_tokens", plan.outputTokens()),
-				otellog.Bool("condense.reasoning_off", plan.reasoningOff))
+				attribute.String("conversation.id", in.conversationID),
+				attribute.Int("condense.attempt", attempt),
+				attribute.Int("condense.max_output_tokens", plan.outputTokens()),
+				attribute.Bool("condense.reasoning_off", plan.reasoningOff))
 			return summarytext.MechanicalSummary(
 				in.fresh, in.prevSummary, in.budget)
 		}
@@ -754,11 +754,11 @@ func (t *Tool) condenseText(ctx context.Context, in condenseInput) string {
 		plan = plan.growAfterMaxOutput(reasoningTokens(resp))
 	}
 	telemetry.Warn(ctx, "compact: folding a mechanical digest",
-		otellog.String("conversation.id", in.conversationID),
-		otellog.Int("fresh.messages", len(in.fresh)),
-		otellog.Int("input.chars", len(in.raw)),
-		otellog.Bool("condense.reasoning_off", plan.reasoningOff),
-		otellog.Int("condense.max_output_tokens", plan.outputTokens()))
+		attribute.String("conversation.id", in.conversationID),
+		attribute.Int("fresh.messages", len(in.fresh)),
+		attribute.Int("input.chars", len(in.raw)),
+		attribute.Bool("condense.reasoning_off", plan.reasoningOff),
+		attribute.Int("condense.max_output_tokens", plan.outputTokens()))
 	return summarytext.MechanicalSummary(in.fresh, in.prevSummary, in.budget)
 }
 
@@ -784,22 +784,22 @@ func (t *Tool) warnEmptyCondensation(
 		}
 	}
 	telemetry.Warn(ctx, "compact: condensation returned no text",
-		otellog.String("conversation.id", in.conversationID),
-		otellog.String("provider", resp.Metadata.Model.Provider),
-		otellog.String("model", resp.Metadata.Model.Name),
-		otellog.String("finish.reason", string(resp.FinishReason)),
-		otellog.Bool("finish.synthesized", resp.FinishSynthesized),
-		otellog.Int("message.parts", len(resp.Message.Content.Parts)),
-		otellog.Int("text.parts", textParts),
-		otellog.Int("reasoning.parts", reasoningParts),
-		otellog.Int("fresh.messages", len(in.fresh)),
-		otellog.Int("input.chars", len(in.raw)),
-		otellog.Int("condense.attempt", attempt),
-		otellog.Int("max.output.tokens", plan.outputTokens()),
-		otellog.Bool("condense.reasoning_off", plan.reasoningOff),
-		otellog.Int64("output.tokens", resp.Usage.OutputTokens),
-		otellog.Int64("reasoning.tokens", reasoningTokens(resp)),
-		otellog.String("request.id", resp.Metadata.RequestID))
+		attribute.String("conversation.id", in.conversationID),
+		attribute.String("provider", resp.Metadata.Model.Provider),
+		attribute.String("model", resp.Metadata.Model.Name),
+		attribute.String("finish.reason", string(resp.FinishReason)),
+		attribute.Bool("finish.synthesized", resp.FinishSynthesized),
+		attribute.Int("message.parts", len(resp.Message.Content.Parts)),
+		attribute.Int("text.parts", textParts),
+		attribute.Int("reasoning.parts", reasoningParts),
+		attribute.Int("fresh.messages", len(in.fresh)),
+		attribute.Int("input.chars", len(in.raw)),
+		attribute.Int("condense.attempt", attempt),
+		attribute.Int("max.output.tokens", plan.outputTokens()),
+		attribute.Bool("condense.reasoning_off", plan.reasoningOff),
+		attribute.Int64("output.tokens", resp.Usage.OutputTokens),
+		attribute.Int64("reasoning.tokens", reasoningTokens(resp)),
+		attribute.String("request.id", resp.Metadata.RequestID))
 }
 
 // reasoningTokens reads the reasoning spend of one response, or -1 when the

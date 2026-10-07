@@ -12,7 +12,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/rs/xid"
 )
@@ -671,7 +671,7 @@ func (s *Server) writeFrame(frame *Frame, bestEffort bool) {
 			if s.stats.droppedNotifications.Add(1) == 1 {
 				telemetry.Warn(context.Background(),
 					"execd: dropping notifications under backpressure",
-					otellog.Int64("execd.dropped_total",
+					attribute.Int64("execd.dropped_total",
 						writer.dropped.Load()))
 			}
 		}

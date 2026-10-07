@@ -10,7 +10,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/event"
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
@@ -53,7 +53,7 @@ func (h *Host) ReloadDocument(ctx context.Context) error {
 	if !h.sessionsStoreMatches() {
 		telemetry.Error(ctx,
 			"host: sessions.Store identity changed across runtime reload; full rebuild required",
-			otellog.Int64("runtime.generation.id", int64(result.GenerationID)))
+			attribute.Int64("runtime.generation.id", int64(result.GenerationID)))
 		return errors.New(
 			"host: in-place document reload changed the sessions implementation; full rebuild required")
 	}
@@ -68,12 +68,12 @@ func (h *Host) ReloadDocument(ctx context.Context) error {
 	// the cheap path, and this line is what tells the two apart when a
 	// review asks why a settings save rebuilt the whole runtime.
 	telemetry.Info(ctx, "host: document reloaded in place",
-		otellog.String("reason", string(AssemblyReasonFrom(ctx))),
-		otellog.String("workspace", h.workDir),
-		otellog.Int64("duration_ms", time.Since(started).Milliseconds()),
-		otellog.Int64("generation", int64(result.GenerationID)),
-		otellog.Bool("in_turn", h.hasActiveRuns()),
-		otellog.String("host_ptr", fmt.Sprintf("%p", h)))
+		attribute.String("reason", string(AssemblyReasonFrom(ctx))),
+		attribute.String("workspace", h.workDir),
+		attribute.Int64("duration_ms", time.Since(started).Milliseconds()),
+		attribute.Int64("generation", int64(result.GenerationID)),
+		attribute.Bool("in_turn", h.hasActiveRuns()),
+		attribute.String("host_ptr", fmt.Sprintf("%p", h)))
 	return nil
 }
 
@@ -156,8 +156,8 @@ func (h *Host) rebindAgents(ctx context.Context) {
 			for _, failure := range lifecycle.LoadMissing(ctx) {
 				telemetry.Warn(ctx,
 					"host: reload agent declaration failed",
-					otellog.String("agent", failure.Name),
-					otellog.String("error", failure.Err.Error()))
+					attribute.String("agent", failure.Name),
+					attribute.String("error", failure.Err.Error()))
 			}
 		}
 	}

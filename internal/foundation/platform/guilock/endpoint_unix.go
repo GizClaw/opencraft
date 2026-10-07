@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // socketName is the raise endpoint inside the state root. A unix socket
@@ -73,5 +73,5 @@ func removeEndpoint(ctx context.Context, endpoint string) {
 		return
 	}
 	telemetry.WarnErr(ctx, "guilock: raise endpoint cleanup failed", err,
-		otellog.String("endpoint", endpoint))
+		attribute.String("endpoint", endpoint))
 }

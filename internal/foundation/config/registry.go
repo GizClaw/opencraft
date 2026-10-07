@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // WorkspaceMeta records one previously opened workspace inside the
@@ -77,7 +77,7 @@ func ListWorkspaces(dataDir string) ([]WorkspaceMeta, error) {
 		if err := json.Unmarshal(data, &meta); err != nil {
 			telemetry.WarnErr(context.Background(),
 				"config: decode workspace meta failed", err,
-				otellog.String("path", filepath.Join(dir, entry.Name())))
+				attribute.String("path", filepath.Join(dir, entry.Name())))
 			continue
 		}
 		if meta.Path == "" || meta.ID == "" {
@@ -100,7 +100,7 @@ func ListWorkspaces(dataDir string) ([]WorkspaceMeta, error) {
 		if err != nil {
 			telemetry.WarnErr(context.Background(),
 				"config: parse workspace last opened failed", err,
-				otellog.String("workspace.id", m.ID))
+				attribute.String("workspace.id", m.ID))
 		}
 		order = append(order, ranked{meta: m, at: at})
 	}

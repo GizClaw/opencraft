@@ -8,7 +8,6 @@ import (
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 
 	"go.opentelemetry.io/otel/attribute"
-	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -30,6 +29,6 @@ func recordTurnMetrics(ctx context.Context, status string, durationMs int64) {
 	turnCompletedCounter.Add(ctx, 1, attrs)
 	turnDurationHistogram.Record(ctx, float64(durationMs), attrs)
 	telemetry.Info(ctx, "host: turn finished",
-		otellog.String("status", status),
-		otellog.Int64("duration_ms", durationMs))
+		attribute.String("status", status),
+		attribute.Int64("duration_ms", durationMs))
 }

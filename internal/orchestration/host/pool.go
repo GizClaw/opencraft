@@ -14,7 +14,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // InvalidateAll drops every pooled Host. Idle hosts close immediately;
@@ -191,11 +191,11 @@ func (m *Manager) Invalidate(ctx context.Context, workDir string) {
 	// torn down: a storm of invalidations all pointing at one caller is
 	// the signal this line exists for.
 	telemetry.Info(ctx, "host: runtime invalidated",
-		otellog.String("reason", string(AssemblyReasonFrom(ctx))),
-		otellog.String("workspace", workDir),
-		otellog.Bool("in_turn", active),
-		otellog.Bool("deferred", !closeNow),
-		otellog.String("host_ptr", fmt.Sprintf("%p", h)))
+		attribute.String("reason", string(AssemblyReasonFrom(ctx))),
+		attribute.String("workspace", workDir),
+		attribute.Bool("in_turn", active),
+		attribute.Bool("deferred", !closeNow),
+		attribute.String("host_ptr", fmt.Sprintf("%p", h)))
 	if closeNow {
 		m.closeHost(h)
 	}

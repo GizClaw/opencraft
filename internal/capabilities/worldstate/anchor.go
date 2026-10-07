@@ -9,7 +9,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -230,7 +230,7 @@ func recordUsageAnchor(
 	}
 	if err := store.WriteUsageAnchor(contextID, anchor); err != nil {
 		telemetry.WarnErr(ctx, "worldstate: persist usage anchor failed", err,
-			otellog.String("conversation.id", contextID))
+			attribute.String("conversation.id", contextID))
 	}
 }
 

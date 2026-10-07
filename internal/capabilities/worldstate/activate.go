@@ -8,7 +8,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
@@ -118,9 +118,9 @@ func (o *activateObserver) OnRunEnd(ctx context.Context, id agent.Identity, res 
 		id.ConversationID, sessions.DocumentSkillActivations, byAgent,
 	); err != nil {
 		telemetry.Warn(ctx, "worldstate: persist skill activations failed",
-			otellog.String("conversation", id.ConversationID),
-			otellog.String("agent", id.AgentID),
-			otellog.String("error", err.Error()))
+			attribute.String("conversation", id.ConversationID),
+			attribute.String("agent", id.AgentID),
+			attribute.String("error", err.Error()))
 	}
 }
 
@@ -149,8 +149,8 @@ func (s *Service) consumeActivations(
 	telemetry.WarnErr(ctx, "worldstate: clear consumed skill activations failed",
 		s.sessionStore.WriteState(
 			contextID, sessions.DocumentSkillActivations, byAgent),
-		otellog.String("conversation.id", contextID),
-		otellog.String("agent.id", agentID))
+		attribute.String("conversation.id", contextID),
+		attribute.String("agent.id", agentID))
 	if len(names) > maxModelActivations {
 		names = names[:maxModelActivations]
 	}
