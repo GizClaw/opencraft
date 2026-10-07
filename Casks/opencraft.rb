@@ -1,4 +1,4 @@
-# Homebrew cask for opencraft (macOS, Apple Silicon).
+# Homebrew cask for opencraft (macOS, arm64 + x86_64).
 #
 # The tap lives in this repository: after each release, refresh the
 # version and sha256 below (scripts/update-cask.sh v0.1.0) and merge the
@@ -13,7 +13,7 @@ cask "opencraft" do
   desc "Local-first work partner built on flowcraft"
   homepage "https://github.com/GizClaw/opencraft"
 
-  depends_on macos: :big_sur
+  depends_on macos: :monterey
 
   app "OpenCraft.app"
 
