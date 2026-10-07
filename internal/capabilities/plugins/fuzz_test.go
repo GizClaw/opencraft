@@ -3,6 +3,8 @@ package plugins
 import (
 	"os"
 	"testing"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/zipx"
 )
 
 func FuzzExtractPluginZip(f *testing.F) {
@@ -14,7 +16,7 @@ func FuzzExtractPluginZip(f *testing.F) {
 		if err := os.WriteFile(path, data, 0o600); err != nil {
 			return
 		}
-		_, cleanup, err := extractPluginZip(path)
+		_, cleanup, err := zipx.Extract(path, pluginJSON)
 		if err == nil {
 			cleanup()
 		}

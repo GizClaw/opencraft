@@ -122,7 +122,7 @@ func newAppFixture(t *testing.T, provider *fakeprovider.Server) *appFixture {
 	if err != nil {
 		t.Fatalf("app registry: %v", err)
 	}
-	if _, err := registry.Install(context.Background(), writeAppPackage(t)); err != nil {
+	if _, err := registry.Install(context.Background(), writeAppPackage(t), apps.InstallOptions{}); err != nil {
 		t.Fatalf("install fixture application: %v", err)
 	}
 	mgr := host.NewManagerAt(dataDir, configDir)

@@ -291,68 +291,6 @@ func (s *Store) Manifest(id string) (*Manifest, error) {
 	return s.readManifest(content, id)
 }
 
-// Install copies an application source (a directory containing app.yaml)
-// into the registry. The manifest's id decides where it lands, so the
-// source directory name is irrelevant — the same rule the plugin
-// registry uses.
-//
-// The source is validated twice over, in the order that keeps a failed
-// install from leaving anything behind: the manifest first, then the
-// staged copy — the bytes that would actually land — and only then does
-// the copy become the installed content root. A refused package changes
-// nothing on disk but the temporary directory it is removed with.
-func (s *Store) Install(ctx context.Context, src string) (Summary, error) {
-	if strings.TrimSpace(s.root) == "" {
-		return Summary{}, errors.New("apps: content root is not configured")
-	}
-	if err := s.checkSource(src); err != nil {
-		return Summary{}, err
-	}
-	m, err := s.readManifest(src, "")
-	if err != nil {
-		return Summary{}, err
-	}
-	if err := s.checkHostVersion(m); err != nil {
-		return Summary{}, err
-	}
-	dst := filepath.Join(s.root, m.ID, "content")
-	if _, err := os.Stat(dst); err == nil {
-		return Summary{}, fmt.Errorf(
-			"apps: %q is already installed; uninstall it first", m.ID)
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return Summary{}, fmt.Errorf("apps: check destination: %w", err)
-	}
-	if err := os.MkdirAll(s.root, 0o700); err != nil {
-		return Summary{}, fmt.Errorf("apps: create content root: %w", err)
-	}
-	staging, err := os.MkdirTemp(s.root, ".install-")
-	if err != nil {
-		return Summary{}, fmt.Errorf("apps: create staging dir: %w", err)
-	}
-	defer func() {
-		telemetry.WarnErr(context.Background(),
-			"apps: remove install staging failed", os.RemoveAll(staging))
-	}()
-	if err := copyTree(src, staging); err != nil {
-		return Summary{}, fmt.Errorf("apps: stage %q: %w", m.ID, err)
-	}
-	if err := Validate(ctx, s.appFromManifest(m, staging, true)); err != nil {
-		return Summary{}, err
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return Summary{}, fmt.Errorf("apps: create application dir: %w", err)
-	}
-	if err := os.Rename(staging, dst); err != nil {
-		return Summary{}, fmt.Errorf("apps: install %q: %w", m.ID, err)
-	}
-	// The install is live from here on, whatever the state write does:
-	// the registry's answer to "is it installed" is the content root.
-	if err := s.setEnabledState(m.ID, true); err != nil {
-		return Summary{}, err
-	}
-	return summaryFromManifest(m, true), nil
-}
-
 // SetEnabled turns one installed application on or off. A call that
 // changes nothing writes nothing.
 func (s *Store) SetEnabled(id string, enabled bool) error {

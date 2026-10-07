@@ -176,6 +176,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ReloadApps(ctx, ids…)`, `ReloadAll(ctx)`), where `ReloadApps` names
   the applications a change touched and `ReloadAll` is what an input
   every deployment reads — the user's inference wiring — asks for.
+- The application registry imports, and the page reads what it installed.
+  `Store.Inspect` reports what installing one candidate package would do
+  — the card it would render as, the layers in order, and the preflight's
+  verdict — without copying anything or touching the state root, and it
+  reports a refused package as rows rather than as an error, because the
+  rows are what the import wizard shows and what the user fixes: a
+  manifest that cannot be read at all is the one case that is a plain
+  error, since there is nothing to report rows about yet. `Install` takes
+  the form's edits (`InstallOptions`: a new id, a new display name, a
+  new icon) and writes them into the staged copy only — the directory the
+  user picked is never edited, an id the host cannot spell fails the
+  install exactly like one an author wrote, and an install that edits
+  nothing copies the manifest byte for byte, comments and formatting
+  included, so a package does not pass through this host twice. The icon
+  is a pointer rather than a string because an application may
+  legitimately have none: nil keeps the manifest's, a pointer to "" clears
+  it, and the zero value still means "as written". `InstallZip` installs
+  a release artifact through the same path, and the archive rules moved
+  into `foundation/utils/zipx`, where the plugin registry now installs
+  through them too: the package is located by its manifest wherever it
+  sits in the archive (root or one top-level directory), every entry must
+  be a relative reference inside it, and the sizes an entry declares are
+  bounded per entry (64 MiB) and per archive (256 MiB) before anything is
+  decompressed — so a zip bomb is a refusal, not an out-of-memory kill.
+  A refused archive leaves nothing behind, not even its extraction root.
+  `Store.ReadAsset` serves the page the files of an installed
+  application's content root: the frontend module it imports and the
+  stylesheet it injects, confined the way the preflight confines the
+  manifest's own references (relative, inside, a regular file, not a
+  symbolic link — including a directory on the way that is one, which is
+  the case a lexical check misses), with a 32 MiB ceiling.
 
 ### Changed
 

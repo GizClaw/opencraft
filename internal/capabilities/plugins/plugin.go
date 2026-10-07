@@ -26,11 +26,17 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/semver"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/zipx"
 )
 
 // idRe constrains plugin/provider ids: lowercase start, then lowercase
 // letters, digits, dot, underscore or dash.
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+// pluginJSON is the plugin manifest file name: what the registry reads
+// out of a plugin directory, and the marker a package archive is located
+// by (see zipx.Extract).
+const pluginJSON = "plugin.json"
 
 // toolNameRe constrains agent-facing tool names: lowercase start,
 // then lowercase letters, digits, underscore or dash. Providers
@@ -615,7 +621,7 @@ func sourcePluginDir(src string) (string, func(), error) {
 	if info.IsDir() {
 		return src, func() {}, nil
 	}
-	return extractPluginZip(src)
+	return zipx.Extract(src, pluginJSON)
 }
 
 // withBuiltinInfo annotates a user-plugin summary when a builtin with
@@ -835,7 +841,7 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 // UpdateZip updates a plugin from a zip package. The archive layout
 // follows InstallZip.
 func (s *Store) UpdateZip(id, zipPath string) (PluginSummary, error) {
-	dir, cleanup, err := extractPluginZip(zipPath)
+	dir, cleanup, err := zipx.Extract(zipPath, pluginJSON)
 	if err != nil {
 		return PluginSummary{}, err
 	}

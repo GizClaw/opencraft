@@ -39,7 +39,7 @@ func stateRootOf(dataDir, id string) string {
 // install installs one package and fails the test when it was refused.
 func install(t *testing.T, s *Store, src string) Summary {
 	t.Helper()
-	sum, err := s.Install(context.Background(), src)
+	sum, err := s.Install(context.Background(), src, InstallOptions{})
 	if err != nil {
 		t.Fatalf("install: %v", err)
 	}
@@ -72,6 +72,24 @@ func mustNotExist(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("%s is there, want nothing at that path", path)
+	}
+}
+
+// mustBeEmpty fails the test when a directory holds anything. It is how
+// the read-only paths state "wrote nothing": the directory itself is a
+// temp dir the test made, its contents are the registry's doing.
+func mustBeEmpty(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Errorf("%s holds %v, want nothing written there", dir, names)
 	}
 }
 
@@ -153,7 +171,7 @@ func TestInstallRefusesAPackageThePreflightRefusesAndLeavesNothingBehind(t *test
     kind: event.Bus
 `)
 	store, root, _ := newStore(t)
-	_, err := store.Install(context.Background(), src)
+	_, err := store.Install(context.Background(), src, InstallOptions{})
 	var refusals Refusals
 	if !errors.As(err, &refusals) {
 		t.Fatalf("install error = %v, want a refusal", err)
@@ -180,7 +198,7 @@ func TestInstallRefusesWhatItCannotCopy(t *testing.T) {
 	t.Run("the same id twice", func(t *testing.T) {
 		store, _, _ := newStore(t)
 		install(t, store, newApp(t))
-		_, err := store.Install(context.Background(), newApp(t))
+		_, err := store.Install(context.Background(), newApp(t), InstallOptions{})
 		if err == nil || !strings.Contains(err.Error(), "is already installed; uninstall it first") {
 			t.Fatalf("second install = %v", err)
 		}
@@ -191,7 +209,7 @@ func TestInstallRefusesWhatItCannotCopy(t *testing.T) {
 		if err := os.MkdirAll(src, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		_, err := store.Install(context.Background(), src)
+		_, err := store.Install(context.Background(), src, InstallOptions{})
 		if err == nil || !strings.Contains(err.Error(), "is inside the application root") {
 			t.Fatalf("install from inside the registry = %v", err)
 		}
@@ -200,7 +218,7 @@ func TestInstallRefusesWhatItCannotCopy(t *testing.T) {
 		src := t.TempDir()
 		writeTestFile(t, src, "layer.yaml", fixtureLayer)
 		store, _, _ := newStore(t)
-		_, err := store.Install(context.Background(), src)
+		_, err := store.Install(context.Background(), src, InstallOptions{})
 		if err == nil || !strings.Contains(err.Error(), "app.yaml is missing") {
 			t.Fatalf("install without a manifest = %v", err)
 		}
@@ -214,7 +232,7 @@ func TestInstallChecksTheManifestAgainstTheHostVersion(t *testing.T) {
 	src := newApp(t)
 	writeTestFile(t, src, ManifestFile, fixtureManifest+"minHostVersion: 2.0.0\n")
 	store, _, _ := newStore(t)
-	_, err := store.Install(context.Background(), src)
+	_, err := store.Install(context.Background(), src, InstallOptions{})
 	if err == nil || !strings.Contains(err.Error(), "requires host 2.0.0, running 0.1.0") {
 		t.Fatalf("install of a newer-host package = %v", err)
 	}
@@ -236,7 +254,7 @@ func TestInstallCopiesPackagesTheWayItPromised(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, root, _ := newStore(t)
-	_, err := store.Install(context.Background(), src)
+	_, err := store.Install(context.Background(), src, InstallOptions{})
 	if err == nil || !strings.Contains(err.Error(), "extra.yaml is a symbolic link") {
 		t.Fatalf("install of a package with a link = %v", err)
 	}
@@ -504,7 +522,7 @@ func TestTheSingleRootLayoutKeepsStateOnUninstall(t *testing.T) {
 // without a root, and it says so instead of writing somewhere else.
 func TestStoreWithoutAContentRootRefusesToWrite(t *testing.T) {
 	store := NewStore(Options{})
-	if _, err := store.Install(context.Background(), newApp(t)); err == nil ||
+	if _, err := store.Install(context.Background(), newApp(t), InstallOptions{}); err == nil ||
 		!strings.Contains(err.Error(), "content root is not configured") {
 		t.Fatalf("Install without a content root = %v", err)
 	}
