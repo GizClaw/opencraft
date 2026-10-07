@@ -33,6 +33,7 @@ function status(id: string) {
     content_root: `/apps/${id}/content`,
     state_root: `/data/apps/${id}`,
     work_dir: `/data/apps/${id}/workspace`,
+    recovery: { ran: true, recovered: 0 },
   };
 }
 

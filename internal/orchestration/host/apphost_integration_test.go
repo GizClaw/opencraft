@@ -333,6 +333,118 @@ func TestAppHostRefusesWhatTheRegistryDoesNotOffer(t *testing.T) {
 	}
 }
 
+// TestAppHostRecoversItsOwnCrashedTurn is the application half of crash
+// recovery: an application's sessions live under a state root of the
+// same kind a workspace's do, so a process killed mid-turn leaves a
+// checkpoint behind, and the next assembly materializes it as an
+// interrupted turn — in the application's own store, and only there. A
+// workspace assembled from the same manager must not see it.
+//
+// The scope half is the point: the pass scans the application's
+// sessions directory and locks the application's root, so two targets
+// can run their passes without reading each other's leftovers.
+func TestAppHostRecoversItsOwnCrashedTurn(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "hello from the app"})
+	f := newAppFixture(t, provider)
+	ctx := context.Background()
+	workDir := t.TempDir()
+
+	h1, err := f.mgr.Acquire(ctx, host.AppTarget("hello"), interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire application host: %v", err)
+	}
+	// One completed turn, so the application has a conversation and a
+	// baseline to measure the recovered turn against.
+	run, err := h1.StartRun(ctx, host.RunOptions{
+		Message: message.NewTextMessage(message.RoleUser, "first"),
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if _, err := run.Wait(ctx); err != nil {
+		t.Fatalf("wait run: %v", err)
+	}
+	conversationID := run.ContextID()
+	baseline, err := h1.Sessions().Turns(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("turns before recovery: %v", err)
+	}
+
+	// The crash: a checkpoint for a run that never archived, written by
+	// a process that is gone (crashCheckpoint backdates the timestamp,
+	// which is what the pass keys on).
+	const runID = "run-appcrash0001"
+	cp := crashCheckpoint(conversationID, runID)
+	if err := h1.Sessions().State().Save(ctx, cp); err != nil {
+		t.Fatalf("save crash checkpoint: %v", err)
+	}
+	if err := h1.Close(); err != nil {
+		t.Fatalf("close first application host: %v", err)
+	}
+
+	// Restart: a fresh manager over the same launch recovers the
+	// application's checkpoint and reports what it did.
+	mgr2 := host.NewManagerAt(f.dataDir, f.configDir)
+	mgr2.SetAppRegistry(f.registry)
+	t.Cleanup(mgr2.CloseUserDB)
+	h2, err := mgr2.Acquire(ctx, host.AppTarget("hello"), interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("re-acquire application host: %v", err)
+	}
+	defer func() { _ = h2.Close() }()
+
+	report, ok := h2.RecoveryReport()
+	if !ok {
+		t.Fatal("the application's assembly ran no recovery pass")
+	}
+	if report.Recovered != 1 || report.Failed != 0 || report.WorkspaceHolder != "" {
+		t.Fatalf("recovery report = %+v, want one recovered turn", report)
+	}
+	turns, err := h2.Sessions().Turns(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("turns after recovery: %v", err)
+	}
+	if len(turns) != len(baseline)+1 {
+		t.Fatalf("turns after recovery = %d, want %d",
+			len(turns), len(baseline)+1)
+	}
+	recovered := turns[len(turns)-1]
+	if recovered.RunID != runID ||
+		recovered.Status != "interrupted" ||
+		recovered.InterruptCause != "app_restart" {
+		t.Fatalf("recovered turn = %+v, want interrupted run %s from app_restart",
+			recovered, runID)
+	}
+	if !turnHasText(recovered.Messages, "hello from the crashed run") {
+		t.Fatalf("recovered turn lost the crashed run's request: %+v",
+			recovered.Messages)
+	}
+	if ids := runCheckpointIDs(t, h2); len(ids) != 0 {
+		t.Fatalf("checkpoints after recovery = %v, want none", ids)
+	}
+
+	// The same manager assembling a workspace scans the workspace's own
+	// store: the application's recovered turn is not there, and the
+	// workspace owes its own (empty) pass.
+	ws, err := mgr2.Acquire(
+		ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire workspace host: %v", err)
+	}
+	defer func() { _ = ws.Close() }()
+	if ws.AppID() != "" {
+		t.Fatalf("the workspace host claims application %q", ws.AppID())
+	}
+	wsTurns, err := ws.Sessions().Turns(ctx, conversationID)
+	if err != nil {
+		t.Fatalf("workspace turns: %v", err)
+	}
+	if len(wsTurns) != 0 {
+		t.Fatalf("the application's turn showed up in the workspace store: %+v",
+			wsTurns)
+	}
+}
+
 // TestWorkspaceTargetsKeepTheWorkspaceBuilder guards the one thing the
 // application path must not change: a workspace still assembles from
 // the workspace builder, with the assistant as its agent.

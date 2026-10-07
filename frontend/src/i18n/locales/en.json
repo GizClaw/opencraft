@@ -59,7 +59,13 @@
       "workDir": "Workspace",
       "files": "Private workspace",
       "up": "Up one level",
-      "emptyDir": "This folder is empty."
+      "emptyDir": "This folder is empty.",
+      "recovery": "Recovery",
+      "recoveryIdle": "This process has not looked at this application's state yet.",
+      "recoveryClean": "This process ran a crash pass and found no unarchived turns.",
+      "recoveryRecovered_one": "This process recovered {{count}} unfinished turn as interrupted.",
+      "recoveryRecovered_other": "This process recovered {{count}} unfinished turns as interrupted.",
+      "recoveryHeld": "Another live process owns this application ({{holder}}); this process ran no recovery."
     },
     "wizard": {
       "title": "Import application",

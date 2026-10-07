@@ -155,6 +155,77 @@ func TestManagerWorkspaceLeaseNamesTheStateRoot(t *testing.T) {
 	}
 }
 
+// TestManagerRecoveryClaimIsScopedToTheAppRoot pins the application half
+// of the same contract: an application's state root carries the same
+// lock and the same crash pass a workspace's does (lock on the app root,
+// scan under its sessions directory), and the answer is accounted per
+// target — one scope's decision never answers for another.
+//
+// This is what lets the desktop say "another live process owns this
+// application" instead of showing the internal path the lock lives in
+// (the app platform plan's §3.7 wording), and it is the reason an
+// application's checkpoints cannot be read as a sibling's crash
+// leftovers.
+func TestManagerRecoveryClaimIsScopedToTheAppRoot(t *testing.T) {
+	layout, err := config.AppLayout(t.TempDir(), "hello")
+	if err != nil {
+		t.Fatalf("app layout: %v", err)
+	}
+	m := NewManager(t.TempDir())
+	holder := wslock.Info{
+		PID:     os.Getpid() + 1,
+		Kind:    "headless",
+		Started: "2026-01-01T00:00:00Z",
+	}
+	var locked []string
+	m.acquireLease = func(_ context.Context, path, kind string) (*wslock.Handle, error) {
+		locked = append(locked, path)
+		return nil, &wslock.HeldError{Path: path, Info: holder}
+	}
+
+	report, owed := m.claimRecovery(context.Background(), layout)
+	if owed {
+		t.Fatalf("claimed a pass while a live process owns the application: %+v", report)
+	}
+	if !strings.Contains(report.WorkspaceHolder, "headless") {
+		t.Fatalf("report = %+v, want the holder's kind", report)
+	}
+	// The lock is the application's state root: not the private
+	// workspace the runtime writes into, and not the read-only content
+	// root the package was installed from.
+	want := filepath.Join(layout.Root, wslock.FileName)
+	if len(locked) != 1 || locked[0] != want {
+		t.Fatalf("lock paths = %v, want [%s]", locked, want)
+	}
+
+	// The decision is memoized with the app root: a second assembly
+	// reports the same holder without trying the lock again.
+	again, owed := m.claimRecovery(context.Background(), layout)
+	if owed || len(locked) != 1 {
+		t.Fatalf("second claim owed=%v lock attempts=%d, want one",
+			owed, len(locked))
+	}
+	if again.WorkspaceHolder != report.WorkspaceHolder {
+		t.Fatalf("second report = %+v, want %+v", again, report)
+	}
+
+	// A workspace's claim is a separate decision: with its own root
+	// free, it owes a pass even though the application's was refused.
+	m.acquireLease = func(_ context.Context, path, kind string) (*wslock.Handle, error) {
+		locked = append(locked, path)
+		return &wslock.Handle{}, nil
+	}
+	wsRoot := t.TempDir()
+	wsLayout := config.WorkspaceLayout{
+		Root:        wsRoot,
+		SessionsDir: filepath.Join(wsRoot, "sessions"),
+		WorkDir:     filepath.Join(wsRoot, "work"),
+	}
+	if _, owed := m.claimRecovery(context.Background(), wsLayout); !owed {
+		t.Fatalf("a workspace claim was answered by the application's decision: %v", locked)
+	}
+}
+
 func TestAcquireStoreAdoptsLegacyProjectSessions(t *testing.T) {
 	m := NewManager(t.TempDir())
 	ctx := context.Background()

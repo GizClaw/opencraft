@@ -18,6 +18,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
+	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/apps"
@@ -328,9 +329,37 @@ func (b *App) Reload(id string) error {
 	return nil
 }
 
+// AppRecovery is one application's crash-recovery view, the numbers the
+// diagnostics panel shows: the pass this process ran when it assembled
+// the application, or the live process that owns the application's state
+// root instead of this one.
+//
+// It mirrors the workspace card's RecoveryDTO with one difference that
+// is the point of it: an application is named by its manifest, never by
+// the state root its lock lives in, so the panel can say "this
+// application is held by another live process" without leaking an
+// internal path the user never chose.
+type AppRecovery struct {
+	// Ran reports a recovery pass this process ran for this
+	// application (as opposed to one that found the root held).
+	Ran bool `json:"ran"`
+	// At is when that pass ran, or when another live process was found
+	// holding the state root (Ran is false in that case). Empty when
+	// this process has neither run a pass nor looked.
+	At string `json:"at,omitempty"`
+	// Recovered counts the unfinished turns the pass materialized as
+	// interrupted: turns a previous process never archived.
+	Recovered int `json:"recovered"`
+	// Holder names the live process that owns this application's state
+	// root, so this one ran no pass at all (its checkpoints are either
+	// that process's live work or leftovers it deliberately left).
+	// Empty means this process owns the root.
+	Holder string `json:"holder,omitempty"`
+}
+
 // AppStatus is what the page's card and the diagnostics view read about
 // one application's runtime: the state it is in, whether a Host serves
-// it right now, and the three roots involved.
+// it right now, the three roots involved, and what recovery did for it.
 type AppStatus struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -347,6 +376,13 @@ type AppStatus struct {
 	ContentRoot string `json:"content_root"`
 	StateRoot   string `json:"state_root"`
 	WorkDir     string `json:"work_dir"`
+	// Recovery is what the application's own Host reports about its
+	// state root: an application's sessions live under the same kind of
+	// root a workspace's do, with the same lock and the same crash pass
+	// (see orchestration/host/recover.go). The zero value is "no Host,
+	// nothing known" — the page then says so instead of claiming a
+	// clean pass.
+	Recovery AppRecovery `json:"recovery"`
 }
 
 // Status reports one installed application's runtime state. It is the
@@ -388,8 +424,29 @@ func (b *App) Status(id string) (AppStatus, error) {
 		// card would show an application that is running fine as down.
 		out.Serving = !h.IsClosing()
 		out.Retiring = h.IsStale()
+		out.Recovery = appRecovery(h)
 	}
 	return out, nil
+}
+
+// appRecovery reads one Host's crash-recovery report in the shape the
+// panel renders. A Host that has not looked at its state root yet
+// reports nothing, which the page shows as "no pass yet" rather than as
+// a root without leftovers.
+func appRecovery(h *host.Host) AppRecovery {
+	report, ok := h.RecoveryReport()
+	if !ok {
+		return AppRecovery{}
+	}
+	out := AppRecovery{
+		Ran:       report.WorkspaceHolder == "",
+		Recovered: report.Recovered,
+		Holder:    report.WorkspaceHolder,
+	}
+	if !report.At.IsZero() {
+		out.At = report.At.UTC().Format(time.RFC3339)
+	}
+	return out
 }
 
 // Manifest returns one installed application's parsed manifest: the
@@ -608,6 +665,34 @@ func (b *App) app(id string) (apps.App, error) {
 	return store.Get(id)
 }
 
+// ensureServing assembles one application's runtime when it is enabled
+// and nothing is serving it, so a read that follows sees what the
+// runtime would serve rather than what the store held before the crash
+// pass ran.
+//
+// It never fails the read it precedes. A disabled application, a launch
+// with no registry, or a package whose layers no longer assemble keeps
+// answering reads — the store is a file and rendering history needs no
+// engine (see appSessions) — and the failure is the card's business, not
+// a transcript read's. A failure here is also not retried by the caller:
+// the next read asks again, which is how a user who fixes the YAML sees
+// it take effect on their next look.
+func (b *App) ensureServing(ctx context.Context, id string) {
+	app, err := b.app(id)
+	if err != nil || !app.Enabled {
+		// Not installed or switched off: there is no runtime to have
+		// run the pass, and asking the pool would only be refused.
+		return
+	}
+	if b.core.Runtime.HostFor(host.AppTarget(id)) != nil {
+		return
+	}
+	if _, err := b.core.Runtime.EnsureHost(ctx, host.AppTarget(id)); err != nil {
+		flowtelemetry.WarnErr(ctx,
+			"desktop: assembling an application for a read failed", err)
+	}
+}
+
 // appSessions returns a handle on one installed application's session
 // store plus the function that releases it.
 //
@@ -621,6 +706,15 @@ func (b *App) app(id string) (apps.App, error) {
 // Going through the pool is also what lets the page show a conversation
 // before the runtime exists (a disabled application) or after it
 // retired: the store is a file, and rendering history needs no engine.
+//
+// One thing the store cannot answer on its own is what a crash left
+// behind: the recovery pass that materializes an unfinished turn runs
+// when a Host is assembled (orchestration/host/recover.go), so a read
+// that overtook the pass would show the conversation with the turn
+// missing — and then the same turn would appear later, once something
+// else assembled the runtime. ensureServing runs first so the page's
+// first read of a crashed application is already the transcript the
+// runtime would serve, the way a workspace's own window open is.
 func (b *App) appSessions(
 	ctx context.Context, id string,
 ) (*sessions.Store, func(), error) {
@@ -628,6 +722,7 @@ func (b *App) appSessions(
 	if mgr == nil {
 		return nil, nil, errNotReady("app")
 	}
+	b.ensureServing(ctx, id)
 	layout, err := config.AppLayout(b.core.DataDir, id)
 	if err != nil {
 		return nil, nil, err

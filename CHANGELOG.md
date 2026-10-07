@@ -365,6 +365,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content is already the new version — instead of at the first message,
   and an application with a turn in flight drains first: an update never
   interrupts one.
+- An application's crash recovery reaches its page, and reaches it first.
+  An application's state root takes the same lockdown and the same
+  checkpoint scan a workspace's does (its own `live.lock`, its own
+  `sessions/`), so a process killed mid-turn leaves the same kind of
+  leftover behind — but the page's transcript reads go straight to the
+  store, and the pass that materializes an unfinished turn runs at
+  assembly. A read that overtook it showed the conversation with the turn
+  missing and then grew the turn later, once something else happened to
+  assemble the runtime: one transcript, two answers. The page's reads now
+  assemble an enabled application first (and only that: a disabled one,
+  a launch without a registry, or a package that no longer assembles
+  keeps answering reads — the store is a file and rendering history needs
+  no engine — with a warning instead of an error). `App.Status` carries
+  what that pass did as `recovery` (`ran`, `at`, `recovered`, `holder`),
+  and the application's diagnostics panel renders it in the
+  application's own words: another live process holding *this
+  application* names that process rather than an internal path, and a
+  root nobody has looked at yet says so instead of reporting a clean
+  pass.
 
 ### Changed
 

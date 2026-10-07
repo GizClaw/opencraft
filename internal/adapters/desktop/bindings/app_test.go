@@ -3,6 +3,7 @@ package bindings
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
@@ -1128,6 +1130,123 @@ func TestAppReadOutlivesTheHostItSharesWith(t *testing.T) {
 	// reopened from the file, runtime or no runtime.
 	if got, err := f.binding.Sessions("hello"); err != nil || got == nil {
 		t.Fatalf("sessions after the release = %+v (%v)", got, err)
+	}
+}
+
+// crashCheckpointAt is the checkpoint a process killed mid-turn leaves
+// behind: the board the run had so far, the request that started it, and
+// a timestamp older than this process — which is what tells the pass
+// this turn is a leftover rather than a sibling's live work.
+func crashCheckpointAt(t *testing.T, conversationID, runID string) agent.Checkpoint {
+	t.Helper()
+	request := agent.Request{
+		ContextID: conversationID,
+		Message: message.NewTextMessage(
+			message.RoleUser, "the turn the crash ate"),
+	}
+	raw, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	board := agent.NewBoard()
+	board.SetVar("oc_thread_id", "oc-"+conversationID)
+	board.AppendChannelMessage(agent.MainChannel, message.NewTextMessage(
+		message.RoleUser, "the turn the crash ate"))
+	board.AppendChannelMessage(agent.MainChannel, message.NewTextMessage(
+		message.RoleAssistant, "partial answer before the crash"))
+	return agent.Checkpoint{
+		ExecID:            runID,
+		Steps:             []string{"world"},
+		Iteration:         1,
+		Board:             board.Snapshot(),
+		Timestamp:         time.Now().Add(-time.Minute),
+		OriginalStartedAt: time.Now().Add(-2 * time.Minute),
+		Attributes: map[string]string{
+			"oc.conversation_id": conversationID,
+			"oc.request":         string(raw),
+		},
+	}
+}
+
+// TestAppReadsRecoverBeforeTheyAnswer pins what an application's page
+// sees after a crash: the pass that materializes an unfinished turn runs
+// at assembly, so the page's own read of the transcript is what has to
+// assemble the runtime. A read that overtook the pass would show the
+// conversation with the turn missing and then grow the turn later, once
+// something else happened to assemble — the same transcript, two
+// answers.
+func TestAppReadsRecoverBeforeTheyAnswer(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "hi"})
+	f := newAppBinding(t, provider)
+	if _, err := f.binding.Install(writeAppBundle(t), AppInstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	if err := f.binding.SetEnabled("hello", true); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	seen := f.watch()
+	startAppTurn(t, f, seen, "hello", "", "first")
+	conversations, err := f.binding.Sessions("hello")
+	if err != nil {
+		t.Fatalf("sessions: %v", err)
+	}
+	if len(conversations) != 1 {
+		t.Fatalf("sessions = %+v, want the one the turn created", conversations)
+	}
+	conversation := conversations[0].ID
+
+	// The crash: a checkpoint with no archive row, and then the process
+	// that owned the runtime is gone.
+	h := f.core.Runtime.HostFor(host.AppTarget("hello"))
+	if h == nil {
+		t.Fatal("no Host serves the application")
+	}
+	cp := crashCheckpointAt(t, conversation, "run-appcrash0001")
+	if err := h.Sessions().State().Save(context.Background(), cp); err != nil {
+		t.Fatalf("save crash checkpoint: %v", err)
+	}
+	f.core.Runtime.Close()
+
+	// A fresh launch: the page reads the application's conversations and
+	// its transcript before it does anything else with it.
+	c := core.NewCoreWithPaths(core.Paths{
+		UserDir: filepath.Join(f.dataDir, "config"),
+		DataDir: f.dataDir,
+		AppHome: f.dataDir,
+	})
+	t.Cleanup(func() {
+		c.Runtime.Close()
+		c.Plugin.Close()
+	})
+	b := NewAppBinding(c)
+	if _, err := b.Sessions("hello"); err != nil {
+		t.Fatalf("sessions after the crash: %v", err)
+	}
+	turns, err := b.Turns("hello", conversation, 0, 0)
+	if err != nil {
+		t.Fatalf("turns after the crash: %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("turns = %d, want the completed one and the recovered one",
+			len(turns))
+	}
+	recovered := turns[len(turns)-1]
+	if recovered.RunID != cp.ExecID || recovered.Status != "interrupted" {
+		t.Fatalf("last turn = %+v, want interrupted run %s",
+			recovered, cp.ExecID)
+	}
+	// The same read is where the page asks how the crash went: the
+	// status now reports the pass that just ran, with the count.
+	status, err := b.Status("hello")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !status.Recovery.Ran || status.Recovery.Recovered != 1 {
+		t.Fatalf("status recovery = %+v, want the one recovered turn",
+			status.Recovery)
+	}
+	if status.Recovery.At == "" {
+		t.Fatalf("status recovery names no moment: %+v", status.Recovery)
 	}
 }
 

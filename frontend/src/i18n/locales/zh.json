@@ -59,7 +59,13 @@
       "workDir": "工作区",
       "files": "私有工作区",
       "up": "上一层",
-      "emptyDir": "这个目录是空的。"
+      "emptyDir": "这个目录是空的。",
+      "recovery": "恢复",
+      "recoveryIdle": "本进程还没有看过这个应用的状态。",
+      "recoveryClean": "本进程运行过恢复，没有发现未归档的轮次。",
+      "recoveryRecovered_other": "本进程把 {{count}} 个未归档的轮次恢复成了中断状态。",
+      "recoveryRecovered_one": "本进程把 {{count}} 个未归档的轮次恢复成了中断状态。",
+      "recoveryHeld": "这个应用由另一个活进程持有（{{holder}}），本进程没有运行恢复。"
     },
     "wizard": {
       "title": "导入应用",

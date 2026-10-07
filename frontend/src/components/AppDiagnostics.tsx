@@ -8,6 +8,7 @@ import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { ICON } from './ui/icon';
 import type { AppFile } from '../apps/types';
+import type * as gen from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/models';
 
 /**
  * AppDiagnostics is one application's diagnostic panel: the three roots
@@ -105,6 +106,17 @@ export function AppDiagnostics({ appID }: { appID: string }) {
             path={status?.work_dir}
             onOpen={() => void api.appReveal(appID, '')}
           />
+          <div className="flex items-center gap-2">
+            <dt className="w-28 shrink-0 text-faint">
+              {t('apps.diag.recovery')}
+            </dt>
+            <dd
+              className={`min-w-0 flex-1 ${recoveryTone(status?.recovery)}`}
+              data-testid="app-recovery"
+            >
+              {recoveryLine(t, status?.recovery)}
+            </dd>
+          </div>
         </dl>
       </section>
 
@@ -197,4 +209,35 @@ function Root({
       )}
     </div>
   );
+}
+
+/**
+ * recoveryLine renders what the application's own Host reports about its
+ * state root: the pass this process ran when it assembled the
+ * application, or the live process that owns the root instead. The
+ * wording is the application's, not the workspace card's — an
+ * application's state root is an internal path, and "another live
+ * process holds this workspace" would name something the user never
+ * picked (see the app platform plan, §3.7).
+ */
+function recoveryLine(
+  t: (key: string, opts?: Record<string, unknown>) => string,
+  recovery?: gen.AppRecovery,
+): string {
+  if (!recovery?.at) return t('apps.diag.recoveryIdle');
+  if (recovery.holder) {
+    return t('apps.diag.recoveryHeld', { holder: recovery.holder });
+  }
+  if (recovery.recovered > 0) {
+    return t('apps.diag.recoveryRecovered', { count: recovery.recovered });
+  }
+  return t('apps.diag.recoveryClean');
+}
+
+// recoveryTone highlights the two states a user has to act on or at
+// least know about: turns that came back interrupted, and a state root
+// another live process owns (this process ran no recovery for them).
+function recoveryTone(recovery?: gen.AppRecovery): string {
+  if (!recovery?.at) return 'text-faint';
+  return recovery.holder || recovery.recovered > 0 ? 'text-warn' : 'text-dim';
 }
