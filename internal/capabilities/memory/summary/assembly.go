@@ -14,7 +14,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // TurnStore is the storage surface the summary assembly needs: the read
@@ -771,8 +771,8 @@ func (a *Assembly) retireStaleNodes(
 	}
 	telemetry.Info(ctx,
 		"memory: retiring summary nodes from a previous identity generation",
-		otellog.String("conversation.id", conversationID),
-		otellog.Int("nodes", len(stale)))
+		attribute.String("conversation.id", conversationID),
+		attribute.Int("nodes", len(stale)))
 	return a.store.DeleteSummaryNodesByID(ctx, conversationID, stale)
 }
 

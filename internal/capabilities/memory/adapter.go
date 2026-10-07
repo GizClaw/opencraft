@@ -9,7 +9,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
@@ -146,8 +146,8 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 			// nothing can be shown for the row, and guessing at its
 			// content would be worse than counting it.
 			telemetry.WarnErr(ctx, "memory: decode transcript payload failed", err,
-				otellog.String("conversation.id", conversationID),
-				otellog.Int64("seq", seq))
+				attribute.String("conversation.id", conversationID),
+				attribute.Int64("seq", seq))
 			undecodable++
 			continue
 		}
@@ -174,14 +174,14 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 	if placeholders > 0 {
 		telemetry.Info(ctx,
 			"memory: transcript rows rendered as placeholders",
-			otellog.String("conversation.id", conversationID),
-			otellog.Int("rows", placeholders))
+			attribute.String("conversation.id", conversationID),
+			attribute.Int("rows", placeholders))
 	}
 	if undecodable+empty > 0 {
 		telemetry.Warn(ctx, "memory: transcript rows left out of the window",
-			otellog.String("conversation.id", conversationID),
-			otellog.Int("undecodable", undecodable),
-			otellog.Int("unrenderable", empty))
+			attribute.String("conversation.id", conversationID),
+			attribute.Int("undecodable", undecodable),
+			attribute.Int("unrenderable", empty))
 	}
 	for i, j := 0, len(desc)-1; i < j; i, j = i+1, j-1 {
 		desc[i], desc[j] = desc[j], desc[i]
@@ -255,8 +255,8 @@ func (a *sqliteTurnStore) UpsertSummaryNode(
 		// treat a write that arrives after the delete.
 		telemetry.Info(ctx,
 			"memory: summary write skipped; conversation is gone",
-			otellog.String("conversation.id", node.ThreadID),
-			otellog.String("node.id", node.ID))
+			attribute.String("conversation.id", node.ThreadID),
+			attribute.String("node.id", node.ID))
 	}
 	return nil
 }
@@ -285,30 +285,30 @@ func (a *sqliteTurnStore) ListSummaryNodes(
 		}
 		if err := json.Unmarshal([]byte(parents), &n.ParentIDs); err != nil {
 			telemetry.WarnErr(ctx, "memory: decode summary parents failed", err,
-				otellog.String("conversation.id", conversationID))
+				attribute.String("conversation.id", conversationID))
 		}
 		if err := json.Unmarshal([]byte(sources), &n.SourceIDs); err != nil {
 			telemetry.WarnErr(ctx, "memory: decode summary sources failed", err,
-				otellog.String("conversation.id", conversationID))
+				attribute.String("conversation.id", conversationID))
 		}
 		if err := json.Unmarshal([]byte(content), &n.Content); err != nil {
 			telemetry.WarnErr(ctx, "memory: decode summary content failed", err,
-				otellog.String("conversation.id", conversationID))
+				attribute.String("conversation.id", conversationID))
 		}
 		if err := json.Unmarshal([]byte(metadata), &n.Metadata); err != nil {
 			telemetry.WarnErr(ctx, "memory: decode summary metadata failed", err,
-				otellog.String("conversation.id", conversationID))
+				attribute.String("conversation.id", conversationID))
 		}
 		var timeErr error
 		n.CreatedAt, timeErr = time.Parse(time.RFC3339Nano, createdAt)
 		if timeErr != nil {
 			telemetry.WarnErr(ctx, "memory: parse summary created time failed",
-				timeErr, otellog.String("conversation.id", conversationID))
+				timeErr, attribute.String("conversation.id", conversationID))
 		}
 		n.UpdatedAt, timeErr = time.Parse(time.RFC3339Nano, updatedAt)
 		if timeErr != nil {
 			telemetry.WarnErr(ctx, "memory: parse summary updated time failed",
-				timeErr, otellog.String("conversation.id", conversationID))
+				timeErr, attribute.String("conversation.id", conversationID))
 		}
 		nodes = append(nodes, n)
 	}

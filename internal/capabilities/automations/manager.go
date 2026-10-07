@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // RunFunc executes one task to completion and reports the result. The
@@ -264,11 +264,11 @@ func (m *Manager) Tick() {
 			// anchor a day out and let the user fix it.
 			telemetry.WarnErr(ctx,
 				"automations: advance corrupt task schedule failed", err,
-				otellog.String("task.id", task.ID))
+				attribute.String("task.id", task.ID))
 			telemetry.WarnErr(ctx,
 				"automations: advance corrupt task anchor failed",
 				m.store.AdvanceNextRun(ctx, task.ID, now.AddDate(0, 0, 1)),
-				otellog.String("task.id", task.ID))
+				attribute.String("task.id", task.ID))
 			continue
 		}
 		if now.Sub(task.NextRunAt) > m.window {
@@ -276,13 +276,13 @@ func (m *Manager) Tick() {
 			// just move to the next occurrence.
 			telemetry.WarnErr(ctx, "automations: advance missed task failed",
 				m.store.AdvanceNextRun(ctx, task.ID, next),
-				otellog.String("task.id", task.ID))
+				attribute.String("task.id", task.ID))
 			m.notifyChange()
 			continue
 		}
 		if err := m.store.AdvanceNextRun(ctx, task.ID, next); err != nil {
 			telemetry.WarnErr(ctx, "automations: advance due task failed", err,
-				otellog.String("task.id", task.ID))
+				attribute.String("task.id", task.ID))
 			continue
 		}
 		m.mu.Lock()
@@ -341,7 +341,7 @@ func (m *Manager) run(ctx context.Context, taskID string) {
 	task, err := m.store.GetTask(ctx, taskID)
 	if err != nil {
 		telemetry.WarnErr(ctx, "automations: load task for run failed", err,
-			otellog.String("task.id", taskID))
+			attribute.String("task.id", taskID))
 		return
 	}
 	at := m.now()
@@ -354,7 +354,7 @@ func (m *Manager) run(ctx context.Context, taskID string) {
 	run, err = m.store.AppendRun(ctx, run)
 	if err != nil {
 		telemetry.WarnErr(ctx, "automations: append run failed", err,
-			otellog.String("task.id", taskID))
+			attribute.String("task.id", taskID))
 		return
 	}
 	m.notifyRun(run)
@@ -406,10 +406,10 @@ func (m *Manager) run(ctx context.Context, taskID string) {
 
 	telemetry.WarnErr(ctx, "automations: persist run result failed",
 		m.store.UpdateRun(ctx, run),
-		otellog.String("task.id", taskID), otellog.String("run.id", run.ID))
+		attribute.String("task.id", taskID), attribute.String("run.id", run.ID))
 	telemetry.WarnErr(ctx, "automations: persist task last run failed",
 		m.store.SetTaskLast(ctx, taskID, at, string(run.Status)),
-		otellog.String("task.id", taskID), otellog.String("run.id", run.ID))
+		attribute.String("task.id", taskID), attribute.String("run.id", run.ID))
 	m.notifyRun(run)
 	m.notifyChange()
 }

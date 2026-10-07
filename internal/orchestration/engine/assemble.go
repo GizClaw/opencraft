@@ -37,7 +37,7 @@ import (
 	"github.com/GizClaw/flowcraft/driver/bytedance"
 	"github.com/GizClaw/flowcraft/driver/minimax"
 	"github.com/GizClaw/flowcraft/driver/openai"
-	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/agents"
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
@@ -479,8 +479,8 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			lifecycle.Bind(rt)
 			for _, failure := range lifecycle.LoadAll(ctx) {
 				telemetry.Warn(ctx, "agents: load declaration failed",
-					log.String("agent", failure.Name),
-					log.String("error", failure.Err.Error()))
+					attribute.String("agent", failure.Name),
+					attribute.String("error", failure.Err.Error()))
 			}
 		}
 	}

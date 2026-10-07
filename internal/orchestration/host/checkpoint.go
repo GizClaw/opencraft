@@ -7,7 +7,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
@@ -106,7 +106,7 @@ func checkpointRequest(ctx context.Context, cp *agent.Checkpoint) *agent.Request
 	var request agent.Request
 	if err := json.Unmarshal([]byte(raw), &request); err != nil {
 		telemetry.WarnErr(ctx, "host: decode checkpoint request failed", err,
-			otellog.String("run.id", cp.ExecID))
+			attribute.String("run.id", cp.ExecID))
 		return nil
 	}
 	return &request

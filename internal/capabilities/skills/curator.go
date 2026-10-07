@@ -16,7 +16,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -200,8 +200,8 @@ func (c *Curator) Retire(
 	}
 	c.svc.Reload()
 	telemetry.Info(ctx, "skills: retired",
-		otellog.String("skill", name),
-		otellog.String("archive", archivePath))
+		attribute.String("skill", name),
+		attribute.String("archive", archivePath))
 	return record, nil
 }
 
@@ -236,7 +236,7 @@ func (c *Curator) Restore(ctx context.Context, id string) (skillusage.Archive, e
 	}
 	c.svc.Reload()
 	telemetry.Info(ctx, "skills: restored",
-		otellog.String("skill", record.Name))
+		attribute.String("skill", record.Name))
 	return record, nil
 }
 

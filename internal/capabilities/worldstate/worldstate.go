@@ -15,7 +15,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/workspace"
-	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -324,11 +324,11 @@ func (s *Service) skillsSections(
 			"skills", message.RoleUser, skills.RenderSection(list)))
 		// Never log the user's message text: reqText can contain
 		// anything the user typed. Only metadata is emitted.
-		attrs := []log.KeyValue{
-			log.Int("count", len(list)),
+		attrs := []attribute.KeyValue{
+			attribute.Int("count", len(list)),
 		}
 		for i, sc := range scored {
-			attrs = append(attrs, log.String(
+			attrs = append(attrs, attribute.String(
 				fmt.Sprintf("rank_%d", i+1),
 				fmt.Sprintf("%s=%.3f", sc.Skill.Name, sc.Score)))
 		}
@@ -362,7 +362,7 @@ func (s *Service) skillsSections(
 				"requested by the model in a previous reply.",
 				content)))
 		telemetry.Info(ctx, "skills: model-requested activation injected",
-			log.String("skill", sk.Name))
+			attribute.String("skill", sk.Name))
 	}
 	return out
 }

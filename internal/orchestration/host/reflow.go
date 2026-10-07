@@ -10,7 +10,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
@@ -37,7 +37,7 @@ func (w *reflowWatch) Close() {
 		if err := w.sub.Close(); err != nil {
 			telemetry.Warn(context.Background(),
 				"host: close delegation reflow subscription failed",
-				otellog.String("error", err.Error()))
+				attribute.String("error", err.Error()))
 		}
 	}
 }
@@ -76,7 +76,7 @@ func (h *Host) attachReflow(ctx context.Context, rt *runtimecore.Runtime) {
 	if err != nil {
 		cancel()
 		telemetry.WarnErr(ctx, "host: subscribe delegation reflow failed", err,
-			otellog.String("workspace", h.workDir))
+			attribute.String("workspace", h.workDir))
 		return
 	}
 	watch := &reflowWatch{sub: sub, cancel: cancel}
@@ -108,8 +108,8 @@ func (h *Host) reflowLoop(ctx context.Context, events <-chan event.Envelope) {
 			if err := env.Decode(&ev); err != nil {
 				telemetry.Warn(ctx,
 					"host: decode delegation event for reflow failed",
-					otellog.String("subject", string(env.Subject)),
-					otellog.String("error", err.Error()))
+					attribute.String("subject", string(env.Subject)),
+					attribute.String("error", err.Error()))
 				continue
 			}
 			result, ok := subagents.ParseCardEvent(ev)
@@ -147,14 +147,14 @@ func (h *Host) reflowDelegation(ctx context.Context, result subagents.Result) {
 	}
 	if h.conversationGone(ConversationID(conversationID)) {
 		telemetry.Info(ctx, "host: drop delegation reflow for a deleted conversation",
-			otellog.String("conversation.id", conversationID),
-			otellog.String("card.id", result.CardID))
+			attribute.String("conversation.id", conversationID),
+			attribute.String("card.id", result.CardID))
 		return
 	}
 	if !store.Exists(conversationID) {
 		telemetry.Warn(ctx, "host: drop delegation reflow for unknown conversation",
-			otellog.String("conversation.id", conversationID),
-			otellog.String("card.id", result.CardID))
+			attribute.String("conversation.id", conversationID),
+			attribute.String("card.id", result.CardID))
 		return
 	}
 	runKey := result.Key()
@@ -163,8 +163,8 @@ func (h *Host) reflowDelegation(ctx context.Context, result subagents.Result) {
 		return
 	case !errors.Is(err, state.ErrNotFound):
 		telemetry.WarnErr(ctx, "host: look up delegation reflow note failed", err,
-			otellog.String("conversation.id", conversationID),
-			otellog.String("card.id", result.CardID))
+			attribute.String("conversation.id", conversationID),
+			attribute.String("card.id", result.CardID))
 		return
 	}
 	note := message.NewTextMessage(message.RoleUser, result.Note())
@@ -179,7 +179,7 @@ func (h *Host) reflowDelegation(ctx context.Context, result subagents.Result) {
 		// of title derivation.
 		telemetry.WarnErr(ctx,
 			"host: encode delegation note payload failed", err,
-			otellog.String("card.id", result.CardID))
+			attribute.String("card.id", result.CardID))
 	} else {
 		origin.Payload = payload
 	}
@@ -192,13 +192,13 @@ func (h *Host) reflowDelegation(ctx context.Context, result subagents.Result) {
 			// and there is nothing to write to. Same outcome as the
 			// guard, one race later.
 			telemetry.Info(ctx, "host: drop delegation reflow for a deleted conversation",
-				otellog.String("conversation.id", conversationID),
-				otellog.String("card.id", result.CardID))
+				attribute.String("conversation.id", conversationID),
+				attribute.String("card.id", result.CardID))
 			return
 		}
 		telemetry.WarnErr(ctx, "host: append delegation reflow note failed", err,
-			otellog.String("conversation.id", conversationID),
-			otellog.String("card.id", result.CardID))
+			attribute.String("conversation.id", conversationID),
+			attribute.String("card.id", result.CardID))
 		return
 	}
 	// The note is a finished turn, not a running one: recording the
@@ -209,13 +209,13 @@ func (h *Host) reflowDelegation(ctx context.Context, result subagents.Result) {
 		string(agent.StatusCompleted), "", "", "", "", "",
 	); err != nil {
 		telemetry.WarnErr(ctx, "host: record delegation reflow turn end failed", err,
-			otellog.String("conversation.id", conversationID))
+			attribute.String("conversation.id", conversationID))
 	}
 	telemetry.Info(ctx, "host: delegated result routed to conversation",
-		otellog.String("conversation.id", conversationID),
-		otellog.String("card.id", result.CardID),
-		otellog.String("subagent", result.Target),
-		otellog.String("status", string(result.Status)))
+		attribute.String("conversation.id", conversationID),
+		attribute.String("card.id", result.CardID),
+		attribute.String("subagent", result.Target),
+		attribute.String("status", string(result.Status)))
 	// Same signal a finished turn emits, so an open conversation
 	// reloads its turns and a closed one updates its sidebar entry.
 	h.notifySessionUpdated(ctx, conversationID)

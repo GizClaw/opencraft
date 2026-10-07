@@ -17,7 +17,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	metricstore "github.com/GizClaw/opencraft/internal/capabilities/telemetry/metric"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // UsageRecorder receives one model usage delta (a finished turn, one
@@ -82,7 +82,7 @@ func (m *Manager) RecordMetric(
 	}
 	if err := store.Record(ctx, name, value, attrs); err != nil {
 		telemetry.WarnErr(ctx, "host: record local metric failed",
-			err, otellog.String("metric", name))
+			err, attribute.String("metric", name))
 	}
 }
 
@@ -118,7 +118,7 @@ func (m *Manager) RecordMetrics(ctx context.Context, samples []MetricSample) {
 	}
 	if err := store.RecordBatch(ctx, batch); err != nil {
 		telemetry.WarnErr(ctx, "host: record local metrics failed", err,
-			otellog.String("count", fmt.Sprint(len(batch))))
+			attribute.String("count", fmt.Sprint(len(batch))))
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
@@ -129,7 +129,7 @@ func mergeSessionSettings(ctx context.Context, handle *db.DB) error {
 	if merged > 0 {
 		telemetry.Info(ctx,
 			"compat: merged session settings into conversation state",
-			otellog.Int("sessions", merged))
+			attribute.Int("sessions", merged))
 	}
 	return nil
 }

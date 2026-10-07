@@ -151,6 +151,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disagree, when an embedded deployment document writes a kind that is
   neither inventoried nor spellable, or when a spelling that follows neither
   style joins `memory` (the one legacy entry, on a budget of one).
+- A turn is not cut off at two hours any more. The assistant's
+  `policy.run_timeout` and `build.timeout` are gone — from the embedded
+  `agents.yaml` and from the definition every dynamic-subagent
+  registration writes — so a turn ends when its work does, when the
+  user stops it or sends a new message, or when a step fails; never
+  when a wall clock runs out. The two keys were bounding the same
+  window all along: nothing in this repository installs a Referee, so
+  a revise attempt — the one thing `build.timeout` (per `Execute`) did
+  not cover — never happens. The per-call bounds stay: a tool dispatch
+  is still bounded by the tool middleware's timeout, and a user layer
+  that sets either key is still honored by flowcraft.
+- A YOLO conversation answers its own confirmations. The fixed yes/no
+  cards the shared gate raises — skill, plugin, subagent and
+  automation changes, and long-term memory writes — used to park the
+  turn on an interaction card even in the one mode whose point is not
+  asking; the desktop prompt backend now answers them yes when the
+  run's conversation is in YOLO mode, and the card never renders. The
+  reply carries the value a click on Yes produces, and an
+  auto-answered card is logged once with its conversation, run and
+  title. Nothing else changes: the predicate matches one prompt
+  source in one shape (a kind-confirm spec offering the Yes option),
+  so `ask_user`, `request_permissions` and the sandbox prompts never
+  reach it; automation runs (`interact.Auto`) and subagent turns still
+  fail closed; and a run whose Host or conversation mode cannot be
+  read falls back to the card — the check is fail-closed.
+
+- flowcraft core moves to v0.4.9 (`driver/openai` v0.3.4) with the
+  OpenTelemetry modules at v1.45.0 / v0.21.0, clearing GO-2026-6505 —
+  endpoint URLs in the OTLP trace exporter's info logs — and
+  GO-2026-6615 — the `sdk/log` batch processor busy-spinning when its
+  export buffer is full. The database published both against the
+  versions core v0.4.8 resolved to; the release's log API is
+  `attribute.KeyValue` end to end, so the telemetry facade, the
+  graph-warning filter and the test log capture build their records
+  through it — the keys and values they carry are unchanged.
 
 ### Removed
 

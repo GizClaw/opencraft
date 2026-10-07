@@ -14,7 +14,7 @@ import (
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -218,14 +218,14 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 				mode = m
 			} else {
 				telemetry.WarnErr(ctx, "host: load conversation mode failed", err,
-					otellog.String("conversation.id", contextID))
+					attribute.String("conversation.id", contextID))
 			}
 			if think == "" {
 				if lvl, err := store.Think(ctx, contextID); err == nil {
 					think = string(lvl)
 				} else {
 					telemetry.WarnErr(ctx, "host: load conversation think level failed", err,
-						otellog.String("conversation.id", contextID))
+						attribute.String("conversation.id", contextID))
 				}
 			}
 			if model == "" {
@@ -233,7 +233,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 					model = m
 				} else {
 					telemetry.WarnErr(ctx, "host: load conversation model failed", err,
-						otellog.String("conversation.id", contextID))
+						attribute.String("conversation.id", contextID))
 				}
 			}
 		}
@@ -455,7 +455,7 @@ func (h *Host) hostedWebSearchExtensions(
 	for _, ext := range exts {
 		if _, ok := decoders[ext.Provider+"/"+ext.ID]; !ok {
 			telemetry.Warn(ctx, "host: hosted web search extension dropped",
-				otellog.String("provider", ext.Provider))
+				attribute.String("provider", ext.Provider))
 			continue
 		}
 		out = append(out, ext)
@@ -514,7 +514,7 @@ func (r *Run) WaitBounded(ctx context.Context) (*agent.Result, error) {
 		if err := r.host.CancelRun(r.RunID()); err != nil {
 			telemetry.WarnErr(context.WithoutCancel(ctx),
 				"host: cancel run at its deadline failed", err,
-				otellog.String("run.id", r.RunID()))
+				attribute.String("run.id", r.RunID()))
 		}
 	})
 	defer stopWatch()
@@ -593,14 +593,14 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		r.responseID = responseID
 		host.mu.Unlock()
 		if execErr != nil {
-			logAttrs := []otellog.KeyValue{
-				otellog.String("conversation.id", detail.contextID),
-				otellog.String("run.id", r.RunID()),
-				otellog.String("status", string(status)),
+			logAttrs := []attribute.KeyValue{
+				attribute.String("conversation.id", detail.contextID),
+				attribute.String("run.id", r.RunID()),
+				attribute.String("status", string(status)),
 			}
 			if requestID != "" {
 				logAttrs = append(
-					logAttrs, otellog.String("request.id", requestID))
+					logAttrs, attribute.String("request.id", requestID))
 			}
 			telemetry.WarnErr(persistCtx, "host: turn execution failed",
 				unwrapErrForTelemetry(execErr), logAttrs...)
@@ -769,7 +769,7 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 			// here is the directory purge, and the caller's request is
 			// already satisfied.
 			telemetry.WarnErr(ctx, "host: purge deleted session residue failed", err,
-				otellog.String("conversation.id", id))
+				attribute.String("conversation.id", id))
 		}
 		h.deleteConversationCheckpoints(ctx, id)
 		return nil

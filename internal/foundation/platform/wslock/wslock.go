@@ -29,7 +29,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
@@ -266,5 +266,5 @@ func closeQuiet(ctx context.Context, file *os.File) {
 		return
 	}
 	telemetry.WarnErr(ctx, "wslock: close lock file failed", err,
-		otellog.String("path", name))
+		attribute.String("path", name))
 }

@@ -7,7 +7,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // fragment is one model-facing instruction fragment. Files are plain
@@ -105,7 +105,7 @@ func (s *Service) modeSections(ctx context.Context) []Section {
 	spec, ok := modeFragments[mode]
 	if !ok {
 		telemetry.Warn(ctx, "worldstate: unknown collaboration mode, using default instructions",
-			log.String("mode", mode))
+			attribute.String("mode", mode))
 		return nil
 	}
 	return renderFragments(ctx, s, []fragment{spec})
@@ -122,7 +122,7 @@ func (s *Service) personalitySections(ctx context.Context) []Section {
 	spec, ok := personalityFragments[name]
 	if !ok {
 		telemetry.Warn(ctx, "worldstate: unknown personality, using neutral default",
-			log.String("personality", name))
+			attribute.String("personality", name))
 		return nil
 	}
 	return renderFragments(ctx, s, []fragment{spec})
@@ -142,9 +142,9 @@ func (s *Service) readFragment(ctx context.Context, rel string) (string, bool) {
 	if len(data) > promptFragmentMaxBytes {
 		warnFragmentOnce(ctx, rel,
 			"worldstate: instruction fragment exceeds size budget",
-			log.String("fragment.file", rel),
-			log.Int("bytes", len(data)),
-			log.Int("budget_bytes", promptFragmentMaxBytes))
+			attribute.String("fragment.file", rel),
+			attribute.Int("bytes", len(data)),
+			attribute.Int("budget_bytes", promptFragmentMaxBytes))
 		return "", false
 	}
 	text := strings.TrimSpace(string(data))
@@ -156,13 +156,13 @@ func (s *Service) readFragment(ctx context.Context, rel string) (string, bool) {
 }
 
 func warnFragmentOnce(
-	ctx context.Context, rel, msg string, attrs ...log.KeyValue,
+	ctx context.Context, rel, msg string, attrs ...attribute.KeyValue,
 ) {
 	if _, loaded := fragmentWarned.LoadOrStore(rel, struct{}{}); loaded {
 		return
 	}
-	all := append([]log.KeyValue{
-		log.String("fragment.file", rel),
+	all := append([]attribute.KeyValue{
+		attribute.String("fragment.file", rel),
 	}, attrs...)
 	telemetry.Warn(ctx, msg, all...)
 }

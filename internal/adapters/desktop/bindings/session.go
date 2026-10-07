@@ -12,7 +12,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
@@ -159,8 +159,8 @@ func delegationNoteDTO(
 	if err := json.Unmarshal(t.Payload, &payload); err != nil {
 		telemetry.WarnErr(ctx, "session: decode delegation note payload failed",
 			err,
-			otellog.String("conversation.id", conversationID),
-			otellog.String("kind", t.Kind))
+			attribute.String("conversation.id", conversationID),
+			attribute.String("kind", t.Kind))
 		return nil
 	}
 	return &DelegationNoteDTO{

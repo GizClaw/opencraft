@@ -203,8 +203,8 @@ func TestCreateRegistersAndPersists(t *testing.T) {
 	}
 	assertGraphMatches(t, engineSettings["graph"], testGraph)
 	// Dynamic subagents lift flowcraft's node-routing guard (0 =
-	// unlimited) and bound the run with wall clock instead, so a
-	// long-horizon subagent is never cut off by a node budget.
+	// unlimited) and declare no run-level wall clock, so a long-horizon
+	// subagent is never cut off by a node budget or a timeout.
 	build, ok := engineSettings["build"].(map[string]any)
 	if !ok {
 		t.Fatalf("engine settings build = %T, want object", engineSettings["build"])
@@ -212,8 +212,11 @@ func TestCreateRegistersAndPersists(t *testing.T) {
 	if got := build["max_iterations"]; got != float64(0) {
 		t.Errorf("build.max_iterations = %v, want 0 (unlimited)", got)
 	}
-	if def.Policy == nil || def.Policy.RunTimeout != "2h" {
-		t.Errorf("policy = %+v, want run_timeout 2h", def.Policy)
+	if _, ok := build["timeout"]; ok {
+		t.Errorf("build.timeout = %v, want none", build["timeout"])
+	}
+	if def.Policy != nil && def.Policy.RunTimeout != "" {
+		t.Errorf("policy = %+v, want no run_timeout", def.Policy)
 	}
 
 	// Persisted declaration round-trips.

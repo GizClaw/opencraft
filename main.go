@@ -23,7 +23,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 //go:embed all:frontend/dist
@@ -99,9 +99,9 @@ func main() {
 				telemetry.Info(context.Background(),
 					fmt.Sprintf("desktop: second instance args=%v workingDir=%s",
 						data.Args, data.WorkingDir),
-					otellog.String("profile", launch.Profile),
-					otellog.String("state_root", launch.DataDir),
-					otellog.String("app_home", launch.AppHome))
+					attribute.String("profile", launch.Profile),
+					attribute.String("state_root", launch.DataDir),
+					attribute.String("app_home", launch.AppHome))
 				desktop.ShowMainWindow(shell)
 			},
 		}
@@ -191,10 +191,10 @@ func main() {
 			telemetry.Info(context.Background(),
 				fmt.Sprintf("desktop: second instance args=%v workingDir=%s",
 					attempt.Args, attempt.WorkingDir),
-				otellog.Int("pid", attempt.PID),
-				otellog.String("profile", launch.Profile),
-				otellog.String("state_root", launch.DataDir),
-				otellog.String("app_home", launch.AppHome))
+				attribute.Int("pid", attempt.PID),
+				attribute.String("profile", launch.Profile),
+				attribute.String("state_root", launch.DataDir),
+				attribute.String("app_home", launch.AppHome))
 			desktop.ShowMainWindow(shell)
 		})
 	}

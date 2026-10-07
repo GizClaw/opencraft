@@ -11,7 +11,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
@@ -97,9 +97,9 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 	o.mu.Unlock()
 	if req == nil {
 		telemetry.Warn(ctx, "memory: archive skipped run with no captured request",
-			otellog.String("conversation", id.ConversationID),
-			otellog.String("run", id.RunID),
-			otellog.String("status", string(res.Status)))
+			attribute.String("conversation", id.ConversationID),
+			attribute.String("run", id.RunID),
+			attribute.String("status", string(res.Status)))
 		return
 	}
 
@@ -118,9 +118,9 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 	raw := extractConversation(req, res)
 	if len(raw) == 0 {
 		telemetry.Warn(ctx, "memory: archive skipped run with no conversation",
-			otellog.String("conversation", id.ConversationID),
-			otellog.String("run", id.RunID),
-			otellog.String("status", string(res.Status)))
+			attribute.String("conversation", id.ConversationID),
+			attribute.String("run", id.RunID),
+			attribute.String("status", string(res.Status)))
 		return
 	}
 	// Memory folding needs at least one produced message; a turn that
@@ -139,9 +139,9 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 		id.ConversationID, id.RunID, raw,
 	); err != nil {
 		telemetry.WarnErr(ctx, "memory: archive turn failed", err,
-			otellog.String("conversation", id.ConversationID),
-			otellog.String("run", id.RunID),
-			otellog.String("status", string(res.Status)))
+			attribute.String("conversation", id.ConversationID),
+			attribute.String("run", id.RunID),
+			attribute.String("status", string(res.Status)))
 	}
 }
 

@@ -23,7 +23,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
@@ -792,7 +792,7 @@ func archiveTurnRecord(
 		if err := json.Unmarshal(turn.ArtifactsJSON, &rec.Artifacts); err != nil {
 			telemetry.WarnErr(ctx,
 				"sessions: decode turn artifacts failed", err,
-				otellog.String("conversation.id", conversationID))
+				attribute.String("conversation.id", conversationID))
 		}
 	}
 	return rec
@@ -822,7 +822,7 @@ func (s *Store) List() ([]Meta, error) {
 			if err := json.Unmarshal(c.UsageJSON, &usage); err != nil {
 				telemetry.WarnErr(context.Background(),
 					"sessions: decode conversation usage failed", err,
-					otellog.String("conversation.id", c.ID))
+					attribute.String("conversation.id", c.ID))
 			}
 		}
 		usage.Model = NormalizeModelName(usage.Model)
@@ -941,7 +941,7 @@ func (s *Store) LoadUsage(ctx context.Context, id string) (Usage, error) {
 	if len(c.UsageJSON) > 0 {
 		if err := json.Unmarshal(c.UsageJSON, &usage); err != nil {
 			telemetry.WarnErr(ctx, "sessions: decode usage failed", err,
-				otellog.String("conversation.id", id))
+				attribute.String("conversation.id", id))
 		}
 	}
 	usage.Model = NormalizeModelName(usage.Model)
@@ -1028,7 +1028,7 @@ func (s *Store) RecordUsageIfEmpty(
 		var existing Usage
 		if err := json.Unmarshal(c.UsageJSON, &existing); err != nil {
 			telemetry.WarnErr(ctx, "sessions: decode usage before empty-seed failed", err,
-				otellog.String("conversation.id", id))
+				attribute.String("conversation.id", id))
 		} else if existing.TotalTokens > 0 {
 			return UsageAlreadyRecorded, nil
 		}
@@ -1076,7 +1076,7 @@ func (s *Store) AddUsage(ctx context.Context, id string, delta Usage) error {
 	if len(c.UsageJSON) > 0 {
 		if err := json.Unmarshal(c.UsageJSON, &usage); err != nil {
 			telemetry.WarnErr(ctx, "sessions: decode usage before add failed", err,
-				otellog.String("conversation.id", id))
+				attribute.String("conversation.id", id))
 		}
 	}
 	usage.Model = NormalizeModelName(usage.Model)
@@ -1126,7 +1126,7 @@ func (s *Store) writeUsage(ctx context.Context, id string, raw []byte) (bool, er
 // so a session whose totals stopped moving stays explainable.
 func skippedUsageWrite(ctx context.Context, id string) error {
 	telemetry.Info(ctx, "sessions: usage write skipped; conversation is gone",
-		otellog.String("conversation.id", id))
+		attribute.String("conversation.id", id))
 	return nil
 }
 

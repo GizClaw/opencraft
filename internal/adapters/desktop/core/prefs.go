@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -140,7 +140,7 @@ func LoadPrefs(userDir string) DesktopPrefs {
 			// root and app home — is the reliable witness.)
 			telemetry.Info(context.Background(),
 				"desktop prefs: config dir defaulted",
-				otellog.String("config_dir", userDir))
+				attribute.String("config_dir", userDir))
 		} else {
 			telemetry.WarnErr(context.Background(),
 				"desktop prefs: resolve config dir failed", err)
@@ -223,7 +223,7 @@ func SavePrefs(userDir string, prefs DesktopPrefs) error {
 		}
 		telemetry.Info(context.Background(),
 			"desktop prefs: config dir defaulted",
-			otellog.String("config_dir", userDir))
+			attribute.String("config_dir", userDir))
 	}
 	data, err := json.MarshalIndent(prefs, "", "  ")
 	if err != nil {

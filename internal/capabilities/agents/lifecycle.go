@@ -23,7 +23,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 	"sigs.k8s.io/yaml"
 
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
@@ -450,9 +450,9 @@ func (l *Lifecycle) Create(ctx context.Context, spec AgentSpec) (CreateResult, e
 			runtimecore.WithRemoveTimeout(removeTimeout),
 		); unregErr != nil {
 			telemetry.Error(ctx, "agents: rollback registration after persist failure",
-				log.String("agent", spec.Card.Name),
-				log.String("persist_error", err.Error()),
-				log.String("rollback_error", unregErr.Error()))
+				attribute.String("agent", spec.Card.Name),
+				attribute.String("persist_error", err.Error()),
+				attribute.String("rollback_error", unregErr.Error()))
 		} else {
 			l.forgetKnown(spec.Card.Name)
 		}
@@ -596,17 +596,17 @@ func (l *Lifecycle) restoreAfterFailedUpdate(
 		runtimecore.WithRemoveTimeout(removeTimeout),
 	); err != nil {
 		telemetry.Error(ctx, "agents: unregister failed definition during restore",
-			log.String("agent", name),
-			log.String("update_error", updateErr.Error()),
-			log.String("restore_error", err.Error()))
+			attribute.String("agent", name),
+			attribute.String("update_error", updateErr.Error()),
+			attribute.String("restore_error", err.Error()))
 		return
 	}
 	def, err := l.agentDefinition(old)
 	if err != nil {
 		telemetry.Error(ctx, "agents: assemble restored definition failed",
-			log.String("agent", name),
-			log.String("update_error", updateErr.Error()),
-			log.String("restore_error", err.Error()))
+			attribute.String("agent", name),
+			attribute.String("update_error", updateErr.Error()),
+			attribute.String("restore_error", err.Error()))
 		return
 	}
 	if _, err := l.registrar().RegisterAgent(
@@ -614,9 +614,9 @@ func (l *Lifecycle) restoreAfterFailedUpdate(
 		runtimecore.WithToolAssembly(toolAssemblyResource),
 	); err != nil {
 		telemetry.Error(ctx, "agents: restore registration after update failure",
-			log.String("agent", name),
-			log.String("update_error", updateErr.Error()),
-			log.String("restore_error", err.Error()))
+			attribute.String("agent", name),
+			attribute.String("update_error", updateErr.Error()),
+			attribute.String("restore_error", err.Error()))
 	}
 }
 

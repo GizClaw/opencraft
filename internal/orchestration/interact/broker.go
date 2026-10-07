@@ -13,7 +13,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/runtime/session"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Broker subscribes to the runtime's prompt events and routes each
@@ -284,8 +284,8 @@ func (b *Broker) onPromptResolved(ctx context.Context, env event.Envelope) error
 		if err := r.Resolve(ctx, res.PromptID, res.Status,
 			b.resolutionReason(res.PromptID, res.Status)); err != nil {
 			telemetry.Warn(ctx, "runtime: prompt resolution failed",
-				otellog.String("prompt", res.PromptID),
-				otellog.String("error", err.Error()))
+				attribute.String("prompt", res.PromptID),
+				attribute.String("error", err.Error()))
 		}
 	} else {
 		b.resolutionReason(res.PromptID, res.Status)

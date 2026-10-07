@@ -19,7 +19,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Event names. Matcher (when non-empty) is a regex over the event's
@@ -122,8 +122,8 @@ func LoadWithSources(
 			// telemetry, matching the registry's per-plugin error model.
 			telemetry.Warn(ctx,
 				"opencraft hooks: skipping plugin hook source",
-				otellog.String("path", src.Path),
-				otellog.String("error", err.Error()))
+				attribute.String("path", src.Path),
+				attribute.String("error", err.Error()))
 		}
 	}
 	return m, nil
@@ -234,8 +234,8 @@ func (m *Manager) run(
 	data, err := json.Marshal(runPayload)
 	if err != nil {
 		telemetry.Warn(ctx, "opencraft hooks: marshal event failed",
-			otellog.String("event", event),
-			otellog.String("error", err.Error()))
+			attribute.String("event", event),
+			attribute.String("error", err.Error()))
 		return
 	}
 	cmd := exec.CommandContext(runCtx, "sh", "-c", h.Command)
@@ -252,10 +252,10 @@ func (m *Manager) run(
 			output = output[:maxHookOutput]
 		}
 		telemetry.Warn(ctx, "opencraft hooks: command hook failed",
-			otellog.String("event", event),
-			otellog.String("command", h.Command),
-			otellog.String("error", err.Error()),
-			otellog.String("output", output))
+			attribute.String("event", event),
+			attribute.String("command", h.Command),
+			attribute.String("error", err.Error()),
+			attribute.String("output", output))
 	}
 }
 

@@ -7,7 +7,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
 )
@@ -104,13 +104,13 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 	}
 	if len(errs) > 0 {
 		telemetry.Warn(ctx, "skills: discovery errors",
-			log.Int("count", len(errs)),
-			log.String("errors", strings.Join(errs, "; ")))
+			attribute.Int("count", len(errs)),
+			attribute.String("errors", strings.Join(errs, "; ")))
 	}
 	if len(warnings) > 0 {
 		telemetry.Info(ctx, "skills: discovery warnings",
-			log.Int("count", len(warnings)),
-			log.String("warnings", strings.Join(warnings, "; ")))
+			attribute.Int("count", len(warnings)),
+			attribute.String("warnings", strings.Join(warnings, "; ")))
 	}
 	return svc, nil
 }

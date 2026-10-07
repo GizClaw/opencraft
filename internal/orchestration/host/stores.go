@@ -20,7 +20,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // UsageStore returns the user-level usage store attached by
@@ -172,7 +172,7 @@ func (m *Manager) scheduleSearchBackfill(
 		); err != nil {
 			telemetry.WarnErr(walkCtx,
 				"host: message search index backfill failed; retried on the next open",
-				err, otellog.String("root", root))
+				err, attribute.String("root", root))
 		}
 	}()
 }

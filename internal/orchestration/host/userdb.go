@@ -23,7 +23,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // OpenUserDB opens the user-level database (user.db under the manager
@@ -216,7 +216,7 @@ func (m *Manager) pruneSkillUsage(
 		}
 		if rows > 0 {
 			telemetry.Info(pruneCtx, "host: skill usage pruned",
-				otellog.Int64("rows", rows))
+				attribute.Int64("rows", rows))
 		}
 	}()
 }

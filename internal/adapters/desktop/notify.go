@@ -11,7 +11,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Notification copy mirrors the pre-migration frontend limits: macOS
@@ -112,7 +112,7 @@ func (d *Desktop) sendNotification(id, title, body string) {
 	if err != nil {
 		telemetry.WarnErr(context.Background(),
 			"desktop: system notification failed", err,
-			otellog.String("notification_id", id))
+			attribute.String("notification_id", id))
 	}
 }
 

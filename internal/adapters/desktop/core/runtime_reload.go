@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/httpprobe"
@@ -113,8 +113,8 @@ func (c *Core) ApplyDocumentReload(ctx context.Context) error {
 	telemetry.WarnErr(ctx,
 		"host: in-place document reload unavailable; rebuilding",
 		err,
-		otellog.String("reason", string(host.AssemblyReasonFrom(ctx))),
-		otellog.String("workspace", c.ActiveWorkDir()))
+		attribute.String("reason", string(host.AssemblyReasonFrom(ctx))),
+		attribute.String("workspace", c.ActiveWorkDir()))
 	return c.RebuildRuntime(ctx)
 }
 
@@ -180,7 +180,7 @@ func (c *Core) reconcileProbe(ctx context.Context) {
 	if blocker := probeBlocker(c.UserDir); blocker != "" {
 		if httpprobe.Uninstall() {
 			telemetry.Warn(ctx, "httpprobe: probe stood down",
-				otellog.String("reason", blocker))
+				attribute.String("reason", blocker))
 		}
 		return
 	}

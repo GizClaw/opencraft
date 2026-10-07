@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
@@ -154,10 +154,10 @@ func (c *Core) handlePluginTelemetryConfigure(
 	// Installing a sink is a configuration event the user asked for,
 	// not a warning: it repeats on every plugin reconnect.
 	telemetry.Info(ctx, "plugin telemetry: OTLP export sink installed",
-		otellog.String("plugin.id", pluginID),
-		otellog.String("telemetry.endpoint", normalized.Endpoint),
-		otellog.Bool("telemetry.insecure", normalized.Insecure),
-		otellog.String("telemetry.header_names",
+		attribute.String("plugin.id", pluginID),
+		attribute.String("telemetry.endpoint", normalized.Endpoint),
+		attribute.Bool("telemetry.insecure", normalized.Insecure),
+		attribute.String("telemetry.header_names",
 			strings.Join(normalized.HeaderNames(), ",")))
 	c.auditTelemetry(octelemetry.AuditEntry{
 		Action:      octelemetry.AuditInstall,
@@ -188,7 +188,7 @@ func (c *Core) handlePluginProcessExit(pluginID string) {
 	if err := c.dropPluginTelemetry(pluginID, "plugin process exited"); err != nil {
 		telemetry.WarnErr(context.Background(),
 			"plugin telemetry: clear sink after plugin exit failed", err,
-			otellog.String("plugin.id", pluginID))
+			attribute.String("plugin.id", pluginID))
 	}
 }
 
@@ -236,8 +236,8 @@ func (c *Core) restorePluginTelemetry() error {
 		return err
 	}
 	telemetry.Warn(ctx, "plugin telemetry: export sink restored",
-		otellog.String("plugin.id", pluginID),
-		otellog.String("telemetry.endpoint", sink.Endpoint))
+		attribute.String("plugin.id", pluginID),
+		attribute.String("telemetry.endpoint", sink.Endpoint))
 	c.auditTelemetry(octelemetry.AuditEntry{
 		Action:      octelemetry.AuditInstall,
 		PluginID:    pluginID,
@@ -269,8 +269,8 @@ func (c *Core) dropPluginTelemetry(pluginID, reason string) error {
 		return err
 	}
 	telemetry.Warn(ctx, "plugin telemetry: export sink removed",
-		otellog.String("plugin.id", pluginID),
-		otellog.String("telemetry.reason", reason))
+		attribute.String("plugin.id", pluginID),
+		attribute.String("telemetry.reason", reason))
 	c.auditTelemetry(octelemetry.AuditEntry{
 		Action:      octelemetry.AuditRemove,
 		PluginID:    pluginID,

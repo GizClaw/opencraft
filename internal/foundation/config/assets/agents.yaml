@@ -22,17 +22,13 @@ agents:
         # graph: { file: graphs/my-assistant.yaml }.
         graph: { embed: assets/graphs/assistant.yaml }
         build:
-          timeout: 2h
           # flowcraft's loop guard counts routed nodes (a skipped node
           # still routes), and each tool round in this graph runs
           # compact + llm + tools (3 nodes). 0 lifts the guard so long
-          # implementation work is never cut off by a node budget; the
-          # run timeout below is what bounds a runaway turn.
+          # implementation work is never cut off by a node budget, and
+          # neither build.timeout nor policy.run_timeout is declared: a
+          # turn ends when its work does or the user stops it.
           max_iterations: 0
-    # Bounds one whole turn end to end — every revise attempt included —
-    # which build.timeout (per Execute) does not: a revise restarts it.
-    policy:
-      run_timeout: 2h
     prepare:
       - type: opencraft.media
         settings:

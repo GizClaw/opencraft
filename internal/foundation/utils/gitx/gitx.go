@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // Root walks upward from dir looking for a .git marker. Empty means
@@ -47,9 +47,9 @@ func RunBounded(
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "git", append([]string{"-C", root}, args...)...)
-	attrs := []otellog.KeyValue{
-		otellog.String("git.root", root),
-		otellog.String("git.args", strings.Join(args, " ")),
+	attrs := []attribute.KeyValue{
+		attribute.String("git.root", root),
+		attribute.String("git.args", strings.Join(args, " ")),
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

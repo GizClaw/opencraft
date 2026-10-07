@@ -13,7 +13,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
@@ -127,7 +127,7 @@ func importLegacyConversation(
 			// there is nothing to import into a deleted conversation.
 			telemetry.Info(ctx,
 				"compat: legacy session skipped; its conversation was deleted",
-				otellog.String("session", id))
+				attribute.String("session", id))
 			return nil
 		}
 		return err
@@ -230,7 +230,7 @@ func importLegacyConversation(
 			// write: the same skip, one race later.
 			telemetry.Info(ctx,
 				"compat: legacy session skipped; its conversation was deleted",
-				otellog.String("session", id))
+				attribute.String("session", id))
 			return nil
 		}
 		return err
@@ -247,7 +247,7 @@ func importLegacyConversation(
 			}
 			telemetry.WarnErr(ctx, "compat: remove legacy session file failed",
 				os.Remove(filepath.Join(dir, entry.Name())),
-				otellog.String("session", id))
+				attribute.String("session", id))
 		}
 	}
 	return nil

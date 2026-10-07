@@ -22,7 +22,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
-	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/assembly"
@@ -258,7 +258,7 @@ func (t *Tool) Execute(
 			"remember: encode result: %v", err)
 	}
 	telemetry.Info(ctx, "remember: memory updated",
-		log.Int("operations", len(env.Applied)))
+		attribute.Int("operations", len(env.Applied)))
 	return message.NewTextContent(string(encoded)), nil
 }
 

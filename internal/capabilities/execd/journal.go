@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 const childrenDirName = "children"
@@ -137,8 +137,8 @@ func sweepOrphans(ctx context.Context) {
 		}
 		if reaped {
 			telemetry.Warn(ctx, "execd: reaped orphaned child",
-				otellog.Int("execd.pid", record.PID),
-				otellog.Int("execd.parent_pid", record.ParentPID))
+				attribute.Int("execd.pid", record.PID),
+				attribute.Int("execd.parent_pid", record.ParentPID))
 		}
 		if !alive || reaped {
 			// The child is gone (or we just reaped it), so the record

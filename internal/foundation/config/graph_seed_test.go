@@ -158,11 +158,13 @@ func TestAssistantGraphDiscardsFailedStreams(t *testing.T) {
 // TestAssistantAgentLiftsIterationGuard guards the default agent's
 // budgets: the graph's node-routing guard is lifted with an explicit 0
 // (an absent key keeps flowcraft's default 100, which ordinary tool
-// work exhausts) and policy.run_timeout bounds the whole run instead,
-// including revise attempts that restart the per-Execute timeout.
+// work exhausts) and no run-level wall clock is declared either: with
+// neither build.timeout nor policy.run_timeout set, a turn ends when
+// its work does or the user stops it.
 func TestAssistantAgentLiftsIterationGuard(t *testing.T) {
 	type buildSpec struct {
-		MaxIterations *int `yaml:"max_iterations"`
+		MaxIterations *int    `yaml:"max_iterations"`
+		Timeout       *string `yaml:"timeout"`
 	}
 	type assistantSpec struct {
 		Engine struct {
@@ -195,7 +197,10 @@ func TestAssistantAgentLiftsIterationGuard(t *testing.T) {
 	if *build.MaxIterations != 0 {
 		t.Fatalf("build.max_iterations = %d, want 0 (unlimited)", *build.MaxIterations)
 	}
-	if got := assistant.Policy.RunTimeout; got != "2h" {
-		t.Fatalf("policy.run_timeout = %q, want 2h once the iteration guard is lifted", got)
+	if build.Timeout != nil {
+		t.Fatalf("build.timeout = %q, want none", *build.Timeout)
+	}
+	if got := assistant.Policy.RunTimeout; got != "" {
+		t.Fatalf("policy.run_timeout = %q, want none: the guard is lifted, not traded for a wall clock", got)
 	}
 }

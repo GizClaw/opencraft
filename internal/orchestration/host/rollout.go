@@ -8,7 +8,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -77,10 +77,10 @@ func (h *Host) recordRollout(
 	}
 	if err := rec.Record(ev); err != nil {
 		telemetry.Warn(ctx, "rollout: "+what+" write failed",
-			otellog.String("conversation", ev.ConversationID),
-			otellog.String("run", ev.RunID),
-			otellog.String("type", ev.Type),
-			otellog.String("error", err.Error()))
+			attribute.String("conversation", ev.ConversationID),
+			attribute.String("run", ev.RunID),
+			attribute.String("type", ev.Type),
+			attribute.String("error", err.Error()))
 	}
 }
 
@@ -109,13 +109,13 @@ func (h *Host) rolloutFor(
 	path, err := store.RolloutPath(conversationID)
 	if err != nil {
 		telemetry.WarnErr(ctx, "rollout: resolve path failed", err,
-			otellog.String("conversation.id", conversationID))
+			attribute.String("conversation.id", conversationID))
 		return nil
 	}
 	rec, err := rollout.Open(path)
 	if err != nil {
 		telemetry.WarnErr(ctx, "rollout: open recorder failed", err,
-			otellog.String("conversation.id", conversationID))
+			attribute.String("conversation.id", conversationID))
 		return nil
 	}
 	h.mu.Lock()

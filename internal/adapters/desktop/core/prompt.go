@@ -26,6 +26,11 @@ type Prompt struct {
 	pending map[string]pendingPrompt
 	notify  func(typ string, data any)
 	runConv func(runID string) string
+	// autoApprove, when set, answers a spec before it reaches the UI:
+	// a non-empty option value short-circuits Ask (no pending entry,
+	// no interact event) and becomes the reply, so the asking turn
+	// sees an immediate answer (see SetAutoApprover).
+	autoApprove func(ctx context.Context, spec interact.Spec, conversationID string) (string, bool)
 }
 
 // NewPrompt creates the prompt backend.
@@ -49,14 +54,45 @@ func (p *Prompt) SetRunConvResolver(fn func(runID string) string) {
 	p.mu.Unlock()
 }
 
-// Ask registers one prompt and blocks for an answer.
+// SetAutoApprover installs the predicate that answers a spec without
+// presenting it. It runs before the prompt is registered or emitted;
+// returning an option value with true means the caller of Ask gets an
+// immediate "ok" reply carrying that value and the frontend never
+// sees an interaction. A false return, an empty value (or no approver
+// installed) keeps the interactive flow.
+func (p *Prompt) SetAutoApprover(
+	fn func(ctx context.Context, spec interact.Spec, conversationID string) (string, bool),
+) {
+	p.mu.Lock()
+	p.autoApprove = fn
+	p.mu.Unlock()
+}
+
+// Ask registers one prompt and blocks for an answer, unless an
+// installed auto-approver answers it first.
 func (p *Prompt) Ask(ctx context.Context, spec interact.Spec) (interact.Reply, error) {
-	ch := make(chan interact.Reply, 1)
 	p.mu.Lock()
 	conversationID := ""
 	if p.runConv != nil {
 		conversationID = p.runConv(spec.RunID)
 	}
+	approve := p.autoApprove
+	p.mu.Unlock()
+	if approve != nil {
+		if option, ok := approve(ctx, spec, conversationID); ok && option != "" {
+			// The predicate names the value, so an auto-answered
+			// prompt carries the same option a click would (the
+			// confirm gate's is confirm.OptionYes): the asking tool
+			// sees a reply, not a special case.
+			return interact.Reply{
+				ID:     spec.ID,
+				Status: interact.ReplyOK,
+				Option: &option,
+			}, nil
+		}
+	}
+	ch := make(chan interact.Reply, 1)
+	p.mu.Lock()
 	p.pending[spec.ID] = pendingPrompt{
 		ch:             ch,
 		conversationID: conversationID,

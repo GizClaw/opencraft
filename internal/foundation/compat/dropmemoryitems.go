@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
@@ -137,12 +137,12 @@ func reportMemoryItemsDrift(ctx context.Context, conn *sql.DB) error {
 	}
 
 	telemetry.Info(ctx, "compat: memory_items is derived; the transcript is the history",
-		otellog.Int("memory_rows", memoryRows),
-		otellog.Int("memory_conversations", memoryThreads),
-		otellog.Int("transcript_rows", archived),
-		otellog.Int("transcript_note_rows", notes),
-		otellog.Int("transcript_system_rows", system),
-		otellog.Int("transcript_textless_rows", textless))
+		attribute.Int("memory_rows", memoryRows),
+		attribute.Int("memory_conversations", memoryThreads),
+		attribute.Int("transcript_rows", archived),
+		attribute.Int("transcript_note_rows", notes),
+		attribute.Int("transcript_system_rows", system),
+		attribute.Int("transcript_textless_rows", textless))
 
 	if memoryRows == 0 {
 		return nil
@@ -176,7 +176,7 @@ func reportMemoryItemsDrift(ctx context.Context, conn *sql.DB) error {
 	if len(unexplained) > 0 {
 		telemetry.Warn(ctx,
 			"compat: memory_items held rows the transcript does not",
-			otellog.String("conversations", strings.Join(unexplained, ", ")))
+			attribute.String("conversations", strings.Join(unexplained, ", ")))
 	}
 	return nil
 }

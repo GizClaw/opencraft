@@ -21,7 +21,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
 )
@@ -200,10 +200,10 @@ func warnKraftBudget(ctx context.Context, dropped, published int) {
 	telemetry.Warn(ctx,
 		"plugin agent tools: registry exceeds the aggregate tool budget; "+
 			"the rest are not advertised to the model",
-		otellog.Int("tools_published", published),
-		otellog.Int("tools_dropped", dropped),
-		otellog.Int("max_tools", maxKraftTools),
-		otellog.Int("max_definition_bytes", maxKraftDefinitionBytes))
+		attribute.Int("tools_published", published),
+		attribute.Int("tools_dropped", dropped),
+		attribute.Int("max_tools", maxKraftTools),
+		attribute.Int("max_definition_bytes", maxKraftDefinitionBytes))
 }
 
 func serverTransport(s agent.MCPServer) (mcpsdk.Transport, error) {
@@ -285,7 +285,7 @@ func (s *Source) republish() {
 		if err := s.registrar.Add(t); err != nil {
 			telemetry.WarnErr(s.ctx,
 				"plugin agent tools: publish tool after registry change failed",
-				err, otellog.String("tool", name))
+				err, attribute.String("tool", name))
 		}
 	}
 	for name := range s.kraftTools {

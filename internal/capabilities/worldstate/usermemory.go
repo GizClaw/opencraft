@@ -7,7 +7,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 )
@@ -82,11 +82,11 @@ func (s *Service) userMemorySection(ctx context.Context) (Section, error) {
 		return Section{}, err
 	}
 	telemetry.Info(ctx, "worldstate: user memory injected",
-		log.Int("facts", len(kept)),
-		log.Int("omitted", total-len(kept)),
-		log.Int("total", total),
-		log.Int("bytes", len(rendered)),
-		log.Int("max_chars", cfg.InjectMaxChars))
+		attribute.Int("facts", len(kept)),
+		attribute.Int("omitted", total-len(kept)),
+		attribute.Int("total", total),
+		attribute.Int("bytes", len(rendered)),
+		attribute.Int("max_chars", cfg.InjectMaxChars))
 	return newTextSection(
 		"user_memory", message.RoleUser, strings.TrimRight(rendered, "\n")), nil
 }

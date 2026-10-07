@@ -16,7 +16,7 @@ import (
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // AllowedPermissions is the closed set of host capabilities a plugin
@@ -182,7 +182,7 @@ func retiredPermission(name string) bool {
 var warnedInputs sync.Map
 
 // warnOnce logs one compatibility warning per (plugin, input) pair.
-func warnOnce(key, msg string, attrs ...otellog.KeyValue) {
+func warnOnce(key, msg string, attrs ...attribute.KeyValue) {
 	if _, loaded := warnedInputs.LoadOrStore(key, struct{}{}); loaded {
 		return
 	}
@@ -192,8 +192,8 @@ func warnOnce(key, msg string, attrs ...otellog.KeyValue) {
 func warnRetiredPermission(id, name string) {
 	warnOnce(id+"\x00permission\x00"+name,
 		"plugins: manifest declares a retired permission; ignoring it",
-		otellog.String("plugin", id),
-		otellog.String("permission", name),
+		attribute.String("plugin", id),
+		attribute.String("permission", name),
 	)
 }
 
@@ -206,9 +206,9 @@ func warnLegacyGrantPair(id string, r PermissionRename) {
 	warnOnce(id+"\x00permission-pair\x00"+r.From,
 		"plugins: manifest declares a grant and its replacement spelling; "+
 			"reading it as the replacement",
-		otellog.String("plugin", id),
-		otellog.String("declared", r.From),
-		otellog.String("canonical", r.To),
+		attribute.String("plugin", id),
+		attribute.String("declared", r.From),
+		attribute.String("canonical", r.To),
 	)
 }
 
@@ -220,7 +220,7 @@ func warnLegacyKraftPair(id string) {
 	warnOnce(id+"\x00kraft-section-pair",
 		"plugins: manifest declares both kraft and its legacy capability "+
 			"key with the same value; reading the kraft key",
-		otellog.String("plugin", id),
+		attribute.String("plugin", id),
 	)
 }
 
@@ -269,7 +269,7 @@ func warnLegacyContributes(id string, keys []string) {
 		"plugins: manifest declares contributes."+strings.Join(keys, ", contributes.")+
 			", which the host no longer reads; register panels, sidebar "+
 			"entries and pet packs from the bundle",
-		otellog.String("plugin", id),
-		otellog.String("contributes", strings.Join(keys, ",")),
+		attribute.String("plugin", id),
+		attribute.String("contributes", strings.Join(keys, ",")),
 	)
 }

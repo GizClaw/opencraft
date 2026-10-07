@@ -13,7 +13,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
@@ -127,14 +127,14 @@ func (h *Host) recoverInterruptedRuns(ctx context.Context) {
 	}
 	if report.Recovered > 0 || report.Failed > 0 || report.Pending > 0 {
 		telemetry.Info(ctx, "host: crash recovery pass finished",
-			otellog.String("workspace", h.workDir),
-			otellog.Int("recovered", report.Recovered),
-			otellog.Int("archived_leftovers", report.Archived),
-			otellog.Int("discarded", report.Discarded),
-			otellog.Int("skipped_live", report.SkippedLive),
-			otellog.String("workspace_holder", report.WorkspaceHolder),
-			otellog.Int("failed", report.Failed),
-			otellog.Int("pending", report.Pending))
+			attribute.String("workspace", h.workDir),
+			attribute.Int("recovered", report.Recovered),
+			attribute.Int("archived_leftovers", report.Archived),
+			attribute.Int("discarded", report.Discarded),
+			attribute.Int("skipped_live", report.SkippedLive),
+			attribute.String("workspace_holder", report.WorkspaceHolder),
+			attribute.Int("failed", report.Failed),
+			attribute.Int("pending", report.Pending))
 	}
 }
 
@@ -150,7 +150,7 @@ func (h *Host) recoverRun(
 	cp, err := stateStore.Load(ctx, runID)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: load run checkpoint for recovery failed",
-			err, otellog.String("run.id", runID))
+			err, attribute.String("run.id", runID))
 		report.Failed++
 		return
 	}
@@ -191,7 +191,7 @@ func (h *Host) recoverRun(
 		return
 	} else if !errors.Is(err, state.ErrNotFound) {
 		telemetry.WarnErr(ctx, "host: look up archived turn failed",
-			err, otellog.String("run.id", runID))
+			err, attribute.String("run.id", runID))
 		report.Failed++
 		return
 	}
@@ -227,14 +227,14 @@ func (h *Host) recoverRun(
 		// still worth writing, the next turn simply has no folded
 		// context for it.
 		telemetry.Warn(ctx, "host: recovering turn without a memory sink",
-			otellog.String("run.id", runID))
+			attribute.String("run.id", runID))
 		err = h.store.AppendTurnWithRunID(
 			ctx, conversationID, runID, msgs)
 	}
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: recover interrupted turn failed", err,
-			otellog.String("conversation.id", conversationID),
-			otellog.String("run.id", runID))
+			attribute.String("conversation.id", conversationID),
+			attribute.String("run.id", runID))
 		report.Failed++
 		return
 	}
@@ -249,10 +249,10 @@ func (h *Host) recoverRun(
 	report.Recovered++
 	h.dropRecoveredCheckpoint(ctx, stateStore, runID, "")
 	telemetry.Info(ctx, "host: recovered interrupted turn",
-		otellog.String("conversation.id", conversationID),
-		otellog.String("run.id", runID),
-		otellog.Int("steps", len(cp.Steps)),
-		otellog.Int("iteration", cp.Iteration))
+		attribute.String("conversation.id", conversationID),
+		attribute.String("run.id", runID),
+		attribute.Int("steps", len(cp.Steps)),
+		attribute.Int("iteration", cp.Iteration))
 }
 
 // dropRecoveredCheckpoint deletes one checkpoint a recovery pass has
@@ -266,13 +266,13 @@ func (h *Host) dropRecoveredCheckpoint(
 ) {
 	if err := stateStore.Delete(ctx, runID); err != nil {
 		telemetry.WarnErr(ctx, "host: delete recovered checkpoint failed",
-			err, otellog.String("run.id", runID))
+			err, attribute.String("run.id", runID))
 		return
 	}
 	if reason != "" {
 		telemetry.Info(ctx, "host: dropped unrecoverable run checkpoint",
-			otellog.String("run.id", runID),
-			otellog.String("reason", reason))
+			attribute.String("run.id", runID),
+			attribute.String("reason", reason))
 	}
 }
 
@@ -389,18 +389,18 @@ func (m *Manager) claimWorkspaceLock(
 	}
 	if holder, held := wslock.IsHeld(err); held {
 		telemetry.Info(ctx, "host: workspace held by another live process",
-			otellog.String("workspace", layout.WorkDir),
-			otellog.String("lock", path),
-			otellog.Int("pid", holder.PID),
-			otellog.String("kind", holder.Kind),
-			otellog.String("since", holder.Started))
+			attribute.String("workspace", layout.WorkDir),
+			attribute.String("lock", path),
+			attribute.Int("pid", holder.PID),
+			attribute.String("kind", holder.Kind),
+			attribute.String("since", holder.Started))
 		return RecoveryReport{
 			At:              time.Now().UTC(),
 			WorkspaceHolder: formatHolder(holder),
 		}, false
 	}
 	telemetry.WarnErr(ctx, "host: workspace lock unavailable; "+
-		"recovering without it", err, otellog.String("lock", path))
+		"recovering without it", err, attribute.String("lock", path))
 	return RecoveryReport{}, true
 }
 

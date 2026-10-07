@@ -73,7 +73,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
@@ -566,8 +566,8 @@ func (m *Manager) start(id string, k Kraft, bin string) (*process, error) {
 		sc.Buffer(make([]byte, 0, 4096), stderrLineLimit)
 		for sc.Scan() {
 			telemetry.Warn(m.baseCtx, "plugin stderr",
-				otellog.String("plugin.id", id),
-				otellog.String("plugin.line", redactStderrLine(sc.Text())))
+				attribute.String("plugin.id", id),
+				attribute.String("plugin.line", redactStderrLine(sc.Text())))
 		}
 		telemetry.WarnErr(m.baseCtx,
 			"plugin kraft: drain stderr failed", sc.Err())
@@ -731,7 +731,7 @@ func (p *process) readLoop(r io.Reader) {
 	if err := sc.Err(); err != nil {
 		telemetry.WarnErr(p.manager.baseCtx,
 			"plugin kraft: read output failed", err,
-			otellog.String("plugin.id", p.id))
+			attribute.String("plugin.id", p.id))
 		p.stop()
 	}
 }
@@ -1068,8 +1068,8 @@ func (m *Manager) warnPermissionDenied(id, perm string) {
 	telemetry.Warn(m.baseCtx,
 		"plugin kraft: refused a primitive the manifest does not declare; "+
 			"declare the permission in plugin.json",
-		otellog.String("plugin", id),
-		otellog.String("permission", perm),
+		attribute.String("plugin", id),
+		attribute.String("permission", perm),
 	)
 }
 

@@ -48,7 +48,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
 )
@@ -175,9 +175,9 @@ func (l *Lock) Serve(ctx context.Context, handler func(Launch)) {
 	listener, err := listenEndpoint(endpoint)
 	if err != nil {
 		telemetry.Warn(ctx, "guilock: state root cannot receive second launches",
-			otellog.String("state_root", l.root),
-			otellog.String("endpoint", endpoint),
-			otellog.String("error", err.Error()))
+			attribute.String("state_root", l.root),
+			attribute.String("endpoint", endpoint),
+			attribute.String("error", err.Error()))
 		return
 	}
 	go func() {
@@ -199,8 +199,8 @@ func (l *Lock) Serve(ctx context.Context, handler func(Launch)) {
 					return
 				}
 				telemetry.Warn(ctx, "guilock: raise endpoint accept failed",
-					otellog.String("endpoint", endpoint),
-					otellog.String("error", err.Error()))
+					attribute.String("endpoint", endpoint),
+					attribute.String("error", err.Error()))
 				// A persistent accept error must not become a hot
 				// loop; a raise is worth retrying briefly.
 				time.Sleep(100 * time.Millisecond)

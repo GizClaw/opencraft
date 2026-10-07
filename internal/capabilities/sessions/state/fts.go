@@ -21,7 +21,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
@@ -239,7 +239,7 @@ func (s *Store) searchHits(
 		parsed, err := time.Parse(atLayout, at)
 		if err != nil {
 			telemetry.WarnErr(ctx, "state: search hit timestamp unreadable", err,
-				otellog.String("conversation.id", hit.ConversationID))
+				attribute.String("conversation.id", hit.ConversationID))
 		} else {
 			hit.At = parsed
 		}
@@ -384,7 +384,7 @@ func (s *Store) indexMessageBatch(ctx context.Context, rows []indexRow) error {
 			// searchable for nothing rather than failing the
 			// migration: it is skipped like memory's window does.
 			telemetry.WarnErr(ctx, "state: skip undecodable message while indexing",
-				err, otellog.Int64("message.id", row.id))
+				err, attribute.Int64("message.id", row.id))
 			continue
 		}
 		if err := insertMessageFTS(ctx, tx, row.conv, row.role, row.at,
