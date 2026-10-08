@@ -1,8 +1,10 @@
 package apps
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -280,6 +282,224 @@ func TestDownloadStopsReadingAtTheBound(t *testing.T) {
 		"is larger than the 1.0 MiB one package may be") {
 		t.Fatalf("inspect an endless download = %v", err)
 	}
+}
+
+// TestGitSourcesAreFetchGuarded: the vocabulary decides what a remote
+// is, and the fetch policy decides whether this host may reach it — the
+// same guard every other outbound fetch runs under, on the git half
+// too. A pasted remote reaches the clone only past that check, which is
+// what the second half pins: under an allowing policy the same source
+// gets as far as git (and fails there, because nothing listens on the
+// port), so the refusal above is the policy's and not the connection's.
+//
+// The file:// half needs no guard, and
+// TestInspectClonesAGitSourceAtTheRef is where that is exercised: a
+// repository on this machine is not a fetch.
+func TestGitSourcesAreFetchGuarded(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	// A port nothing listens on, taken from the kernel rather than
+	// guessed, so "the clone failed" cannot quietly become "the clone
+	// connected to something".
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	src := "git+https://" + addr + "/hello.git"
+	ctx := context.Background()
+
+	guarded, _, _ := newStore(t)
+	if _, err := guarded.resolveSource(ctx, src); err == nil {
+		t.Fatal("the default policy cloned a loopback remote")
+	} else if want := `private address "127.0.0.1" is blocked`; !strings.Contains(err.Error(), want) {
+		t.Fatalf("resolve %s = %v, want %q", src, err, want)
+	}
+
+	allowed, _, _ := newStore(t)
+	allowed.sourcePolicy = netguard.Policy{AllowPrivate: true}
+	if _, err := allowed.resolveSource(ctx, src); err == nil {
+		t.Fatal("a clone of a port nothing listens on succeeded")
+	} else if strings.Contains(err.Error(), "private address") {
+		t.Fatalf("the allowing policy was still guarded: %v", err)
+	}
+}
+
+// TestGitSourceClonesOneTreeAtTheRef pins the command line itself,
+// because here the flags are the whole behaviour: a package is one tree
+// at one version, so the clone is shallow, of a single branch, of the
+// ref by name — and `--` ends the options, so a remote string is always
+// an operand rather than something git could read as a flag. The cost of
+// losing the first two is invisible in the installed tree (only the
+// bytes and time of a deep, all-branches clone of a real repository tell
+// the difference), which is exactly why the flags get a test of their
+// own instead of riding the end-to-end one.
+func TestGitSourceClonesOneTreeAtTheRef(t *testing.T) {
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not on PATH")
+	}
+	// The repository is built before the shim exists: every git this
+	// test runs from here on is recorded.
+	store, _, _ := newStore(t)
+	repo := gitRepo(t, newApp(t))
+	argv := shimGitOnPATH(t, real)
+
+	res, err := store.resolveSource(
+		context.Background(), "git+file://"+repo+"#main")
+	if err != nil {
+		t.Fatalf("resolve a git source: %v", err)
+	}
+	defer res.cleanup()
+
+	recorded := strings.Split(strings.TrimSpace(readFile(t, argv)), "\n")
+	want := []string{
+		"clone", "--depth", "1", "--single-branch", "--quiet",
+		"--branch", "main", "--", "file://" + repo,
+	}
+	if len(recorded) != len(want)+1 {
+		t.Fatalf("git argv = %q, want the clone line plus its destination", recorded)
+	}
+	for i, w := range want {
+		if recorded[i] != w {
+			t.Fatalf("git argv[%d] = %q, want %q (argv = %q)", i, recorded[i], w, recorded)
+		}
+	}
+	if got := recorded[len(want)]; !strings.HasPrefix(got, os.TempDir()) {
+		t.Fatalf("clone destination = %q, want a staging directory", got)
+	}
+}
+
+// TestCloneOutputIsBounded: what a failing clone says is quoted into an
+// error message, so it is collected up to a cap and no further — a
+// repository that prints a progress bar for a gigabyte must not grow the
+// host's memory through its own error. The cap is silent in the sense
+// that matters (a short write would abort the child instead of the
+// message), and loud in the message itself.
+func TestCloneOutputIsBounded(t *testing.T) {
+	// One write longer than the cap: it is cut, and the message says so.
+	var one cappedBuffer
+	over := int(cloneOutputBytes) + 1<<10
+	if n, err := one.Write(make([]byte, over)); n != over || err != nil {
+		t.Fatalf("Write = %d, %v; want every byte accepted", n, err)
+	}
+	if got := one.buf.Len(); got != int(cloneOutputBytes) {
+		t.Errorf("collected %d bytes, want the %d-byte cap", got, cloneOutputBytes)
+	}
+	if !one.truncated {
+		t.Error("a write cut at the cap was not recorded as truncated")
+	}
+
+	// And a stream that keeps arriving stops growing the buffer.
+	var stream cappedBuffer
+	chunk := bytes.Repeat([]byte("x"), 4<<10)
+	for i := 0; i < int(cloneOutputBytes)/(4<<10)+4; i++ {
+		n, err := stream.Write(chunk)
+		if n != len(chunk) || err != nil {
+			t.Fatalf("Write = %d, %v; want every byte accepted", n, err)
+		}
+	}
+	if got := stream.buf.Len(); got != int(cloneOutputBytes) {
+		t.Errorf("collected %d bytes, want the %d-byte cap", got, cloneOutputBytes)
+	}
+	if !stream.truncated {
+		t.Error("the buffer dropped output without recording that it did")
+	}
+	if got := stream.suffix(); !strings.Contains(got, "(output truncated)") {
+		t.Errorf("suffix() = %q, want it to say the output was cut", got)
+	}
+
+	var small cappedBuffer
+	if _, err := small.Write([]byte("fatal: couldn't find remote ref nope")); err != nil {
+		t.Fatal(err)
+	}
+	if small.truncated {
+		t.Error("a short message was reported as truncated")
+	}
+	if got := small.suffix(); !strings.HasPrefix(got, ": fatal: couldn't find remote ref nope") {
+		t.Errorf("suffix() = %q, want the message itself", got)
+	}
+}
+
+// TestSourceStagingIsRemovedByItsCleanup: resolving a remote source
+// stages it where the host may write — a downloaded archive, an
+// extraction root, a clone — and the cleanup each resolution returns is
+// what removes every part of it. A leak here is a temp tree per install
+// (and one per *failed* install), and it is invisible in the application
+// that did get installed, so TMPDIR is pointed at a directory of the
+// test's own and what the process leaves behind is what is in there.
+func TestSourceStagingIsRemovedByItsCleanup(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+
+	// The git half: the clone's staging directory, which holds the tree
+	// until it is handed over to the install.
+	store, _, _ := newStore(t)
+	repo := gitRepo(t, newApp(t))
+	t.Setenv("TMPDIR", tmp)
+	res, err := store.resolveSource(ctx, "git+file://"+repo+"#main")
+	if err != nil {
+		t.Fatalf("resolve a git source: %v", err)
+	}
+	res.cleanup()
+	mustBeEmpty(t, tmp)
+
+	// The archive half: the download and the tree extracted from it.
+	archive := zipTree(t, newApp(t), "hello-0.1.0/")
+	raw, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/hello.zip", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(raw)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	downloads, _, _ := newStore(t)
+	downloads.sourcePolicy = netguard.Policy{AllowPrivate: true}
+	res, err = downloads.resolveSource(ctx, ts.URL+"/hello.zip")
+	if err != nil {
+		t.Fatalf("resolve an archive URL: %v", err)
+	}
+	res.cleanup()
+	mustBeEmpty(t, tmp)
+}
+
+// shimGitOnPATH puts a recording git ahead of the real one and returns
+// the file the arguments land in, one per line. The shim runs the real
+// git, so the clone still happens; only the argv is the test's.
+func shimGitOnPATH(t *testing.T, realGit string) string {
+	t.Helper()
+	binDir := t.TempDir()
+	argvFile := filepath.Join(t.TempDir(), "argv")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" >> '" + argvFile + "'\n" +
+		"exec '" + realGit + "' \"$@\"\n"
+	shim := filepath.Join(binDir, "git")
+	if err := os.WriteFile(shim, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return argvFile
+}
+
+// readFile reads one file a test wrote through a child process,
+// failing when it is missing or empty.
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if len(data) == 0 {
+		t.Fatalf("%s is empty", path)
+	}
+	return string(data)
 }
 
 // TestResolveGitStagesATreeWithoutItsRepository: the staging directory a
