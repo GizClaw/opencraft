@@ -10,6 +10,107 @@ import (
 	"testing"
 )
 
+// TestClientRevalidatesEveryRedirect: a hop is judged as a URL of its
+// own, not only as a socket to open. The dial-time check reads the host,
+// so it can see a redirect into a private address; what it cannot see is
+// everything else the rules are about — here, a Location that carries a
+// user and a password, which is a server handing the next host a
+// credential the user never typed. The hop is refused before the request
+// for it exists, so the server that sent the redirect sees one request
+// and not two.
+func TestClientRevalidatesEveryRedirect(t *testing.T) {
+	var ts *httptest.Server
+	hits := 0
+	ts = httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			hits++
+			target := "http://user:secret@" +
+				strings.TrimPrefix(ts.URL, "http://") + "/next"
+			http.Redirect(w, r, target, http.StatusFound)
+		}))
+	defer ts.Close()
+
+	req, err := http.NewRequestWithContext(
+		context.Background(), http.MethodGet, ts.URL+"/start", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := Client(Policy{AllowPrivate: true}).Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("a redirect carrying credentials was followed")
+	}
+	if !strings.Contains(err.Error(), "without credentials or fragment") {
+		t.Fatalf("err = %v, want the redirect refused as a URL", err)
+	}
+	if hits != 1 {
+		t.Errorf("the server saw %d requests, want the redirect refused before one was made", hits)
+	}
+}
+
+// TestClientCountsTheRedirectCapToTheHop: the cap is a number of hops,
+// and the fetch that stays under it succeeds. Both halves matter — a
+// client that refused one hop early would break ordinary URLs (a
+// canonical-route redirect, an http→https upgrade), which is the failure
+// a test that only watches for "too many redirects" cannot see.
+func TestClientCountsTheRedirectCapToTheHop(t *testing.T) {
+	// hopChain serves 200 once it has sent `redirects` redirects, so a
+	// successful fetch is what says the chain was followed to the end.
+	hopChain := func(redirects int) (*httptest.Server, *int) {
+		seen := 0
+		var ts *httptest.Server
+		ts = httptest.NewServer(http.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) {
+				seen++
+				if seen <= redirects {
+					http.Redirect(w, r, ts.URL+"/next", http.StatusFound)
+					return
+				}
+				_, _ = w.Write([]byte("done"))
+			}))
+		return ts, &seen
+	}
+
+	// One hop short of the cap: followed.
+	ts, seen := hopChain(MaxRedirects - 1)
+	defer ts.Close()
+	req, err := http.NewRequestWithContext(
+		context.Background(), http.MethodGet, ts.URL+"/start", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := Client(Policy{AllowPrivate: true})
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("a chain of %d redirects failed: %v", MaxRedirects-1, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %s, want 200", resp.Status)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Errorf("close body: %v", err)
+	}
+	if *seen != MaxRedirects {
+		t.Errorf("the server saw %d requests, want %d", *seen, MaxRedirects)
+	}
+
+	// And at the cap: refused.
+	ts2, seen2 := hopChain(MaxRedirects)
+	defer ts2.Close()
+	req2, err := http.NewRequestWithContext(
+		context.Background(), http.MethodGet, ts2.URL+"/start", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Do(req2); err == nil ||
+		!strings.Contains(err.Error(), "too many redirects") {
+		t.Fatalf("a chain of %d redirects = %v, want too many redirects", MaxRedirects, err)
+	}
+	if *seen2 != MaxRedirects {
+		t.Errorf("the server saw %d requests, want the last redirect refused", *seen2)
+	}
+}
+
 // TestCheckURLJudgesTheShapeAndTheHost: what the host will fetch is a
 // URL the user could not have typed into a tool call, so the rules are
 // read off the string itself — scheme, credentials, fragment — and off
