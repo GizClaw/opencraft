@@ -112,22 +112,28 @@ var kindTable = []kindRule{
 	{kind: "hook.prepare",
 		reason: "turn preparation belongs to the contract layer"},
 
-	// Sandbox, exec and the tool containers: v1 gives applications none
-	// of them (no exec, no tool catalog, no host workspace surface).
+	// Sandbox, exec and the tool containers: these reach an application
+	// only through the host's capability fragments — the manifest names
+	// one, the fragment declares the resources above the application's
+	// own layers and the generated wiring points the agents at them. A
+	// layer that declared one of them itself would be building a second
+	// surface beside the host's, which is what these rows refuse; the
+	// reason names the capability, because that is the thing an author
+	// actually wants.
 	{kind: "sandbox.Runner",
-		reason: "v1 gives applications no exec"},
+		reason: "the sandbox is the host's: an application names the \"exec\" capability in its manifest, it does not declare a runner"},
 	{kind: "tool.Assembly",
-		reason: "v1 gives applications no tool containers"},
+		reason: "the tool assembly is the host's: an application names the capability that contributes containers (\"tools\", \"exec\", \"web\")"},
 	{kind: "tool.Registry",
-		reason: "v1 gives applications no tool catalog"},
+		reason: "the tool catalog is built from what the host's fragments declare; an application names a capability"},
 	{kind: "tool.Source",
-		reason: "v1 gives applications no tool sources"},
+		reason: "tool containers come from the host: an application names a capability (\"tools\", \"exec\", \"web\") instead of declaring its own"},
 	{kind: "opencraft.execpolicy",
-		reason: "exec approvals are not available to applications"},
+		reason: "exec approvals are the host's, and the \"exec\" capability is how an application gets them"},
 	{kind: "opencraft.hostworkspace",
-		reason: "the mode-aware host workspace is a tool-facing surface applications do not get"},
+		reason: "the tool-facing host workspace belongs to the fragments: \"tools\" declares it, on the application's own private workspace"},
 	{kind: "opencraft.netpolicy",
-		reason: "network posture is a host concern"},
+		reason: "network posture is the host's: the \"web\" and \"exec\" capabilities declare it"},
 
 	// Credentials come from the read-only keyring view the contract
 	// layer declares (secret.keychain); an application layer may not

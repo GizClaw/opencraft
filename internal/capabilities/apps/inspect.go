@@ -38,6 +38,11 @@ type Inspection struct {
 	Summary Summary
 	// Layers are the deployment layers, in the manifest's order.
 	Layers []string
+	// Capabilities are the host's fragments the manifest opts into, in
+	// manifest order: what the package asks the host for, read off the
+	// file rather than out of a merged document, so the wizard can say
+	// it before anything is installed.
+	Capabilities []string
 	// Refusals is the preflight's verdict over the package as it lies in
 	// its source directory. Empty means it can be installed as it is.
 	Refusals []Refusal
@@ -94,8 +99,9 @@ func (s *Store) inspect(ctx context.Context, src string) (Inspection, error) {
 		return Inspection{}, err
 	}
 	insp := Inspection{
-		Summary: summaryFromManifest(m, true),
-		Layers:  append([]string(nil), m.Layers...),
+		Summary:      summaryFromManifest(m, true),
+		Layers:       append([]string(nil), m.Layers...),
+		Capabilities: append([]string(nil), m.Capabilities...),
 	}
 	err = Validate(ctx, s.appFromManifest(m, src, true))
 	var refusals Refusals

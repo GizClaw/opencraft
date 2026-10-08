@@ -1,0 +1,76 @@
+# Capability fragments: the tool-result policy every container group
+# shares.
+#
+# This layer joins an application deployment when its manifest names at
+# least one capability (see foundation/config's capability table and
+# AppDeployLayers). The assembly below is declared here rather than in
+# each fragment because the chain is one policy: a fragment contributes
+# its containers as deps under resources.tools, the core merge unions
+# their deps maps, and what a deployment ends up with is this chain over
+# exactly the containers its enabled fragments declared.
+#
+# The settings are the assistant's own block (assets/tools.yaml), minus
+# what an application has no part of — the secret rules, the truncate
+# cache and the audit trail are one spelling of one policy, and
+# TestCapabilityAssemblySharesTheAssistantPolicy fails if the two drift
+# apart. The audit trail lands in the application's own state root
+# (${ocraft:AUDIT_DIR} is its audit directory), and the truncate cache in
+# its own tool cache, like every other path an application resolves.
+#
+# What is deliberately absent: the `dynamic` discovery policy. An
+# application's own graph decides how its tools reach the model (its
+# inference node declares all_tools: true), and a host-side injection
+# policy on top of that would be a second, invisible rule about what the
+# application's graph does.
+resources:
+  tools:
+    kind: tool.Assembly
+    impl: opencraft
+    settings:
+      middlewares:
+        recover:
+          enabled: true
+        timeout:
+          default: 5m
+        # Backstop hard ceiling; the text policy below runs first on the
+        # way out, so with truncate enabled this normally only enforces
+        # the non-text part budget.
+        result_limit:
+          max_chars: 32768
+          # Non-text parts (view_image output, structured data) share
+          # this byte budget, metered on the canonical wire encoding
+          # (message.MarshalPart).
+          part_budget_bytes: 1048576
+        # Primary text policy: oversized tool outputs are persisted in
+        # full under the application's tool cache and excerpted in
+        # context. JSON envelopes are excerpted inside their own string
+        # fields and re-encoded, so structured results (read_file,
+        # exec_command, ...) stay parseable for the model and the UI.
+        truncate:
+          enabled: true
+          max_chars: 8000
+          dir: ${ocraft:TOOL_CACHE}
+          work_dir: ${ocraft:WORKDIR}
+        # Best-effort secret stripping from tool results before the
+        # model sees them. The same rules always apply to the audit
+        # trail below, even when this middleware is disabled.
+        redact:
+          enabled: true
+          rules:
+            - pattern: "sk-(?:[A-Za-z0-9]{16,})"
+            # OpenAI project keys and Anthropic API keys contain hyphens
+            # (sk-proj-..., sk-ant-...), which the legacy sk- rule does
+            # not match.
+            - pattern: "sk-proj-[A-Za-z0-9_-]{20,}"
+            - pattern: "sk-ant-[A-Za-z0-9_-]{20,}"
+            - pattern: "AKIA[0-9A-Z]{16}"
+            - pattern: "gh[pousr]_[A-Za-z0-9]{20,}"
+            - pattern: "xox[baprs]-[A-Za-z0-9-]{10,}"
+            - pattern: '(?i)bearer\s+[A-Za-z0-9._~+/=-]{16,}'
+            - pattern: '(?i)api[_-]?key\s*[:=]\s*[A-Za-z0-9_-]{8,}'
+            - pattern: '-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----'
+        # Append-only tool-call audit trail: one JSONL record per call
+        # with redacted copies of arguments and results.
+        audit:
+          enabled: true
+          dir: ${ocraft:AUDIT_DIR}

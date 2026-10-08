@@ -1,0 +1,86 @@
+# Capability fragment: sandboxed command execution.
+#
+# An application opts in by naming "exec" in its manifest's capabilities:
+# list. What it gets is the assistant's own chain — an approval gate, the
+# OS sandbox, and one tool container — resolved against the application's
+# state root: the approvals file and the audit trail are the
+# application's own (${ocraft:APPROVALS} and ${ocraft:AUDIT_DIR}), so a
+# command the user allows for one application is not allowed for another,
+# and the record of what ran lives with the application that ran it.
+#
+# What is deliberately absent:
+#   - the process feed (the assistant's box taps every session into
+#     opencraft.processes so the UI can show a process tail). An
+#     application's page has no such surface, and the dep is optional:
+#     without it sessions run exactly as before, untapped.
+#   - the command hooks (the assistant's policy fires PreToolUse /
+#     PostToolUse through the hook host). Applications have no hook host:
+#     it belongs to the contract layer's owner.
+#
+# The network gate is the same block the `web` fragment declares
+# (TestCapabilityFragmentsAgreeOnSharedResources pins the two together):
+# one fragment per capability, but a resource two of them share is one
+# spelling of one policy. Its exec posture is the assistant's default —
+# the OS sandbox plus the approval gate are the fence, not a network
+# denial.
+resources:
+  execpolicy:
+    kind: opencraft.execpolicy
+    impl: manager
+    settings:
+      # Commands not in this list (or in approvals_path) ask the user
+      # before running. Rules are token prefixes; "*" matches any
+      # remaining arguments.
+      allowed_commands: []
+      approvals_path: ${ocraft:APPROVALS}
+      # Escalation decisions ("run outside the sandbox" answers) are
+      # appended to <audit_dir>/escalations.jsonl. Remembered rules live
+      # in escalations.yaml next to approvals.yaml, so a downgrade to a
+      # build without the feature cannot drop them.
+      audit_dir: ${ocraft:AUDIT_DIR}
+  netpolicy:
+    kind: opencraft.netpolicy
+    impl: local
+    settings:
+      exec:
+        mode: default
+        allow_hosts: []
+      web_fetch:
+        allow_hosts: []
+        deny_hosts: []
+        allow_private: false
+  box:
+    kind: sandbox.Runner
+    impl: opencraft
+    deps:
+      execpolicy: execpolicy
+      sessions: sessions
+      netpolicy: netpolicy
+    settings:
+      root: ${ocraft:WORKDIR}
+      # The sandbox's scratch root: Go build cache, tmp. It sits in the
+      # application's state root but outside its private workspace, so
+      # the sandbox has to be told it may write there.
+      writable_paths: ["${ocraft:TOOL_CACHE}"]
+      cache_dir: ${ocraft:TOOL_CACHE}
+      # The forked execd child runs the command, exactly as it does for
+      # the assistant: the parent never runs sandboxed code in-process.
+      remote: true
+      # Sandbox environment defaults to a curated allowlist (PATH, HOME,
+      # locale, toolchain, opencraft path vars, ...), NOT the parent
+      # environment wholesale, so provider API keys never leak into
+      # anything an application runs. A package that needs more declares
+      # env_policy in its own layer — the same knob the assistant has.
+  tool.exec:
+    kind: tool.Source
+    impl: opencraft/exec
+    deps:
+      sandbox: box
+      # Escalation prompt: when the OS sandbox refuses a command, the
+      # user may allow one re-run outside it. Same policy resource the
+      # sandbox consults, so "always" answers are persisted with the
+      # application's approvals file.
+      escalator: execpolicy
+  tools:
+    deps:
+      tool.exec: tool.exec

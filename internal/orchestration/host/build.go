@@ -377,10 +377,17 @@ func (m *Manager) buildAppHost(
 	}
 	telemetry.WarnErr(ctx, "host: ensure application layout failed",
 		layout.Ensure())
+	// The run identity and the deployment document are built from the
+	// same manifest read: the agents it names are the ones the
+	// capability wiring has to reach (a dependency is per agent), and
+	// the capabilities it names are the fragments the document carries.
+	id := appIdentity(app.Agent, app.Agents, app.Defaults)
 	doc, err := engine.LoadAppDocument(ctx, engine.AppDoc{
-		ID:         app.ID,
-		ContentDir: app.ContentDir,
-		Layers:     app.Layers,
+		ID:           app.ID,
+		ContentDir:   app.ContentDir,
+		Layers:       app.Layers,
+		Capabilities: app.Capabilities,
+		Agents:       app.RunAgents(),
 	}, r.userDir)
 	if err != nil {
 		return nil, err
@@ -390,7 +397,7 @@ func (m *Manager) buildAppHost(
 		target:   t,
 		layout:   layout,
 		doc:      doc,
-		identity: appIdentity(app.Agent, app.Agents, app.Defaults),
+		identity: id,
 		fileBase: app.ContentDir,
 		// The registry is consulted again on every reload: the layers
 		// list lives in the manifest, and an author who edits it (or
@@ -411,9 +418,11 @@ func (m *Manager) buildAppHost(
 				return deploy.Document{}, err
 			}
 			return engine.LoadAppDocument(ctx, engine.AppDoc{
-				ID:         app.ID,
-				ContentDir: app.ContentDir,
-				Layers:     app.Layers,
+				ID:           app.ID,
+				ContentDir:   app.ContentDir,
+				Layers:       app.Layers,
+				Capabilities: app.Capabilities,
+				Agents:       app.RunAgents(),
 			}, r.userDir)
 		},
 		reloadIdentity: func(ctx context.Context) (identity, error) {

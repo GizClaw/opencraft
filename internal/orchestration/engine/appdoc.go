@@ -1,6 +1,8 @@
-// Application deployment documents: the three layers an application
+// Application deployment documents: the layer stack an application
 // runtime assembles from — the embedded contract layer, the
-// application's own layers, and the host-generated inference overlay.
+// application's own layers, the capability fragments its manifest
+// enabled with the host's wiring above them, and the host-generated
+// inference overlay.
 package engine
 
 import (
@@ -12,7 +14,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // AppDoc names the deployment content of one installed application: the
@@ -30,11 +31,23 @@ type AppDoc struct {
 	// Layers are the application's deployment layers, in ascending
 	// priority order, relative to ContentDir.
 	Layers []string
+	// Capabilities are the host-owned capability fragments the manifest
+	// opted into, in manifest order: the tool containers, the sandbox
+	// and the network gate an application asks for by name (see
+	// config.AppDeployLayers). Empty means the application runs on the
+	// contract layer's own surface.
+	Capabilities []string
+	// Agents are every agent the application runs, entry first — the
+	// list Host.identity() carries, built from the manifest's agent and
+	// agents fields. The generated capability wiring names each of
+	// them, because a dependency is per agent.
+	Agents []string
 }
 
 // LoadAppDocument merges one application's deploy document: the
-// embedded contract layer (priority 0), the application's layers
-// (priority 10+, manifest order), and the host-generated inference
+// embedded contract layer, the application's layers, the capability
+// fragments the manifest enabled with the wiring that makes them
+// reachable (config.AppDeployLayers), and the host-generated inference
 // overlay (above all of them) built from the user layer's inference
 // wiring in userDir.
 //
@@ -58,27 +71,14 @@ func LoadAppDocument(
 	}
 	// The contract layer is the complete document (version and all), so
 	// it has to be first; the application's layers follow it in manifest
-	// order; the inference overlay goes above every one of them, whatever
-	// the manifest declares. The layer and both bands come from
-	// foundation/config, which is also where the registry's preflight
-	// merges the same contract — see AppContractLayer.
-	layers := []deploy.Layer{config.AppContractLayer()}
-	for index, name := range app.Layers {
-		// A manifest's layer list is validated on import, but this is
-		// the join onto the content root: a layer name that could walk
-		// out of it (or an absolute path) is refused here, no matter
-		// which caller assembled the list.
-		if strings.TrimSpace(name) == "" || !pathsafe.RelRef(name) {
-			return deploy.Document{}, fmt.Errorf(
-				"engine: %s: layer %q is not a relative path inside the content root",
-				appLabel(app), name)
-		}
-		layers = append(layers, deploy.Layer{
-			Priority: config.AppLayerPriorityBase + index,
-			Name:     name,
-			Source:   resource.Source{File: name},
-			BaseDir:  app.ContentDir,
-		})
+	// order. Both bands, and the host's own on top of them, come from
+	// foundation/config — which is also where the registry's preflight
+	// merges exactly the same stack, so the document a refusal is about
+	// is the document that gets assembled.
+	layers, err := config.AppDeployLayers(
+		app.ContentDir, app.Layers, app.Capabilities, app.Agents)
+	if err != nil {
+		return deploy.Document{}, fmt.Errorf("engine: %s: %w", appLabel(app), err)
 	}
 	overlay, ok, err := config.UserInferenceOverlay(userDir)
 	if err != nil {
@@ -86,7 +86,7 @@ func LoadAppDocument(
 	}
 	if ok {
 		layers = append(layers, deploy.Layer{
-			Priority: config.AppOverlayPriorityBase + len(app.Layers),
+			Priority: config.AppOverlayPriorityBase,
 			Name:     "inference",
 			Source:   resource.Source{Inline: overlay},
 		})

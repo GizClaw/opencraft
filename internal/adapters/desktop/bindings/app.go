@@ -426,6 +426,12 @@ type AppStatus struct {
 	ContentRoot string `json:"content_root"`
 	StateRoot   string `json:"state_root"`
 	WorkDir     string `json:"work_dir"`
+	// Capabilities are the host's fragments this installation opted
+	// into, in manifest order: what the application may reach beyond
+	// the contract layer's own surface (the tool containers, the
+	// sandbox, the network gate), which is the question a user reading
+	// the panel is asking. Empty is the common case.
+	Capabilities []string `json:"capabilities,omitempty"`
 	// Recovery is what the application's own Host reports about its
 	// state root: an application's sessions live under the same kind of
 	// root a workspace's do, with the same lock and the same crash pass
@@ -459,13 +465,14 @@ func (b *App) Status(id string) (AppStatus, error) {
 		return AppStatus{}, err
 	}
 	out := AppStatus{
-		ID:          app.ID,
-		Name:        app.Name,
-		Enabled:     app.Enabled,
-		Builtin:     app.Builtin,
-		ContentRoot: app.ContentDir,
-		StateRoot:   stateRoot,
-		WorkDir:     workDir,
+		ID:           app.ID,
+		Name:         app.Name,
+		Enabled:      app.Enabled,
+		Builtin:      app.Builtin,
+		ContentRoot:  app.ContentDir,
+		StateRoot:    stateRoot,
+		WorkDir:      workDir,
+		Capabilities: append([]string(nil), app.Capabilities...),
 		Assembly: appAssembly(
 			b.core.Runtime.Manager().AssemblyStats(host.AppTarget(id)),
 		),

@@ -23,10 +23,34 @@ const (
 	// AppLayerPriorityBase is the priority of the first application
 	// layer; the manifest's remaining layers follow it in order.
 	AppLayerPriorityBase = 10
-	// AppOverlayPriorityBase is where the host-generated layer starts,
-	// above every application layer whatever their count.
-	AppOverlayPriorityBase = 20
+	// AppCapabilityPriorityBase is the priority of the shared tool
+	// assembly layer; the capability fragments the manifest enabled
+	// follow it in order. The band sits above every application layer
+	// whatever their count — which is what "an application cannot
+	// shadow a fragment" means in practice: a layer that declared a
+	// fragment's resource would lose the merge to it, so the preflight
+	// refuses that key instead (see capabilities/apps).
+	AppCapabilityPriorityBase = 100
+	// AppWiringPriorityBase is the priority of the host-generated
+	// wiring layer, above the fragments it names.
+	AppWiringPriorityBase = 300
+	// AppOverlayPriorityBase is the priority of the host-generated
+	// inference layer, the topmost layer of every application
+	// deployment.
+	AppOverlayPriorityBase = 400
 )
+
+// AppLayerName reports the layer a provenance entry belongs to when that
+// layer is one of the application's own, and "" for every host band: the
+// contract layer, the capability fragments, the generated wiring and the
+// inference overlay. A refusal must not claim an application file
+// declared a key the host did, which is what the empty answer means.
+func AppLayerName(ref deploy.LayerRef) string {
+	if ref.Priority < AppLayerPriorityBase || ref.Priority >= AppCapabilityPriorityBase {
+		return ""
+	}
+	return ref.Name
+}
 
 // AppContractLayer returns the lowest-priority layer of an application
 // deployment: the embedded contract layer, the whole of what v1 gives

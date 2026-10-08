@@ -1,0 +1,55 @@
+# Capability fragment: the web tools.
+#
+# An application opts in by naming "web" in its manifest's capabilities:
+# list. It gets two containers — web_fetch, whose domain gate and
+# private-IP (SSRF) guard come from the network policy below, and the
+# provider-independent web_search — and nothing else about the network:
+# the sandbox's own posture is the `exec` fragment's business.
+#
+# The network gate is the same block the `exec` fragment declares
+# (TestCapabilityFragmentsAgreeOnSharedResources pins the two together):
+# a resource two fragments share is one spelling of one policy, and the
+# merge picks whichever layer is higher — so the two must not drift.
+#
+# What is deliberately absent: the discovery policy. web_search is not
+# listed under dynamic.exposures anywhere in an application deployment,
+# because an application has no dynamic policy at all (see
+# assets/capabilities/assembly.yaml): the application's graph decides
+# what the model sees.
+resources:
+  netpolicy:
+    kind: opencraft.netpolicy
+    impl: local
+    settings:
+      exec:
+        mode: default
+        allow_hosts: []
+      web_fetch:
+        allow_hosts: []
+        deny_hosts: []
+        allow_private: false
+  tool.webfetch:
+    kind: tool.Source
+    impl: opencraft/webfetch
+    deps:
+      # The domain gate (allow/deny lists + private-IP SSRF guard) is
+      # installed only when the netpolicy dependency is wired; the
+      # sessions dep lets YOLO sessions keep their "no sandbox"
+      # semantics.
+      netpolicy: netpolicy
+      sessions: sessions
+  # Provider-independent web search: the keyless Parallel/Exa hosted MCP
+  # endpoints make it work with any model out of the box, and Tavily /
+  # Brave keys (settings page) raise the quota.
+  tool.websearch:
+    kind: tool.Source
+    impl: opencraft/websearch
+    settings:
+      enabled: true
+      provider: auto
+      max_results: 8
+      timeout: 15s
+  tools:
+    deps:
+      tool.webfetch: tool.webfetch
+      tool.websearch: tool.websearch

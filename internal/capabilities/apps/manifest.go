@@ -48,6 +48,7 @@ const (
 	maxIconChars        = 64
 	maxLayerCount       = 64
 	maxAgentCount       = 8
+	maxCapabilityCount  = 8
 	maxPathLen          = 256
 	maxDefaultsChars    = 128
 )
@@ -116,6 +117,13 @@ type Manifest struct {
 	// disagree about it — and each is offered to the application's own
 	// frontend through the manifest it reads at load time.
 	Agents []string `json:"agents,omitempty"`
+	// Capabilities lists the host-owned capability fragments this
+	// application opts into, by name (the vocabulary is the capability
+	// table in foundation/config, and each fragment's own layer is
+	// where what it grants is spelled out). The names are the whole
+	// request: the fragments merge above the application's own layers,
+	// and no layer can widen what one grants.
+	Capabilities []string `json:"capabilities,omitempty"`
 	// Icon is either a glyph/emoji (shown as the card's icon) or a path
 	// to an image inside the content root. See iconIsPath.
 	Icon string `json:"icon,omitempty"`
@@ -126,10 +134,13 @@ type Manifest struct {
 	UI *UI `json:"ui,omitempty"`
 	// Defaults are the per-application run defaults.
 	Defaults *Defaults `json:"defaults,omitempty"`
-	// Permissions is reserved (the app platform plan, §2.3/P3). It is
-	// parsed so a declared list is refused by name instead of being
-	// silently ignored: an author who writes permissions today would
-	// otherwise believe they are enforced.
+	// Permissions is the spelling the plugin protocol uses for what an
+	// application calls capabilities (see the capability table in
+	// foundation/config): it is parsed so the guess is refused with a
+	// pointer at the real field rather than with a decode error about
+	// an unknown one. A plugin author's first try at this switch is
+	// this name, and this is the only place in the manifest that
+	// answers it.
 	Permissions []string `json:"permissions,omitempty"`
 	// Generated marks a manifest the host wrote (an import of a
 	// directory that had none). The host keeps the fields a user edited
@@ -208,6 +219,9 @@ func validateManifest(m *Manifest) error {
 	if err := validateAgents(m); err != nil {
 		return err
 	}
+	if err := validateCapabilities(m); err != nil {
+		return err
+	}
 	if err := validateLayers(m.Layers); err != nil {
 		return err
 	}
@@ -224,8 +238,9 @@ func validateManifest(m *Manifest) error {
 	}
 	if len(m.Permissions) > 0 {
 		return fmt.Errorf(
-			"apps: %s: permissions are not available yet (declared: %s)",
-			ManifestFile, strings.Join(m.Permissions, ", "))
+			"apps: %s: an application opts into host surfaces with capabilities:, not permissions: (declared %s; want one of %s)",
+			ManifestFile, strings.Join(m.Permissions, ", "),
+			strings.Join(config.CapabilityNames(), ", "))
 	}
 	return nil
 }
@@ -307,6 +322,46 @@ func validateAgents(m *Manifest) error {
 		}
 		seen[trimmed] = true
 		m.Agents[index] = trimmed
+	}
+	return nil
+}
+
+// validateCapabilities checks the capability list as a set of names the
+// host provides. It is deliberately the *only* place the vocabulary is
+// checked: a name this build does not ship is refused when the manifest
+// is read (install, update, every Get), so nothing downstream has to
+// answer what an unknown fragment means. The names are normalized in
+// place for the same reason the agent list is: the layer bands and the
+// reserved keys are keyed by the name as written.
+func validateCapabilities(m *Manifest) error {
+	if len(m.Capabilities) > maxCapabilityCount {
+		return fmt.Errorf(
+			"apps: %s: %d capabilities exceeds the %d an application may declare",
+			ManifestFile, len(m.Capabilities), maxCapabilityCount)
+	}
+	seen := make(map[string]bool, len(m.Capabilities))
+	for index, name := range m.Capabilities {
+		trimmed := strings.TrimSpace(name)
+		switch {
+		case trimmed == "":
+			return fmt.Errorf(
+				"apps: %s: capabilities[%d] is empty", ManifestFile, index)
+		case !config.KnownCapability(trimmed):
+			// A name the host does not provide is refused here rather
+			// than skipped: the fragment an author believes they
+			// enabled is the one their graph is written against, and a
+			// silent no-op would surface as a tool the model cannot
+			// call.
+			return fmt.Errorf(
+				"apps: %s: capability %q is not one this host provides (want %s)",
+				ManifestFile, trimmed,
+				strings.Join(config.CapabilityNames(), ", "))
+		case seen[trimmed]:
+			return fmt.Errorf(
+				"apps: %s: capability %q is listed twice", ManifestFile, trimmed)
+		}
+		seen[trimmed] = true
+		m.Capabilities[index] = trimmed
 	}
 	return nil
 }

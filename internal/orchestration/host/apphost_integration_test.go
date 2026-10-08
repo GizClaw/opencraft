@@ -33,8 +33,7 @@ import (
 // what the smallest package does not carry (the run defaults).
 func writeAppPackage(t *testing.T, manifestExtra string) string {
 	t.Helper()
-	dir := t.TempDir()
-	files := map[string]string{
+	return writePackage(t, map[string]string{
 		apps.ManifestFile: `app: v1
 id: hello
 name: Hello
@@ -83,7 +82,14 @@ edges:
 `,
 		"scripts/write.js": `fs.write("hello.txt", "written by the app\n");
 `,
-	}
+	})
+}
+
+// writePackage writes one throwaway content root from relative path to
+// contents — the directory form every install takes as its source.
+func writePackage(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
 	for rel, data := range files {
 		full := filepath.Join(dir, rel)
 		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
@@ -138,6 +144,18 @@ func newAppFixture(
 	models ...config.Model,
 ) *appFixture {
 	t.Helper()
+	return newAppFixtureFrom(t, provider, writeAppPackage(t, manifestExtra), models...)
+}
+
+// newAppFixtureFrom builds the same launch around a package a test wrote
+// itself, for the packages the smallest fixture does not describe.
+func newAppFixtureFrom(
+	t *testing.T,
+	provider *fakeprovider.Server,
+	pkg string,
+	models ...config.Model,
+) *appFixture {
+	t.Helper()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))
 	configDir := filepath.Join(dataDir, "config")
@@ -154,7 +172,7 @@ func newAppFixture(
 	if err != nil {
 		t.Fatalf("app registry: %v", err)
 	}
-	if _, err := registry.Install(context.Background(), writeAppPackage(t, manifestExtra), apps.InstallOptions{}); err != nil {
+	if _, err := registry.Install(context.Background(), pkg, apps.InstallOptions{}); err != nil {
 		t.Fatalf("install fixture application: %v", err)
 	}
 	mgr := host.NewManagerAt(dataDir, configDir)

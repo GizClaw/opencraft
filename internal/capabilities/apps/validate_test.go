@@ -242,8 +242,9 @@ agents:
 }
 
 // TestValidateRefusesExecutionSurfacesAndUnknownKinds covers the two
-// ways a kind can be unusable: the table denies it (v1 gives an
-// application no exec), or this build has no factory for it at all.
+// ways a kind can be unusable: the table denies it to application layers
+// (the host's own capability fragments are where exec and the tool
+// containers come from), or this build has no factory for it at all.
 func TestValidateRefusesExecutionSurfacesAndUnknownKinds(t *testing.T) {
 	dir := newApp(t)
 	writeTestFile(t, dir, "layer.yaml", `resources:
@@ -267,7 +268,8 @@ agents:
 		t.Fatalf("refusals = %d, want 3:\n%s", len(refusals.List), refusals.Error())
 	}
 	refusedEvery(t, refusals,
-		"resources.shell: kind \"sandbox.Runner\" is not available to an application: v1 gives applications no exec",
+		"resources.shell: kind \"sandbox.Runner\" is not available to an application: "+
+			"the sandbox is the host's: an application names the \"exec\" capability in its manifest, it does not declare a runner",
 		"resources.nodes: kind \"graph.NodeType\" is not available to an application",
 		"resources.mystery: kind \"opencraft.new_thing\" is not a resource kind this build can construct")
 }
@@ -559,7 +561,9 @@ func TestValidateRefusesHookSlotsAndToolsOnTheReservedAgent(t *testing.T) {
 	}
 	refusedEvery(t, refusals,
 		"layer.yaml: agents.app.commit: the transcript path (prepare, observe, commit) is the contract layer's",
-		"layer.yaml: agents.app.tools: v1 gives applications no tools")
+		"layer.yaml: agents.app.tools: an application's tool surface is the host's: "+
+			"the containers come from the capabilities the manifest names (\"tools\", \"exec\", \"web\"), "+
+			"and the application's own graph decides what the model sees")
 }
 
 // TestValidateRefusesADepThatNamesNothing catches the typo the assembly

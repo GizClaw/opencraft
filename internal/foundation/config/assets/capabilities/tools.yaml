@@ -1,0 +1,62 @@
+# Capability fragment: the host's whitelisted file tools, working on the
+# application's own private workspace.
+#
+# An application opts in by naming "tools" in its manifest's
+# capabilities: list. Everything below is host-owned and merges above the
+# application's own layers, so a layer can neither declare these
+# resources nor shadow them; the containers reach the application's
+# agents through the generated wiring layer (see config.AppDeployLayers).
+#
+# Three notes on what is here and what is not:
+#   - hostws is the mode-aware host workspace. It resolves to the
+#     contract layer's ws, the application's private workspace, so
+#     every file tool reads and writes inside the state root: the
+#     content root the package was installed from stays read-only for
+#     the runtime, and the user's own directories are not reachable at
+#     all (that is the `project` fragment's business, not this one's).
+#   - readonly_roots is the application's own tool cache: the exec
+#     fragment's sandbox may write it, so the file tools need read
+#     access to the excerpts a truncated tool result leaves behind —
+#     and to nothing else.
+#   - the containers are contributed to the shared assembly
+#     (resources.tools.deps): the core merge unions the deps maps of
+#     every layer, so one capability is one layer's worth of
+#     containers, and a deployment that enables two fragments gets both.
+resources:
+  hostws:
+    kind: opencraft.hostworkspace
+    impl: local
+    deps:
+      sessions: sessions
+      workspace: ws
+      observer: artifacts
+    settings:
+      readonly_roots: ["${ocraft:TOOL_CACHE}"]
+  tool.files:
+    kind: tool.Source
+    impl: opencraft/files
+    deps:
+      hostworkspace: hostws
+  tool.applypatch:
+    kind: tool.Source
+    impl: opencraft/applypatch
+    deps:
+      hostworkspace: hostws
+  # Multimodal input: view_image returns one workspace image as an image
+  # part (downscaled to fit the prompt budget) so a vision model can look
+  # at screenshots, diagrams and charts. read_file keeps reading files as
+  # text. The budget below is metered on the canonical wire encoding, so
+  # it stays under the assembly's part budget above.
+  tool.viewimage:
+    kind: tool.Source
+    impl: opencraft/viewimage
+    deps:
+      hostworkspace: hostws
+    settings:
+      max_edge: 1568
+      max_bytes: 786000
+  tools:
+    deps:
+      tool.files: tool.files
+      tool.applypatch: tool.applypatch
+      tool.viewimage: tool.viewimage

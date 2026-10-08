@@ -298,7 +298,8 @@ func TestParseManifestRefusesOneFieldAtATime(t *testing.T) {
 		{
 			name: "permissions",
 			raw:  minimalManifest + "permissions:\n  - net\n",
-			want: "permissions are not available yet (declared: net)",
+			want: "opts into host surfaces with capabilities:, not permissions: " +
+				"(declared net; want one of exec, tools, web)",
 		},
 		{
 			name: "unknown field",

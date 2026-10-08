@@ -162,6 +162,9 @@ type App struct {
 	// Agents are the application's other agents: every agent a run may
 	// name beyond the entry, in manifest order. See Manifest.Agents.
 	Agents []string
+	// Capabilities are the host-owned fragments the manifest opted
+	// into, in manifest order. See Manifest.Capabilities.
+	Capabilities []string
 	// ContentDir is the content root: the layers and every {file:}
 	// reference inside them resolve against it.
 	ContentDir string
@@ -179,6 +182,16 @@ type App struct {
 	Enabled bool
 	// Builtin reports a read-only, app-bundled application.
 	Builtin bool
+}
+
+// RunAgents lists every agent the application runs, the entry agent
+// first: what a caller may name for a turn (host.RunOptions.AgentID) and
+// what the host's capability wiring has to reach — a dependency is per
+// agent, so a capability that reached only the entry would be a fragment
+// the application's other agents never see. It is one spelling of one
+// list, for the readers that must not disagree about it.
+func (a App) RunAgents() []string {
+	return append([]string{a.Agent}, a.Agents...)
 }
 
 // Summary is the frontend-facing view of one application: what the list
@@ -388,16 +401,17 @@ func (s *Store) Uninstall(id string, purge bool) error {
 // what it is about to copy, and a staged directory is not installed yet.
 func (s *Store) appFromManifest(m *Manifest, content string, enabled bool) App {
 	app := App{
-		ID:          m.ID,
-		Name:        m.Name,
-		Version:     m.Version,
-		Description: m.Description,
-		Icon:        m.Icon,
-		Agent:       m.Agent,
-		Agents:      append([]string(nil), m.Agents...),
-		ContentDir:  content,
-		Layers:      append([]string(nil), m.Layers...),
-		Enabled:     enabled,
+		ID:           m.ID,
+		Name:         m.Name,
+		Version:      m.Version,
+		Description:  m.Description,
+		Icon:         m.Icon,
+		Agent:        m.Agent,
+		Agents:       append([]string(nil), m.Agents...),
+		Capabilities: append([]string(nil), m.Capabilities...),
+		ContentDir:   content,
+		Layers:       append([]string(nil), m.Layers...),
+		Enabled:      enabled,
 	}
 	if m.UI != nil {
 		app.UI = *m.UI

@@ -156,6 +156,11 @@ export function AppImportWizard({
 
   const refusals = candidate?.inspection?.Refusals ?? [];
   const layers = candidate?.inspection?.Layers ?? [];
+  // The host fragments the package asks for. The names are the manifest
+  // vocabulary and are shown as they are written — the host's own table
+  // is what says what each one grants, and a name this build does not
+  // ship is a refusal row below rather than something to translate.
+  const capabilities = candidate?.inspection?.Capabilities ?? [];
   // The one thing the wizard can decide that the registry cannot: an
   // update replaces a named application, so a package for another one is
   // the wrong pick rather than a new install.
@@ -300,6 +305,31 @@ export function AppImportWizard({
                 </ol>
               )}
             </section>
+
+            {/* What the package asks the host for, before anything is
+                installed: a package that names no fragment runs on the
+                contract layer's own surface, and that case needs no
+                section — the layers above are the whole report. */}
+            {capabilities.length > 0 && (
+              <section data-testid="app-package-capabilities">
+                <h4 className="mb-1 text-xs font-semibold text-dim">
+                  {t('apps.wizard.capabilities')}
+                </h4>
+                <ul className="flex flex-wrap gap-1.5">
+                  {capabilities.map((name) => (
+                    <li
+                      key={name}
+                      className="rounded-tight border border-edge bg-panel2 px-1.5 py-0.5 font-mono text-micro text-dim"
+                    >
+                      {name}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1 text-xs text-faint">
+                  {t('apps.wizard.capabilitiesHint')}
+                </p>
+              </section>
+            )}
 
             {refusals.length > 0 && (
               <section

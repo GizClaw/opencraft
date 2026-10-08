@@ -789,6 +789,55 @@ func TestAppStatusCarriesTheAssemblyRecord(t *testing.T) {
 	}
 }
 
+// TestAppStatusCarriesTheCapabilitiesThePackageAskedFor: the diagnostics
+// panel's capability row reads this field, so it has to answer two
+// things — the names the manifest wrote, in its order, and nothing at
+// all for a package that asked for nothing (an empty list on the wire
+// would read like an answer the package never gave).
+func TestAppStatusCarriesTheCapabilitiesThePackageAskedFor(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pkg  func(t *testing.T) string
+		want []string
+	}{{
+		name: "a package that names fragments",
+		pkg: func(t *testing.T) string {
+			dir := writeAppBundle(t)
+			writeAppBundleWithCapabilities(t, dir)
+			return dir
+		},
+		want: []string{"tools", "web"},
+	}, {
+		name: "a package that names none",
+		pkg:  writeAppBundle,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAppBinding(t, nil)
+			if _, err := f.binding.Install(tc.pkg(t), AppInstallOptions{}); err != nil {
+				t.Fatalf("install: %v", err)
+			}
+
+			status, err := f.binding.Status("hello")
+			if err != nil {
+				t.Fatalf("status: %v", err)
+			}
+			if !slices.Equal(status.Capabilities, tc.want) {
+				t.Fatalf("capabilities = %v, want %v", status.Capabilities, tc.want)
+			}
+			raw, err := json.Marshal(status)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			switch carried := strings.Contains(string(raw), `"capabilities"`); {
+			case len(tc.want) > 0 && !carried:
+				t.Fatalf("the status drops what the package asked for: %s", raw)
+			case len(tc.want) == 0 && carried:
+				t.Fatalf("a package that asked for nothing carries capabilities: %s", raw)
+			}
+		})
+	}
+}
+
 // TestAppReloadOfADisabledApplicationOnlyInvalidates pins the other half
 // of the same decision: there is no runtime to bring back, so a reload
 // succeeds and assembles nothing. An id no content root holds is still
@@ -992,6 +1041,31 @@ func TestAppManifestReadsWhatThePageAndTheBundleNeed(t *testing.T) {
 // application's turn belongs — streamed deltas and a terminal event
 // named with the application, and the transcript in the application's
 // own store rather than anywhere the window's workspace could see.
+// writeAppBundleWithCapabilities rewrites the fixture package into one
+// that asks the host for fragments. The manifest is the only file that
+// changes: what a fragment grants is the host's, and the application
+// contributes nothing to it.
+func writeAppBundleWithCapabilities(t *testing.T, dir string) {
+	t.Helper()
+	files := map[string]string{
+		apps.ManifestFile: `app: v1
+id: hello
+name: Hello
+version: 0.1.0
+capabilities:
+  - tools
+  - web
+layers:
+  - layer.yaml
+`,
+	}
+	for rel, data := range files {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // writeAppBundleWithAgents rewrites the fixture package into one that
 // plays two roles: the manifest lists a judge, and the layer declares it
 // with the contract's committer. The entry agent's own layer is

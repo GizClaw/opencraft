@@ -104,7 +104,33 @@ func TestInspectAcceptsAPackageAndDescribesTheInstall(t *testing.T) {
 	if len(insp.Layers) != 1 || insp.Layers[0] != "layer.yaml" {
 		t.Fatalf("layers = %v", insp.Layers)
 	}
+	// The wizard's other list: what the package asks the host for, read
+	// off the file before anything is copied. A package that names none
+	// reports none — the wizard shows no section for that, and a slice
+	// that lied here would make it invent one.
+	if len(insp.Capabilities) != 0 {
+		t.Fatalf("capabilities = %v, want none", insp.Capabilities)
+	}
 	mustBeEmpty(t, root)
+}
+
+// TestInspectReportsTheCapabilitiesTheManifestAsksFor: the wizard lists
+// what a user is agreeing to before the install button is live, so the
+// inspection carries the manifest's own names, in its order.
+func TestInspectReportsTheCapabilitiesTheManifestAsksFor(t *testing.T) {
+	store, _, _ := newStore(t)
+	src := newApp(t)
+	withManifest(t, src, "capabilities:\n  - exec\n  - tools\n")
+	insp, err := store.Inspect(context.Background(), src)
+	if err != nil {
+		t.Fatalf("inspect: %v", err)
+	}
+	if len(insp.Refusals) != 0 {
+		t.Fatalf("refusals = %v, want none", insp.Refusals)
+	}
+	if got := strings.Join(insp.Capabilities, ","); got != "exec,tools" {
+		t.Fatalf("capabilities = %q, want the manifest's own order", got)
+	}
 }
 
 // TestInspectReportsRefusalsAsData pins the wizard's contract: a package

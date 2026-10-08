@@ -79,6 +79,47 @@ describe('AppImportWizard', () => {
     expect(apiMock.appInstall).not.toHaveBeenCalled();
   });
 
+  // The wizard is where a user agrees to what a package asks the host
+  // for, so the fragments are named before the install button is live —
+  // and a package that asks for none gets no section rather than an
+  // empty one (the layers above are then the whole report).
+  it('names the host capabilities the package asks for', async () => {
+    apiMock.appInspect.mockResolvedValue(
+      inspection({ Capabilities: ['tools', 'exec'] }),
+    );
+    render(
+      <AppImportWizard
+        open
+        update={null}
+        onClose={() => {}}
+        onDone={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('app-pick-folder'));
+
+    const section = await screen.findByTestId('app-package-capabilities');
+    expect(section).toHaveTextContent('tools');
+    expect(section).toHaveTextContent('exec');
+    expect(screen.getByText('Capabilities')).toBeTruthy();
+  });
+
+  it('says nothing about capabilities when the package asks for none', async () => {
+    render(
+      <AppImportWizard
+        open
+        update={null}
+        onClose={() => {}}
+        onDone={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('app-pick-folder'));
+    await screen.findByText('Hello');
+
+    expect(screen.queryByTestId('app-package-capabilities')).toBeNull();
+  });
+
   it('lists every refusal and refuses to install', async () => {
     apiMock.appInspect.mockResolvedValue(
       inspection({

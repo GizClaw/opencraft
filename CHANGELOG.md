@@ -44,6 +44,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An application can ask the host for the surfaces v1 does not hand out
+  by default. The manifest's `capabilities:` list names host-owned
+  fragments — `tools` (the host's whitelisted file tools, working on
+  the application's own private workspace), `exec` (sandboxed command
+  execution, with the application's own approvals file and audit trail)
+  and `web` (`web_fetch`/`web_search` under the host's network policy) —
+  and each name is one embedded host layer: the containers it declares,
+  plus the shared tool-result policy that joins the stack above the
+  application's own layers. The topmost layer is generated rather than
+  packaged, because a dependency is per agent and the agent names come
+  from the manifest: it points every agent the application runs at the
+  tool assembly the fragments built. An application cannot widen what a
+  fragment grants — `resources.tools` is a reserved key as soon as the
+  manifest opts in, and the refusals for the sandbox, exec-approval,
+  host-workspace and network kinds now name the capability to ask for
+  instead of saying an application does not get that surface. The
+  preflight and the assembly read one composition of the stack
+  (`config.AppDeployLayers`), so what an install was checked against is
+  what the runtime builds, and the per-layer checks still only ever
+  blame the application's own layers. `permissions:` — the plugin
+  manifest's spelling of the same idea — is refused with a pointer at
+  the field that works. The import wizard shows what a package asks for
+  before anything is copied, and the diagnostics panel shows what an
+  installation opted into; both list the manifest's own names, which is
+  the vocabulary the refusals read back. `project` (the user's working
+  directory as a root) and `memory` (history injection) are not built.
 - An application can now play more than one role. Its manifest lists the
   agents it runs besides the entry one (`agents:`), each of those
   declared by a layer, and a caller picks one per turn by name

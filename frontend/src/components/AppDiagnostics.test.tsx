@@ -24,6 +24,7 @@ vi.mock('./AppGallery', () => ({ AppIcon: () => null }));
 function status(
   recovery: gen.AppRecovery,
   assembly: gen.AppAssembly = { count: 0 },
+  capabilities: string[] = [],
 ): gen.AppStatus {
   return {
     id: 'hello',
@@ -35,15 +36,20 @@ function status(
     content_root: '/apps/hello/content',
     state_root: '/data/apps/hello',
     work_dir: '/data/apps/hello/workspace',
+    capabilities,
     recovery,
     assembly,
   };
 }
 
-function seed(recovery: gen.AppRecovery, assembly?: gen.AppAssembly) {
+function seed(
+  recovery: gen.AppRecovery,
+  assembly?: gen.AppAssembly,
+  capabilities?: string[],
+) {
   useAppsStore.setState({
     apps: [{ id: 'hello', name: 'Hello', enabled: true }],
-    status: { hello: status(recovery, assembly) },
+    status: { hello: status(recovery, assembly, capabilities) },
   });
 }
 
@@ -219,5 +225,43 @@ describe('AppDiagnostics recent events', () => {
     // The moment is the page's own clock, which is the question the
     // list answers ("did that just arrive?").
     expect(rows[1]).toHaveTextContent(new Date(at).toLocaleTimeString());
+  });
+});
+
+// The capability row is what an author with a tool call that never
+// happened comes here for: which host fragments this installation asked
+// for, and — when the answer is the empty one — that it asked for none.
+// The names are the manifest vocabulary, shown as the manifest writes
+// them and as a refusal reads them back; a per-fragment explanation is
+// not this panel's to invent.
+describe('AppDiagnostics capabilities row', () => {
+  const live: gen.AppRecovery = {
+    ran: true,
+    at: '2026-09-21T10:00:00Z',
+    recovered: 0,
+  };
+
+  it('names the fragments the installation opted into', async () => {
+    seed(live, { count: 0 }, ['tools', 'exec']);
+
+    render(<AppDiagnostics appID="hello" />);
+
+    const row = await screen.findByTestId('app-capabilities');
+    expect(row.children).toHaveLength(2);
+    expect(row).toHaveTextContent('tools');
+    expect(row).toHaveTextContent('exec');
+    expect(
+      screen.getByText(/merged above the application's own layers/),
+    ).toBeInTheDocument();
+  });
+
+  it('says an installation reaches no host surface', async () => {
+    seed(live, { count: 0 });
+
+    render(<AppDiagnostics appID="hello" />);
+
+    expect(await screen.findByTestId('app-capabilities')).toHaveTextContent(
+      'Names no host capabilities (tools, command execution, the network).',
+    );
   });
 });

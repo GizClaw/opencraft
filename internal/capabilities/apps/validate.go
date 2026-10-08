@@ -272,7 +272,7 @@ func (p *preflight) run(ctx context.Context) (Refusals, error) {
 		return p.refusals, nil
 	}
 
-	merged, provenance, err := p.merge(ctx, layers)
+	merged, provenance, err := p.merge(ctx)
 	if err != nil {
 		// The merge error already names the layer that broke it (the
 		// core layer loader spells out priority and name), so it is
@@ -422,22 +422,22 @@ func (p *preflight) loadLayers(ctx context.Context) []layerDoc {
 	return out
 }
 
-// merge loads the contract layer and the application layers the way the
-// assembly does (deploy.LoadLayers: ascending priority, deep merge) so
-// the document pass sees the document the runtime would see — minus the
-// inference overlay, which arrives from the user's settings and is not
-// the application's to declare.
+// merge loads the application's layers the way the assembly does
+// (config.AppDeployLayers + deploy.LoadLayers: ascending priority, deep
+// merge) so the document pass sees the document the runtime would see —
+// minus the inference overlay, which arrives from the user's settings
+// and is not the application's to declare. The capability fragments are
+// part of the stack on purpose: an application layer that names a
+// fragment's resource (its agent engine's tools dependency, most of all)
+// is checked against the document that will exist, not against the
+// document the contract layer alone describes.
 func (p *preflight) merge(
-	ctx context.Context, layers []layerDoc,
+	ctx context.Context,
 ) (deploy.Document, deploy.Provenance, error) {
-	stack := []deploy.Layer{config.AppContractLayer()}
-	for index, layer := range layers {
-		stack = append(stack, deploy.Layer{
-			Priority: config.AppLayerPriorityBase + index,
-			Name:     layer.name,
-			Source:   resource.Source{File: layer.name},
-			BaseDir:  p.root,
-		})
+	stack, err := config.AppDeployLayers(
+		p.root, p.app.Layers, p.app.Capabilities, p.app.RunAgents())
+	if err != nil {
+		return deploy.Document{}, deploy.Provenance{}, err
 	}
 	return deploy.LoadLayers(ctx, stack)
 }
@@ -447,9 +447,22 @@ func (p *preflight) merge(
 // the kind table are all decided here, with the layer name in the
 // refusal.
 func (p *preflight) declarations(layers []layerDoc) {
-	reserved := make(map[string]bool, len(p.contract.Resources))
+	// The keys the host band provides: the contract layer's resources,
+	// and — once the manifest opts into a capability — the tool assembly
+	// the generated wiring aggregates the fragments' containers into. A
+	// layer that declared one of them would be losing the merge to the
+	// host band above it, silently, which is why each is refused with
+	// the reason it is the host's.
+	reserved := make(map[string]string, len(p.contract.Resources)+1)
 	for key := range p.contract.Resources {
-		reserved[key] = true
+		reserved[key] = fmt.Sprintf(
+			"the host provides %q in the contract layer; remove it and use the contract's resource",
+			key)
+	}
+	if len(p.app.Capabilities) > 0 {
+		reserved[config.CapabilityToolsKey] = fmt.Sprintf(
+			"the host declares %q once an application opts into a capability, and a layer cannot widen what one grants; rename the resource",
+			config.CapabilityToolsKey)
 	}
 	for _, layer := range layers {
 		if version := strings.TrimSpace(layer.doc.Version); version != "" &&
@@ -472,11 +485,10 @@ func (p *preflight) declarations(layers []layerDoc) {
 }
 
 // resourceKey decides one resource key an application layer declared.
-func (p *preflight) resourceKey(layer string, reserved map[string]bool, key, kind string) {
+func (p *preflight) resourceKey(layer string, reserved map[string]string, key, kind string) {
 	where := "resources." + key
-	if reserved[key] {
-		p.refuse(layer, where, fmt.Sprintf(
-			"the host provides %q in the contract layer; remove it and use the contract's resource", key))
+	if reason, ok := reserved[key]; ok {
+		p.refuse(layer, where, reason)
 		return
 	}
 	if config.OwnsInferenceKey(key) {
@@ -529,7 +541,8 @@ func (p *preflight) agentKey(layer, name string, def agent.Definition) {
 			CommitHookType))
 	}
 	if len(def.Tools) > 0 {
-		p.refuse(layer, where+".tools", "v1 gives applications no tools")
+		p.refuse(layer, where+".tools",
+			"an application's tool surface is the host's: the containers come from the capabilities the manifest names (\"tools\", \"exec\", \"web\"), and the application's own graph decides what the model sees")
 	}
 	if def.Engine.Kind != "" {
 		p.kind(layer, where+".engine", string(def.Engine.Kind))
@@ -647,8 +660,17 @@ func (p *preflight) document(merged deploy.Document) {
 	}
 
 	for _, key := range sortedResourceKeys(merged.Resources) {
+		// Only what an application layer declared is walked. The host
+		// bands above it — the contract layer's own keys, the capability
+		// fragments — are the host's embedded layers: their references
+		// are the host's to keep resolvable (nothing here could fix
+		// them), and a refusal has no application file to name.
+		layer := p.layerOfResource(key)
+		if layer == "" {
+			continue
+		}
 		where := "resources." + key + ".settings"
-		p.settings(p.layerOfResource(key), where, merged.Resources[key].Settings)
+		p.settings(layer, where, merged.Resources[key].Settings)
 	}
 }
 
@@ -807,25 +829,16 @@ func (p *preflight) refuse(layer, key, reason string) {
 }
 
 // layerOfResource names the layer that declared one merged resource key:
-// the preflight merges the contract layer and the application's layers,
-// and a refusal must not claim an application file declared a key the
-// host did.
+// the preflight merges the host bands and the application's layers, and
+// a refusal must not claim an application file declared a key the host
+// did (config.AppLayerName answers "" for every host band).
 func (p *preflight) layerOfResource(key string) string {
-	return layerName(p.provenance.Resources[key])
+	return config.AppLayerName(p.provenance.Resources[key])
 }
 
 // layerOfAgent names the layer that declared one merged agent.
 func (p *preflight) layerOfAgent(name string) string {
-	return layerName(p.provenance.Agents[name])
-}
-
-// layerName turns one provenance entry into a layer name, empty for the
-// host's own layers (they sit below the application band).
-func layerName(ref deploy.LayerRef) string {
-	if ref.Priority < config.AppLayerPriorityBase {
-		return ""
-	}
-	return ref.Name
+	return config.AppLayerName(p.provenance.Agents[name])
 }
 
 // documentExt reports whether a referenced path is a document the scan

@@ -107,6 +107,41 @@ export function AppDiagnostics({ appID }: { appID: string }) {
             path={status?.work_dir}
             onOpen={() => void api.appReveal(appID, '')}
           />
+          {/* The host fragments the installation opted into. Always a
+              row: "this application reaches no host surface" is the
+              answer to a tool call that never happened, which is one of
+              the reasons a user opens this panel. */}
+          <div className="flex items-start gap-2">
+            <dt className="w-28 shrink-0 text-faint">
+              {t('apps.diag.capabilities')}
+            </dt>
+            <dd className="min-w-0 flex-1">
+              {status?.capabilities && status.capabilities.length > 0 ? (
+                <>
+                  <ul
+                    className="flex flex-wrap gap-1.5"
+                    data-testid="app-capabilities"
+                  >
+                    {status.capabilities.map((name) => (
+                      <li
+                        key={name}
+                        className="rounded-tight border border-edge bg-panel3 px-1.5 py-0.5 font-mono text-micro text-dim"
+                      >
+                        {name}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-1 text-micro text-faint">
+                    {t('apps.diag.capabilitiesHint')}
+                  </p>
+                </>
+              ) : (
+                <span className="text-faint" data-testid="app-capabilities">
+                  {t('apps.diag.capabilitiesNone')}
+                </span>
+              )}
+            </dd>
+          </div>
           <div className="flex items-center gap-2">
             <dt className="w-28 shrink-0 text-faint">
               {t('apps.diag.recovery')}
