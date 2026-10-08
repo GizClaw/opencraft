@@ -396,21 +396,22 @@ func TestUpdateKeepsTheEnableState(t *testing.T) {
 	}
 }
 
-// TestUpdateZipIsTheDirectoryUpdate: a release artifact installs the same
-// package a directory does, entry point and all.
-func TestUpdateZipIsTheDirectoryUpdate(t *testing.T) {
+// TestUpdateTakesAnArchiveSource: a release artifact updates the same way
+// a directory does — the source is resolved before any of the update's own
+// rules (id, version, one step back) are applied.
+func TestUpdateTakesAnArchiveSource(t *testing.T) {
 	store, _, _ := newStore(t)
 	if _, err := store.Install(context.Background(), appAt(t, "0.1.0"), InstallOptions{}); err != nil {
 		t.Fatalf("install: %v", err)
 	}
 	zipPath := zipTree(t, appAt(t, "0.2.0"), "hello/")
-	if _, err := store.UpdateZip(context.Background(), "hello", zipPath); err != nil {
-		t.Fatalf("update zip: %v", err)
+	if _, err := store.Update(context.Background(), "hello", zipPath); err != nil {
+		t.Fatalf("update from an archive: %v", err)
 	}
 	if got := contentFile(t, store, "hello", "version.txt"); got != "0.2.0\n" {
 		t.Fatalf("content = %q", got)
 	}
-	if _, err := store.UpdateZip(context.Background(), "hello", zipPath); err == nil {
+	if _, err := store.Update(context.Background(), "hello", zipPath); err == nil {
 		t.Fatal("the same archive updated twice")
 	}
 }

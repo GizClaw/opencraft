@@ -16,6 +16,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/maxpath"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/netguard"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/semver"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
@@ -69,6 +70,11 @@ type Options struct {
 	// minHostVersion is checked against (foundation/version).
 	// Empty skips the check.
 	HostVersion string
+	// SourcePolicy relaxes the network guards a remote install source
+	// is fetched under (foundation/utils/netguard). Zero — the shipped
+	// value — fetches public https only; AllowPrivate is for tests and
+	// development servers.
+	SourcePolicy netguard.Policy
 }
 
 // Store is the application registry.
@@ -82,6 +88,23 @@ type Store struct {
 	// is a field so that the preflight and every install read one
 	// answer, and so that the check can be exercised on any platform.
 	pathLimit int
+	// sourcePolicy is what a remote source is fetched under; see
+	// Options.SourcePolicy.
+	sourcePolicy netguard.Policy
+	// sourceBytes bounds one downloaded archive in bytes actually
+	// written (see downloadArchive). Zero — the shipped value — means
+	// defaultSourceBytes: it is a knob for lowering the bound in a test,
+	// never one for lifting it.
+	sourceBytes int64
+}
+
+// sourceByteLimit is the bound one download is held to. A Store that
+// named none is held to the shipped default.
+func (s *Store) sourceByteLimit() int64 {
+	if s.sourceBytes <= 0 {
+		return defaultSourceBytes
+	}
+	return s.sourceBytes
 }
 
 // NewStore returns the registry described by o. It creates nothing: an
@@ -89,11 +112,12 @@ type Store struct {
 // installed anything is a read of an empty registry.
 func NewStore(o Options) *Store {
 	return &Store{
-		root:        o.Root,
-		dataDir:     o.DataDir,
-		builtin:     o.Builtin,
-		hostVersion: o.HostVersion,
-		pathLimit:   maxpath.HostLimit(),
+		root:         o.Root,
+		dataDir:      o.DataDir,
+		builtin:      o.Builtin,
+		hostVersion:  o.HostVersion,
+		pathLimit:    maxpath.HostLimit(),
+		sourcePolicy: o.SourcePolicy,
 	}
 }
 
@@ -420,23 +444,6 @@ func (s *Store) appFromManifest(m *Manifest, content string, enabled bool) App {
 		app.Defaults = *m.Defaults
 	}
 	return app
-}
-
-// checkSource refuses a source that cannot be copied into the registry:
-// not a directory, or one that lives inside the registry itself (an
-// install would recurse into its own staging area).
-func (s *Store) checkSource(src string) error {
-	if strings.TrimSpace(src) == "" {
-		return errors.New("apps: source is required")
-	}
-	info, err := os.Stat(src)
-	if err != nil {
-		return fmt.Errorf("apps: source: %w", err)
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("apps: source %q is not a directory", src)
-	}
-	return s.checkOutsideRoot(src)
 }
 
 // checkOutsideRoot refuses a source inside the content root. An install

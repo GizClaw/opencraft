@@ -228,12 +228,17 @@ func TestInstallCopiesAnUneditedManifestByteForByte(t *testing.T) {
 	}
 }
 
-func TestInstallZipInstallsThePackageTheArchiveCarried(t *testing.T) {
+// TestInstallUnpacksTheArchiveTheSourceNames: a path that is a file is an
+// archive, and the archive layout rules are the release-artifact ones —
+// app.yaml at the root or under a single top-level directory. There is
+// one Install, so a picker and a paste cannot disagree about which half
+// of the source vocabulary they are handing over.
+func TestInstallUnpacksTheArchiveTheSourceNames(t *testing.T) {
 	zipPath := zipTree(t, newApp(t), "hello-0.1.0/")
 	store, root, _ := newStore(t)
-	sum, err := store.InstallZip(context.Background(), zipPath, InstallOptions{ID: "zipped"})
+	sum, err := store.Install(context.Background(), zipPath, InstallOptions{ID: "zipped"})
 	if err != nil {
-		t.Fatalf("install zip: %v", err)
+		t.Fatalf("install archive: %v", err)
 	}
 	if sum.ID != "zipped" || !sum.Enabled {
 		t.Fatalf("summary = %+v", sum)
@@ -248,7 +253,7 @@ func TestInstallZipInstallsThePackageTheArchiveCarried(t *testing.T) {
 	mustExist(t, filepath.Join(app.ContentDir, "nodes", "hello.js"))
 }
 
-func TestInstallZipRefusesAnArchiveWithoutAManifest(t *testing.T) {
+func TestInstallRefusesAnArchiveWithoutAManifest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "package.zip")
 	f, err := os.Create(path)
 	if err != nil {
@@ -269,9 +274,9 @@ func TestInstallZipRefusesAnArchiveWithoutAManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, root, _ := newStore(t)
-	if _, err := store.InstallZip(context.Background(), path, InstallOptions{}); err == nil ||
+	if _, err := store.Install(context.Background(), path, InstallOptions{}); err == nil ||
 		!strings.Contains(err.Error(), "zip has no "+ManifestFile) {
-		t.Fatalf("install zip without a manifest = %v", err)
+		t.Fatalf("install archive without a manifest = %v", err)
 	}
 	mustBeEmpty(t, root)
 }

@@ -80,9 +80,12 @@
     },
     "wizard": {
       "title": "导入应用",
-      "hint": "选择应用所在的目录或 zip。校验通过之前不会安装任何东西。",
+      "hint": "选择应用所在的目录或 zip，或粘贴 git / URL 来源。校验通过之前不会安装任何东西。",
       "chooseFolder": "选择目录…",
       "chooseZip": "选择 zip…",
+      "sourceLabel": "包来源",
+      "sourcePlaceholder": "git+https://host/owner/repo.git#main",
+      "sourceFetch": "读取来源",
       "install": "安装",
       "unusable": "这个来源里没有可用的应用包",
       "layers": "部署层",

@@ -16,8 +16,6 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-
-	"github.com/GizClaw/opencraft/internal/foundation/utils/zipx"
 )
 
 // InstallOptions are the manifest fields the import wizard lets a user
@@ -48,12 +46,13 @@ func InstallOptionsFromSummary(sum Summary) InstallOptions {
 	return InstallOptions{ID: sum.ID, Name: sum.Name, Icon: &icon}
 }
 
-// Install copies a package directory into the registry and enables it.
-// The install is all-or-nothing by construction: the package is staged
-// inside the registry and validated *there* — the bytes that would
-// actually land — and only then renamed into place. A refused install
-// leaves nothing behind, not even its staging directory, and never
-// touches the source directory.
+// Install copies a package into the registry and enables it. src is any
+// source (source.go): a directory, an archive, a git remote, an archive
+// URL. The install is all-or-nothing by construction: the package is
+// staged inside the registry and validated *there* — the bytes that
+// would actually land — and only then renamed into place. A refused
+// install leaves nothing behind, not even its staging directory, and
+// never touches the source.
 func (s *Store) Install(
 	ctx context.Context,
 	src string,
@@ -62,9 +61,12 @@ func (s *Store) Install(
 	if strings.TrimSpace(s.root) == "" {
 		return Summary{}, errors.New("apps: content root is not configured")
 	}
-	if err := s.checkSource(src); err != nil {
+	resolved, err := s.resolveSource(ctx, src)
+	if err != nil {
 		return Summary{}, err
 	}
+	defer resolved.cleanup()
+	src = resolved.dir
 	m, err := s.readManifest(src, "")
 	if err != nil {
 		return Summary{}, err
@@ -125,23 +127,6 @@ func (s *Store) Install(
 		return Summary{}, err
 	}
 	return summaryFromManifest(manifest, true), nil
-}
-
-// InstallZip installs an application from a zip package (a release
-// artifact, an exported directory). The archive may carry the package
-// files at its root or under a single top-level directory; app.yaml is
-// located and that folder is installed through the normal path.
-func (s *Store) InstallZip(
-	ctx context.Context,
-	zipPath string,
-	opts InstallOptions,
-) (Summary, error) {
-	dir, cleanup, err := zipx.Extract(zipPath, ManifestFile)
-	if err != nil {
-		return Summary{}, err
-	}
-	defer cleanup()
-	return s.Install(ctx, dir, opts)
 }
 
 // rewriteManifest applies the form's edits to a parsed manifest and

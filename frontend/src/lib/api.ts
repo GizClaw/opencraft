@@ -577,12 +577,9 @@ export const api = {
   appInspect: (path: string) => App.Inspect(path),
   appInstall: (src: string, opts: gen.AppInstallOptions) =>
     App.Install(src, opts),
-  appInstallZip: (zip: string, opts: gen.AppInstallOptions) =>
-    App.InstallZip(zip, opts),
   appSetEnabled: (id: string, enabled: boolean) => App.SetEnabled(id, enabled),
   appUninstall: (id: string, purge: boolean) => App.Uninstall(id, purge),
   appUpdate: (id: string, src: string) => App.Update(id, src),
-  appUpdateZip: (id: string, zip: string) => App.UpdateZip(id, zip),
   appRollback: (id: string) => App.Rollback(id),
   appReload: (id: string) => App.Reload(id),
   appStatus: (id: string) => App.Status(id),

@@ -101,16 +101,20 @@ func (b *App) List() ([]apps.Summary, error) {
 
 // Inspect reads one candidate package without installing it: the card it
 // would render as, its layers, and every reason the preflight refuses it
-// — as rows, so the wizard can list what the user has to fix.
-func (b *App) Inspect(path string) (apps.Inspection, error) {
+// — as rows, so the wizard can list what the user has to fix. src is any
+// source the registry resolves, the same string Install takes.
+func (b *App) Inspect(src string) (apps.Inspection, error) {
 	store, err := b.store()
 	if err != nil {
 		return apps.Inspection{}, err
 	}
-	return store.Inspect(b.core.Shell.Context(), path)
+	return store.Inspect(b.core.Shell.Context(), src)
 }
 
-// Install copies a package directory into the registry and enables it.
+// Install copies a package into the registry and enables it. src is any
+// source the registry resolves (a directory, an archive, a git remote,
+// an archive URL — see capabilities/apps), so the import wizard has one
+// call to make whatever the user picked or pasted.
 func (b *App) Install(
 	src string, opts AppInstallOptions,
 ) (apps.Summary, error) {
@@ -126,28 +130,11 @@ func (b *App) Install(
 	return sum, nil
 }
 
-// InstallZip installs an application from a zip package (a release
-// artifact, an exported folder). The archive layout is the plugin one:
-// app.yaml may sit at the root or under a single top-level directory.
-func (b *App) InstallZip(
-	zipPath string, opts AppInstallOptions,
-) (apps.Summary, error) {
-	store, err := b.store()
-	if err != nil {
-		return apps.Summary{}, err
-	}
-	sum, err := store.InstallZip(b.core.Shell.Context(), zipPath, opts.options())
-	if err != nil {
-		return apps.Summary{}, err
-	}
-	b.changed(sum.ID)
-	return sum, nil
-}
-
 // Update replaces an installed application's content with a newer package
 // and serves it: the registry swaps the content root (the previous version
 // is snapshotted, so Rollback is one click away), and the application is
-// assembled again on the new bytes.
+// assembled again on the new bytes. src is any source, resolved the way
+// Install resolves one.
 //
 // A version the host cannot serve fails here rather than at the first
 // message — the package passed the preflight, so what is left to fail is
@@ -161,21 +148,6 @@ func (b *App) Update(id, src string) (apps.Summary, error) {
 	}
 	ctx := b.core.Shell.Context()
 	sum, err := store.Update(ctx, id, src)
-	if err != nil {
-		return apps.Summary{}, err
-	}
-	return sum, b.applySwap(ctx, id)
-}
-
-// UpdateZip updates an application from a zip package, with the same
-// entry-point rules Update has.
-func (b *App) UpdateZip(id, zipPath string) (apps.Summary, error) {
-	store, err := b.store()
-	if err != nil {
-		return apps.Summary{}, err
-	}
-	ctx := b.core.Shell.Context()
-	sum, err := store.UpdateZip(ctx, id, zipPath)
 	if err != nil {
 		return apps.Summary{}, err
 	}

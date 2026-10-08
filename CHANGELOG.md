@@ -44,6 +44,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- An application can be installed from a source the user never had to
+  download first. `App.Inspect`, `App.Install` and `App.Update` take one
+  string and resolve it in one place, so the import wizard has a single
+  field for a git remote (`git+https://host/owner/repo.git#ref`, or
+  `git+file:///path` for a repository on this machine) and for an archive
+  URL (`https://host/package.zip`) alongside the folder and zip pickers it
+  already had; the zip-specific half of the service (`InstallZip`,
+  `UpdateZip`) is gone, because an extension is not what decides the
+  semantics. Nothing is guessed: `https://…/repo.git` and a bare
+  `github.com/owner/repo` are refused with the spelling that would have
+  worked, rather than fetched from somewhere the user did not name. Git
+  sources are cloned shallow and single-branch at the named branch or tag
+  and land as a tree — the clone's `.git` is removed before anything else
+  reads the staging directory, and a `git+ssh://` remote is refused
+  outright, since the host cannot answer a host-key or credential prompt.
+  Every remote source is fetched under the same guards the host's other
+  outbound requests use: public HTTPS only, no credentials in the URL, the
+  host re-checked at dial time and on every redirect, and a byte-counted
+  256 MiB bound on the download (not a `Content-Length` claim) so a server
+  that streams forever is cut off rather than stored. A private or
+  plaintext source is refused with the workaround in the sentence: clone
+  it yourself and install the directory, which needs no network at all.
 - An application can ask the host for the surfaces v1 does not hand out
   by default. The manifest's `capabilities:` list names host-owned
   fragments — `tools` (the host's whitelisted file tools, working on

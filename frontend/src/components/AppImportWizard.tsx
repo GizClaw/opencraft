@@ -11,6 +11,7 @@ import { useAppsStore } from '../apps/store';
 import type { AppSummary } from '../apps/store';
 import { AppIcon } from './AppGallery';
 import { Button } from './ui/Button';
+import { Input } from './ui/Input';
 import { Modal } from './ui/Modal';
 import { ICON } from './ui/icon';
 import type * as gen from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/models';
@@ -20,9 +21,10 @@ import type * as genApps from '../../bindings/github.com/GizClaw/opencraft/inter
 // end up in the same place: a source the registry can read, and the
 // answers the preflight gave about it.
 interface Candidate {
-  /** src is the directory or the zip the user picked. */
+  /** src is whatever the user picked or pasted: a directory, an
+   *  archive, a git remote (git+https://…#ref), an archive URL. The
+   *  host resolves it; the wizard only carries the string. */
   src: string;
-  zip: boolean;
   inspection?: genApps.Inspection;
   /** error is the refusal that stops the wizard before the form: a
    *  source the host cannot even read a manifest out of. */
@@ -65,6 +67,7 @@ export function AppImportWizard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({ id: '', name: '', icon: '' });
+  const [source, setSource] = useState('');
   const [iconTouched, setIconTouched] = useState(false);
   const updating = update !== null;
 
@@ -75,15 +78,16 @@ export function AppImportWizard({
     setCandidate(null);
     setError('');
     setForm({ id: '', name: '', icon: '' });
+    setSource('');
     setIconTouched(false);
   }, [open]);
 
-  const inspect = async (src: string, zip: boolean) => {
+  const inspect = async (src: string) => {
     setBusy(true);
     setError('');
     try {
       const inspection = await api.appInspect(src);
-      setCandidate({ src, zip, inspection });
+      setCandidate({ src, inspection });
       setForm({
         id: inspection.Summary.id,
         name: inspection.Summary.name,
@@ -92,9 +96,10 @@ export function AppImportWizard({
       setIconTouched(false);
     } catch (err) {
       // The refusal that arrives as an error is the one about the
-      // package itself (no manifest, a manifest the host cannot parse),
-      // not about a key inside it.
-      setCandidate({ src, zip, error: String(err) });
+      // source itself (nothing there, a remote the guards refuse, a
+      // manifest the host cannot parse), not about a key inside the
+      // package.
+      setCandidate({ src, error: String(err) });
     } finally {
       setBusy(false);
     }
@@ -103,7 +108,7 @@ export function AppImportWizard({
   const pickFolder = async () => {
     try {
       const path = await api.pickFolder(t('apps.wizard.chooseFolder'));
-      if (path) await inspect(path, false);
+      if (path) await inspect(path);
     } catch (err) {
       setError(String(err));
     }
@@ -112,10 +117,18 @@ export function AppImportWizard({
   const pickZip = async () => {
     try {
       const path = await api.pickFile(t('apps.wizard.chooseZip'), '*.zip');
-      if (path) await inspect(path, true);
+      if (path) await inspect(path);
     } catch (err) {
       setError(String(err));
     }
+  };
+
+  // A typed or pasted source goes through the same call as a picked one:
+  // the host resolves the string, and which kind of source it names is
+  // the host's answer, not a branch the wizard keeps in step.
+  const fetchSource = async () => {
+    const src = source.trim();
+    if (src) await inspect(src);
   };
 
   const submit = async () => {
@@ -125,9 +138,7 @@ export function AppImportWizard({
     try {
       let summary: genApps.Summary;
       if (update) {
-        summary = candidate.zip
-          ? await api.appUpdateZip(update.id, candidate.src)
-          : await api.appUpdate(update.id, candidate.src);
+        summary = await api.appUpdate(update.id, candidate.src);
       } else {
         const opts: gen.AppInstallOptions = {
           id: form.id.trim(),
@@ -137,9 +148,7 @@ export function AppImportWizard({
         // wrote it; one they cleared is an install without an icon, which
         // the null says explicitly.
         if (iconTouched) opts.icon = form.icon.trim();
-        summary = candidate.zip
-          ? await api.appInstallZip(candidate.src, opts)
-          : await api.appInstall(candidate.src, opts);
+        summary = await api.appInstall(candidate.src, opts);
       }
       await load();
       onDone(summary.id);
@@ -228,6 +237,33 @@ export function AppImportWizard({
               {candidate.src}
             </span>
           )}
+        </div>
+
+        {/* A source the user has and the host does not: a git remote, an
+            archive URL. One field for both, because the host decides
+            which one the string names — and the same call reads it as a
+            picked path is read. */}
+        <div className="flex items-center gap-2">
+          <Input
+            size="sm"
+            value={source}
+            aria-label={t('apps.wizard.sourceLabel')}
+            placeholder={t('apps.wizard.sourcePlaceholder')}
+            onChange={(e) => setSource(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void fetchSource();
+            }}
+            data-testid="app-source-input"
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy || source.trim() === ''}
+            onClick={() => void fetchSource()}
+            data-testid="app-source-fetch"
+          >
+            {t('apps.wizard.sourceFetch')}
+          </Button>
         </div>
 
         {error && (

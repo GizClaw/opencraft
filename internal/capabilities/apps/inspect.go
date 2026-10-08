@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/zipx"
 )
 
 // maxAssetBytes bounds one file read out of a content root. An
@@ -61,31 +60,17 @@ type Inspection struct {
 // the platform would not take — is a refusal, because those are the
 // things a user can go and fix.
 func (s *Store) Inspect(ctx context.Context, src string) (Inspection, error) {
-	if strings.TrimSpace(src) == "" {
-		return Inspection{}, errors.New("apps: source is required")
-	}
-	info, err := os.Stat(src)
+	// The source may be a path, an archive, a git remote or a URL, and
+	// resolving it is where "which of those is it" is decided — once,
+	// for this call and for Install and Update alike. Whatever staging
+	// the resolution needed is gone when this returns: the checks below
+	// want a tree, and nothing keeps a copy of where it came from.
+	resolved, err := s.resolveSource(ctx, src)
 	if err != nil {
-		return Inspection{}, fmt.Errorf("apps: source: %w", err)
-	}
-	if err := s.checkOutsideRoot(src); err != nil {
 		return Inspection{}, err
 	}
-	if !info.IsDir() {
-		// A file is an archive, and unpacking it is how it is read at
-		// all: the checks below want a tree. An archive over a size
-		// bound stays an error rather than becoming a row — nothing
-		// inside it could be read, and the bound's own sentence ("the
-		// archive declares 90.0 MiB for this entry") already says what
-		// is wrong with the package.
-		dir, cleanup, err := zipx.Extract(src, ManifestFile)
-		if err != nil {
-			return Inspection{}, err
-		}
-		defer cleanup()
-		return s.inspect(ctx, dir)
-	}
-	return s.inspect(ctx, src)
+	defer resolved.cleanup()
+	return s.inspect(ctx, resolved.dir)
 }
 
 // inspect reads one package tree, wherever it came from: the directory a

@@ -139,6 +139,70 @@ test('an imported application runs its bundle and talks on its own stream', asyn
   );
 });
 
+// A remote source is a string the host resolves, not a branch the wizard
+// keeps in step: a pasted one goes through the same Inspect and the same
+// Install a picked directory does, and what reaches the backend is the
+// source as it was typed. That is the whole contract of the market half —
+// one vocabulary, resolved in one place.
+test('a pasted remote source is read and installed through the same calls', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: '/workspace',
+    apps: [],
+    appPackage: { summary: { id: 'hello', name: 'Hello' }, path: '/tmp/hello' },
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Applications' }).click();
+  await page.getByRole('button', { name: 'Import application' }).click();
+
+  // What the backend saw: the two handlers are wrapped, because the
+  // source the wizard carried is a request field and the page cannot
+  // show it.
+  await page.evaluate(() => {
+    const win = window as never as {
+      __ocMockByModule: Record<
+        string,
+        Record<string, (...a: unknown[]) => unknown>
+      >;
+      __ocAppSourceCalls: { inspect: string[]; install: string[] };
+    };
+    const handlers = win.__ocMockByModule.App;
+    const calls = { inspect: [] as string[], install: [] as string[] };
+    win.__ocAppSourceCalls = calls;
+    const realInspect = handlers.Inspect;
+    const realInstall = handlers.Install;
+    handlers.Inspect = async (src: string) => {
+      calls.inspect.push(src);
+      return realInspect(src);
+    };
+    handlers.Install = async (...args: unknown[]) => {
+      calls.install.push(String(args[0]));
+      return realInstall(...args);
+    };
+  });
+
+  const src = 'git+https://example.invalid/owner/hello.git#main';
+  await page.getByTestId('app-source-input').fill(src);
+  await page.getByTestId('app-source-fetch').click();
+  // The package the host read out of the remote it cloned.
+  await expect(page.getByText('hello · 1.0.0 · hello')).toBeVisible();
+  await page.getByTestId('app-install-confirm').click();
+
+  // The install landed, and both calls carried the pasted string.
+  await expect(page.getByTestId('app-nav-hello')).toBeVisible();
+  const calls = await page.evaluate(
+    () =>
+      (
+        window as never as {
+          __ocAppSourceCalls: { inspect: string[]; install: string[] };
+        }
+      ).__ocAppSourceCalls,
+  );
+  expect(calls.inspect).toEqual([src]);
+  expect(calls.install).toEqual([src]);
+});
+
 test("another conversation's events are not the page's", async ({ page }) => {
   await page.addInitScript(mockBackend as never, {
     workspace: '/workspace',

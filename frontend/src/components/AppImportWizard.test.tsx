@@ -5,9 +5,7 @@ import { AppImportWizard } from './AppImportWizard';
 const apiMock = vi.hoisted(() => ({
   appInspect: vi.fn(),
   appInstall: vi.fn(),
-  appInstallZip: vi.fn(),
   appUpdate: vi.fn(),
-  appUpdateZip: vi.fn(),
   pickFolder: vi.fn(),
   pickFile: vi.fn(),
 }));
@@ -43,13 +41,7 @@ beforeEach(() => {
   apiMock.pickFile.mockResolvedValue('/tmp/hello.zip');
   apiMock.appInspect.mockResolvedValue(inspection());
   apiMock.appInstall.mockResolvedValue(summary);
-  apiMock.appInstallZip.mockResolvedValue(summary);
   apiMock.appUpdate.mockResolvedValue({
-    ...summary,
-    version: '2.0.0',
-    canRollback: true,
-  });
-  apiMock.appUpdateZip.mockResolvedValue({
     ...summary,
     version: '2.0.0',
     canRollback: true,
@@ -158,7 +150,10 @@ describe('AppImportWizard', () => {
     expect(screen.getByTestId('app-install-confirm')).toBeDisabled();
   });
 
-  it('installs through the zip binding when the source is a zip', async () => {
+  // A picked archive and a picked directory are the same call: the host
+  // resolves the string, so the wizard has one install path and cannot
+  // get out of step with the source vocabulary.
+  it('installs a picked archive through the one install call', async () => {
     const installed = vi.fn();
     render(
       <AppImportWizard
@@ -175,16 +170,87 @@ describe('AppImportWizard', () => {
     );
     fireEvent.click(screen.getByTestId('app-install-confirm'));
 
-    await waitFor(() => expect(apiMock.appInstallZip).toHaveBeenCalledTimes(1));
-    expect(apiMock.appInstallZip).toHaveBeenCalledWith('/tmp/hello.zip', {
+    await waitFor(() => expect(apiMock.appInstall).toHaveBeenCalledTimes(1));
+    expect(apiMock.appInstall).toHaveBeenCalledWith('/tmp/hello.zip', {
       id: 'hello',
       name: 'Hello',
     });
-    expect(apiMock.appInstall).not.toHaveBeenCalled();
     await waitFor(() => expect(installed).toHaveBeenCalledWith('hello'));
     // The list the page renders is re-read after an install, or the new
     // card is missing until a restart.
     expect(storeMock.load).toHaveBeenCalled();
+  });
+
+  // A remote source is read before anything is fetched into the registry,
+  // and installed through the same call a picked path uses. The wizard
+  // hands the string over as typed: which kind of source it names is the
+  // host's answer (a git remote, an archive URL, a path).
+  it('reads and installs a pasted git source', async () => {
+    const installed = vi.fn();
+    render(
+      <AppImportWizard
+        open
+        update={null}
+        onClose={() => {}}
+        onDone={installed}
+      />,
+    );
+
+    const src = 'git+https://example.invalid/owner/hello.git#main';
+    const field = screen.getByTestId('app-source-input');
+    // Nothing to read until something is typed.
+    expect(
+      screen.getByTestId('app-source-fetch').hasAttribute('disabled'),
+    ).toBe(true);
+    fireEvent.change(field, { target: { value: src } });
+    fireEvent.click(screen.getByTestId('app-source-fetch'));
+
+    await waitFor(() => expect(apiMock.appInspect).toHaveBeenCalledWith(src));
+    expect(screen.getByText('Hello')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('app-install-confirm'));
+    await waitFor(() => expect(apiMock.appInstall).toHaveBeenCalledTimes(1));
+    expect(apiMock.appInstall).toHaveBeenCalledWith(src, {
+      id: 'hello',
+      name: 'Hello',
+    });
+    await waitFor(() => expect(installed).toHaveBeenCalledWith('hello'));
+  });
+
+  // The refusal a remote source can produce is the source's own (nothing
+  // there, a remote the guards refuse), and it is shown as the reason the
+  // source could not be read — before any install button exists.
+  it('reports a source the host refuses', async () => {
+    apiMock.appInspect.mockRejectedValue(
+      new Error(
+        'apps: source "http://packages.example.com/hello.zip": http is only allowed for private or test hosts',
+      ),
+    );
+    render(
+      <AppImportWizard
+        open
+        update={null}
+        onClose={() => {}}
+        onDone={() => {}}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId('app-source-input'), {
+      target: { value: 'http://packages.example.com/hello.zip' },
+    });
+    fireEvent.click(screen.getByTestId('app-source-fetch'));
+
+    const box = await screen.findByText(
+      'No usable application package in this source',
+    );
+    expect(box).toBeTruthy();
+    expect(
+      screen.getByText(/http is only allowed for private or test hosts/),
+    ).toBeTruthy();
+    expect(screen.queryByTestId('app-install-confirm')).toBeTruthy();
+    expect(
+      screen.getByTestId('app-install-confirm').hasAttribute('disabled'),
+    ).toBe(true);
   });
 
   it('leaves an untouched icon to the manifest and sends an edited one', async () => {

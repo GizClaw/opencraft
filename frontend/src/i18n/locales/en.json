@@ -80,9 +80,12 @@
     },
     "wizard": {
       "title": "Import application",
-      "hint": "Pick the directory or the zip the application is shipped as. Nothing is installed until the checks pass.",
+      "hint": "Pick the folder or zip the application lives in, or paste a git / URL source. Nothing is installed until the checks pass.",
       "chooseFolder": "Choose a folder…",
       "chooseZip": "Choose a zip…",
+      "sourceLabel": "Package source",
+      "sourcePlaceholder": "git+https://host/owner/repo.git#main",
+      "sourceFetch": "Read source",
       "install": "Install",
       "unusable": "No usable application package in this source",
       "layers": "Deployment layers",

@@ -420,9 +420,9 @@ export function mockBackend(cfg?: MockConfig) {
         Layers: config.appPackage?.layers ?? ['layer.yaml'],
         Refusals: config.appPackage?.refusals ?? [],
       }),
+      // One install call for every source (a directory, an archive, a
+      // git remote, an archive URL): the host resolves the string.
       Install: async (_src: string, opts: Record<string, unknown>) =>
-        recordInstall(opts),
-      InstallZip: async (_zip: string, opts: Record<string, unknown>) =>
         recordInstall(opts),
       KVDelete: noop,
       KVGet: async () => ({ key: '', value: '' }),
@@ -466,7 +466,6 @@ export function mockBackend(cfg?: MockConfig) {
       Turns: emptyList,
       Uninstall: noop,
       Update: async (id: string) => recordUpdate(id),
-      UpdateZip: async (id: string) => recordUpdate(id),
     },
     Agent: {
       Detail: async () => null,

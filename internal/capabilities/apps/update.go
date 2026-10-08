@@ -23,7 +23,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/foundation/utils/semver"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/zipx"
 )
 
 // backupDir is where the version an update replaced is kept, so a
@@ -42,11 +41,12 @@ func (s *Store) canRollback(id string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-// Update replaces an installed application's content with a newer package
-// directory. Everything outside the content root is preserved: the enable
-// state, the state root, and the previous rollback snapshot — a failed
-// update leaves both the installed version and the snapshot it would have
-// replaced untouched.
+// Update replaces an installed application's content with a newer
+// package. src is any source (source.go), resolved the same way Install
+// resolves one. Everything outside the content root is preserved: the
+// enable state, the state root, and the previous rollback snapshot — a
+// failed update leaves both the installed version and the snapshot it
+// would have replaced untouched.
 func (s *Store) Update(ctx context.Context, id, src string) (Summary, error) {
 	content, builtin, err := s.contentDir(id)
 	if err != nil {
@@ -57,9 +57,12 @@ func (s *Store) Update(ctx context.Context, id, src string) (Summary, error) {
 			"apps: %q is built in and cannot be updated; install the package under another id",
 			id)
 	}
-	if err := s.checkSource(src); err != nil {
+	resolved, err := s.resolveSource(ctx, src)
+	if err != nil {
 		return Summary{}, err
 	}
+	defer resolved.cleanup()
+	src = resolved.dir
 	m, err := s.readManifest(src, "")
 	if err != nil {
 		return Summary{}, err
@@ -151,18 +154,6 @@ func (s *Store) Update(ctx context.Context, id, src string) (Summary, error) {
 	telemetry.WarnErr(context.Background(),
 		"apps: remove previous rollback snapshot failed", os.RemoveAll(old))
 	return s.summaryOf(m, id), nil
-}
-
-// UpdateZip updates an application from a zip package (a release
-// artifact, an exported directory), with the same entry-point rules an
-// install has.
-func (s *Store) UpdateZip(ctx context.Context, id, zipPath string) (Summary, error) {
-	dir, cleanup, err := zipx.Extract(zipPath, ManifestFile)
-	if err != nil {
-		return Summary{}, err
-	}
-	defer cleanup()
-	return s.Update(ctx, id, dir)
 }
 
 // Rollback restores the version the last update replaced and consumes the
