@@ -8,8 +8,7 @@
 // project the desktop app also has open — a supported combination, not a
 // bug. A process starting inside another process's long wave sees a live
 // checkpoint with an older timestamp, and the timestamp heuristic in the
-// recovery pass (docs/agent-runtime-parity/layer-1-4, "不重放 frontier")
-// would materialize a running turn as interrupted.
+// recovery pass would materialize a running turn as interrupted.
 //
 // The lock answers the one question a timestamp cannot: is another live
 // process holding this workspace? It is a non-blocking exclusive lock on

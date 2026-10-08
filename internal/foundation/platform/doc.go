@@ -7,8 +7,6 @@
 // a binary links exactly one implementation per GOOS, and the shape
 // that is actually polymorphic (the sandbox execution surface, with
 // capabilities carried as a value) already lives in flowcraft core.
-// The rationale, and the entry conditions for ever revisiting it, are
-// in docs/architecture-plan.md §W1.
 //
 // Admission rules, applied when reviewing a new platform primitive:
 //
@@ -39,5 +37,5 @@
 //
 // "Platform" here means the host operating system. The app platform
 // (user-installable applications and the capability surface they may
-// declare) is a different concept: see docs/app-platform-plan.md.
+// declare) is a different concept: see docs/app-platform.md.
 package platform

@@ -40,7 +40,7 @@ func TestDocumentNamesAreWireValues(t *testing.T) {
 // once, with an owner and a generation, and nothing else is. Without
 // this, adding a document to the constants and forgetting the registry
 // (or the reverse) is invisible — the registry is what a future
-// migration and docs/session-data-model.md §2 walk.
+// migration and docs/architecture.md (conversation data model) walk.
 func TestDocumentsRegistryIsComplete(t *testing.T) {
 	declared := documentConstants(t)
 

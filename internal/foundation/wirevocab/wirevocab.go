@@ -3,7 +3,7 @@
 //
 // A JSON field name is a cross-version contract: an older UI build, a
 // plugin compiled against last year's SDK, or a bundle a user exported
-// months ago reads it. W5.3 of docs/architecture-plan.md renamed the
+// months ago reads it. The rename that introduced this list: the
 // conversation id from `session_id` to `conversation_id` — four
 // hand-written DTOs and the frontend that reads them, in one step. The
 // build notices nothing when a new `json:"session_id"` shows up beside

@@ -88,7 +88,7 @@ type RecoveryReport struct {
 // re-executing whatever the interrupted wave was doing, and OpenCraft's
 // turns run side-effecting tools; the product promise is "the turn is
 // visible and the user can continue with a fresh one", not "the turn
-// continues by itself" (see docs/agent-runtime-parity/layer-1-4).
+// continues by itself".
 //
 // Recovery is best-effort and never fails assembly: a store that cannot
 // be scanned leaves the checkpoints for the next pass.

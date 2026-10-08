@@ -17,7 +17,8 @@ import (
 // legacy per-session meta.json and is the source of truth for the
 // resume list.
 //
-// Column ownership (docs/session-data-model.md §1 has the full model):
+// Column ownership (docs/architecture.md, the conversation data model,
+// has the full model):
 // this row is an index over the transcript, never a second copy of it.
 //
 //   - ID / CreatedAt / UpdatedAt: identity and bookkeeping.

@@ -1,5 +1,5 @@
 // Package platform_test carries the executable half of the platform
-// capability matrix (docs/architecture-plan.md §4): each platform's
+// capability matrix: each platform's
 // confined backend, whether interactive sessions exist, the
 // single-instance endpoint mechanism, how a file is marked hidden, and
 // the process lock a state root takes.

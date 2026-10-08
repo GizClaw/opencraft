@@ -132,8 +132,8 @@ func recordsWithBody(
 	return out
 }
 
-// TestRuntimeInPlaceReloadGenerationSemantics is the M0 verification
-// experiment from docs/backend-runtime-reload-plan.md: it applies a
+// TestRuntimeInPlaceReloadGenerationSemantics is the verification
+// experiment for in-place reloads: it applies a
 // document-only reload through the production entry point
 // (Host.ReloadDocument, which wraps flowcraft Runtime.Reload) while a
 // turn is in flight and pins down which host-level resources must

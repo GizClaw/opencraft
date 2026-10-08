@@ -5,12 +5,13 @@
 // The deploy layering itself is flowcraft core's deploy.LoadLayers —
 // this package decides what opencraft writes into it.
 //
-// File map (W3b of docs/architecture-plan.md §W3): a domain is found by
+// File map: a domain is found by
 // name, not by reading the package. The shape is <domain>_<role>.go
 // where a domain has more than one file (inference_* is the example);
 // a single-file domain keeps the plain name, because renaming
 // delegation.go to delegation_load.go would cost blame and the
-// references §W4 and AGENTS.md make to config/atomic.go without
+// references this package's callers and AGENTS.md make to config/atomic.go
+// without
 // answering a question nobody asked.
 //
 //	core        manager.go           discovery, seeding, layered load/save

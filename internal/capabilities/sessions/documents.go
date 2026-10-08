@@ -4,8 +4,8 @@ import "github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 
 // conversation_state is the session store's per-conversation key/value
 // table, and every document in it belongs to exactly one owner. The
-// names live in this one file, for the same reason
-// docs/session-data-model.md §2 lists them in one table: a reader must
+// names live in this one file, for the same reason docs/architecture.md
+// (conversation data model) lists them in one table: a reader must
 // be able to see every document, who writes it, and which shape
 // generation this build reads, without grepping five packages.
 //
@@ -54,8 +54,8 @@ type StateDocument struct {
 	Generation int
 }
 
-// Documents lists every document, in the order
-// docs/session-data-model.md §2 does. Readers and writers use the
+// Documents lists every document, in the order docs/architecture.md
+// (conversation data model) does. Readers and writers use the
 // constants above; this is the registry tests and future migrations
 // walk, and TestDocumentsRegistryIsComplete keeps it in step with the
 // constants.

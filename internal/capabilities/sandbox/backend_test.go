@@ -10,8 +10,7 @@ import (
 
 // TestBackendTable pins the platform table every consumer reads: the
 // backend name, the probe program and whether TTY sessions are served.
-// The values are the ones §4 of docs/architecture-plan.md documents;
-// the table and the construction live in the same entry (backend.go),
+// The table and the construction live in the same entry (backend.go),
 // so changing one without the other is not expressible, and
 // InteractiveSessions is the one value behind both the advertised
 // exec_session tool and the noTTYRunner enforcement: Windows does not

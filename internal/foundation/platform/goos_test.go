@@ -13,10 +13,10 @@ import (
 // goosSite is one allowlisted file plus why it is allowed to read the
 // host OS, and how many reads it may contain.
 //
-// W8 of docs/architecture-plan.md: reading runtime.GOOS is the cheapest
-// possible way to answer a platform question and therefore the easiest
-// thing to scatter. W1 converged the questions themselves (backend,
-// shells, PATH, hidden marking); this list keeps the answers converged:
+// Reading runtime.GOOS is the cheapest possible way to answer a
+// platform question and therefore the easiest thing to scatter. The
+// questions themselves are converged elsewhere (backend, shells, PATH,
+// hidden marking); this list keeps the answers converged:
 // a new read has to be added here, with a reason a reviewer reads, or
 // the test fails.
 //

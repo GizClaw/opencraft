@@ -11,7 +11,8 @@ import (
 
 // The launch resolver turns one process start into the pair of roots the
 // rest of the app runs against. Two roots exist because they answer
-// different questions (docs/multi-instance-and-profiles.md §2):
+// different questions (docs/architecture.md, "launch, roots, single
+// instance"):
 //
 //   - state root: everything with session state (workspaces/, user.db,
 //     logs/, audit/, cache/). One GUI process per state root.
