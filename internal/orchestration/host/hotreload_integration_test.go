@@ -258,6 +258,113 @@ defaults:
 	}
 }
 
+// TestAppHostRefusedReloadLeavesTheManifestsIdentityAlone is the
+// ordering half of the identity commit: the manifest is read before
+// anything is swapped and committed after the swap has landed, so a
+// reload refused in between cannot leave the Host serving one
+// generation under another manifest's entry agent or defaults.
+//
+// Where the refusal comes from is what makes the test say anything. A
+// layer the preflight refuses is refused while the document loads —
+// before the manifest is read at all — and a Host that never read the
+// new identity has nothing it could commit. The edit here is therefore
+// a manifest that moves the default model, plus a user layer that
+// stopped declaring the inference wiring (the file a settings save
+// leaves behind once the last provider is removed), which the reload
+// refuses at the router check: one step past the read.
+func TestAppHostRefusedReloadLeavesTheManifestsIdentityAlone(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "ok"})
+	f := newAppFixture(t, provider,
+		"defaults:\n  model: openai-1/fake-model\n",
+		config.Model{Name: "fake-model"},
+		config.Model{
+			Name: "fake-model-thinks",
+			Capabilities: model.ModelCapabilities{
+				Reasoning: model.ReasoningCapability{Kind: model.ReasoningToggle},
+			},
+		},
+	)
+	ctx := host.WithAssemblyReason(context.Background(), host.ReasonAppTurn)
+	h, err := f.mgr.Acquire(ctx, host.AppTarget("hello"), interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire application host: %v", err)
+	}
+	defer func() {
+		if err := h.Close(); err != nil {
+			t.Errorf("close application host: %v", err)
+		}
+	}()
+
+	first, err := h.StartRun(ctx, host.RunOptions{
+		Message: message.NewTextMessage(message.RoleUser, "hi"),
+	})
+	if err != nil {
+		t.Fatalf("start first run: %v", err)
+	}
+	if _, err := first.Wait(ctx); err != nil {
+		t.Fatalf("wait first run: %v", err)
+	}
+	if got := requestModel(t, provider, 0); got != "fake-model" {
+		t.Fatalf("first turn ran on %q, want the manifest's default", got)
+	}
+
+	// The edit: a new default model, and a user layer without the
+	// inference wiring.
+	manifest := `app: v1
+id: hello
+name: Hello
+version: 0.1.0
+minHostVersion: 0.1.0
+agent: app
+layers:
+  - layer.yaml
+defaults:
+  model: openai-1/fake-model-thinks
+`
+	if err := os.WriteFile(
+		filepath.Join(f.contentRoot(), "app.yaml"), []byte(manifest), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	dropInferenceWiring(t, f.configDir)
+	err = h.ReloadDocument(ctx)
+	if err == nil {
+		t.Fatal("the reload served a document with no configured router")
+	}
+	if !strings.Contains(err.Error(), "router") {
+		t.Fatalf("reload error = %v, want the router the layer stopped declaring", err)
+	}
+
+	// The identity the failed swap carried was not committed: the next
+	// turn runs the model the Host was serving with, not the one the
+	// manifest it could not serve named.
+	second, err := h.StartRun(ctx, host.RunOptions{
+		Message: message.NewTextMessage(message.RoleUser, "again"),
+	})
+	if err != nil {
+		t.Fatalf("start run after the refused reload: %v", err)
+	}
+	if _, err := second.Wait(ctx); err != nil {
+		t.Fatalf("wait run after the refused reload: %v", err)
+	}
+	if got := requestModel(t, provider, 1); got != "fake-model" {
+		t.Errorf("turn after the refused reload ran on %q, want the serving default %q",
+			got, "fake-model")
+	}
+}
+
+// dropInferenceWiring rewrites the user's own layer as the fixture
+// seeds it and nothing else: the file a settings save leaves behind
+// after the last provider is removed, which is a document no router can
+// be built from.
+func dropInferenceWiring(t *testing.T, configDir string) {
+	t.Helper()
+	seed := []byte("version: v1\nresources:\n  box:\n    settings:\n      remote: false\n")
+	if err := os.WriteFile(config.UserLayerFile(configDir), seed, 0o600); err != nil {
+		t.Fatalf("write user layer: %v", err)
+	}
+}
+
 // policyBrokenLayer is the fixture layer with one reserved key added: an
 // edit an author can make, that decodes, that loads, and that the
 // preflight refuses. It is the class of edit an in-place swap could

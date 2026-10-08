@@ -14,15 +14,109 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"sigs.k8s.io/yaml"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
+
+// TestInPlaceReloadRefusesADocumentThatSwapsTheSessionsStore pins the
+// invariant an in-place swap cannot keep: the Host persists transcripts
+// through the one store it acquired, and the engine reads and writes
+// whatever the document resolves. A document that moves `sessions`
+// somewhere else therefore hands the runtime a second store — the
+// history the user writes and the history the runtime appends diverge —
+// so the swap reports the requirement instead of serving it.
+//
+// The report has to come after the swap, not before: whether the
+// sessions resource is still the Host's store is a question about the
+// generation that resolved it, and that generation only exists once the
+// swap has landed. What the caller does with the report is its own
+// business (the desktop falls back to a full rebuild, which is what
+// re-acquires the store); the Host's contract is the sentence.
+func TestInPlaceReloadRefusesADocumentThatSwapsTheSessionsStore(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	workDir := t.TempDir()
+	dataDir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dataDir, "home"))
+	configDir := filepath.Join(dataDir, "config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeConfig(t, configDir, provider.URL())
+
+	mgr := host.NewManagerAt(dataDir, configDir)
+	ctx := context.Background()
+	h, err := mgr.Acquire(ctx, host.WorkspaceTarget(workDir), interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire host: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+
+	// The user's own document, edited the way a user edits it: the
+	// sessions key the contract layer declares, moved to another root.
+	moveSessionsRoot(t, configDir, filepath.Join(dataDir, "somewhere-else"))
+
+	err = h.ReloadDocument(ctx)
+	if err == nil {
+		t.Fatal("the in-place reload served a document that swaps the sessions store")
+	}
+	if !strings.Contains(err.Error(), "sessions implementation") ||
+		!strings.Contains(err.Error(), "full rebuild") {
+		t.Fatalf("reload error = %v, want the requirement a rebuild answers", err)
+	}
+
+	// And the failure is the real one: the generation now serving really
+	// does resolve a different store, which is what the caller has to
+	// rebuild away from.
+	value, ok := h.Controller().Runtime().Resource("sessions")
+	store, isStore := value.(*ocsessions.Store)
+	if !ok || !isStore {
+		t.Fatalf("runtime sessions resource = %#v", value)
+	}
+	if store == h.Sessions() {
+		t.Fatal("the swapped generation resolves the Host's own store; " +
+			"the refusal is about a state the runtime is not in")
+	}
+}
+
+// moveSessionsRoot edits one key of the user's own layer — the sessions
+// root the contract declares — leaving the rest of the file alone. The
+// fixture's inference wiring lives in that same layer, so replacing the
+// document wholesale would fail the reload's router check instead of
+// the one under test.
+func moveSessionsRoot(t *testing.T, configDir, root string) {
+	t.Helper()
+	path := config.UserLayerFile(configDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read user layer: %v", err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse user layer: %v", err)
+	}
+	resources, ok := doc["resources"].(map[string]any)
+	if !ok {
+		t.Fatalf("user layer carries no resources mapping:\n%s", data)
+	}
+	resources["sessions"] = map[string]any{
+		"settings": map[string]any{"root": root},
+	}
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		t.Fatalf("encode user layer: %v", err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatalf("write user layer: %v", err)
+	}
+}
 
 // recordsWithBody returns the records whose body equals msg, in order.
 func recordsWithBody(
