@@ -40,6 +40,31 @@ layers:
 ` + manifestExtra
 }
 
+// toolGraphYAML is the graph the two halves of the tool acceptance run:
+// an inference node offering the whole catalog, a tool node executing
+// what the model asked for, and the edge that loops back for the answer.
+// What the model sees is the graph's decision; the fragments decide what
+// is in the catalog.
+const toolGraphYAML = `name: hello
+entry: llm
+nodes:
+  - id: llm
+    type: inference
+    config:
+      # The whole tool catalog, the way the assistant's graph offers it.
+      all_tools: true
+      tool_pending_key: tool_pending
+      stream: true
+  - id: tools
+    type: tool
+    config:
+      results_key: tool_results
+edges:
+  - { from: llm, to: tools, condition: "tool_pending == true" }
+  - { from: llm, to: __end__ }
+  - { from: tools, to: llm }
+`
+
 // writeToolAppPackage writes the fixture of these tests: the smallest
 // application whose graph runs a tool — an inference node offering the
 // whole catalog, a tool node executing what the model asked for, and the
@@ -57,26 +82,76 @@ agents:
       settings:
         graph: { file: graph.yaml }
 `,
-		"graph.yaml": `name: hello
-entry: llm
+		"graph.yaml": toolGraphYAML,
+	})
+}
+
+// writeToolJudgePackage writes the same package with a second agent
+// whose graph offers the same catalog — and whose layer deliberately
+// omits the tools dependency, since adding it is the host's wiring (see
+// config.CapabilityToolsKey). Its skeleton is the one the multi-agent
+// fixture uses for a non-entry agent: a script node in front of the
+// inference node, and a commit chain, so the turn is a turn of the
+// conversation rather than a graph that answers and forgets.
+func writeToolJudgePackage(t *testing.T) string {
+	t.Helper()
+	return writePackage(t, map[string]string{
+		apps.ManifestFile: toolAppManifest("agents:\n  - judge\ncapabilities:\n  - tools\n"),
+		"layer.yaml": `version: v1
+agents:
+  app:
+    card:
+      name: Hello
+    engine:
+      settings:
+        graph: { file: graph.yaml }
+  judge:
+    card:
+      name: Judge
+      description: the second agent
+    engine:
+      kind: agent.Engine
+      impl: graph
+      deps:
+        inference: infer
+        router: router
+        workspace: ws
+        script_runtime: js
+      settings:
+        graph: { file: judge.yaml }
+    commit:
+      - type: opencraft.commit
+        deps:
+          memory: mem
+          sessions: sessions
+`,
+		"graph.yaml": toolGraphYAML,
+		"judge.yaml": `name: judge
+entry: verdict
 nodes:
+  - id: verdict
+    type: script
+    config:
+      runtime: js
+      source: { file: scripts/judge.js }
   - id: llm
     type: inference
     config:
-      # The whole tool catalog, the way the assistant's graph offers it:
-      # what the model sees is the graph's decision, and the fragments
-      # decide what is in the catalog.
       all_tools: true
       tool_pending_key: tool_pending
       stream: true
+      model_hint: ${board:model:}
   - id: tools
     type: tool
     config:
       results_key: tool_results
 edges:
+  - { from: verdict, to: llm }
   - { from: llm, to: tools, condition: "tool_pending == true" }
   - { from: llm, to: __end__ }
   - { from: tools, to: llm }
+`,
+		"scripts/judge.js": `fs.write("verdict.txt", "judged\n");
 `,
 	})
 }
@@ -193,6 +268,76 @@ func offeredTools(t *testing.T, provider *fakeprovider.Server, call int) []strin
 		}
 	}
 	return out
+}
+
+// TestAppHostWiresTheFragmentIntoEveryAgent: the wiring names every
+// agent the application runs, not the entry alone — a dependency is per
+// agent, and a fragment that reached only the entry would be one the
+// application's other agents never see. The turn here is the second
+// agent's, and what it proves is the whole path: the manifest named the
+// fragment, the host wired it into an agent the manifest merely listed,
+// and the model of that agent's turn called a host tool.
+//
+// The agent's layer omits the dependency on purpose: a package cannot
+// declare its way into the host's tool assembly (the preflight refuses
+// it — see TestValidateRefusesAToolsDependencyWithoutTheCapability), so
+// what is exercised is the host's own wiring.
+func TestAppHostWiresTheFragmentIntoEveryAgent(t *testing.T) {
+	provider := fakeprovider.New(t,
+		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+			Name: "write_file",
+			Arguments: `{"file_path": "from-judge.txt", ` +
+				`"content": "written by the judge's tool\n"}`,
+		}}},
+		fakeprovider.Reply{Text: "done"},
+	)
+	f := newAppFixtureFrom(t, provider, writeToolJudgePackage(t))
+	ctx := host.WithAssemblyReason(context.Background(), host.ReasonAppTurn)
+
+	h, err := f.mgr.Acquire(ctx, host.AppTarget("hello"), interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire application host: %v", err)
+	}
+	defer func() {
+		if err := h.Close(); err != nil {
+			t.Errorf("close application host: %v", err)
+		}
+	}()
+
+	run, err := h.StartRun(ctx, host.RunOptions{
+		AgentID: "judge",
+		Message: message.NewTextMessage(message.RoleUser, "write me a file"),
+	})
+	if err != nil {
+		t.Fatalf("start the judge's turn: %v", err)
+	}
+	if got := run.AgentID(); got != "judge" {
+		t.Fatalf("the run answers as %q, want judge", got)
+	}
+	if _, err := run.Wait(ctx); err != nil {
+		t.Fatalf("wait the judge's turn: %v", err)
+	}
+
+	// The catalog reached that agent's model: the tools the request
+	// offered are the assembly the fragments built, which the host's
+	// wiring is the only way into.
+	if names := offeredTools(t, provider, 0); !slices.Contains(names, "write_file") {
+		t.Errorf("the judge's turn offered tools %v, want the fragment's catalog", names)
+	}
+	// And the call it made ran: the file is in the application's private
+	// workspace, written by the tool the fragment contributed.
+	data, err := os.ReadFile(filepath.Join(f.appStateRoot(), "workspace", "from-judge.txt"))
+	if err != nil {
+		t.Fatalf("the judge's tool call did not write into the workspace: %v", err)
+	}
+	if string(data) != "written by the judge's tool\n" {
+		t.Errorf("from-judge.txt = %q", data)
+	}
+	// The graph's own first node ran too, so this is the second agent's
+	// graph rather than the entry's: both halves are in one workspace.
+	if _, err := os.Stat(filepath.Join(f.appStateRoot(), "workspace", "verdict.txt")); err != nil {
+		t.Errorf("the judge's script node did not run: %v", err)
+	}
 }
 
 // TestAppHostReloadAddsAFragment: an author who edits an installed
