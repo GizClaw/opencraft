@@ -22,6 +22,17 @@
 #     (resources.tools.deps): the core merge unions the deps maps of
 #     every layer, so one capability is one layer's worth of
 #     containers, and a deployment that enables two fragments gets both.
+#   - the granularity is the fragment, not the tool: naming "tools"
+#     grants everything declared here, and there is no per-tool
+#     whitelist. That is deliberate (the app platform plan, §3.8). What
+#     an application may call is already exactly what its named
+#     fragments declare; the workspace below is the application's own,
+#     with the content root read-only and the user's directories out of
+#     reach; exec is behind approvals and the network behind the host's
+#     policy. A visibility list would not be a boundary anyway — core's
+#     hidden tools stay callable by name — so a boundary would have to be
+#     an allow middleware on this chain, and it should arrive with the
+#     manifest field that states the intent.
 resources:
   hostws:
     kind: opencraft.hostworkspace
