@@ -13,32 +13,29 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/netguard"
 )
 
 const (
-	maxInfoBytes   = 1 << 20 // 1 MiB update manifest
-	maxZipBytes    = 256 << 20
-	maxRedirects   = 5
-	requestTimeout = 30 * time.Second
-	dialTimeout    = 10 * time.Second
+	maxInfoBytes = 1 << 20 // 1 MiB update manifest
+	maxZipBytes  = 256 << 20
 )
 
-// Policy controls network restrictions for tests/development.
-// AllowPrivate permits loopback/private destinations (used by local
-// test servers); the zero value keeps them blocked and requires https.
-type Policy struct {
-	AllowPrivate bool
-}
+// Policy is the network policy of one update fetch: the shared guards
+// the host fetches any manifest-declared URL under (netguard), named
+// here so this package's callers do not have to spell out where the
+// rules live. AllowPrivate permits loopback/private destinations (used
+// by local test servers); the zero value keeps them blocked and
+// requires https.
+type Policy = netguard.Policy
 
 // CheckWithPolicy fetches and validates the update manifest at sourceURL
 // under an explicit network policy.
@@ -185,51 +182,10 @@ func validateInfo(ctx context.Context, info plugins.UpdateInfo, pol Policy) erro
 }
 
 func validateURL(ctx context.Context, u *url.URL, pol Policy) error {
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("plugin update: unsupported scheme %q", u.Scheme)
-	}
-	if !pol.AllowPrivate && u.Scheme != "https" {
-		return errors.New("plugin update: http is only allowed for private/test hosts")
-	}
-	if u.Host == "" || u.User != nil || u.Fragment != "" {
-		return errors.New("plugin update: url must be absolute, without credentials or fragment")
-	}
-	if err := checkHost(ctx, u.Hostname(), pol); err != nil {
-		return err
+	if err := netguard.CheckURL(ctx, u, pol); err != nil {
+		return fmt.Errorf("plugin update: %w", err)
 	}
 	return nil
-}
-
-func checkHost(ctx context.Context, host string, pol Policy) error {
-	if ip := net.ParseIP(host); ip != nil {
-		if !pol.AllowPrivate && blockedIP(ip) {
-			return fmt.Errorf("plugin update: private address %q is blocked", host)
-		}
-		return nil
-	}
-	if pol.AllowPrivate {
-		return nil
-	}
-	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
-	defer cancel()
-	ips, err := net.DefaultResolver.LookupIP(dctx, "ip", host)
-	if err != nil {
-		return fmt.Errorf("plugin update: resolve %q: %w", host, err)
-	}
-	for _, ip := range ips {
-		if blockedIP(ip) {
-			return fmt.Errorf(
-				"plugin update: host %q resolves to private address %s (blocked)",
-				host, ip)
-		}
-	}
-	return nil
-}
-
-func blockedIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified()
 }
 
 func parseChecksum(s string) (string, error) {
@@ -247,32 +203,6 @@ func parseChecksum(s string) (string, error) {
 	return strings.ToLower(hexPart), nil
 }
 
-func client(pol Policy) *http.Client {
-	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: func(
-			ctx context.Context,
-			network, addr string,
-		) (net.Conn, error) {
-			host, _, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			if err := checkHost(ctx, host, pol); err != nil {
-				return nil, err
-			}
-			dialer := &net.Dialer{Timeout: dialTimeout}
-			return dialer.DialContext(ctx, network, addr)
-		},
-	}
-	return &http.Client{
-		Transport: transport,
-		Timeout:   requestTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
-				return errors.New("plugin update: too many redirects")
-			}
-			return validateURL(req.Context(), req.URL, pol)
-		},
-	}
-}
+// client is the guarded HTTP client of one fetch: the shared rules
+// (netguard.Client) under this package's policy.
+func client(pol Policy) *http.Client { return netguard.Client(pol) }
