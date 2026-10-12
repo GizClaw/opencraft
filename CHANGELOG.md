@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carrying an `InstanceID`, and the Wails shell option that spoke a
   second protocol beside the GUI lock is gone, leaving one gate.
   `OPENCRAFT_NO_SINGLE_INSTANCE` still turns the lock off.
+- The build's Go pin is 1.26.9 (from 1.26.0) and `govulncheck` is v1.9.0:
+  the newer scanner reports the standard library advisories that 1.26.1
+  fixed as reaching this code, and `go.mod` is the version CI's
+  `setup-go` and the release builds read, so the patch reaches the
+  shipped binaries rather than only telling the scanner about it.
 
 ### Removed
 
@@ -54,8 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `foundation/utils/{filetype,fsatomic,httpprobe,imageutil,pathsafe,search,wsread}`
   and `platform/wslock` to `core/utils/*` (`wslock` is `core/utils/lock`
   now), and the e2e fake provider to `core/inference/inferencetest`. The
-  CI lanes lose the wslock cases with the package, and `govulncheck`
-  moves to v1.9.0.
+  CI lanes lose the wslock cases with the package.
 
 ## [0.6.1] - 2026-10-07
 
