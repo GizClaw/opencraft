@@ -91,6 +91,6 @@ describe('HTTPProbeCard', () => {
       await screen.findByRole('button', { name: 'Record' }),
     ).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Off' })).toBeDisabled();
-    expect(screen.getByText(/OPENCRAFT_HTTP_PROBE forces/)).toBeInTheDocument();
+    expect(screen.getByText(/FLOWCRAFT_HTTP_PROBE forces/)).toBeInTheDocument();
   });
 });

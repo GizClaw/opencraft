@@ -32,7 +32,7 @@ func BenchmarkResultLimit(b *testing.B) {
 	content := strings.Repeat("x", 100_000)
 	benchAssembly(b, `{
 		"middlewares": {
-			"result_limit": {"max_chars": 32768}
+			"result_limit": {"max": 32768}
 		}
 	}`, content)
 }

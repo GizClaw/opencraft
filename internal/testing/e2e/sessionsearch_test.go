@@ -9,9 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
+
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestHeadlessSessionSearchRecallsEarlierSession drives the cross-session
@@ -21,22 +22,22 @@ import (
 // answered from the archived index of the first session.
 func TestHeadlessSessionSearchRecallsEarlierSession(t *testing.T) {
 	const token = "zebra42quokka"
-	provider := fakeprovider.New(t,
+	provider := inferencetest.NewScriptedOpenAI(t,
 		// Session one: the fact is only ever written here.
-		fakeprovider.Reply{
+		inferencetest.ScriptedReply{
 			Text: "Noted: the deployment passphrase is " + token + ".",
 		},
 		// Session two: discover the recall tool, call it, answer.
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name: "tool_search",
 			Arguments: `{"query":"search past conversations earlier ` +
 				`sessions history recall"}`,
 		}}},
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "session_search",
 			Arguments: `{"query":"` + token + `"}`,
 		}}},
-		fakeprovider.Reply{Text: "Found it in an earlier session."},
+		inferencetest.ScriptedReply{Text: "Found it in an earlier session."},
 	)
 	workDir := t.TempDir()
 	configDir := filepath.Join(t.TempDir(), "config")

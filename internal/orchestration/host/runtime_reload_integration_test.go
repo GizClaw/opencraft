@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/event"
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -20,7 +21,6 @@ import (
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
@@ -57,18 +57,18 @@ func recordsWithBody(
 //     uses) still observes the new generation's rebuild event.
 func TestRuntimeInPlaceReloadGenerationSemantics(t *testing.T) {
 	recorder := logcapture.Install(t)
-	providerA := fakeprovider.New(t, fakeprovider.Reply{Text: "done-a"})
+	providerA := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done-a"})
 	gate := providerA.HoldNext()
-	providerB := fakeprovider.New(t,
-		fakeprovider.Reply{Text: "done-b"},
+	providerB := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{Text: "done-b"},
 		// Consumed by the process-feed check at the end of the test:
 		// the new generation runs one command so the Host's feed can
 		// be observed serving the new generation, not the retired one.
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "exec_command",
 			Arguments: `{"command":"echo reload-tap"}`,
 		}}},
-		fakeprovider.Reply{Text: "done-c"},
+		inferencetest.ScriptedReply{Text: "done-c"},
 	)
 
 	workDir := t.TempDir()
@@ -361,12 +361,12 @@ func waitAgentLifecycleRebound(
 // artifacts resource, so workspace writes during a later turn are
 // still buffered into the conversation archive.
 func TestHostArtifactObservationSurvivesDocumentReload(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"out.txt","content":"reload artifacts\n"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
@@ -440,9 +440,9 @@ func TestHostArtifactObservationSurvivesDocumentReload(t *testing.T) {
 // Start waits for the in-flight turn instead of running in parallel,
 // then serves on the new generation.
 func TestSameConversationBargeInDuringReloadStaysSerial(t *testing.T) {
-	providerA := fakeprovider.New(t, fakeprovider.Reply{Text: "done-a"})
+	providerA := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done-a"})
 	gate := providerA.HoldNext()
-	providerB := fakeprovider.New(t, fakeprovider.Reply{Text: "done-b"})
+	providerB := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done-b"})
 
 	workDir := t.TempDir()
 	dataDir := t.TempDir()

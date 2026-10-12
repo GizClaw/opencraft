@@ -13,6 +13,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/event"
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -20,7 +21,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 func writeFakeConfig(t *testing.T, configDir, baseURL string) {
@@ -51,7 +51,7 @@ func writeFakeConfig(t *testing.T, configDir, baseURL string) {
 // acquired Host that the test closes with itself. It returns the host
 // and the workspace directory the runs work in.
 func acquireHostFixture(
-	t *testing.T, provider *fakeprovider.Server,
+	t *testing.T, provider *inferencetest.ScriptedOpenAI,
 ) (*host.Host, string) {
 	t.Helper()
 	workDir := t.TempDir()
@@ -73,12 +73,12 @@ func acquireHostFixture(
 }
 
 func TestHostRunWritesFileEndToEnd(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"out.txt","content":"host e2e\n"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
@@ -156,12 +156,12 @@ func TestHostTapsSandboxProcessOutput(t *testing.T) {
 		// tap semantics on every backend.
 		t.Skip("POSIX shell fixture")
 	}
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "exec_command",
 			Arguments: `{"command":"echo host-tap-ok"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
@@ -233,7 +233,7 @@ func TestHostTapsSandboxProcessOutput(t *testing.T) {
 // exactly that archived turn after turn_end. This is the backend half
 // of the turn-end reconciliation contract.
 func TestHostConcurrentRunsArchiveMatchesStream(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "final archive text"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "final archive text"})
 	prompts := []string{
 		"alpha", "beta", "gamma", "delta", "epsilon", "zeta",
 	}
@@ -343,7 +343,7 @@ func TestHostConcurrentRunsArchiveMatchesStream(t *testing.T) {
 }
 
 func TestHostRunFiresExternalLifecycleHooks(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))

@@ -5,10 +5,9 @@ all: fmt lint check-boundaries test
 
 # GOFMT is the gofmt of the toolchain go.mod pins. Naming the toolchain
 # explicitly matters: GOTOOLCHAIN=auto only switches *up*, so a machine
-# with a newer Go than go.mod asks for (1.27 against 1.25) keeps using
-# its own gofmt, and the two format differently (1.27 de-indents nested
-# composite literals that 1.25 keeps). That is how a change can pass
-# `make fmt-check` locally and fail CI on the same commit.
+# with a newer Go than go.mod asks for (1.27 against 1.26) keeps using
+# its own gofmt, and the two format differently. That is how a change
+# can pass `make fmt-check` locally and fail CI on the same commit.
 GO_TOOLCHAIN := go$(shell sed -n 's/^go[[:space:]]\{1,\}//p' go.mod | head -1)
 GOFMT := $(shell GOTOOLCHAIN=$(GO_TOOLCHAIN) go env GOROOT)/bin/gofmt
 

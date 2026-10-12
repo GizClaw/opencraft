@@ -3,8 +3,8 @@
 // the user can act on.
 //
 // The lock is a non-blocking exclusive flock on <state root>/gui.lock
-// (the same kernel primitives wslock uses for a workspace, so the
-// kernel releases it when the holder dies for any reason). The holder
+// (flowcraft's core/utils/lock, the same primitive a workspace takes, so
+// the kernel releases it when the holder dies for any reason). The holder
 // records its pid, kind, start time and version in the file, which is
 // what lets a rejected launch name the owner instead of vanishing
 // silently.
@@ -16,14 +16,13 @@
 // again shows the running app - therefore rests on this protocol
 // instead of on the shell's.
 //
-// The Wails SingleInstance options stay enabled next to this lock, but
-// only as a second, opportunistic gate: they speak different protocols
-// ($TMPDIR flock plus a distributed notification on macOS, a D-Bus name
-// on Linux, a named mutex on Windows) that older builds of the same
-// root lineage still use, so keeping them catches a mix of generations.
-// The guarantee itself lives here, because it must not depend on
-// $TMPDIR semantics, on a session bus (whose absence used to abort
-// startup on Linux) or on a per-platform mutex check.
+// The lock is the only single-instance gate: the shell's own Wails
+// SingleInstance options were removed rather than kept as a second,
+// opportunistic check. They spoke different protocols ($TMPDIR flock
+// plus a distributed notification on macOS, a D-Bus name on Linux, a
+// named mutex on Windows), and the guarantee must not rest on $TMPDIR
+// semantics, on a session bus (whose absence used to abort startup on
+// Linux) or on a per-platform mutex check.
 //
 // Semantics: held by a live process -> HeldError, IsHeld true, the
 // caller rejects the launch. The lock file cannot be taken or written
@@ -48,9 +47,10 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/lock"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
+	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
 
 // LockName is the lock file inside the state root.
@@ -71,9 +71,10 @@ const raiseReadLimit = 64 << 10
 // raiseAck is the reply of a holder that ran its handler.
 const raiseAck = "ok"
 
-// Info describes the process holding the state root. It is wslock's
-// holder record: diagnostics only, the lock state is the authority.
-type Info = wslock.Info
+// Info describes the process holding the state root. It is the lock
+// package's holder record: diagnostics only, the lock state is the
+// authority.
+type Info = lock.Info
 
 // Launch describes one rejected launch: the arguments and working
 // directory the holder logs (and nothing it acts on).
@@ -92,7 +93,7 @@ type Launch struct {
 // switch: the lock is per state root, not per workspace) and doubles as
 // the raise endpoint's server side.
 type Lock struct {
-	handle   *wslock.Handle
+	handle   *lock.Handle
 	root     string
 	identity string
 }
@@ -109,29 +110,40 @@ type Lock struct {
 //   - (nil, err): the lock could not be taken or recorded. Fail open.
 //
 // identity names the state root in endpoint names that cannot carry a
-// path (Windows pipe names, the socket fallback for over-long roots);
-// callers pass the resolved single-instance id (config.Launch), which is
-// canonical for the root. An empty identity falls back to the cleaned
-// root path.
+// path (Windows pipe names, the socket fallback for over-long roots). An
+// empty identity derives the root's canonical id (singleInstanceID) -
+// the string released builds passed in explicitly - so the endpoint name
+// and the raise channel survive an update in which the old build still
+// holds the root; two spellings of one root derive one id as well.
 func Acquire(ctx context.Context, stateRoot, identity string) (*Lock, error) {
 	if stateRoot == "" {
 		return nil, errors.New("guilock: state root is empty")
 	}
-	handle, err := wslock.Acquire(ctx, filepath.Join(stateRoot, LockName), Kind)
+	id := identityOf(stateRoot, identity)
+	handle, err := lock.Acquire(ctx, filepath.Join(stateRoot, LockName), Kind,
+		// A second Acquire of this same process (tests, embedded
+		// hosts) is the root already being ours, not a foreign
+		// holder: the launch proceeds on a shared handle.
+		lock.ShareWithinProcess(),
+		lock.WithVersion(version.ServiceVersion),
+		// The record names the raise channel, so a rejected launch
+		// reads where the holder listens instead of re-deriving it.
+		lock.WithEndpoint(endpointName(stateRoot, id)),
+	)
 	if err != nil {
 		return nil, err
 	}
 	return &Lock{
 		handle:   handle,
 		root:     stateRoot,
-		identity: identityOf(stateRoot, identity),
+		identity: id,
 	}, nil
 }
 
 // IsHeld reports whether err means "another live process owns the state
 // root" and returns the holder it recorded.
 func IsHeld(err error) (Info, bool) {
-	return wslock.IsHeld(err)
+	return lock.IsHeld(err)
 }
 
 // Info names the holder as recorded in the lock file.
@@ -226,7 +238,14 @@ func RequestRaise(ctx context.Context, stateRoot, identity string, attempt Launc
 	if err != nil {
 		return err
 	}
-	conn, err := dialEndpoint(ctx, endpointName(stateRoot, identityOf(stateRoot, identity)))
+	// The holder's own record wins: it survives an identity spelling
+	// that no longer matches (an older build, a caller with no resolved
+	// instance id), where re-deriving the name would dial nothing.
+	endpoint := endpointName(stateRoot, identityOf(stateRoot, identity))
+	if info, ok := lock.ReadInfo(filepath.Join(stateRoot, LockName)); ok && info.Endpoint != "" {
+		endpoint = info.Endpoint
+	}
+	conn, err := dialEndpoint(ctx, endpoint)
 	if err != nil {
 		return err
 	}
@@ -289,14 +308,57 @@ func closeQuiet(ctx context.Context, msg string, closer io.Closer) {
 	telemetry.WarnErr(ctx, msg, err)
 }
 
-// identityOf falls back to the cleaned root when the caller had no
-// resolved id; two spellings of one root then at least share the root
-// part of their identity.
+// identityOf falls back to the root's canonical id when the caller had
+// no resolved one: symlink spellings of one root derive one name, and
+// the string is byte-for-byte what released builds passed as their
+// instance id, so endpoint names - and the raise channel - survive an
+// update in which the old build still holds the root.
 func identityOf(stateRoot, identity string) string {
 	if identity != "" {
 		return identity
 	}
-	return filepath.Clean(stateRoot)
+	return singleInstanceID(stateRoot)
+}
+
+// singleInstancePrefix leads the canonical id. The trailing "d" keeps
+// every element of the historical D-Bus name from starting with a digit.
+// The spelling is frozen: endpoint names hash it, and released builds
+// hashed the same string.
+const singleInstancePrefix = "com.GizClaw.opencraft.d"
+
+// singleInstanceID derives the endpoint identity of one state root: its
+// canonical path hashed to 12 hex chars.
+func singleInstanceID(stateRoot string) string {
+	sum := sha256.Sum256([]byte(canonicalPath(stateRoot)))
+	return singleInstancePrefix + hex.EncodeToString(sum[:6])
+}
+
+// canonicalPath resolves symlinks for the deepest existing ancestor of
+// path and rejoins the rest, so "/tmp/../tmp/x" and "/tmp/x" derive one
+// id even before the directory exists. A path that cannot be resolved
+// falls back to its cleaned absolute form.
+func canonicalPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	abs = filepath.Clean(abs)
+	rest := ""
+	current := abs
+	for {
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			if rest == "" {
+				return resolved
+			}
+			return filepath.Join(resolved, rest)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return abs
+		}
+		rest = filepath.Join(filepath.Base(current), rest)
+		current = parent
+	}
 }
 
 // endpointToken reduces an identity to a short, path- and name-safe

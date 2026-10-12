@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/utils/lock"
+
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
 )
 
 func TestStorePoolSharesPerRoot(t *testing.T) {
@@ -62,15 +63,16 @@ func TestStorePoolClosesAfterLastRelease(t *testing.T) {
 // of being read as crash leftovers.
 func TestManagerRecoveryClaimYieldsToLiveHolder(t *testing.T) {
 	m := NewManager(t.TempDir())
-	holder := wslock.Info{
+	holder := lock.Info{
 		PID:     os.Getpid() + 1,
 		Kind:    "gui",
 		Started: "2026-01-01T00:00:00Z",
 	}
 	calls := 0
-	m.acquireLease = func(_ context.Context, path, kind string) (*wslock.Handle, error) {
+	m.acquireLease = func(_ context.Context, path, kind string,
+		_ ...lock.Option) (*lock.Handle, error) {
 		calls++
-		return nil, &wslock.HeldError{Path: path, Info: holder}
+		return nil, &lock.HeldError{Path: path, Info: holder}
 	}
 	root := t.TempDir()
 	layout := config.WorkspaceLayout{
@@ -121,7 +123,7 @@ func TestManagerWorkspaceLeaseNamesTheStateRoot(t *testing.T) {
 	if !owed {
 		t.Fatalf("the first claim declined the pass: %+v", report)
 	}
-	info, ok := wslock.ReadInfo(filepath.Join(root, wslock.FileName))
+	info, ok := lock.ReadInfo(filepath.Join(root, workspaceLockName))
 	if !ok {
 		t.Fatal("no holder recorded in the workspace state root")
 	}

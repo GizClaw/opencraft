@@ -14,8 +14,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
+	"github.com/GizClaw/flowcraft/core/hooks"
+
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"

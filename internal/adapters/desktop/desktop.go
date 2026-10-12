@@ -57,10 +57,6 @@ type Options struct {
 	// Profile names the state-root profile this process runs as, for
 	// logging and the diagnostics report; empty for the default one.
 	Profile string
-	// InstanceID is the single-instance identity of the state root
-	// (config.ResolveLaunch). It is only logged here: main.go hands it
-	// to Wails before this constructor runs.
-	InstanceID string
 }
 
 // Desktop is the desktop composition root. It is not a Wails binding object;
@@ -189,7 +185,6 @@ func New(opts Options) (*Desktop, error) {
 		attribute.String("state_root", stateRoot),
 		attribute.String("app_home", opts.AppHome),
 		attribute.String("config_dir", opts.UserDir),
-		attribute.String("instance_id", opts.InstanceID),
 		attribute.String("defaulted", strings.Join(defaults, ", ")))
 	// Resolve PATH once the log sink exists (the line below is the record
 	// of what the app runs with) but before anything can spawn: a

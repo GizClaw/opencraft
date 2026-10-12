@@ -10,8 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 )
 
 const (

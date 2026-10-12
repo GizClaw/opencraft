@@ -18,14 +18,14 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/fsatomic"
 	"sigs.k8s.io/yaml"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
-	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
+	"github.com/GizClaw/flowcraft/core/hooks"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/permissions"
 	"github.com/GizClaw/opencraft/internal/capabilities/worldstate"
 	"github.com/GizClaw/opencraft/internal/foundation/interact"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/fsatomic"
 )
 
 // approvalsFile is the on-disk shape of the workspace-owned
@@ -249,8 +249,8 @@ func (m *Manager) Approve(
 // escalation" and keep the original confined failure.
 func (m *Manager) Escalate(
 	ctx context.Context,
-	req ocsandbox.EscalationRequest,
-) (ocsandbox.EscalationDecision, error) {
+	req sandbox.EscalationRequest,
+) (sandbox.EscalationDecision, error) {
 	m.mu.Lock()
 	hookMgr := m.hooks
 	m.mu.Unlock()
@@ -265,7 +265,7 @@ func (m *Manager) Escalate(
 	}
 	host, ok := agent.HostFromContext(ctx)
 	if !ok {
-		return ocsandbox.EscalationDecision{}, errdefs.NotAvailablef(
+		return sandbox.EscalationDecision{}, errdefs.NotAvailablef(
 			"opencraft execpolicy: no host in tool context")
 	}
 	opts, err := json.Marshal([]interact.Option{
@@ -277,7 +277,7 @@ func (m *Manager) Escalate(
 		},
 	})
 	if err != nil {
-		return ocsandbox.EscalationDecision{}, err
+		return sandbox.EscalationDecision{}, err
 	}
 	body := fmt.Sprintf(
 		"The sandbox refused this command:\n\n%s\n\n%s\n\n"+
@@ -298,30 +298,30 @@ func (m *Manager) Escalate(
 		},
 	})
 	if err != nil {
-		return ocsandbox.EscalationDecision{}, err
+		return sandbox.EscalationDecision{}, err
 	}
 	switch reply.Metadata[interact.MetaChoice] {
 	case "escalate_once":
 		m.recordEscalation(req, escalationDecisionOnce)
-		return ocsandbox.EscalationDecision{Allow: true}, nil
+		return sandbox.EscalationDecision{Allow: true}, nil
 	case "escalate_always":
 		rule := strings.TrimSpace(req.Rule)
 		if rule == "" {
-			return ocsandbox.EscalationDecision{}, errdefs.Validationf(
+			return sandbox.EscalationDecision{}, errdefs.Validationf(
 				"opencraft execpolicy: escalation rule is empty")
 		}
 		if err := m.AlwaysEscalate(rule); err != nil {
-			return ocsandbox.EscalationDecision{}, err
+			return sandbox.EscalationDecision{}, err
 		}
 		m.recordEscalation(req, escalationDecisionAlways)
-		return ocsandbox.EscalationDecision{
+		return sandbox.EscalationDecision{
 			Allow:    true,
 			Remember: true,
 		}, nil
 	default:
 		// Empty reply or "deny": keep the confined failure.
 		m.recordEscalation(req, escalationDecisionDeny)
-		return ocsandbox.EscalationDecision{}, nil
+		return sandbox.EscalationDecision{}, nil
 	}
 }
 
@@ -349,7 +349,7 @@ type escalationAuditEntry struct {
 // an audit write failure is logged and never blocks the command the
 // user already approved.
 func (m *Manager) recordEscalation(
-	req ocsandbox.EscalationRequest, decision string,
+	req sandbox.EscalationRequest, decision string,
 ) {
 	path := m.auditPath
 	if path == "" {
@@ -392,7 +392,7 @@ func (m *Manager) recordEscalation(
 
 // escalationBody renders why the command looked sandbox-refused,
 // including the concrete stderr line when one was captured.
-func escalationBody(req ocsandbox.EscalationRequest) string {
+func escalationBody(req sandbox.EscalationRequest) string {
 	reason := strings.TrimSpace(req.Reason)
 	detail := strings.TrimSpace(req.Detail)
 	switch {
@@ -642,5 +642,5 @@ func writeYAML(path string, doc any) error {
 
 var _ permissions.Policy = (*Manager)(nil)
 var _ worldstate.PrefixProvider = (*Manager)(nil)
-var _ ocsandbox.Escalator = (*Manager)(nil)
-var _ ocsandbox.EscalationRules = (*Manager)(nil)
+var _ sandbox.Escalator = (*Manager)(nil)
+var _ sandbox.EscalationRules = (*Manager)(nil)

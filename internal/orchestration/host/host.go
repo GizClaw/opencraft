@@ -11,6 +11,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/delegation"
 	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/utils/lock"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
@@ -25,7 +26,6 @@ import (
 	plugininstalltool "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
-	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
 	"github.com/GizClaw/opencraft/internal/orchestration/engine"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
@@ -102,12 +102,13 @@ type Manager struct {
 	// leases holds this process's advisory lock on each workspace state
 	// root it assembled. The lock is what tells a process starting later
 	// that this one is still alive and may be mid-run (see
-	// foundation/platform/wslock); it lives for the process lifetime, so it
-	// is deliberately not released when a Host closes.
-	leases map[string]*wslock.Handle
+	// flowcraft's core/utils/lock); it lives for the process lifetime,
+	// so it is deliberately not released when a Host closes.
+	leases map[string]*lock.Handle
 	// acquireLease is the lock entry point. It is a field so tests can
 	// present a foreign holder without spawning one.
-	acquireLease func(ctx context.Context, path, kind string) (*wslock.Handle, error)
+	acquireLease func(ctx context.Context, path, kind string,
+		opts ...lock.Option) (*lock.Handle, error)
 	// leaseKind names this process in the lock file ("gui", "headless").
 	leaseKind string
 

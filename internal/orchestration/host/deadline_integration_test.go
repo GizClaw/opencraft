@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // deadlineWatchdogGrace is how long a broken watchdog is given to prove
@@ -28,7 +28,7 @@ const deadlineWatchdogGrace = 5 * time.Second
 // wait still ends only once that turn settled (finish timing measured,
 // turn archived), never at the deadline itself.
 func TestWaitBoundedCancelsAtDeadlineAndWaitsForSettle(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "never read"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "never read"})
 	hold := provider.HoldNext()
 	defer hold.Release()
 
@@ -88,7 +88,7 @@ func TestWaitBoundedCancelsAtDeadlineAndWaitsForSettle(t *testing.T) {
 // the cancellation took, and the slot comes back so the task queued
 // behind it still runs.
 func TestAutomationDeadlineMarksTimeoutAndFreesSlot(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	hold := provider.HoldNext()
 	defer hold.Release()
 

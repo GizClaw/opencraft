@@ -8,13 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 func TestPluginSessionImportRequiresPermission(t *testing.T) {
@@ -38,7 +38,7 @@ func TestPluginSessionImportRequiresWorkspace(t *testing.T) {
 }
 
 func TestPluginSessionImportWiresHostWritePath(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "imported"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "imported"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	configDir := t.TempDir()
@@ -119,7 +119,7 @@ func TestPluginSessionImportWiresHostWritePath(t *testing.T) {
 }
 
 func TestPluginSessionImportedSourcesReportsExisting(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "imported"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "imported"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	configDir := t.TempDir()

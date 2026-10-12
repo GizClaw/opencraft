@@ -6,7 +6,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
+	"github.com/GizClaw/flowcraft/core/hooks"
 )
 
 // ---------------------------------------------------------------------------

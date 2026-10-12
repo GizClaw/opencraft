@@ -2,7 +2,7 @@
 // become ordinary tool.Tool values, and plugin-declared MCP servers
 // are attached through the same flowcraft MCP source the settings page
 // uses. Skills and hooks are consumed by their own resources
-// (opencraft.skills / opencraft.hooks) through the shared plugin host.
+// (opencraft.skills / hooks.Runner) through the shared plugin host.
 package pluginagent
 
 import (

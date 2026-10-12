@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
+	corelock "github.com/GizClaw/flowcraft/core/utils/lock"
 )
 
 // requireUnixSocketEndpoint skips a case that asserts about the shape of
@@ -43,6 +43,43 @@ const (
 func testIdentity(t *testing.T) string {
 	t.Helper()
 	return "guilock-test-" + t.Name()
+}
+
+// TestSingleInstanceIDFollowsCanonicalStateRoot pins the two jobs of the
+// derived id: equivalent spellings of one root must land on one endpoint
+// name, and the formula must keep producing the string released builds
+// passed in by hand.
+func TestSingleInstanceIDFollowsCanonicalStateRoot(t *testing.T) {
+	// /tmp is a symlink on macOS; both spellings must land on one id.
+	first := singleInstanceID("/tmp/../tmp/opencraft-id-test")
+	second := singleInstanceID("/tmp/opencraft-id-test")
+	if first != second {
+		t.Errorf("id differs for equivalent roots: %q vs %q", first, second)
+	}
+	if !strings.HasPrefix(first, singleInstancePrefix) ||
+		len(first)-len(singleInstancePrefix) != 12 {
+		t.Errorf("id = %q, want %q plus 12 hex chars",
+			first, singleInstancePrefix)
+	}
+	other := singleInstanceID("/tmp/opencraft-id-test-other")
+	if other == first {
+		t.Errorf("different roots share id %q", first)
+	}
+
+	// A root that does not exist yet resolves through its deepest
+	// existing ancestor, so two spellings of one missing directory
+	// still agree.
+	home := t.TempDir()
+	missing := filepath.Join(home, "not-there", "state")
+	noisy := filepath.Join(home, "not-there", "..", "not-there", "state")
+	if got, want := singleInstanceID(noisy), singleInstanceID(missing); got != want {
+		t.Errorf("unresolved root ids differ: %q vs %q", got, want)
+	}
+
+	// A caller that has a resolved id of its own keeps it.
+	if got := identityOf("/some/root", "custom"); got != "custom" {
+		t.Errorf("explicit identity = %q, want %q", got, "custom")
+	}
 }
 
 // TestHelperProcess is not a test: it is the child half of the
@@ -90,7 +127,7 @@ func TestAcquireRecordsHolderAndReleases(t *testing.T) {
 	// The lock file sits in the state root, spelled out: the location is
 	// the contract the diagnostics point at.
 	lockPath := filepath.Join(root, "gui.lock")
-	recorded, ok := wslock.ReadInfo(lockPath)
+	recorded, ok := corelock.ReadInfo(lockPath)
 	if !ok || recorded.PID != os.Getpid() {
 		t.Fatalf("recorded holder = %+v (ok=%v), want this process", recorded, ok)
 	}

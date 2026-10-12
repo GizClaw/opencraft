@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
+
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
 	reviewstore "github.com/GizClaw/opencraft/internal/capabilities/review/store"
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // reviewedFact is the fact the fake model proposes when the review call
@@ -56,13 +57,13 @@ func writeReviewEnabledConfig(t *testing.T, dir, baseURL string) {
 // engine narrows to the trailing assistant block, so every successful
 // turn fell to the min_tool_calls gate and the review never ran.
 func TestHeadlessReviewQueuesSuggestionAfterToolTurn(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"out.txt","content":"hello review\n"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
-		fakeprovider.Reply{Text: reviewAnswer},
+		inferencetest.ScriptedReply{Text: "done"},
+		inferencetest.ScriptedReply{Text: reviewAnswer},
 	)
 	workDir := t.TempDir()
 	configDir := filepath.Join(t.TempDir(), "config")

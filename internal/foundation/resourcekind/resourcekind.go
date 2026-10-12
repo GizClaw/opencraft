@@ -152,19 +152,6 @@ var Kinds = []Kind{
 			"depends on. Flat single word under the prefix.",
 	},
 	{
-		Value: "opencraft.hooks",
-		Owner: "capabilities/hooks",
-		Note: "The hook host: one registry for every opencraft hook " +
-			"implementation.",
-	},
-	{
-		Value: "opencraft.hooks.observer",
-		Owner: "capabilities/hooks",
-		Note: "The hook host's own observer. Kept distinct on the wire " +
-			"from `opencraft.hooks`, which is why the dotted form is " +
-			"preferred over a third flat word.",
-	},
-	{
 		Value: "opencraft.hostworkspace",
 		Owner: "capabilities/sandbox",
 		Note: "The mode-aware workspace over the session's persisted " +
@@ -233,15 +220,35 @@ var Kinds = []Kind{
 	},
 }
 
-// Impls is every value a `ResourceImpl` constant declares. Impl strings
-// are navigation labels inside one kind, not cross-version contracts, so
+// Impl is one entry of the impl inventory: an impl string a deploy
+// document can write after `impl:`, and the tree that declares it.
+type Impl struct {
+	// Value is the impl string as a deploy document spells it.
+	Value string
+	// Upstream marks an impl whose `ResourceImpl` constant lives in
+	// flowcraft. The scan in resourcekind_test.go only sees this tree,
+	// so an upstream entry is navigation — the constant, the factory
+	// and the name all belong to the module that ships it.
+	Upstream bool
+}
+
+// Impls is every value a `ResourceImpl` constant declares, plus the
+// upstream impls this app's deploy surface names. Impl strings are
+// navigation labels inside one kind, not cross-version contracts, so
 // there is no rule for them — but they are still inventoried, because a
 // typo in an impl is the same silent failure as a typo in a kind.
-var Impls = []string{
-	"keychain",
-	"local",
-	"opencraft.review",
-	"opencraft/automation",
-	"opencraft/plugininstall",
-	"opencraft/plugins",
+var Impls = []Impl{
+	// The secret.Store impl: declared by flowcraft's
+	// backends/secret/keychain, registered here in the deploy document
+	// as `secret.keychain`.
+	{Value: "keychain", Upstream: true},
+	{Value: "local"},
+	// The attachment prepare hook: flowcraft's core/media/hook owns the
+	// factory, the deploy surface names it in the assistant's prepare
+	// list (`type: media.attachments`).
+	{Value: "media.attachments", Upstream: true},
+	{Value: "opencraft.review"},
+	{Value: "opencraft/automation"},
+	{Value: "opencraft/plugininstall"},
+	{Value: "opencraft/plugins"},
 }

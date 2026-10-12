@@ -19,11 +19,11 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/tool"
+	"github.com/GizClaw/flowcraft/core/utils/filetype"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/fshidden"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 )
 
 const (

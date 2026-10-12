@@ -1245,6 +1245,25 @@ func TestDeploymentIDStableAcrossReorders(t *testing.T) {
 	}
 }
 
+// TestInferenceSecretAccount pins the credential-store account a
+// migrated literal key lands in: the settings page writes it as the
+// row's KeyRef, and instanceAPIKey renders it back as a
+// ${secret:keychain.<name>} reference. Both halves must agree, and the
+// name must stay dot-free to be addressable there.
+func TestInferenceSecretAccount(t *testing.T) {
+	account := InferenceSecretAccount(Instance{Type: "deepseek", StableID: "inst-abc"}.DeploymentID(1))
+	if account != "inference/deepseek-inst-abc" {
+		t.Fatalf("account = %q, want inference/deepseek-inst-abc", account)
+	}
+	if strings.Contains(account, ".") {
+		t.Fatalf("account %q must stay dot-free for ${secret:keychain.<name>}", account)
+	}
+	in := Instance{KeySource: KeyKeychain, KeyValue: account}
+	if got := instanceAPIKey(in, Provider{}); got != "${secret:keychain."+account+"}" {
+		t.Fatalf("rendered key = %q", got)
+	}
+}
+
 func TestLiteralKeyQuoted(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{{
 		Type:      "openai",

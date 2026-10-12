@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
+
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // writeUserFact stores one fact in the user database the state root
@@ -61,7 +62,7 @@ func TestHeadlessUserMemoryInjectsStoredFacts(t *testing.T) {
 		Kind:  "convention",
 	})
 
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "Ready."})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "Ready."})
 	writeFakeInferenceConfig(t, configDir, provider.URL())
 
 	result, err := headless.Run(context.Background(), headless.Options{
@@ -107,9 +108,9 @@ func TestHeadlessUserMemoryHonoursWorkspaceScope(t *testing.T) {
 		Workspace: owner,
 	})
 
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{Text: "Ready."},
-		fakeprovider.Reply{Text: "Ready."},
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{Text: "Ready."},
+		inferencetest.ScriptedReply{Text: "Ready."},
 	)
 	writeFakeInferenceConfig(t, configDir, provider.URL())
 

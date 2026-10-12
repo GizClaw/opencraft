@@ -124,10 +124,6 @@ func (execSourceFactory) Spec() resource.Spec {
 		Impl: "opencraft/exec",
 		Deps: []resource.DepSpec{
 			{Name: "sandbox", Type: "sandbox.Runner", Required: true},
-			// Optional: the escalation prompt needs a user to ask.
-			// Headless and embedded runtimes leave it unwired and keep
-			// an OS-sandbox refusal as a plain command failure.
-			{Name: "escalator", Type: "opencraft.execpolicy", Required: false},
 		},
 	}
 }
@@ -140,13 +136,7 @@ func (execSourceFactory) New(_ context.Context, in resource.Input) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	var escalator ocsandbox.Escalator
-	if dep, ok := in.Dep("escalator"); ok {
-		if esc, ok := dep.(ocsandbox.Escalator); ok {
-			escalator = esc
-		}
-	}
-	return execToolList(runner, escalator, goruntime.GOOS), nil
+	return execToolList(runner, goruntime.GOOS), nil
 }
 
 // execToolList builds the sandbox-backed exec tools for a target OS.
@@ -154,19 +144,18 @@ func (execSourceFactory) New(_ context.Context, in resource.Input) (any, error) 
 // with OS-level write confinement, which the flowcraft backend does
 // not combine with ConPTY TTY sessions yet (issue #38).
 //
-// Only exec_command takes part in escalation: a refusal is detected
-// from a finished command's output, and exec_session has no finished
-// result to inspect at Start, so a session is never prompted. A
-// remembered rule still applies to any spawn, sessions included,
-// because the sandbox runner consults it before starting.
+// Only exec_command takes part in escalation, and it does so through
+// the runner's own front end (sandbox.EscalationProvider): a refusal is
+// detected from a finished command's output, and exec_session has no
+// finished result to inspect at Start, so a session is never prompted
+// and never consults a remembered rule either — an interactive session
+// runs under its session's mode.
 func execToolList(
 	runner sandbox.Runner,
-	escalator ocsandbox.Escalator,
 	goos string,
 ) toolList {
 	tools := toolList{exec.MustNewCommand(
 		runner,
-		exec.WithEscalator(escalator),
 		exec.WithShell(shelldetect.Detect(goos)),
 	)}
 	if ocsandbox.InteractiveSessions(goos) {

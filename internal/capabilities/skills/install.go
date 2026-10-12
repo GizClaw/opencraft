@@ -12,8 +12,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/telemetry"
-
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 )
 
 // Install clones a skill (git URL or local path) into the target

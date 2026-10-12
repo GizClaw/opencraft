@@ -6,18 +6,18 @@ import (
 	"os"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestStartRunOnClosedHostReturnsRetryableSentinel pins that StartRun
 // after a Host retired surfaces ErrRuntimeClosing (not a wrapped or
 // unrelated error), so adapters can retry on the replacement Host.
 func TestStartRunOnClosedHostReturnsRetryableSentinel(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	configDir := t.TempDir()

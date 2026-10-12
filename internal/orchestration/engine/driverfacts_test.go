@@ -13,12 +13,12 @@ import (
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
-// TestBuildRuntimeAcceptsDriverFacts pins the shapes the settings page
+// TestBuildAssemblyAcceptsDriverFacts pins the shapes the settings page
 // writes for the declaration leaves flowcraft's drivers added: model
 // lifecycle, the unmodeled body-field bag, the retention policy's
 // "omit", and ByteDance's per-model video facts. A runtime that builds
 // means the released drivers decoded all of them.
-func TestBuildRuntimeAcceptsDriverFacts(t *testing.T) {
+func TestBuildAssemblyAcceptsDriverFacts(t *testing.T) {
 	work := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -86,9 +86,10 @@ func TestBuildRuntimeAcceptsDriverFacts(t *testing.T) {
 	}
 	layout := testWorkspaceLayout(t, home, work)
 	sessionStore := migratedSessionStore(t, layout)
-	rt, err := BuildRuntime(
+	ctrl, err := BuildAssembly(
 		context.Background(),
-		view.Document,
+		view,
+		work,
 		WithAutomationHost(automationStub{}),
 		WithWorkBase(work),
 		WithConfigBase(userDir),
@@ -100,7 +101,11 @@ func TestBuildRuntimeAcceptsDriverFacts(t *testing.T) {
 		}),
 	)
 	if err != nil {
-		t.Fatalf("BuildRuntime: %v", err)
+		t.Fatalf("BuildAssembly: %v", err)
 	}
-	defer func() { _ = rt.Close() }()
+	rt := ctrl.Runtime()
+	if rt == nil {
+		t.Fatal("assembled runtime missing")
+	}
+	defer func() { _ = ctrl.Close() }()
 }

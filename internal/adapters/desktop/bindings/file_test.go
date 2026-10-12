@@ -11,8 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/utils/filetype"
+
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 )
 
 func TestFileListAndSearch(t *testing.T) {

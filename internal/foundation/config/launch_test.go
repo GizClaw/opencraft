@@ -38,16 +38,6 @@ func TestResolveLaunchDefaults(t *testing.T) {
 	if launch.AppName != BaseAppName {
 		t.Errorf("app name = %q, want %q", launch.AppName, BaseAppName)
 	}
-	if !launch.SingleInstance {
-		t.Error("single instance = false, want true")
-	}
-	if !strings.HasPrefix(launch.InstanceID, instanceIDPrefix) {
-		t.Errorf("instance id = %q, want prefix %q",
-			launch.InstanceID, instanceIDPrefix)
-	}
-	if got := strings.TrimPrefix(launch.InstanceID, instanceIDPrefix); len(got) != 12 {
-		t.Errorf("instance id hash = %q, want 12 hex chars", got)
-	}
 	// Resolution is read-only: a launch that never starts must not seed
 	// directories under the home it resolved.
 	entries, err := os.ReadDir(home)
@@ -90,13 +80,12 @@ func TestResolveLaunchProfileKeepsAppHome(t *testing.T) {
 func TestResolveLaunchPriority(t *testing.T) {
 	home := t.TempDir()
 	env := map[string]string{
-		"HOME":              home,
-		EnvDataDir:          filepath.Join(home, "env-state"),
-		EnvAppHome:          filepath.Join(home, "env-home"),
-		EnvConfigDir:        filepath.Join(home, "env-config"),
-		EnvWorkDir:          filepath.Join(home, "env-work"),
-		EnvProfile:          "dev",
-		EnvNoSingleInstance: "1",
+		"HOME":       home,
+		EnvDataDir:   filepath.Join(home, "env-state"),
+		EnvAppHome:   filepath.Join(home, "env-home"),
+		EnvConfigDir: filepath.Join(home, "env-config"),
+		EnvWorkDir:   filepath.Join(home, "env-work"),
+		EnvProfile:   "dev",
 	}
 	launch, err := ResolveLaunch([]string{
 		"--data-dir", filepath.Join(home, "flag-state"),
@@ -120,9 +109,6 @@ func TestResolveLaunchPriority(t *testing.T) {
 		if tc.got != tc.want {
 			t.Errorf("%s = %q, want %q", tc.name, tc.got, tc.want)
 		}
-	}
-	if launch.SingleInstance {
-		t.Error("single instance = true, want false from the env escape hatch")
 	}
 }
 
@@ -271,26 +257,28 @@ func TestResolveLaunchRejectsBadArguments(t *testing.T) {
 	}
 }
 
-func TestInstanceIDFollowsCanonicalStateRoot(t *testing.T) {
-	// /tmp is a symlink on macOS; both spellings must land on one id.
-	first := InstanceIDFor("/tmp/../tmp/opencraft-id-test")
-	second := InstanceIDFor("/tmp/opencraft-id-test")
-	if first != second {
-		t.Errorf("instance id differs for equivalent roots: %q vs %q", first, second)
+func TestSingleInstanceEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{"unset", "", true},
+		{"truthy 1", "1", false},
+		{"truthy true", "true", false},
+		{"truthy uppercase", "YES", false},
+		{"falsy 0", "0", true},
+	} {
+		got := SingleInstanceEnabled(fakeEnv(map[string]string{
+			EnvNoSingleInstance: tc.value,
+		}))
+		if got != tc.want {
+			t.Errorf("%s: SingleInstanceEnabled(%q) = %v, want %v",
+				tc.name, tc.value, got, tc.want)
+		}
 	}
-	other := InstanceIDFor("/tmp/opencraft-id-test-other")
-	if other == first {
-		t.Errorf("different roots share instance id %q", first)
-	}
-
-	// A root that does not exist yet resolves through its deepest
-	// existing ancestor, so two spellings of one missing directory
-	// still agree.
-	home := t.TempDir()
-	missing := filepath.Join(home, "not-there", "state")
-	noisy := filepath.Join(home, "not-there", "..", "not-there", "state")
-	if got, want := InstanceIDFor(noisy), InstanceIDFor(missing); got != want {
-		t.Errorf("unresolved root ids differ: %q vs %q", got, want)
+	if !SingleInstanceEnabled(nil) {
+		t.Error("SingleInstanceEnabled(nil) = false, want true")
 	}
 }
 

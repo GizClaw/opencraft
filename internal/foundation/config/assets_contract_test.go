@@ -8,6 +8,8 @@ import (
 	"path"
 	"strings"
 	"testing"
+
+	"github.com/GizClaw/flowcraft/core/media/hook"
 )
 
 // TestEmbeddedDocumentCarriesNoEmptySource pins the shipped side of the
@@ -123,5 +125,63 @@ func TestEmbeddedAssetsResolveAppHome(t *testing.T) {
 			t.Errorf("%s: %d ${ocraft:APP_HOME} references, want %d",
 				file, got, count)
 		}
+	}
+}
+
+// TestEmbeddedAssistantPreparesAttachmentsWithTheUpstreamHook pins the
+// deployment half of the attachment path: the assistant's first prepare
+// hook is flowcraft's media.attachments factory (core/media/hook), and
+// the flattened lines keep the markers sessions already recorded —
+// moving the hook out of internal/capabilities/media must not change
+// the prompt text a turn carries. audio/video/file stay flattened: the
+// hook runs before routing, so a kind passes through only where a
+// deployment knows its models take it (passthrough_kinds, user layer).
+func TestEmbeddedAssistantPreparesAttachmentsWithTheUpstreamHook(t *testing.T) {
+	mgr, err := Open(Options{UserDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mgr.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, h := range view.Document.Agents["assistant"].Prepare {
+		if h.Type != hook.AttachmentsType {
+			continue
+		}
+		found++
+		var settings hook.Settings
+		if err := json.Unmarshal(h.Settings, &settings); err != nil {
+			t.Fatalf("decode %s settings: %v", h.Type, err)
+		}
+		if settings.WorkDir != "${ocraft:WORKDIR}" {
+			t.Errorf("work_dir = %q, want the workspace root", settings.WorkDir)
+		}
+		markers := map[string]string{
+			"image_marker": settings.ImageMarker,
+			"audio_marker": settings.AudioMarker,
+			"video_marker": settings.VideoMarker,
+			"file_marker":  settings.FileMarker,
+		}
+		want := map[string]string{
+			"image_marker": "[图片文件] ",
+			"audio_marker": "[音频文件] ",
+			"video_marker": "[视频文件] ",
+			"file_marker":  "[一般文件] ",
+		}
+		for name, got := range markers {
+			if got != want[name] {
+				t.Errorf("%s = %q, want %q", name, got, want[name])
+			}
+		}
+		if len(settings.PassthroughKinds) != 0 {
+			t.Errorf("passthrough_kinds = %v, want every non-image kind "+
+				"flattened by default", settings.PassthroughKinds)
+		}
+	}
+	if found != 1 {
+		t.Fatalf("%s hooks in the assistant's prepare list = %d, want 1",
+			hook.AttachmentsType, found)
 	}
 }

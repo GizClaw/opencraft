@@ -76,7 +76,7 @@ func TestSandboxRunnerContract(t *testing.T) {
 		// The escalation prompt keys off this predicate, so a real
 		// backend refusal must be recognisable from the finished
 		// command's own output.
-		if reason, denied := Denied(res); !denied {
+		if reason, denied := coresandbox.Denied(res); !denied {
 			t.Fatalf("real refusal not detected: exit=%d stderr=%q",
 				res.ExitCode, res.Stderr)
 		} else if reason == "" {

@@ -9,11 +9,11 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestAutomationStartStepsAsideForLiveRun pins the collision policy end
@@ -22,9 +22,9 @@ import (
 // retryable), the live run finishes untouched, and once it has been
 // waited on the same automation start succeeds.
 func TestAutomationStartStepsAsideForLiveRun(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{Text: "first answer"},
-		fakeprovider.Reply{Text: "second answer"},
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{Text: "first answer"},
+		inferencetest.ScriptedReply{Text: "second answer"},
 	)
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
@@ -111,9 +111,9 @@ func TestAutomationStartStepsAsideForLiveRun(t *testing.T) {
 // before it. The starts are fired together, so the interleaving is the
 // scheduler's; exactly one may win, and only it may reach the provider.
 func TestConcurrentAutomationStartsKeepOneRun(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{Text: "seed answer"},
-		fakeprovider.Reply{Text: "scheduled answer"},
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{Text: "seed answer"},
+		inferencetest.ScriptedReply{Text: "scheduled answer"},
 	)
 	workDir := t.TempDir()
 	dataDir := t.TempDir()

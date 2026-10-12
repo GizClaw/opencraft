@@ -11,76 +11,95 @@ import (
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 )
 
-// escalatingRunner answers differently depending on whether the call
-// carries the approved-escalation marker, and reports whether the
-// session may escalate at all.
-type escalatingRunner struct {
-	confinedCode int
-	confinedText string
-	hostCode     int
-	hostText     string
-	gate         bool
-	escalated    []bool
+// The command tool does not own escalation: the runner serves the front
+// end (sandbox.EscalationProvider) and the tool reports what it did.
+// These tests pin the tool's half — which results get a note, and that
+// nothing prompts when the runner serves no front end.
+
+// escalationProvider is the runner shape the wiring produces: a
+// confined chain that answers the provider question with the front end
+// the tool should use.
+type escalationProvider struct {
+	sandbox.Runner
+	front *sandbox.Escalation
 }
 
-func (r *escalatingRunner) Close() error { return nil }
+func (p escalationProvider) Escalation() *sandbox.Escalation { return p.front }
 
-func (r *escalatingRunner) Capabilities() sandbox.Capabilities {
-	return sandbox.Capabilities{}
+type fakeEscalator struct {
+	decision sandbox.EscalationDecision
+	err      error
+	requests []sandbox.EscalationRequest
 }
 
-func (r *escalatingRunner) Start(
-	ctx context.Context, _ sandbox.SessionSpec,
-) (sandbox.Session, error) {
-	escalated := ocsandbox.Escalating(ctx)
-	r.escalated = append(r.escalated, escalated)
-	code, text := r.confinedCode, r.confinedText
-	if escalated {
-		code, text = r.hostCode, r.hostText
+func (f *fakeEscalator) Escalate(
+	_ context.Context, req sandbox.EscalationRequest,
+) (sandbox.EscalationDecision, error) {
+	f.requests = append(f.requests, req)
+	return f.decision, f.err
+}
+
+// stubRuleStore matches the rules the test registered.
+type stubRuleStore struct {
+	rules []string
+}
+
+func (s stubRuleStore) EscalatedAllowed(req sandbox.ExecRequest) bool {
+	got := sandbox.RuleFor(append([]string{req.Command}, req.Args...))
+	for _, rule := range s.rules {
+		if rule == got {
+			return true
+		}
 	}
+	return false
+}
+
+// runOutput builds the finished-session output for one exit code, on
+// stderr when the command failed.
+func runOutput(text string, code int) (sandbox.SessionOutput, sandbox.SessionExit) {
 	stream := sandbox.SessionStreamStdout
 	if code != 0 {
 		stream = sandbox.SessionStreamStderr
 	}
-	if text == "" {
-		text = "ok"
+	return sandbox.SessionOutput{
+		NextSeq: 1,
+		Chunks: []sandbox.OutputChunk{{
+			Seq: 0, Stream: stream, Data: []byte(text),
+		}},
+		EOF: true,
+	}, sandbox.SessionExit{Code: code, Reason: sandbox.SessionExited}
+}
+
+// newEscalationTool wires the command tool the way the deployment does:
+// a confined chain that refuses, a host chain that succeeds, and the
+// gate the session mode owns.
+func newEscalationTool(
+	t *testing.T,
+	escalator *fakeEscalator,
+	gate bool,
+	rules sandbox.EscalationRules,
+) (*CommandTool, *cmdRunner, *cmdRunner) {
+	t.Helper()
+	confinedOut, confinedExit := runOutput(
+		"[Errno 1] Operation not permitted: '/Users/x/.local/lib'", 1)
+	confined := &cmdRunner{out: confinedOut, exit: confinedExit}
+	hostOut, hostExit := runOutput("installed", 0)
+	host := &cmdRunner{out: hostOut, exit: hostExit}
+	front := &sandbox.Escalation{
+		Confined:   confined,
+		Unconfined: host,
+		Escalate:   escalator,
+		Rules:      rules,
+		Gate: sandbox.EscalationGateFunc(
+			func(context.Context) bool { return gate }),
 	}
-	return &cmdSession{
-		out: sandbox.SessionOutput{
-			NextSeq: 1,
-			Chunks: []sandbox.OutputChunk{{
-				Seq: 0, Stream: stream, Data: []byte(text),
-			}},
-			EOF: true,
-		},
-		exit: sandbox.SessionExit{
-			Code:   code,
-			Reason: sandbox.SessionExited,
-		},
-	}, nil
-}
-
-func (r *escalatingRunner) List(context.Context) ([]sandbox.SessionInfo, error) {
-	return nil, nil
-}
-
-func (r *escalatingRunner) Terminate(context.Context, string) error { return nil }
-
-func (r *escalatingRunner) EscalationAvailable(context.Context) bool {
-	return r.gate
-}
-
-type fakeEscalator struct {
-	decision ocsandbox.EscalationDecision
-	err      error
-	requests []ocsandbox.EscalationRequest
-}
-
-func (f *fakeEscalator) Escalate(
-	_ context.Context, req ocsandbox.EscalationRequest,
-) (ocsandbox.EscalationDecision, error) {
-	f.requests = append(f.requests, req)
-	return f.decision, f.err
+	tool, err := NewCommand(
+		escalationProvider{Runner: confined, front: front},
+		WithShell(testPosixShell))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tool, confined, host
 }
 
 func escalationResult(t *testing.T, out string) map[string]any {
@@ -92,33 +111,11 @@ func escalationResult(t *testing.T, out string) map[string]any {
 	return res
 }
 
-func newEscalationTool(
-	t *testing.T,
-	confinedExit int,
-	escalator *fakeEscalator,
-	gate bool,
-) (*CommandTool, *escalatingRunner) {
-	t.Helper()
-	runner := &escalatingRunner{
-		confinedCode: confinedExit,
-		confinedText: "[Errno 1] Operation not permitted: '/Users/x/.local/lib'",
-		hostCode:     0,
-		hostText:     "installed",
-		gate:         gate,
-	}
-	tool, err := NewCommand(
-		runner, WithEscalator(escalator), WithShell(testPosixShell))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return tool, runner
-}
-
 func TestEscalationRetriesOutsideSandbox(t *testing.T) {
 	escalator := &fakeEscalator{
-		decision: ocsandbox.EscalationDecision{Allow: true},
+		decision: sandbox.EscalationDecision{Allow: true},
 	}
-	tool, runner := newEscalationTool(t, 1, escalator, true)
+	tool, confined, host := newEscalationTool(t, escalator, true, nil)
 	out, err := tool.Execute(context.Background(),
 		`{"command":"pip install requests"}`)
 	if err != nil {
@@ -132,8 +129,9 @@ func TestEscalationRetriesOutsideSandbox(t *testing.T) {
 	if !strings.Contains(note, "outside the sandbox") {
 		t.Fatalf("note = %q", note)
 	}
-	if len(runner.escalated) != 2 || runner.escalated[0] || !runner.escalated[1] {
-		t.Fatalf("escalation flags = %v, want [false true]", runner.escalated)
+	if len(confined.started) != 1 || len(host.started) != 1 {
+		t.Fatalf("starts: confined=%d host=%d",
+			len(confined.started), len(host.started))
 	}
 	if len(escalator.requests) != 1 {
 		t.Fatalf("escalation requests = %d", len(escalator.requests))
@@ -152,9 +150,9 @@ func TestEscalationRetriesOutsideSandbox(t *testing.T) {
 
 func TestEscalationRememberedNote(t *testing.T) {
 	escalator := &fakeEscalator{
-		decision: ocsandbox.EscalationDecision{Allow: true, Remember: true},
+		decision: sandbox.EscalationDecision{Allow: true, Remember: true},
 	}
-	tool, _ := newEscalationTool(t, 1, escalator, true)
+	tool, _, _ := newEscalationTool(t, escalator, true, nil)
 	out, err := tool.Execute(context.Background(),
 		`{"command":"pip install requests"}`)
 	if err != nil {
@@ -166,9 +164,38 @@ func TestEscalationRememberedNote(t *testing.T) {
 	}
 }
 
+// TestEscalationRuleSkipsConfinedAttempt pins the note for the path
+// where nothing was refused: a remembered rule ran the command on the
+// host from the start.
+func TestEscalationRuleSkipsConfinedAttempt(t *testing.T) {
+	escalator := &fakeEscalator{
+		decision: sandbox.EscalationDecision{Allow: true},
+	}
+	rules := stubRuleStore{rules: []string{"pip install requests"}}
+	tool, confined, host := newEscalationTool(t, escalator, true, rules)
+	out, err := tool.Execute(context.Background(),
+		`{"command":"pip install requests"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := escalationResult(t, out.Text())
+	if res["exit_code"] != float64(0) {
+		t.Fatalf("exit_code = %v", res["exit_code"])
+	}
+	note, _ := res["note"].(string)
+	if !strings.Contains(note, "remembered") {
+		t.Fatalf("note = %q", note)
+	}
+	if len(confined.started) != 0 || len(host.started) != 1 ||
+		len(escalator.requests) != 0 {
+		t.Fatalf("remembered rule: confined=%d host=%d prompts=%d",
+			len(confined.started), len(host.started), len(escalator.requests))
+	}
+}
+
 func TestEscalationDeniedKeepsConfinedResult(t *testing.T) {
 	escalator := &fakeEscalator{}
-	tool, runner := newEscalationTool(t, 1, escalator, true)
+	tool, confined, host := newEscalationTool(t, escalator, true, nil)
 	out, err := tool.Execute(context.Background(),
 		`{"command":"pip install requests"}`)
 	if err != nil {
@@ -181,19 +208,21 @@ func TestEscalationDeniedKeepsConfinedResult(t *testing.T) {
 	if _, ok := res["note"]; ok {
 		t.Fatal("denied escalation must not add a note")
 	}
-	if len(runner.escalated) != 1 {
-		t.Fatalf("calls = %v, want a single confined attempt", runner.escalated)
+	if len(confined.started) != 1 || len(host.started) != 0 {
+		t.Fatalf("calls: confined=%d host=%d",
+			len(confined.started), len(host.started))
 	}
 }
 
 func TestNoEscalationForOrdinaryFailure(t *testing.T) {
 	escalator := &fakeEscalator{
-		decision: ocsandbox.EscalationDecision{Allow: true},
+		decision: sandbox.EscalationDecision{Allow: true},
 	}
-	tool, runner := newEscalationTool(t, 1, escalator, true)
+	tool, confined, host := newEscalationTool(t, escalator, true, nil)
 	// Compile-style failure: not a sandbox refusal, so no prompt.
-	runner.confinedText = "./main.go:12:2: undefined: foo"
-	out, err := tool.Execute(context.Background(),
+	out, exit := runOutput("./main.go:12:2: undefined: foo", 1)
+	confined.out, confined.exit = out, exit
+	out2, err := tool.Execute(context.Background(),
 		`{"command":"go build ./..."}`)
 	if err != nil {
 		t.Fatal(err)
@@ -201,20 +230,21 @@ func TestNoEscalationForOrdinaryFailure(t *testing.T) {
 	if len(escalator.requests) != 0 {
 		t.Fatalf("ordinary failure prompted: %+v", escalator.requests)
 	}
-	if len(runner.escalated) != 1 {
-		t.Fatalf("calls = %v", runner.escalated)
+	if len(confined.started) != 1 || len(host.started) != 0 {
+		t.Fatalf("calls: confined=%d host=%d",
+			len(confined.started), len(host.started))
 	}
-	if _, ok := escalationResult(t, out.Text())["note"]; ok {
+	if _, ok := escalationResult(t, out2.Text())["note"]; ok {
 		t.Fatal("ordinary failure must not carry a note")
 	}
 }
 
 func TestNoEscalationWhenGateClosed(t *testing.T) {
 	escalator := &fakeEscalator{
-		decision: ocsandbox.EscalationDecision{Allow: true},
+		decision: sandbox.EscalationDecision{Allow: true},
 	}
 	// Read-only / unconfined sessions report the gate as closed.
-	tool, runner := newEscalationTool(t, 1, escalator, false)
+	tool, confined, host := newEscalationTool(t, escalator, false, nil)
 	out, err := tool.Execute(context.Background(),
 		`{"command":"pip install requests"}`)
 	if err != nil {
@@ -223,34 +253,47 @@ func TestNoEscalationWhenGateClosed(t *testing.T) {
 	if len(escalator.requests) != 0 {
 		t.Fatalf("closed gate still prompted: %+v", escalator.requests)
 	}
-	if len(runner.escalated) != 1 {
-		t.Fatalf("calls = %v", runner.escalated)
+	if len(confined.started) != 1 || len(host.started) != 0 {
+		t.Fatalf("calls: confined=%d host=%d",
+			len(confined.started), len(host.started))
 	}
 	if _, ok := escalationResult(t, out.Text())["note"]; ok {
 		t.Fatal("closed gate must not add a note")
 	}
 }
 
-func TestEscalationWithoutEscalator(t *testing.T) {
-	runner := &escalatingRunner{
-		confinedCode: 1,
-		confinedText: "Operation not permitted",
-		hostCode:     0,
-		gate:         true,
-	}
-	tool, err := NewCommand(runner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := tool.Execute(context.Background(),
-		`{"command":"pip install requests"}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res := escalationResult(t, out.Text()); res["exit_code"] != float64(1) {
-		t.Fatalf("exit_code = %v", res["exit_code"])
-	}
-	if len(runner.escalated) != 1 {
-		t.Fatalf("calls = %v", runner.escalated)
+// TestEscalationWithoutFrontEnd pins the headless and embedded shape: a
+// runner that serves no front end (no escalator wired, or nothing wired
+// at all) leaves a refusal as a plain command failure.
+func TestEscalationWithoutFrontEnd(t *testing.T) {
+	out, exit := runOutput("Operation not permitted", 1)
+	for name, runner := range map[string]sandbox.Runner{
+		"no provider": &cmdRunner{out: out, exit: exit},
+		"nil front": escalationProvider{
+			Runner: &cmdRunner{out: out, exit: exit},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tool, err := NewCommand(runner, WithShell(testPosixShell))
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := tool.Execute(context.Background(),
+				`{"command":"pip install requests"}`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := escalationResult(t, res.Text())
+			if body["exit_code"] != float64(1) {
+				t.Fatalf("exit_code = %v", body["exit_code"])
+			}
+			if _, ok := body["note"]; ok {
+				t.Fatal("no front end must not add a note")
+			}
+		})
 	}
 }
+
+// The provider interface is how the tool finds the front end; keep the
+// assertion honest if the wiring changes shape.
+var _ ocsandbox.EscalationProvider = escalationProvider{}

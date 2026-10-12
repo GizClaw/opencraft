@@ -3,7 +3,7 @@ package config
 import (
 	"os"
 
-	"github.com/GizClaw/opencraft/internal/foundation/utils/fsatomic"
+	"github.com/GizClaw/flowcraft/core/utils/fsatomic"
 )
 
 // writeFileAtomic writes data to path via a temp file in the same

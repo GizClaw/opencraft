@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestScheduleReplacementAssemblesWhenTheDrainIsAlreadyGone pins the
@@ -23,7 +23,7 @@ import (
 // turn or rebuild — so the watcher assembles the replacement the arm
 // asked for, and that replacement serves new turns.
 func TestScheduleReplacementAssemblesWhenTheDrainIsAlreadyGone(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))

@@ -6,13 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestAutomationCancelRunStopsLiveTurnAndFreesSlot drives the panel's
@@ -21,7 +21,7 @@ import (
 // than as whatever shape the aborted turn took, and the freed slot
 // lets the task queued behind it run.
 func TestAutomationCancelRunStopsLiveTurnAndFreesSlot(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	hold := provider.HoldNext()
 	defer hold.Release()
 

@@ -8,8 +8,9 @@ import (
 	"time"
 	"weak"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
+
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestRebuiltHostIsCollectable guards the desktop Runtime's per-Host
@@ -30,7 +31,7 @@ func TestRebuiltHostIsCollectable(t *testing.T) {
 // this frame, so no stack slot of the test keeps the Host alive.
 func rebuildAndRetireHost(t *testing.T) weak.Pointer[host.Host] {
 	t.Helper()
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	configDir := t.TempDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatal(err)

@@ -7,15 +7,15 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 func TestHostForkCopiesArchive(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "forkable answer"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "forkable answer"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))

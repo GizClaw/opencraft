@@ -1,15 +1,19 @@
 // Package assembly owns opencraft's tool.Assembly/opencraft factory:
-// the core middleware chain (recover / timeout / concurrency) plus the
-// result-quality and security middlewares — truncate (persisted
-// excerpt), result_limit (hard ceiling), redact (secret stripping)
-// and audit (append-only, redacted tool-call trail).
+// flowcraft's middleware settings (recover / telemetry / timeout /
+// concurrency / result_limit / truncate) plus the opencraft-specific
+// middlewares — redact (secret stripping), audit (append-only, redacted
+// tool-call trail), the delegation policy and the lifecycle hooks. The
+// middleware implementations themselves all live upstream; what stays
+// here is the chain order a deployment's settings select.
 package assembly
 
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/hooks"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -17,7 +21,6 @@ import (
 	toolmiddleware "github.com/GizClaw/flowcraft/core/tool/middleware"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
 )
 
@@ -32,18 +35,13 @@ type AssemblySettings struct {
 }
 
 type middlewareSettings struct {
-	Recover     *toolmiddleware.RecoverSettings     `json:"recover,omitempty"`
-	Timeout     *toolmiddleware.TimeoutSettings     `json:"timeout,omitempty"`
-	Concurrency *toolmiddleware.ConcurrencySettings `json:"concurrency,omitempty"`
-	Truncate    *TruncateSettings                   `json:"truncate,omitempty"`
-	ResultLimit *ResultLimitSettings                `json:"result_limit,omitempty"`
-	Redact      *RedactSettings                     `json:"redact,omitempty"`
-	Audit       *AuditSettings                      `json:"audit,omitempty"`
-	// ResultPartBudgetBytes caps the encoded size of one result's
-	// non-text parts when result_limit does not carry its own
-	// part_budget_bytes. Nil keeps flowcraft's default (1 MiB); 0 lifts
-	// the cap.
-	ResultPartBudgetBytes *int `json:"result_part_budget_bytes,omitempty"`
+	// Settings is flowcraft's own middleware subtree: recover, telemetry,
+	// timeout, concurrency, result_limit, truncate and the non-text part
+	// budget, with the keys and the semantics its package documents.
+	toolmiddleware.Settings
+	// Redact and Audit are opencraft's additions to the chain.
+	Redact *RedactSettings `json:"redact,omitempty"`
+	Audit  *AuditSettings  `json:"audit,omitempty"`
 }
 
 // AssemblyFactory builds tool.Assembly/opencraft.
@@ -183,16 +181,38 @@ func buildMiddleware(
 	// truncate persists the full output and bounds text first (keeping
 	// JSON envelopes parseable), so result_limit normally only has to
 	// enforce the non-text part budget. Its text ceiling still applies
-	// when a deployment leaves truncate off.
-	mw, err := resultLimitMiddleware(s.ResultLimit)
-	if err != nil {
-		return nil, err
+	// when a deployment leaves truncate off. Both middlewares are
+	// flowcraft's; the settings are validated here because this chain
+	// composes them itself instead of handing the whole subtree to
+	// [toolmiddleware.FromSettings].
+	if s.ResultLimit != nil {
+		if s.ResultLimit.Max <= 0 {
+			return nil, errdefs.Validationf(
+				"tool middleware: result_limit.max must be positive, got %d",
+				s.ResultLimit.Max)
+		}
+		opts := make([]toolmiddleware.ResultLimitOption, 0, 2)
+		if s.ResultLimit.Marker != "" {
+			opts = append(opts,
+				toolmiddleware.WithResultMarker(s.ResultLimit.Marker))
+		}
+		if s.ResultLimit.PartBudgetBytes != nil {
+			opts = append(opts, toolmiddleware.WithResultPartBudget(
+				*s.ResultLimit.PartBudgetBytes))
+		}
+		mws = append(mws, toolmiddleware.ResultLimiter(s.ResultLimit.Max, opts...))
 	}
-	if mw != nil {
-		mws = append(mws, mw)
-	}
-	if s.Truncate != nil {
-		if mw := truncateMiddleware(*s.Truncate); mw != nil {
+	if s.Truncate != nil && s.Truncate.Enabled {
+		if s.Truncate.MaxChars <= 0 {
+			return nil, errdefs.Validationf(
+				"tool middleware: truncate.max_chars must be positive, got %d",
+				s.Truncate.MaxChars)
+		}
+		if strings.TrimSpace(s.Truncate.Dir) == "" {
+			return nil, errdefs.Validationf(
+				"tool middleware: truncate.dir is required")
+		}
+		if mw := toolmiddleware.Truncate(*s.Truncate); mw != nil {
 			mws = append(mws, mw)
 		}
 	}

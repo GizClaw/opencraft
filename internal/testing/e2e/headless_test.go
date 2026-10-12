@@ -9,11 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
+
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 func writeFakeInferenceConfig(t *testing.T, dir, baseURL string) {
@@ -54,12 +55,12 @@ func writeFakeConfig(t *testing.T, dir, baseURL, sandboxSetting string) {
 }
 
 func TestHeadlessRunWritesFileViaToolCall(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"out.txt","content":"hello e2e\n"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	workDir := t.TempDir()
 	configDir := filepath.Join(t.TempDir(), "config")
@@ -127,7 +128,7 @@ func TestHeadlessRunWritesFileViaToolCall(t *testing.T) {
 }
 
 func TestHeadlessRunProviderFailureFailsClosed(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "ok"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "ok"})
 	provider.Close() // force connection errors
 	workDir := t.TempDir()
 	configDir := filepath.Join(t.TempDir(), "config")

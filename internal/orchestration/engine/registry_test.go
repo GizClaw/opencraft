@@ -8,6 +8,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/resource"
+	"github.com/GizClaw/flowcraft/craft"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -19,6 +20,25 @@ func unusedSessionStore(
 	context.Context, string, int,
 ) (*ocsessions.Store, error) {
 	return nil, errors.New("session store unused in registry test")
+}
+
+// registerTestFactories runs the assembly's registering capabilities
+// into a fresh registry: the same list BuildAssembly hands craft, so a
+// kind this test cannot find is a kind a deployment cannot resolve
+// either.
+func registerTestFactories(t *testing.T, o *Options) *resource.Registry {
+	t.Helper()
+	reg := resource.NewRegistry()
+	for _, capability := range assemblyCapabilities(o, nil) {
+		registrar, ok := capability.(craft.Registrar)
+		if !ok {
+			continue
+		}
+		if err := registrar.Register(reg); err != nil {
+			t.Fatalf("register %s: %v", capability.Name(), err)
+		}
+	}
+	return reg
 }
 
 // TestEmbeddedAssetsResolveAgainstRegistry writes down the deploy-time
@@ -42,12 +62,9 @@ func TestEmbeddedAssetsResolveAgainstRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load embedded layers: %v", err)
 	}
-	reg := resource.NewRegistry()
-	if err := registerResources(reg, &Options{
+	reg := registerTestFactories(t, &Options{
 		SessionStore: unusedSessionStore,
-	}); err != nil {
-		t.Fatalf("register resources: %v", err)
-	}
+	})
 
 	lookup := func(what, kind, impl string) {
 		t.Helper()
@@ -88,12 +105,9 @@ func TestEmbeddedAssetsResolveAgainstRegistry(t *testing.T) {
 // the flowcraft windows backend must resolve even though no embedded
 // asset selects it, because a user layer is allowed to.
 func TestWindowsSandboxBackendIsRegistered(t *testing.T) {
-	reg := resource.NewRegistry()
-	if err := registerResources(reg, &Options{
+	reg := registerTestFactories(t, &Options{
 		SessionStore: unusedSessionStore,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if _, ok := reg.Lookup("sandbox.Runner", "windows"); !ok {
 		t.Fatal("sandbox.Runner/windows is not registered")
 	}

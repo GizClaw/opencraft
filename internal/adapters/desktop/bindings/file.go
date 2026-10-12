@@ -15,15 +15,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/media/imageutil"
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/filetype"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/fshidden"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // File exposes the viewer's file operations. The workspace tree (List,

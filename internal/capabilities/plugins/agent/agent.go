@@ -14,10 +14,11 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
+	"github.com/GizClaw/flowcraft/core/hooks"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // ToolSpec is one agent-callable tool backed by a method on a
@@ -162,9 +163,13 @@ func (h *Host) SkillRoots() []string {
 	return roots
 }
 
-// PluginHooks returns the hooks.json files contributed by enabled
+// HookSources returns the hooks.json files contributed by enabled
 // plugins. Dir anchors relative hook commands to the plugin root.
-func (h *Host) PluginHooks() []hooks.ExtraSource {
+//
+// It implements flowcraft's hooks.SourceProvider: the hooks.Runner
+// resource resolves the plugin host through its declared dependency
+// and loads whatever this returns alongside the user's hooks.json.
+func (h *Host) HookSources() []hooks.ExtraSource {
 	var out []hooks.ExtraSource
 	for _, e := range h.entries().plugins {
 		if !hasPerm(e.m, "hooks:provide") {

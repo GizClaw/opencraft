@@ -64,7 +64,7 @@ func TestDeclaredImplConstantsAreInventoried(t *testing.T) {
 	declared := scanConstDeclarations(t, []string{"ResourceImpl"})
 	known := make(map[string]bool, len(Impls))
 	for _, impl := range Impls {
-		known[impl] = true
+		known[impl.Value] = true
 	}
 	for value, decls := range declared {
 		if !known[value] {
@@ -72,8 +72,12 @@ func TestDeclaredImplConstantsAreInventoried(t *testing.T) {
 		}
 	}
 	for _, impl := range Impls {
-		if _, ok := declared[impl]; !ok {
-			t.Errorf("Impls lists %q but nothing declares it", impl)
+		if impl.Upstream {
+			// The constant lives in flowcraft; the scan cannot see it.
+			continue
+		}
+		if _, ok := declared[impl.Value]; !ok {
+			t.Errorf("Impls lists %q but nothing declares it", impl.Value)
 		}
 	}
 }

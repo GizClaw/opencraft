@@ -31,7 +31,7 @@ func Fetch(ctx context.Context, httpClient *http.Client, timeout time.Duration, 
 		// visible to the round-trip probe. flowcraft's
 		// core/utils.NewHttpClient would clone that transport through an
 		// unchecked *http.Transport assertion, which a wrapped process
-		// transport breaks (see foundation/utils/httpprobe).
+		// transport breaks (see flowcraft's core/utils/httpprobe).
 		httpClient = &http.Client{Timeout: timeout}
 	}
 

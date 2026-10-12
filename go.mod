@@ -1,12 +1,14 @@
 module github.com/GizClaw/opencraft
 
-go 1.25.13
+go 1.26.0
 
 require (
-	github.com/GizClaw/flowcraft/core v0.4.9
-	github.com/GizClaw/flowcraft/driver/anthropic v0.3.3
-	github.com/GizClaw/flowcraft/driver/bytedance v0.3.3
-	github.com/GizClaw/flowcraft/driver/minimax v0.3.2
+	github.com/GizClaw/flowcraft/backends/secret v0.1.0
+	github.com/GizClaw/flowcraft/core v0.5.1
+	github.com/GizClaw/flowcraft/craft v0.0.0-20261012083040-8c197bb961df
+	github.com/GizClaw/flowcraft/driver/anthropic v0.3.4
+	github.com/GizClaw/flowcraft/driver/bytedance v0.3.4
+	github.com/GizClaw/flowcraft/driver/minimax v0.3.3
 	github.com/GizClaw/flowcraft/driver/openai v0.3.4
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/PuerkitoBio/goquery v1.12.0
@@ -20,10 +22,9 @@ require (
 	go.opentelemetry.io/otel/log v0.21.0
 	go.opentelemetry.io/otel/metric v1.45.0
 	go.opentelemetry.io/otel/sdk/log v0.21.0
-	go.opentelemetry.io/otel/trace v1.45.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.2
-	golang.org/x/net v0.58.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/net v0.60.0
+	golang.org/x/sys v0.48.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	modernc.org/sqlite v1.56.0
@@ -90,11 +91,12 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.45.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.45.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
+	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
-	golang.org/x/image v0.43.0 // indirect
+	golang.org/x/image v0.45.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
@@ -104,3 +106,8 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+// craft rides a pseudo-version of upstream main (flowcraft@8c197bb9) because
+// no craft/v* tag exists yet. The path replace this adoption started with
+// cannot be resolved by CI, which clones opencraft alone. Swap the
+// pseudo-version for the release tag once the changeset lands.

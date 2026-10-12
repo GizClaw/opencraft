@@ -200,7 +200,7 @@ func ExtractTurnMessages(
 			}
 			turn := joined[h:]
 			// The model-facing board carries the user's turn
-			// message with inline media (the opencraft.media
+			// message with inline media (the media.attachments
 			// prepare hook inlined URL sources before the LLM).
 			// The archive keeps the URL form from the original
 			// request so attachments stay compact and

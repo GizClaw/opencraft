@@ -21,14 +21,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/bm25"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 	"go.opentelemetry.io/otel/attribute"
+	"sigs.k8s.io/yaml"
 
 	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/search"
-
-	"sigs.k8s.io/yaml"
 )
 
 // Limits mirror agentskills.io parser behaviour.
@@ -74,7 +73,7 @@ type SkillError struct {
 type SkillLoadOutcome struct {
 	Skills []SkillMetadata
 	Errors []SkillError
-	Index  *search.Index
+	Index  *bm25.Index
 	Roots  []string
 	// ScanRoots lists every candidate root that was walked (whether or
 	// not it contained a skill). Discovery and reads use it to keep
@@ -179,16 +178,25 @@ func (s *Service) reload() {
 	// List and ranking may show each path.
 	outcome.Skills = dropShadowedBuiltins(outcome.Skills)
 	byPath := make(map[string]SkillMetadata, len(outcome.Skills))
-	docs := make([]search.Doc, 0, len(outcome.Skills))
+	docs := make([]bm25.Doc, 0, len(outcome.Skills))
 	for _, s := range outcome.Skills {
 		byPath[s.Path] = s
-		docs = append(docs, search.Doc{
+		docs = append(docs, bm25.Doc{
 			ID:   s.Path,
 			Name: s.Name,
 			Text: s.Description,
 		})
 	}
-	outcome.Index = search.NewIndex(docs)
+	index, err := bm25.New(docs)
+	if err != nil {
+		// Document ids are skill paths, which discovery keeps unique;
+		// a collision is a bug rather than a discovery outcome. Serve
+		// the pass unindexed (Rank returns nothing) instead of
+		// dropping every skill along with it.
+		telemetry.WarnErr(s.ctx, "skills: index build failed", err)
+	} else {
+		outcome.Index = index
+	}
 	s.snapshot.Store(&snapshot{
 		outcome:   outcome,
 		byPath:    byPath,

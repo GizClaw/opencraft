@@ -13,9 +13,10 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/tool"
 
+	"github.com/GizClaw/flowcraft/core/hooks"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/agents"
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -155,11 +156,11 @@ func migratedSessionStore(
 	return store
 }
 
-// TestBuildRuntimeAssemblesNewTools verifies that the embedded deploy
+// TestBuildAssemblyAssemblesNewTools verifies that the embedded deploy
 // document (with the new tool sources) assembles into a runtime. The
 // inference wiring and the local-sandbox override live in the
 // wizard-generated user layer.
-func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
+func TestBuildAssemblyAssemblesNewTools(t *testing.T) {
 	work := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -193,9 +194,10 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	}
 	layout := testWorkspaceLayout(t, home, work)
 	sessionStore := migratedSessionStore(t, layout)
-	rt, err := BuildRuntime(
+	ctrl, err := BuildAssembly(
 		context.Background(),
-		view.Document,
+		view,
+		work,
 		WithAutomationHost(automationStub{}),
 		WithWorkBase(work),
 		WithConfigBase(userDir),
@@ -207,9 +209,13 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 		}),
 	)
 	if err != nil {
-		t.Fatalf("BuildRuntime: %v", err)
+		t.Fatalf("BuildAssembly: %v", err)
 	}
-	defer func() { _ = rt.Close() }()
+	defer func() { _ = ctrl.Close() }()
+	rt := ctrl.Runtime()
+	if rt == nil {
+		t.Fatal("assembled runtime missing")
+	}
 
 	// The deployed assistant carries no wall clock: the graph's
 	// iteration guard is lifted (build.max_iterations: 0) and neither
@@ -313,10 +319,10 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	}
 }
 
-// TestBuildRuntimeWithPluginInstallerExposesTools verifies the desktop
+// TestBuildAssemblyWithPluginInstallerExposesTools verifies the desktop
 // shape: an injected registry exposes plugin_list / plugin_install /
 // plugin_update, which copy from the workspace through the host.
-func TestBuildRuntimeWithPluginInstallerExposesTools(t *testing.T) {
+func TestBuildAssemblyWithPluginInstallerExposesTools(t *testing.T) {
 	work := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -349,9 +355,10 @@ func TestBuildRuntimeWithPluginInstallerExposesTools(t *testing.T) {
 	installer := &recordingInstaller{summary: plugins.PluginSummary{
 		ID: "hello", Name: "Hello", Version: "0.1.0", Enabled: true,
 	}}
-	rt, err := BuildRuntime(
+	ctrl, err := BuildAssembly(
 		context.Background(),
-		view.Document,
+		view,
+		work,
 		WithPluginInstaller(installer),
 		WithWorkBase(work),
 		WithConfigBase(userDir),
@@ -363,9 +370,13 @@ func TestBuildRuntimeWithPluginInstallerExposesTools(t *testing.T) {
 		}),
 	)
 	if err != nil {
-		t.Fatalf("BuildRuntime with plugin installer: %v", err)
+		t.Fatalf("BuildAssembly with plugin installer: %v", err)
 	}
-	defer func() { _ = rt.Close() }()
+	defer func() { _ = ctrl.Close() }()
+	rt := ctrl.Runtime()
+	if rt == nil {
+		t.Fatal("assembled runtime missing")
+	}
 
 	toolsValue, ok := rt.Resource("tools")
 	if !ok {
@@ -446,7 +457,7 @@ func TestBuildRuntimeWithPluginInstallerExposesTools(t *testing.T) {
 	}
 }
 
-func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
+func TestBuildAssemblyWithPluginHostExposesAgentCapabilities(t *testing.T) {
 	work := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -533,9 +544,10 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 	}
 	layout := testWorkspaceLayout(t, home, work)
 	sessionStore := migratedSessionStore(t, layout)
-	rt, err := BuildRuntime(
+	ctrl, err := BuildAssembly(
 		context.Background(),
-		view.Document,
+		view,
+		work,
 		WithWorkBase(work),
 		WithConfigBase(userDir),
 		WithAgentPlugins(host),
@@ -547,9 +559,13 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 		}),
 	)
 	if err != nil {
-		t.Fatalf("BuildRuntime with plugin host: %v", err)
+		t.Fatalf("BuildAssembly with plugin host: %v", err)
 	}
-	defer func() { _ = rt.Close() }()
+	defer func() { _ = ctrl.Close() }()
+	rt := ctrl.Runtime()
+	if rt == nil {
+		t.Fatal("assembled runtime missing")
+	}
 
 	// Plugin skill is part of the shared skills registry.
 	skillsValue, ok := rt.Resource("skills")
@@ -657,7 +673,7 @@ func TestRetiredPathRefsReportAndRepair(t *testing.T) {
 	}
 	stale = append(stale, []byte(
 		"agents:\n  assistant:\n    prepare:\n"+
-			"      - type: opencraft.media\n"+
+			"      - type: media.attachments\n"+
 			"        settings:\n"+
 			"          work_dir: ${env:OPEN_CRAFT_WORKDIR}\n")...)
 	if err := os.WriteFile(path, stale, 0o600); err != nil {
@@ -694,9 +710,10 @@ func TestRetiredPathRefsReportAndRepair(t *testing.T) {
 	}
 	layout := testWorkspaceLayout(t, home, work)
 	sessionStore := migratedSessionStore(t, layout)
-	rt, err := BuildRuntime(
+	ctrl, err := BuildAssembly(
 		context.Background(),
-		view.Document,
+		view,
+		work,
 		WithAutomationHost(automationStub{}),
 		WithWorkBase(work),
 		WithConfigBase(userDir),
@@ -708,7 +725,11 @@ func TestRetiredPathRefsReportAndRepair(t *testing.T) {
 		}),
 	)
 	if err != nil {
-		t.Fatalf("BuildRuntime after repair: %v", err)
+		t.Fatalf("BuildAssembly after repair: %v", err)
 	}
-	defer func() { _ = rt.Close() }()
+	defer func() { _ = ctrl.Close() }()
+	rt := ctrl.Runtime()
+	if rt == nil {
+		t.Fatal("assembled runtime missing")
+	}
 }

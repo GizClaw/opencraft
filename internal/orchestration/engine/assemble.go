@@ -1,6 +1,13 @@
 // Package engine assembles opencraft's runtime from a deploy document:
 // embedded deploy assets, user-facing config, factory registration,
 // platform sandbox selection, and lifecycle hooks.
+//
+// The assembly itself is craft's: one Craft per Host, its definition the
+// embedded layers this binary ships, its overlay the on-disk layers a
+// reload re-reads, and its capabilities the factories and decorators
+// below. What stays here is the application's half — which factories
+// exist, which caller-owned values are injected, and which values the
+// deploy document resolves through ${ocraft:...}.
 package engine
 
 import (
@@ -9,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/GizClaw/flowcraft/backends/secret/keychain"
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/agent/scriptrt"
 	sdkdelegation "github.com/GizClaw/flowcraft/core/delegation"
@@ -33,23 +41,24 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
 	"github.com/GizClaw/flowcraft/core/tool/middleware"
 	"github.com/GizClaw/flowcraft/core/workspace"
+	"github.com/GizClaw/flowcraft/craft"
 	"github.com/GizClaw/flowcraft/driver/anthropic"
 	"github.com/GizClaw/flowcraft/driver/bytedance"
 	"github.com/GizClaw/flowcraft/driver/minimax"
 	"github.com/GizClaw/flowcraft/driver/openai"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/GizClaw/flowcraft/core/hooks"
+	mediahook "github.com/GizClaw/flowcraft/core/media/hook"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/agents"
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
-	opmedia "github.com/GizClaw/opencraft/internal/capabilities/media"
 	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
 	"github.com/GizClaw/opencraft/internal/capabilities/review"
 	reviewstore "github.com/GizClaw/opencraft/internal/capabilities/review/store"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
-	"github.com/GizClaw/opencraft/internal/capabilities/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
@@ -59,6 +68,7 @@ import (
 	plugininstalltool "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
 	"github.com/GizClaw/opencraft/internal/capabilities/worldstate"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
 
 // Options controls assembly paths.
@@ -114,30 +124,28 @@ type Options struct {
 		ctx context.Context, root string, window int,
 	) (*ocsessions.Store, error)
 	// WorkspaceLayout explicitly supplies the workspace state root.
-	// Required: BuildRuntime rejects a nil layout so assemblies never
+	// Required: BuildAssembly rejects a nil layout so assemblies never
 	// fall back to project-local state.
 	WorkspaceLayout *config.WorkspaceLayout
 }
 
 type Option func(*Options)
 
-// LoadDocument loads the merged deploy document for one user config
-// directory. Runtime assembly (Manager) and in-place reload (Host)
-// share this entry point so both always operate on the same layer
-// merge and cannot drift apart.
-func LoadDocument(
-	ctx context.Context,
-	userDir string,
-) (deploy.Document, error) {
+// LoadView loads the merged deployment view for one user config
+// directory: the document, and the layer split it was merged from.
+// Runtime assembly (BuildAssembly) and in-place reload
+// (Controller.Reload) share this entry point so both always operate on
+// the same layers and cannot drift apart.
+func LoadView(ctx context.Context, userDir string) (*config.View, error) {
 	mgr, err := config.Open(config.Options{UserDir: userDir})
 	if err != nil {
-		return deploy.Document{}, fmt.Errorf("engine: open config: %w", err)
+		return nil, fmt.Errorf("engine: open config: %w", err)
 	}
 	view, err := mgr.Load(ctx)
 	if err != nil {
-		return deploy.Document{}, fmt.Errorf("engine: load config: %w", err)
+		return nil, fmt.Errorf("engine: load config: %w", err)
 	}
-	return view.Document, nil
+	return view, nil
 }
 
 // WithConfigBase overrides the config reference base directory.
@@ -225,9 +233,13 @@ func WithWorkspaceLayout(l *config.WorkspaceLayout) Option {
 // ocraftScheme names the resolver scheme carrying per-assembly path
 // values into the deploy document (${ocraft:<NAME>} references). It
 // replaces the historical ${env:OPEN_CRAFT_*} publishing: values now
-// travel with the flowcraft Builder instead of the process
-// environment, so assemblies for different workspaces never share
-// mutable expansion state and may run concurrently.
+// travel with the assembly instead of the process environment, so
+// assemblies for different workspaces never share mutable expansion
+// state and may run concurrently.
+//
+// It stays a capability scheme rather than craft's ${craft:NAME} values
+// because the embedded assets spell the references this way; the two
+// spellings meet when the assets become a craft.yaml.
 const ocraftScheme = "ocraft"
 
 // ocraftResolver maps the assembly path values into the ocraftScheme.
@@ -262,11 +274,340 @@ func ocraftResolver(o *Options, dataDir, cacheDir string) *resource.ReferenceRes
 	})
 }
 
-// BuildRuntime assembles an opencraft runtime from a deploy document.
-// Assembly path values are injected through a per-build resolver (see
-// ocraftScheme), so concurrent calls for different workspaces do not
-// race shared process state.
-func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*runtimecore.Runtime, error) {
+// registrar adapts one factory registration into a capability. Most of
+// the registry's kinds are registered by a package-level function with
+// no state, which is exactly what a Registrar is.
+type registrar struct {
+	name string
+	fn   func(*resource.Registry) error
+}
+
+func (r registrar) Name() string { return r.name }
+
+func (r registrar) Register(reg *resource.Registry) error { return r.fn(reg) }
+
+// coreCapabilities is the framework half of the factory list:
+// flowcraft's own kinds, the OS sandbox backends and the inference
+// drivers. Every (kind, impl) an embedded asset names must resolve
+// here, which is what TestEmbeddedAssetsResolveAgainstRegistry scans
+// for: a missing registration only fails at deploy time, and only for
+// the asset that names it.
+func coreCapabilities() []craft.Capability {
+	return []craft.Capability{
+		registrar{"events", event.Register},
+		registrar{"graph", graphresource.Register},
+		registrar{"workspace", workspace.Register},
+		registrar{"tools", tool.Register},
+		registrar{"tool-middleware", middleware.Register},
+		registrar{"mcp", mcp.Register},
+		registrar{"secrets", secret.Register},
+		registrar{"inference", inference.Register},
+		registrar{"inference-route", route.Register},
+		registrar{"script-runtime", scriptrt.Register},
+		registrar{"sandbox-local", sandboxlocal.Register},
+		registrar{"sandbox-bwrap", bwrap.Register},
+		registrar{"sandbox-seatbelt", seatbelt.Register},
+		// The windows backend must be registered even though no embedded
+		// asset deploys it: a user layer that picks impl: windows would
+		// otherwise fail assembly with "no factory", and the flowcraft
+		// backend exists precisely for that choice (the opencraft impl
+		// stays the default because hostsandbox.go owns the env policy
+		// and approval chain around it).
+		registrar{"sandbox-windows", sbwindows.Register},
+		registrar{"driver-anthropic", anthropic.Register},
+		registrar{"driver-bytedance", bytedance.Register},
+		registrar{"driver-minimax", minimax.Register},
+		registrar{"driver-openai", openai.Register},
+	}
+}
+
+// appCapabilities is the application half of the factory list: the
+// kinds this repository ships, and the caller-owned stores they read.
+func appCapabilities(o *Options) []craft.Capability {
+	return []craft.Capability{
+		registrar{"memory", func(r *resource.Registry) error {
+			return opmemory.RegisterWithObserver(r, o.usageObserver)
+		}},
+		registrar{"sessions", func(r *resource.Registry) error {
+			if o.SessionStore == nil {
+				return fmt.Errorf(
+					"engine: session store requires WithSessionStore " +
+						"(schema migration is centralized in internal/foundation/compat)")
+			}
+			return r.Register(ocsessions.Factory{StoreFor: o.SessionStore})
+		}},
+		registrar{"media-hooks", mediahook.Register},
+		registrar{"skills", skills.Register},
+		registrar{"tools-opencraft", opentools.Register},
+		registrar{"sandbox", sandbox.Register},
+		registrar{"keychain", keychain.Register},
+		registrar{"worldstate", worldstate.Register},
+		registrar{"agents", func(r *resource.Registry) error {
+			return r.Register(agents.Factory{})
+		}},
+		registrar{"delegation-kanban", delegationkanban.Register},
+		registrar{"delegation-directory", sdkdelegation.RegisterDirectory},
+		registrar{"delegation-sessions", sdkdelegation.RegisterSessionProvider},
+		registrar{"delegation", func(r *resource.Registry) error {
+			// The stream resolver/exporter are app-owned behavior the
+			// document cannot express: they describe a live sink as a
+			// durable destination (exporter) and turn that
+			// destination back into a sink (resolver), so an async
+			// delegation's stream survives losing its in-process
+			// escrow. A deployment that injects neither keeps the
+			// escrow-only behavior.
+			var opts []sdkdelegation.Option
+			if o.DelegationStreamResolver != nil {
+				opts = append(opts,
+					sdkdelegation.WithStreamTargetResolver(o.DelegationStreamResolver))
+			}
+			if o.DelegationStreamExporter != nil {
+				opts = append(opts,
+					sdkdelegation.WithStreamTargetExporter(o.DelegationStreamExporter))
+			}
+			return r.Register(sdkdelegation.NewServiceFactory(opts...))
+		}},
+		registrar{"delegation-tool", func(r *resource.Registry) error {
+			return r.Register(tooldelegation.NewSourceFactory())
+		}},
+		registrar{"exec-policy", execpolicy.Register},
+		registrar{"hooks", func(r *resource.Registry) error {
+			// External lifecycle hooks and the subagent observer, both
+			// flowcraft's own kinds. The document declares the plugin host
+			// as this runner's extra hook source, so enabled plugins keep
+			// contributing their hooks.json files.
+			return hooks.Register(r,
+				hooks.WithSourceDep("plugin.host", "opencraft.plugins"),
+			)
+		}},
+		// User-level state bindings: each pairs the caller-owned store the
+		// host attached to user.db with that feature's document settings,
+		// so consumers read one dependency instead of two.
+		registrar{"user-memory-store", func(r *resource.Registry) error {
+			return r.Register(userstore.Factory{})
+		}},
+		registrar{"skill-usage-store", func(r *resource.Registry) error {
+			return r.Register(skillusage.Factory{})
+		}},
+		registrar{"review-store", func(r *resource.Registry) error {
+			return r.Register(reviewstore.Factory{})
+		}},
+		registrar{"review", func(r *resource.Registry) error {
+			return r.Register(review.Factory{})
+		}},
+		registrar{"subagent-policy", func(r *resource.Registry) error {
+			return r.Register(subagents.PolicyFactory{})
+		}},
+	}
+}
+
+// valuesCapability carries the per-assembly path values (see
+// ocraftScheme) as a resolver scheme.
+type valuesCapability struct {
+	resolver *resource.ReferenceResolver
+}
+
+func (valuesCapability) Name() string { return "assembly-values" }
+
+func (c valuesCapability) Resolver() *resource.ReferenceResolver { return c.resolver }
+
+// usageCapability reports every inference usage the runtime produces —
+// the model actually invoked included — to the caller's observer, with
+// the turn context intact.
+type usageCapability struct {
+	observer func(context.Context, inference.Usage)
+}
+
+func (usageCapability) Name() string { return "usage-observer" }
+
+func (c usageCapability) HostFactoryDecorators() []runtimecore.HostFactoryDecorator {
+	if c.observer == nil {
+		return nil
+	}
+	observer := c.observer
+	return []runtimecore.HostFactoryDecorator{func(
+		base sessions.HostFactory,
+	) (sessions.HostFactory, error) {
+		return sessions.HostFactoryFunc(func(
+			ctx context.Context,
+			req sessions.HostRequest,
+		) (agent.Host, error) {
+			host, err := base.NewHost(ctx, req)
+			if err != nil {
+				return nil, err
+			}
+			hf := agent.HostFuncs{Inner: host}
+			hf.ReportUsageFn = func(
+				ctx context.Context,
+				usage inference.Usage,
+			) error {
+				if err := host.ReportUsage(ctx, usage); err != nil {
+					return err
+				}
+				observer(ctx, usage)
+				return nil
+			}
+			return hf, nil
+		}), nil
+	}}
+}
+
+// delegationCapability exposes the delegation service on every turn
+// host so the delegate / delegation_status tools can resolve it at call
+// time.
+type delegationCapability struct{}
+
+func (delegationCapability) Name() string { return "delegation-host" }
+
+func (delegationCapability) ResultHostFactoryDecorators() []runtimecore.ResultHostFactoryDecorator {
+	return []runtimecore.ResultHostFactoryDecorator{func(
+		result *deploy.Result,
+		factory sessions.HostFactory,
+	) (sessions.HostFactory, error) {
+		return delegationhostwrap.Wrap(factory, result)
+	}}
+}
+
+// assemblyCapabilities is the full capability list of one assembly.
+func assemblyCapabilities(o *Options, resolver *resource.ReferenceResolver) []craft.Capability {
+	caps := coreCapabilities()
+	caps = append(caps, appCapabilities(o)...)
+	caps = append(caps,
+		valuesCapability{resolver: resolver},
+		usageCapability{observer: o.usageObserver},
+		delegationCapability{},
+	)
+	return caps
+}
+
+// assemblyExternals are the caller-owned values injected into the
+// runtime instead of being built from registry factories. The deploy
+// document declares them under runtime.external_deps
+// (assets/runtime.yaml); craft keeps these values across in-place
+// Runtime.Reload generations, so stable app objects (plugin store/kraft
+// runtime, automation manager) never need re-registration on document
+// reloads.
+func assemblyExternals(o *Options) []deploy.ExternalResource {
+	pluginHost := o.AgentHost
+	if pluginHost == nil {
+		pluginHost = pluginagent.NewEmpty()
+	}
+	automationHost := o.AutomationHost
+	if automationHost == nil {
+		automationHost = automationtool.EmptyHost()
+	}
+	pluginInstaller := o.PluginInstaller
+	if pluginInstaller == nil {
+		pluginInstaller = plugininstalltool.EmptyInstaller()
+	}
+	userMemory := o.UserMemory
+	if userMemory == nil {
+		userMemory = userstore.Empty()
+	}
+	skillUsage := o.SkillUsage
+	if skillUsage == nil {
+		skillUsage = skillusage.EmptyLifecycle()
+	}
+	reviewQueue := o.ReviewQueue
+	if reviewQueue == nil {
+		reviewQueue = reviewstore.Empty()
+	}
+	return []deploy.ExternalResource{
+		{
+			External: deploy.External{
+				Name:     "plugin.host",
+				Contract: pluginagent.ResourceKind,
+			},
+			Value: pluginHost,
+		},
+		{
+			External: deploy.External{
+				Name:     "automation.host",
+				Contract: automationtool.ResourceKind,
+			},
+			Value: automationHost,
+		},
+		{
+			External: deploy.External{
+				Name:     "plugin.installer",
+				Contract: plugininstalltool.ResourceKind,
+			},
+			Value: pluginInstaller,
+		},
+		{
+			External: deploy.External{
+				Name:     "user.memory",
+				Contract: userstore.StoreContract,
+			},
+			Value: userMemory,
+		},
+		{
+			External: deploy.External{
+				Name:     "skill.usage",
+				Contract: skillusage.StoreContract,
+			},
+			Value: skillUsage,
+		},
+		{
+			External: deploy.External{
+				Name:     "review.queue",
+				Contract: reviewstore.StoreContract,
+			},
+			Value: reviewQueue,
+		},
+	}
+}
+
+// baseLayers converts the embedded layer list into the definition's
+// base layers. The embedded sources resolve against config.FS(), the
+// Assets of the Craft below, so only name, priority and the embed path
+// travel.
+func baseLayers(layers []deploy.Layer) []craft.BaseLayer {
+	out := make([]craft.BaseLayer, 0, len(layers))
+	for i, layer := range layers {
+		name := layer.Name
+		if name == "" {
+			name = fmt.Sprintf("base-%d", i)
+		}
+		out = append(out, craft.BaseLayer{
+			Name:     name,
+			Priority: layer.Priority,
+			File:     layer.Source.File,
+			Embed:    layer.Source.Embed,
+		})
+	}
+	return out
+}
+
+// agentsResourceName is the deploy-document resource id of the
+// persistent subagent registry.
+const agentsResourceName = "agentlifecycle"
+
+// closeOnFailure tears a Craft down after an assembly step failed: the
+// step's error is what the caller reports, so a teardown failure is
+// logged rather than merged into it (the error it would hide is the
+// one that says why nothing was assembled).
+func closeOnFailure(ctx context.Context, c *craft.Craft) {
+	if err := c.Close(); err != nil {
+		telemetry.WarnErr(ctx, "engine: close craft after failed assembly", err)
+	}
+}
+
+// BuildAssembly assembles the runtime one Host runs on: a Craft whose
+// definition is the embedded base of view, whose overlay is the on-disk
+// half of view, and whose one runtime is opened under key.
+//
+// The caller keeps the view it passed (or a fresh one) for reloads:
+// Controller.Reload hands craft a new overlay, and craft recomposes and
+// swaps the generation. Assembly for different workspaces may run
+// concurrently: everything per-workspace travels with this Craft
+// instead of through process state.
+func BuildAssembly(
+	ctx context.Context,
+	view *config.View,
+	key string,
+	opts ...Option,
+) (*Controller, error) {
 	o := Options{}
 	for _, opt := range opts {
 		if opt != nil {
@@ -294,11 +635,16 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		// resolved root explicitly (it can differ from the state root).
 		o.AppHome = filepath.Dir(o.ConfigBase)
 	}
-	// Inference wiring is generated into the user configuration layer,
-	// so nothing declares the router before the setup page runs. Say
-	// that plainly instead of letting the graph fail on a missing
-	// resource reference.
-	configured, err := config.RouterConfigured(doc)
+	if view == nil {
+		return nil, fmt.Errorf("engine: deployment view is required")
+	}
+	if len(view.Base) == 0 {
+		return nil, fmt.Errorf("engine: deployment view carries no base layers")
+	}
+	// Inference wiring is generated into the user layer, so nothing
+	// declares the router before the setup page runs. Say that plainly
+	// instead of letting the graph fail on a missing resource reference.
+	configured, err := config.RouterConfigured(view.Document)
 	if err != nil {
 		return nil, fmt.Errorf("engine: check router configuration: %w", err)
 	}
@@ -307,14 +653,6 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			"engine: inference is not configured: %s declares no router "+
 				"generate target (configure a provider in the settings page)",
 			filepath.Join(o.ConfigBase, "opencraft.yaml"))
-	}
-	// Tell the media hook which turns may carry a video part. A model
-	// that cannot take video rejects the request instead of ignoring the
-	// part, so the hook keeps flattening video to its path everywhere
-	// else. This reads only the deployment document, so it stays a
-	// build-time computation.
-	if doc, err = withVideoHints(doc); err != nil {
-		return nil, err
 	}
 	// The layout is required for everything below: the state-resolved
 	// path values and the cache directory this assembly creates. A
@@ -335,140 +673,35 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		resource.WithBaseDir(o.ConfigBase),
 		resource.WithEmbed(config.FS()),
 	)
-	reg := resource.NewRegistry()
-	if err := registerResources(reg, &o); err != nil {
-		return nil, err
-	}
-
-	builder := runtimecore.NewBuilder(reg)
-	if err := builder.WithLoader(loader); err != nil {
-		return nil, err
-	}
-	if err := builder.WithResolver(ocraftResolver(&o, dataDir, cacheDir)); err != nil {
-		return nil, err
-	}
-	// plugin.host / automation.host are caller-owned values injected
-	// through flowcraft's external dependency mechanism instead of
-	// being built from registry factories. The deploy document declares
-	// them under runtime.external_deps (assets/runtime.yaml); flowcraft
-	// keeps these values across in-place Runtime.Reload generations, so
-	// stable app objects (plugin store/kraft runtime, automation
-	// manager) never need re-registration on document reloads.
-	pluginHost := o.AgentHost
-	if pluginHost == nil {
-		pluginHost = pluginagent.NewEmpty()
-	}
-	automationHost := o.AutomationHost
-	if automationHost == nil {
-		automationHost = automationtool.EmptyHost()
-	}
-	pluginInstaller := o.PluginInstaller
-	if pluginInstaller == nil {
-		pluginInstaller = plugininstalltool.EmptyInstaller()
-	}
-	userMemory := o.UserMemory
-	if userMemory == nil {
-		userMemory = userstore.Empty()
-	}
-	skillUsage := o.SkillUsage
-	if skillUsage == nil {
-		skillUsage = skillusage.EmptyLifecycle()
-	}
-	reviewQueue := o.ReviewQueue
-	if reviewQueue == nil {
-		reviewQueue = reviewstore.Empty()
-	}
-	for _, ext := range []runtimecore.ExternalResource{
-		{
-			ExternalDependency: runtimecore.ExternalDependency{
-				Name:     "plugin.host",
-				Contract: pluginagent.ResourceKind,
-			},
-			Value: pluginHost,
+	c, err := craft.New(craft.Definition{
+		Craft: craft.Meta{
+			ID:      "com.GizClaw.opencraft",
+			Name:    "OpenCraft",
+			Version: version.ServiceVersion,
 		},
-		{
-			ExternalDependency: runtimecore.ExternalDependency{
-				Name:     "automation.host",
-				Contract: automationtool.ResourceKind,
-			},
-			Value: automationHost,
-		},
-		{
-			ExternalDependency: runtimecore.ExternalDependency{
-				Name:     "plugin.installer",
-				Contract: plugininstalltool.ResourceKind,
-			},
-			Value: pluginInstaller,
-		},
-		{
-			ExternalDependency: runtimecore.ExternalDependency{
-				Name:     "user.memory",
-				Contract: userstore.StoreContract,
-			},
-			Value: userMemory,
-		},
-		{
-			ExternalDependency: runtimecore.ExternalDependency{
-				Name:     "skill.usage",
-				Contract: skillusage.StoreContract,
-			},
-			Value: skillUsage,
-		},
-		{
-			ExternalDependency: runtimecore.ExternalDependency{
-				Name:     "review.queue",
-				Contract: reviewstore.StoreContract,
-			},
-			Value: reviewQueue,
-		},
-	} {
-		if err := builder.WithExternalResource(ext); err != nil {
-			return nil, err
-		}
-	}
-	if err := builder.WithHostFactory(func(
-		base sessions.HostFactory,
-	) (sessions.HostFactory, error) {
-		return sessions.HostFactoryFunc(func(
-			ctx context.Context,
-			req sessions.HostRequest,
-		) (agent.Host, error) {
-			host, err := base.NewHost(ctx, req)
-			if err != nil {
-				return nil, err
-			}
-			hf := agent.HostFuncs{Inner: host}
-			if o.usageObserver != nil {
-				observer := o.usageObserver
-				hf.ReportUsageFn = func(
-					ctx context.Context,
-					usage inference.Usage,
-				) error {
-					if err := host.ReportUsage(ctx, usage); err != nil {
-						return err
-					}
-					observer(ctx, usage)
-					return nil
-				}
-			}
-			return hf, nil
-		}), nil
-	}); err != nil {
-		return nil, err
-	}
-	// Expose the delegation service on every turn host so the
-	// delegate / delegation_status tools can resolve it at call time.
-	if err := builder.WithResultHostFactory(func(
-		result *deploy.Result,
-		factory sessions.HostFactory,
-	) (sessions.HostFactory, error) {
-		return delegationhostwrap.Wrap(factory, result)
-	}); err != nil {
-		return nil, err
-	}
-	rt, err := builder.Build(ctx, doc)
+		BaseLayers: baseLayers(view.Base),
+	}, craft.Options{
+		ConfigDir:     o.ConfigBase,
+		DataDir:       dataDir,
+		AppHome:       o.AppHome,
+		DefinitionDir: o.ConfigBase,
+		Assets:        config.FS(),
+		Loader:        loader,
+		Capabilities:  assemblyCapabilities(&o, ocraftResolver(&o, dataDir, cacheDir)),
+		Externals:     assemblyExternals(&o),
+		Layers:        view.Overlay,
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("engine: craft: %w", err)
+	}
+	if err := c.Start(ctx); err != nil {
+		closeOnFailure(ctx, c)
+		return nil, fmt.Errorf("engine: craft start: %w", err)
+	}
+	rt, err := c.OpenRuntime(ctx, craft.RuntimeKey(key), craft.RuntimeOptions{})
+	if err != nil {
+		closeOnFailure(ctx, c)
+		return nil, fmt.Errorf("engine: open runtime %q: %w", key, err)
 	}
 	// Install the runtime so create_agent / unregister_agent and the
 	// startup loader can register agents, then re-register every
@@ -484,108 +717,5 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			}
 		}
 	}
-	return rt, nil
-}
-
-// agentsResourceName is the deploy-document resource id of the
-// persistent subagent registry.
-const agentsResourceName = "agentlifecycle"
-
-// registerResources installs every resource factory this build ships:
-// flowcraft's own kinds, the OS backends, the inference drivers,
-// opencraft's capabilities, and the user-level store bindings. It is
-// the one registry the embedded deploy assets are validated against
-// (TestEmbeddedAssetsResolveAgainstRegistry): every (kind, impl) an
-// asset names must resolve here. A missing registration — the windows
-// sandbox backend was one — only fails at deploy time, and only for
-// the asset that names it, so the scan is what keeps the list honest.
-func registerResources(reg *resource.Registry, o *Options) error {
-	registers := []func(*resource.Registry) error{
-		event.Register,
-		graphresource.Register,
-		workspace.Register,
-		tool.Register,
-		middleware.Register,
-		mcp.Register,
-		secret.Register,
-		inference.Register,
-		route.Register,
-		scriptrt.Register,
-		sandboxlocal.Register,
-		bwrap.Register,
-		seatbelt.Register,
-		// The windows backend must be registered even though no embedded
-		// asset deploys it: a user layer that picks impl: windows would
-		// otherwise fail assembly with "no factory", and the flowcraft
-		// backend exists precisely for that choice (the opencraft impl
-		// stays the default because hostsandbox.go owns the env policy
-		// and approval chain around it).
-		sbwindows.Register,
-		anthropic.Register,
-		bytedance.Register,
-		minimax.Register,
-		openai.Register,
-		func(r *resource.Registry) error {
-			return opmemory.RegisterWithObserver(r, o.usageObserver)
-		},
-		func(r *resource.Registry) error {
-			if o.SessionStore == nil {
-				return fmt.Errorf(
-					"engine: session store requires WithSessionStore " +
-						"(schema migration is centralized in internal/foundation/compat)")
-			}
-			return r.Register(ocsessions.Factory{StoreFor: o.SessionStore})
-		},
-		opmedia.Register,
-		skills.Register,
-		opentools.Register,
-		sandbox.Register,
-		secrets.Register,
-		worldstate.Register,
-		func(r *resource.Registry) error {
-			return r.Register(agents.Factory{})
-		},
-		delegationkanban.Register,
-		sdkdelegation.RegisterDirectory,
-		sdkdelegation.RegisterSessionProvider,
-		func(r *resource.Registry) error {
-			// The stream resolver/exporter are app-owned behavior the
-			// document cannot express: they describe a live sink as a
-			// durable destination (exporter) and turn that
-			// destination back into a sink (resolver), so an async
-			// delegation's stream survives losing its in-process
-			// escrow. A deployment that injects neither keeps the
-			// escrow-only behavior.
-			var opts []sdkdelegation.Option
-			if o.DelegationStreamResolver != nil {
-				opts = append(opts,
-					sdkdelegation.WithStreamTargetResolver(o.DelegationStreamResolver))
-			}
-			if o.DelegationStreamExporter != nil {
-				opts = append(opts,
-					sdkdelegation.WithStreamTargetExporter(o.DelegationStreamExporter))
-			}
-			return r.Register(sdkdelegation.NewServiceFactory(opts...))
-		},
-		func(r *resource.Registry) error {
-			return r.Register(tooldelegation.NewSourceFactory())
-		},
-		execpolicy.Register,
-	}
-	for _, register := range registers {
-		if err := register(reg); err != nil {
-			return err
-		}
-	}
-	reg.MustRegister(hooks.Factory{})
-	reg.MustRegister(hooks.ObserverFactory{})
-	// User-level state bindings: each pairs the caller-owned store the
-	// host attached to user.db with that feature's document settings,
-	// so consumers read one dependency instead of two.
-	reg.MustRegister(userstore.Factory{})
-	reg.MustRegister(skillusage.Factory{})
-	reg.MustRegister(reviewstore.Factory{})
-	reg.MustRegister(review.Factory{})
-	reg.MustRegister(subagents.PolicyFactory{})
-	return nil
+	return &Controller{craft: c, key: craft.RuntimeKey(key)}, nil
 }

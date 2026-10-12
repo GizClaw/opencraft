@@ -12,8 +12,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/GizClaw/flowcraft/core/hooks"
+
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -35,18 +36,18 @@ func (h *Host) ReloadDocument(ctx context.Context) error {
 		return ErrRuntimeNotReady
 	}
 	started := time.Now()
-	doc, err := engine.LoadDocument(ctx, h.userDir)
+	view, err := engine.LoadView(ctx, h.userDir)
 	if err != nil {
-		return fmt.Errorf("host: load document: %w", err)
+		return fmt.Errorf("host: load config view: %w", err)
 	}
-	configured, err := config.RouterConfigured(doc)
+	configured, err := config.RouterConfigured(view.Document)
 	if err != nil {
 		return fmt.Errorf("host: check router configuration: %w", err)
 	}
 	if !configured {
 		return errors.New("host: inference router is not configured")
 	}
-	result, err := h.ctrl.Reload(ctx, doc)
+	result, err := h.ctrl.Reload(ctx, view.Overlay)
 	if err != nil {
 		return fmt.Errorf("host: in-place document reload: %w", err)
 	}

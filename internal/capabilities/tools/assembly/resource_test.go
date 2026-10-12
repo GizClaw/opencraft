@@ -15,7 +15,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/tool"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
+	"github.com/GizClaw/flowcraft/core/hooks"
 )
 
 const testSecret = "sk-1234567890abcdef"
@@ -81,7 +81,7 @@ func imageProbeTool(t *testing.T, size int) tool.Tool {
 func TestAssemblyPartBudgetBoundsImages(t *testing.T) {
 	settings := `{
 		"middlewares": {
-			"result_limit": {"max_chars": 8000, "part_budget_bytes": 1024}
+			"result_limit": {"max": 8000, "part_budget_bytes": 1024}
 		}
 	}`
 	asm := newAssembly(t, settings, stubSource{t: imageProbeTool(t, 4096)})
@@ -98,7 +98,7 @@ func TestAssemblyPartBudgetBoundsImages(t *testing.T) {
 
 	roomy := `{
 		"middlewares": {
-			"result_limit": {"max_chars": 8000, "part_budget_bytes": 65536}
+			"result_limit": {"max": 8000, "part_budget_bytes": 65536}
 		}
 	}`
 	asm = newAssembly(t, roomy, stubSource{t: imageProbeTool(t, 4096)})
@@ -142,7 +142,7 @@ func TestAssemblyWiresResultLimitRedactAudit(t *testing.T) {
 		"middlewares": {
 			"recover": {"enabled": true},
 			"timeout": {"default": "5m"},
-			"result_limit": {"max_chars": 300},
+			"result_limit": {"max": 300},
 			"redact": {
 				"enabled": true,
 				"rules": [{"pattern": "sk-[A-Za-z0-9]{16,}"}]
@@ -239,17 +239,28 @@ func TestAssemblyRedactsHyphenatedProviderKeys(t *testing.T) {
 	}
 }
 
-func TestAssemblyResultLimitZeroDisabled(t *testing.T) {
-	settings := `{
-		"middlewares": {
-			"result_limit": {"max_chars": 0}
-		}
-	}`
+// TestAssemblyResultLimitSectionRules pins flowcraft's settings
+// contract: the section is what turns the ceiling on, so a declared
+// budget has to be positive, and a deployment that wants no text
+// ceiling omits the section rather than zeroing it.
+func TestAssemblyResultLimitSectionRules(t *testing.T) {
 	content := strings.Repeat("x", 5000)
-	asm := newAssembly(t, settings, stubSource{t: probeTool(content)})
+	asm := newAssembly(t, `{"middlewares": {}}`,
+		stubSource{t: probeTool(content)})
 	if res := runProbe(asm); res.Content.Text() != content {
-		t.Fatalf("zero limit must pass through, got %d runes",
+		t.Fatalf("no result_limit section must pass through, got %d runes",
 			len([]rune(res.Content.Text())))
+	}
+
+	f := AssemblyFactory{}
+	_, err := f.New(context.Background(), resource.Input{
+		Settings: []byte(`{
+			"middlewares": {"result_limit": {"max": 0}}
+		}`),
+		Deps: map[string]any{"tool": stubSource{t: probeTool("x")}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "result_limit.max") {
+		t.Fatalf("zero budget error = %v, want result_limit.max", err)
 	}
 }
 
@@ -259,7 +270,7 @@ func TestAssemblyTruncatePersistsRedactedContent(t *testing.T) {
 	auditDir := filepath.Join(work, "audit")
 	settings := `{
 		"middlewares": {
-			"result_limit": {"max_chars": 1000},
+			"result_limit": {"max": 1000},
 			"redact": {
 				"enabled": true,
 				"rules": [{"pattern": "sk-[A-Za-z0-9]{16,}"}]
@@ -314,7 +325,7 @@ func TestAssemblyKeepsOver32kJSONEnvelopeValid(t *testing.T) {
 				"dir": "` + cacheDir + `",
 				"work_dir": "` + work + `"
 			},
-			"result_limit": {"max_chars": 32768}
+			"result_limit": {"max": 32768}
 		}
 	}`
 	full, err := json.Marshal(map[string]any{
@@ -376,7 +387,7 @@ func TestAssemblyRejectsInvalidMiddlewareSettings(t *testing.T) {
 			name: "negative result limit",
 			settings: `{
 				"middlewares": {
-					"result_limit": {"max_chars": -1}
+					"result_limit": {"max": -1}
 				}
 			}`,
 		},

@@ -120,7 +120,7 @@ func TestSessionSearchSourceFactory(t *testing.T) {
 
 func TestExecToolListPlatformGate(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux", "freebsd", "windows"} {
-		names := toolNames(execToolList(stubRunner{}, nil, goos))
+		names := toolNames(execToolList(stubRunner{}, goos))
 		if !contains(names, "exec_command") {
 			t.Errorf("%s: exec_command missing from %v", goos, names)
 		}

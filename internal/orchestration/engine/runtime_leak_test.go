@@ -72,9 +72,10 @@ func buildAndCloseRuntime(t *testing.T) []leakProbe {
 	}
 	layout := testWorkspaceLayout(t, home, work)
 	sessionStore := migratedSessionStore(t, layout)
-	rt, err := BuildRuntime(
+	ctrl, err := BuildAssembly(
 		context.Background(),
-		view.Document,
+		view,
+		work,
 		WithAutomationHost(automationStub{}),
 		WithWorkBase(work),
 		WithConfigBase(userDir),
@@ -86,7 +87,11 @@ func buildAndCloseRuntime(t *testing.T) []leakProbe {
 		}),
 	)
 	if err != nil {
-		t.Fatalf("BuildRuntime: %v", err)
+		t.Fatalf("BuildAssembly: %v", err)
+	}
+	rt := ctrl.Runtime()
+	if rt == nil {
+		t.Fatal("assembled runtime missing")
 	}
 	value, ok := rt.Resource("skills")
 	if !ok {
@@ -100,7 +105,7 @@ func buildAndCloseRuntime(t *testing.T) []leakProbe {
 	runtimeProbe := weak.Make(rt)
 	skillsProbe := weak.Make(service)
 
-	if err := rt.Close(); err != nil {
+	if err := ctrl.Close(); err != nil {
 		t.Fatalf("close runtime: %v", err)
 	}
 	return []leakProbe{

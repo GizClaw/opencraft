@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestSecondTurnReplaysStructuredToolPair drives two turns against the
@@ -22,13 +22,13 @@ import (
 // result is replayed as a real role=tool message paired with its
 // assistant tool_call — not degraded to user text.
 func TestSecondTurnReplaysStructuredToolPair(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"out.txt","content":"hello\n"}`,
 		}}},
-		fakeprovider.Reply{Text: "first turn done"},
-		fakeprovider.Reply{Text: "second turn ok"},
+		inferencetest.ScriptedReply{Text: "first turn done"},
+		inferencetest.ScriptedReply{Text: "second turn ok"},
 	)
 	workDir := t.TempDir()
 	configDir := filepath.Join(t.TempDir(), "config")

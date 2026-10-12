@@ -5,12 +5,12 @@ import (
 	"os"
 	"strings"
 
+	"github.com/GizClaw/flowcraft/core/media/imageutil"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
+	"github.com/GizClaw/flowcraft/core/utils/filetype"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 )
 
 // persistUserAttachments makes URL-sourced image attachments durable

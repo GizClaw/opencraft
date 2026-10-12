@@ -36,6 +36,55 @@ func TestLoadLayeredDocuments(t *testing.T) {
 	}
 }
 
+// TestViewCarriesTheLayerSplit pins the two halves a craft-based
+// assembly names separately: the embedded base (the definition, fixed
+// for this binary) and the on-disk overlay (what a reload re-reads).
+// The overlay is the layers in merge order, explicit below user, and
+// the document is the merge of both halves.
+func TestViewCarriesTheLayerSplit(t *testing.T) {
+	userDir := t.TempDir()
+	writeConfig(t, userDir, "opencraft.yaml", "version: v1\n")
+	explicitDir := t.TempDir()
+	writeConfig(t, explicitDir, "explicit.yaml", "version: v1\n")
+
+	mgr, err := Open(Options{
+		UserDir:  userDir,
+		Explicit: filepath.Join(explicitDir, "explicit.yaml"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mgr.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Base) != 4 {
+		t.Fatalf("base layers = %d, want the four embedded assets", len(view.Base))
+	}
+	for i, want := range []string{
+		"embedded", "embedded-tools", "embedded-agents", "embedded-runtime",
+	} {
+		if view.Base[i].Name != want {
+			t.Errorf("base[%d] = %q, want %q", i, view.Base[i].Name, want)
+		}
+	}
+	if len(view.Overlay) != 2 {
+		t.Fatalf("overlay layers = %d, want the explicit and user layers",
+			len(view.Overlay))
+	}
+	if view.Overlay[0].Name != "explicit" || view.Overlay[0].Priority != 5 {
+		t.Errorf("overlay[0] = %+v, want the explicit layer at priority 5",
+			view.Overlay[0])
+	}
+	if view.Overlay[1].Name != string(LayerUser) || view.Overlay[1].Priority != 10 {
+		t.Errorf("overlay[1] = %+v, want the user layer at priority 10",
+			view.Overlay[1])
+	}
+	if view.Document.Version == "" {
+		t.Fatalf("merged document carries no version: %+v", view.Document)
+	}
+}
+
 func TestLoadWithoutUserLayer(t *testing.T) {
 	// Before the settings page writes a user layer, Load must succeed
 	// with the embedded layers alone. Inference wiring is generated

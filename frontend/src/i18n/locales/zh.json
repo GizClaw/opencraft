@@ -234,7 +234,7 @@
     "diagPerfProbeTitle": "渲染进程性能采样",
     "diagHttpProbeActive": "记录中：每次 provider 调用前后各留一条 `httpprobe:` 日志（发出请求 / 收到响应头）。",
     "diagHttpProbeBlocked": "已暂停：配置了 HTTP MCP server，其客户端无法在包装过的 transport 下构建。",
-    "diagHttpProbeEnv": "OPENCRAFT_HTTP_PROBE 已强制开启，开关无法关闭。",
+    "diagHttpProbeEnv": "FLOWCRAFT_HTTP_PROBE 已强制开启，开关无法关闭。",
     "diagHttpProbeHint": "包装进程的 HTTP transport，记录 provider 请求何时离开进程、响应头何时到达。两者之差是网络加 provider 首包时间，与上一步之间的间隔则是本地组装——每轮延迟数字看不出这一拆分。默认关闭：会让每次模型调用的日志行翻倍。",
     "diagHttpProbeOff": "关闭",
     "diagHttpProbeOn": "记录",

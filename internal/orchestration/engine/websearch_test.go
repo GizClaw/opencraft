@@ -110,9 +110,10 @@ func buildWebSearchRuntime(
 	}
 	layout := testWorkspaceLayout(t, home, work)
 	sessionStore := migratedSessionStore(t, layout)
-	rt, err := BuildRuntime(
+	ctrl, err := BuildAssembly(
 		context.Background(),
-		view.Document,
+		view,
+		work,
 		WithWorkBase(work),
 		WithConfigBase(userDir),
 		WithWorkspaceLayout(layout),
@@ -123,7 +124,11 @@ func buildWebSearchRuntime(
 		}),
 	)
 	if err != nil {
-		t.Fatalf("BuildRuntime: %v", err)
+		t.Fatalf("BuildAssembly: %v", err)
+	}
+	rt := ctrl.Runtime()
+	if rt == nil {
+		t.Fatal("assembled runtime missing")
 	}
 	t.Cleanup(func() { _ = rt.Close() })
 

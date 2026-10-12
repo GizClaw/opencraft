@@ -6,11 +6,11 @@ import (
 	"os"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/utils/httpprobe"
 
-	"github.com/GizClaw/opencraft/internal/foundation/utils/httpprobe"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
@@ -20,10 +20,10 @@ import (
 // wrapper and the reload that follows rebuilds the provider clients
 // against it (a turn then leaves "request dispatched" records), switching
 // off quiets even the runtime that was built while the probe was on, and
-// OPENCRAFT_HTTP_PROBE still forces it on over an off switch, so a
+// FLOWCRAFT_HTTP_PROBE still forces it on over an off switch, so a
 // support session can ask for records without editing desktop.json.
 func TestProbeFollowsTheDiagnosticsSwitch(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
@@ -98,7 +98,7 @@ func TestProbeFollowsTheDiagnosticsSwitch(t *testing.T) {
 		t.Fatalf("rebuild under the env override: %v", err)
 	}
 	if !httpprobe.Active() {
-		t.Fatal("OPENCRAFT_HTTP_PROBE did not force the probe on")
+		t.Fatal("FLOWCRAFT_HTTP_PROBE did not force the probe on")
 	}
 }
 

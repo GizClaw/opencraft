@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestStartTurnRoutesToOwningWorkspace covers the queued-draft
@@ -20,7 +20,7 @@ import (
 // for an id no store owns is refused instead of being attached as a
 // brand-new session in whichever workspace happens to be active.
 func TestStartTurnRoutesToOwningWorkspace(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	configDir := t.TempDir()
 	writeConversationRetryConfig(t, configDir, provider.URL())
 	home := t.TempDir()

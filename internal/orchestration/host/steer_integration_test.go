@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // steerGateTimeout bounds how long a test waits for the fake provider to
@@ -29,7 +29,7 @@ const steerGateTimeout = 30 * time.Second
 
 // steerHost starts one Host on a fresh workspace, wired to the fake
 // provider.
-func steerHost(t *testing.T, provider *fakeprovider.Server) (*host.Host, context.Context) {
+func steerHost(t *testing.T, provider *inferencetest.ScriptedOpenAI) (*host.Host, context.Context) {
 	t.Helper()
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
@@ -52,7 +52,7 @@ func steerHost(t *testing.T, provider *fakeprovider.Server) (*host.Host, context
 	return h, ctx
 }
 
-func waitSteerGate(t *testing.T, gate *fakeprovider.Gate) {
+func waitSteerGate(t *testing.T, gate *inferencetest.Gate) {
 	t.Helper()
 	select {
 	case <-gate.Ready():
@@ -108,12 +108,12 @@ func steerCallID(t *testing.T, m map[string]any) string {
 // owns — after the tool result, as a standalone user message, ahead of
 // the next round's request.
 func TestSteerDeliveredAtToolBoundary(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"steer.txt","content":"steer\n"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	hold := provider.HoldNext()
 	defer hold.Release()
@@ -180,12 +180,12 @@ func TestSteerDeliveredAtToolBoundary(t *testing.T) {
 // flight, so an interjection does not have to sit at "waiting for the
 // next step" until turn_end carries the settled count.
 func TestSteerPendingReportedWhileTheTurnRuns(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"steer.txt","content":"steer\n"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	hold := provider.HoldNext()
 	defer hold.Release()
@@ -249,12 +249,12 @@ func TestSteerPendingReportedWhileTheTurnRuns(t *testing.T) {
 // to the caller, and every message the turn did accept still reaches the
 // model exactly once.
 func TestSteerRunRejections(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"steer.txt","content":"x\n"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	hold := provider.HoldNext()
 	defer hold.Release()
@@ -328,12 +328,12 @@ func TestSteerRunRejections(t *testing.T) {
 // terminal turn's ErrSteerClosed, the barge-in window's
 // agent.Interrupted): a rejected steer is refused, never half-queued.
 func TestSteerRunTooLargeKeepsTheTurnAlive(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"steer.txt","content":"x\n"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	hold := provider.HoldNext()
 	defer hold.Release()
@@ -387,7 +387,7 @@ func TestSteerRunTooLargeKeepsTheTurnAlive(t *testing.T) {
 // refusal is core's ErrSteerClosed; the frontend classifies both as
 // "the turn stopped accepting the message".)
 func TestSteerRunAfterTheSettleIsRefused(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	h, ctx := steerHost(t, provider)
 	run, err := h.StartRun(ctx, host.RunOptions{
 		Message:       message.NewTextMessage(message.RoleUser, "hello"),
@@ -421,12 +421,12 @@ func TestSteerRunAfterTheSettleIsRefused(t *testing.T) {
 // drop the only copy of the user's text.
 func TestPendingSteerReadsTheRealTurnResult(t *testing.T) {
 	t.Run("delivered at the boundary", func(t *testing.T) {
-		provider := fakeprovider.New(t,
-			fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+		provider := inferencetest.NewScriptedOpenAI(t,
+			inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 				Name:      "write_file",
 				Arguments: `{"file_path":"steer.txt","content":"x\n"}`,
 			}}},
-			fakeprovider.Reply{Text: "done"},
+			inferencetest.ScriptedReply{Text: "done"},
 		)
 		hold := provider.HoldNext()
 		defer hold.Release()
@@ -458,7 +458,7 @@ func TestPendingSteerReadsTheRealTurnResult(t *testing.T) {
 	t.Run("still queued at the settle", func(t *testing.T) {
 		// The turn ends on a plain reply: no tool ever ran, so no
 		// boundary drained the queue the steer went into.
-		provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+		provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 		hold := provider.HoldNext()
 		defer hold.Release()
 
@@ -496,16 +496,16 @@ func TestPendingSteerReadsTheRealTurnResult(t *testing.T) {
 // frees the budget again, and what the queue accepted still reaches the
 // model exactly once.
 func TestSteerRunBoundsThePayloadOneBoundaryInjects(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"steer.txt","content":"x\n"}`,
 		}}},
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"steer.txt","content":"y\n"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	hold := provider.HoldNext()
 	defer hold.Release()
