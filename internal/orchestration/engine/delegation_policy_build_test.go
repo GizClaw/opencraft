@@ -72,7 +72,7 @@ func TestEmptySettingsSavesKeepWorkspaceBuildable(t *testing.T) {
 		}
 	}
 
-	doc, err := LoadDocument(context.Background(), userDir)
+	view, err := LoadView(context.Background(), userDir)
 	if err != nil {
 		t.Fatalf("load document: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestEmptySettingsSavesKeepWorkspaceBuildable(t *testing.T) {
 		"delegate.policy", "review", "usermemory", "skilllifecycle",
 		"tool.websearch",
 	} {
-		settings := string(doc.Resources[name].Settings)
+		settings := string(view.Document.Resources[name].Settings)
 		if settings == "" || settings == "{}" || settings == "null" {
 			t.Errorf("merged %s settings = %q, want a readable source",
 				name, settings)
@@ -89,9 +89,10 @@ func TestEmptySettingsSavesKeepWorkspaceBuildable(t *testing.T) {
 
 	layout := testWorkspaceLayout(t, home, work)
 	sessionStore := migratedSessionStore(t, layout)
-	rt, err := BuildRuntime(
+	ctrl, err := BuildAssembly(
 		context.Background(),
-		doc,
+		view,
+		work,
 		WithAutomationHost(automationStub{}),
 		WithWorkBase(work),
 		WithConfigBase(userDir),
@@ -103,9 +104,13 @@ func TestEmptySettingsSavesKeepWorkspaceBuildable(t *testing.T) {
 		}),
 	)
 	if err != nil {
-		t.Fatalf("BuildRuntime: %v", err)
+		t.Fatalf("BuildAssembly: %v", err)
 	}
-	defer func() { _ = rt.Close() }()
+	defer func() { _ = ctrl.Close() }()
+	rt := ctrl.Runtime()
+	if rt == nil {
+		t.Fatal("assembled runtime missing")
+	}
 
 	// A cleared policy is not a locked-down one: the built resource
 	// allows every registered target.

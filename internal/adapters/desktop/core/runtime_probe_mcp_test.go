@@ -8,15 +8,16 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
+	"github.com/GizClaw/flowcraft/core/utils/httpprobe"
+
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/httpprobe"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
 // TestReloadReconcilesProbeWithMCPConfiguration pins the guard that keeps
-// the diagnostic round-trip probe (the DEV switch or OPENCRAFT_HTTP_PROBE,
-// see foundation/utils/httpprobe) from breaking an HTTP MCP server.
+// the diagnostic round-trip probe (the DEV switch or FLOWCRAFT_HTTP_PROBE,
+// see flowcraft's core/utils/httpprobe) from breaking an HTTP MCP server.
 //
 // A streamable-HTTP MCP client is built inside a reload — flowcraft
 // deploys the mcp tool through core/utils.NewRoundTripper, which clones
@@ -27,7 +28,7 @@ import (
 // builds clients from the document. The switch itself stays on: the card
 // reports the stand-down rather than dropping the user's choice.
 func TestReloadReconcilesProbeWithMCPConfiguration(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {

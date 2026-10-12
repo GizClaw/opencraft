@@ -19,20 +19,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rs/xid"
-
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/route"
+	"github.com/GizClaw/flowcraft/core/media/imageutil"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
+	"github.com/rs/xid"
 
-	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/inferenceext"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/wsread"
 )
 
 // Name is the canonical generate_image tool name.
@@ -539,7 +537,7 @@ func (t *Tool) loadReferenceImage(
 		return media.ImageSource{}, errdefs.Validationf(
 			"%s: reference image path is empty", Name)
 	}
-	data, err := wsread.Capped(ctx, t.ws, path, imageutil.MaxInlineImageBytes)
+	data, err := workspace.Capped(ctx, t.ws, path, imageutil.MaxInlineImageBytes)
 	if err != nil {
 		return media.ImageSource{}, fmt.Errorf(
 			"%s: read reference image %s: %w", Name, path, err)
@@ -569,7 +567,7 @@ func (t *Tool) loadMask(
 	ctx context.Context, path string,
 ) (media.ImageSource, error) {
 	path = strings.TrimSpace(path)
-	data, err := wsread.Capped(ctx, t.ws, path, imageutil.MaxInlineImageBytes)
+	data, err := workspace.Capped(ctx, t.ws, path, imageutil.MaxInlineImageBytes)
 	if err != nil {
 		return media.ImageSource{}, fmt.Errorf(
 			"%s: read mask %s: %w", Name, path, err)

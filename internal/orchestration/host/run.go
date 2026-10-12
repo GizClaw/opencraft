@@ -161,16 +161,21 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	if !opts.Origin.valid() {
 		return nil, fmt.Errorf("host: unknown run origin %q", opts.Origin)
 	}
-	ctrl := h.Controller()
-	if ctrl == nil || ctrl.Runtime() == nil {
-		return nil, ErrRuntimeNotReady
-	}
+	// The Host's own lifecycle is the first truth: retiring a Host is
+	// also what tears its runtime down, so a closed one must say that
+	// instead of leaving the missing runtime to read as "never
+	// assembled" — an adapter needs ErrRuntimeClosing to retry on the
+	// replacement Host.
 	h.mu.Lock()
 	if h.closing || h.closed {
 		h.mu.Unlock()
 		return nil, ErrRuntimeClosing
 	}
 	h.mu.Unlock()
+	ctrl := h.Controller()
+	if ctrl == nil || ctrl.Runtime() == nil {
+		return nil, ErrRuntimeNotReady
+	}
 	if opts.ContextID != "" {
 		h.mu.Lock()
 		gone := h.deleting[ConversationID(opts.ContextID)] ||
@@ -740,6 +745,14 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 	if !ids.IsSession(id) {
 		return fmt.Errorf("host: invalid session id %q", id)
 	}
+	// A closing Host is answered as such before anything else: closing
+	// is what removed its runtime (see StartRun).
+	h.mu.Lock()
+	if h.closed || h.closing {
+		h.mu.Unlock()
+		return ErrRuntimeClosing
+	}
+	h.mu.Unlock()
 	ctrl := h.Controller()
 	if ctrl == nil || ctrl.Runtime() == nil {
 		return ErrRuntimeNotReady
@@ -751,10 +764,6 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 	conv := ConversationID(id)
 
 	h.mu.Lock()
-	if h.closed || h.closing {
-		h.mu.Unlock()
-		return ErrRuntimeClosing
-	}
 	if h.deleted[conv] {
 		h.mu.Unlock()
 		// The tombstone outlives the rows, and the rows are what the

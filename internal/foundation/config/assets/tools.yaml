@@ -12,11 +12,6 @@ resources:
     impl: opencraft/exec
     deps:
       sandbox: box
-      # Escalation prompt: when the OS sandbox refuses a command, the
-      # user may allow one re-run outside it. Same policy resource the
-      # sandbox consults, so "always" answers are persisted with the
-      # workspace approvals file.
-      escalator: execpolicy
   tool.applypatch:
     kind: tool.Source
     impl: opencraft/applypatch
@@ -222,7 +217,7 @@ resources:
         # enforces the non-text part budget; the text ceiling still
         # applies when a deployment turns truncate off.
         result_limit:
-          max_chars: 32768
+          max: 32768
           # Non-text parts (view_image output, structured data) share
           # this byte budget, metered on the canonical wire encoding
           # (message.MarshalPart): an inline image spends base64 bytes,

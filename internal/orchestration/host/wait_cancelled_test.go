@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestWaitWithACancelledContextReturnsNoResult pins the wait contract
@@ -18,7 +18,7 @@ import (
 // desktop starts for every turn — a whole-app crash out of a cancelled
 // wait.
 func TestWaitWithACancelledContextReturnsNoResult(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "never read"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "never read"})
 	hold := provider.HoldNext()
 	defer hold.Release()
 

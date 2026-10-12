@@ -67,11 +67,11 @@ func TestHostExposesAgentCapabilities(t *testing.T) {
 	if len(roots) != 1 || filepath.Clean(roots[0]) != filepath.Join(root, "cap", "skills") {
 		t.Fatalf("SkillRoots = %v", roots)
 	}
-	hookSources := host.PluginHooks()
+	hookSources := host.HookSources()
 	if len(hookSources) != 1 ||
 		hookSources[0].Path != filepath.Join(root, "cap", "hooks", "hooks.json") ||
 		hookSources[0].Dir != filepath.Join(root, "cap") {
-		t.Fatalf("PluginHooks = %+v", hookSources)
+		t.Fatalf("HookSources = %+v", hookSources)
 	}
 	servers := host.MCPServers()
 	if len(servers) != 1 ||

@@ -6,6 +6,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- A user layer that copies parts of the assembly speaks the upstream
+  vocabulary now: the hook host is `hooks.Runner`, its observer is
+  `hooks.SubagentObserver` (whose dependency is `runner:`, not
+  `hooks:`), and the attachment hook is `media.attachments`. `tool.exec`
+  no longer takes an `escalator` dependency — the escalation front end
+  comes from the sandbox runner — and the tool-output bound spells
+  `result_limit.max`, not `max_chars`. The embedded layer moved with
+  them, so a profile that overrides nothing is unaffected.
+- The env override that forces the HTTP probe on is
+  `FLOWCRAFT_HTTP_PROBE` now, because the probe itself lives in
+  flowcraft; `OPENCRAFT_HTTP_PROBE` turns nothing on. The persisted
+  switch (`desktop.json`, `diagnostics.httpProbe`) is unchanged.
+
+### Changed
+
+- The engine's assembly half runs on flowcraft's `craft`. A Host loads a
+  `config.View` (`LoadDocument` becomes `LoadView`) and builds one
+  `craft.Craft` per Host (`BuildRuntime` becomes `BuildAssembly`): the
+  four embedded layers are the Definition's base layers, `-config` plus
+  the user layer are craft's overlay, and layer merging happens once,
+  inside craft. The factory list is `coreCapabilities()` +
+  `appCapabilities()` plus the values, usage and delegation registrars,
+  and the six caller-owned externals are injected through
+  `craft.Options.Externals`. `engine.Controller` wraps the Craft and its
+  runtime key, so `Runtime`/`Close`/`Drain` are craft calls and a
+  settings reload is `craft.ReloadRuntimeWith` over the re-read overlay;
+  `ReloadResult.GenerationID` stays the one source for the generation
+  the desktop reports and the sessions store checks against.
+- The single-instance identity is derived where it is used: `guilock`
+  computes the canonical root id itself instead of the launch result
+  carrying an `InstanceID`, and the Wails shell option that spoke a
+  second protocol beside the GUI lock is gone, leaving one gate.
+  `OPENCRAFT_NO_SINGLE_INSTANCE` still turns the lock off.
+- The build's Go pin is 1.26.9 (from 1.26.0) and `govulncheck` is v1.9.0:
+  the newer scanner reports the standard library advisories that 1.26.1
+  fixed as reaching this code, and `go.mod` is the version CI's
+  `setup-go` and the release builds read, so the patch reaches the
+  shipped binaries rather than only telling the scanner about it.
+
+### Removed
+
+- The packages that moved upstream in this cycle are gone from the tree
+  and their callers import flowcraft's copies: `capabilities/hooks` (the
+  settings manager, its observer and the resource factory) to
+  `core/hooks`, `capabilities/secrets` to `backends/secret`, the media
+  prepare hook to `core/media/hook` (the engine's own video-hint pass
+  went with it), sandbox escalation to `core/sandbox`, the tool-output
+  bounds (`resultlimit`, `truncate`) to `core/tool/middleware`,
+  `foundation/utils/{filetype,fsatomic,httpprobe,imageutil,pathsafe,search,wsread}`
+  and `platform/wslock` to `core/utils/*` (`wslock` is `core/utils/lock`
+  now), and the e2e fake provider to `core/inference/inferencetest`. The
+  CI lanes lose the wslock cases with the package.
+
 ## [0.6.1] - 2026-10-07
 
 ### Upgrade notes

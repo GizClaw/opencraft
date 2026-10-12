@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // runCheckpointIDs returns the engine run checkpoints currently in the
@@ -40,7 +40,7 @@ func runCheckpointIDs(t *testing.T, h *host.Host) []string {
 // and the original request so a later assembly can reconstruct the
 // turn; the checkpoint is dropped once the turn has an archive row.
 func TestHostRunCheckpointsCarryRecoveryAnnotations(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))

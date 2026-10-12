@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/fsatomic"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/fsatomic"
 )
 
 const prefsFile = "desktop.json"

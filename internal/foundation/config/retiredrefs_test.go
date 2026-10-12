@@ -55,7 +55,7 @@ resources:
 agents:
   assistant:
     prepare:
-      - type: opencraft.media
+      - type: media.attachments
         settings:
           work_dir: ${env:OPEN_CRAFT_WORKDIR}
 `

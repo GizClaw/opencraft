@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
@@ -26,7 +26,7 @@ import (
 // frontend refreshes those on the ready event alone, which is why the
 // in-place path has to emit it.
 func TestApplyDocumentReloadEmitsReady(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
@@ -77,7 +77,7 @@ func TestApplyDocumentReloadEmitsReady(t *testing.T) {
 // reason attribute) is what makes "why did a settings save reassemble
 // everything" answerable after the fact.
 func TestApplyDocumentReloadLogsRebuildFallback(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
@@ -151,7 +151,7 @@ func TestApplyDocumentReloadLogsRebuildFallback(t *testing.T) {
 // replacement nothing reassembles A after teardown and StartRun keeps
 // failing with "host: runtime is closing" until an unrelated rebuild.
 func TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workA := t.TempDir()
 	workB := t.TempDir()
 	dataDir := t.TempDir()
@@ -268,7 +268,7 @@ func TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack(t *testing.T) {
 // teardown and assemble a fresh Host for the original workspace that
 // immediately accepts new turns.
 func TestEnsureHostRebuildsRetiredWorkspace(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workA := t.TempDir()
 	workB := t.TempDir()
 	dataDir := t.TempDir()

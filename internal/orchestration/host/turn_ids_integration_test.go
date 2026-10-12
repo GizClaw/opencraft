@@ -9,15 +9,15 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/event"
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 func startFakeHost(
-	t *testing.T, provider *fakeprovider.Server,
+	t *testing.T, provider *inferencetest.ScriptedOpenAI,
 ) *host.Host {
 	t.Helper()
 	workDir := t.TempDir()
@@ -52,7 +52,7 @@ func discardSink() agent.StreamSink {
 // request/response ids ride all the way from the provider stream
 // through the Host capture into FinishedIDs and the archived turn.
 func TestHostTurnCorrelationIDsSurfaceFromStream(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{
 		Text:       "done",
 		RequestID:  "req-host-1",
 		ResponseID: "resp-host-1",
@@ -101,7 +101,7 @@ func TestHostTurnCorrelationIDsSurfaceFromStream(t *testing.T) {
 // request id carried by the provider error chain reaches FinishedIDs
 // and the archived failed turn.
 func TestHostTurnCorrelationIDSurfacesOnProviderFailure(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{
 		Status:    http.StatusBadRequest,
 		Error:     "fake provider boom",
 		RequestID: "req-fail-1",
@@ -147,7 +147,7 @@ func TestHostTurnCorrelationIDSurfacesOnProviderFailure(t *testing.T) {
 // on one Host while finish deltas are delivered, so the request/response
 // id capture is exercised under the race detector.
 func TestHostConcurrentRunsCaptureCorrelationIDs(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{
 		Text:       "done",
 		RequestID:  "req-shared",
 		ResponseID: "resp-shared",

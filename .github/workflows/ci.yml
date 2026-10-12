@@ -88,10 +88,10 @@ jobs:
           version: v2.12.2
 
       - name: Vulnerability scan (govulncheck)
-        # Pinned: v1.8.0+ requires Go >= 1.26 while this repo builds on
-        # go.mod's 1.25 toolchain (GOTOOLCHAIN=local). Bump together with
-        # the Go version instead of tracking @latest.
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+        # Pinned rather than @latest: the scanner's own Go floor tracks
+        # the toolchain go.mod pins (v1.8+ needs Go >= 1.26, which
+        # go.mod now requires), so this bumps with the Go version.
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
       - name: Frontend dependency audit
         working-directory: frontend
@@ -217,14 +217,14 @@ jobs:
         run: go test -count=1 ./internal/capabilities/sandbox ./internal/capabilities/execd ./internal/adapters/desktop ./internal/capabilities/sessions
       # The platform primitives have a macOS-specific half that a linux
       # run never touches: sysfont reads CoreText, procmem reads mach
-      # task info, guilock binds the unix socket endpoint and wslock
-      # takes flock. All 34 cases in the packages below run here (0 skips
-      # on this lane: procmem's "no process probe" and sysfont's "no
-      # font catalogue" skips belong to other platforms).
+      # task info, guilock binds the unix socket endpoint and takes its
+      # flock. All 29 cases in the packages below run here (0 skips on
+      # this lane: procmem's "no process probe" and sysfont's "no font
+      # catalogue" skips belong to other platforms).
       # -v is there so those counts are checkable from the log rather than
       # from a reading of the case list: every case prints its own line.
       - name: Platform primitives (macos)
-        run: go test -v -count=1 ./internal/foundation/platform/sysfont ./internal/foundation/platform/procmem ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock ./internal/foundation/platform/wslock
+        run: go test -v -count=1 ./internal/foundation/platform/sysfont ./internal/foundation/platform/procmem ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock
       # The capability matrix file itself: the goos-parameterised rows for
       # all three platforms (a macOS run still pins the Windows row), plus
       # the host row -- the endpoint mechanism, the hidden marking and the
@@ -316,14 +316,16 @@ jobs:
       # The primitives whose Windows half is behind a build tag: the
       # FILE_ATTRIBUTE_HIDDEN branch of fshidden (its only test file is
       # //go:build windows, so this lane is the only place it can run),
-      # guilock's named-pipe endpoint over its named-mutex lock, and
-      # wslock's LockFileEx. 17 cases run, 2 skip: guilock's stale-socket
-      # cleanup and socket path-length fallback assert the on-disk unix
-      # socket and call requireUnixSocketEndpoint.
+      # guilock's named-pipe endpoint over its named-mutex lock. 12 cases
+      # run, 2 skip: guilock's stale-socket cleanup and socket path-length
+      # fallback assert the on-disk unix socket and call
+      # requireUnixSocketEndpoint. (The workspace lock's LockFileEx half
+      # lives in flowcraft's core/utils/lock now; this lane still
+      # exercises it through the matrix file below.)
       # -v prints a line per case, which is where those counts are read
       # from after a run.
       - name: Platform primitives (windows)
-        run: go test -v -count=1 ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock ./internal/foundation/platform/wslock
+        run: go test -v -count=1 ./internal/foundation/platform/fshidden ./internal/foundation/platform/guilock
         shell: pwsh
       # The same matrix file on the row whose implementation is chosen by
       # build tags: the named-pipe endpoint, the LockFileEx range lock and
@@ -333,7 +335,7 @@ jobs:
         run: go test -v -count=1 ./internal/foundation/platform
         shell: pwsh
       - name: Compile check (sandbox/desktop/sessions/secrets)
-        run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktop ./internal/capabilities/sessions ./internal/capabilities/secrets
+        run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktop ./internal/capabilities/sessions
         shell: pwsh
 
   desktop-linux:

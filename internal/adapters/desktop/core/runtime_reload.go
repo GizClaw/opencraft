@@ -5,10 +5,10 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/httpprobe"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/httpprobe"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
@@ -162,8 +162,8 @@ func (c *Core) SetHTTPProbe(ctx context.Context, enabled bool) error {
 }
 
 // reconcileProbe keeps the provider round-trip probe (a diagnostic, see
-// foundation/utils/httpprobe) in the state its opt-ins ask for: the
-// switch (desktop.json diagnostics.httpProbe) or OPENCRAFT_HTTP_PROBE
+// flowcraft's core/utils/httpprobe) in the state its opt-ins ask for: the
+// switch (desktop.json diagnostics.httpProbe) or FLOWCRAFT_HTTP_PROBE
 // installs it, and neither counting as a yes removes it.
 //
 // A streamable-HTTP MCP client is built by flowcraft's

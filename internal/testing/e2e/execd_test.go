@@ -8,9 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestBinaryRunExecCommandThroughExecd builds the real binary and drives
@@ -29,12 +30,12 @@ func TestBinaryRunExecCommandThroughExecd(t *testing.T) {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "exec_command",
 			Arguments: `{"command":"echo execd-e2e-ok"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	home := t.TempDir()
 	configDir := filepath.Join(home, "config")

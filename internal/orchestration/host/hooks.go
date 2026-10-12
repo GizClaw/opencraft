@@ -8,7 +8,8 @@ package host
 import (
 	"context"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
+	"github.com/GizClaw/flowcraft/core/hooks"
+
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
 

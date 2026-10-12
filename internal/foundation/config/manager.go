@@ -57,15 +57,25 @@ func Open(opts Options) (*Manager, error) {
 	}, nil
 }
 
-// View is the merged deployment document.
+// View is the merged deployment document and the layers it came from.
 type View struct {
 	// Document is the deploy document merged across layers.
 	Document deploy.Document
+	// Base is the embedded layer list: the assets this binary ships,
+	// in merge order. A craft-based assembly names them in its
+	// definition, apart from the on-disk overlay that changes under
+	// the running process.
+	Base []deploy.Layer
+	// Overlay is the on-disk layer list above the base: the -config
+	// document and the user layer, in merge order (empty when neither
+	// exists). It is the half a reload re-reads.
+	Overlay []deploy.Layer
 }
 
-// Load merges the layered deploy documents.
-func (m *Manager) Load(ctx context.Context) (*View, error) {
-	layers := []deploy.Layer{{
+// embeddedLayers is the layer list of the assets compiled into the
+// binary, lowest priority first.
+func embeddedLayers() []deploy.Layer {
+	return []deploy.Layer{{
 		Priority: 0,
 		Name:     "embedded",
 		Source:   resource.Source{Embed: "assets/opencraft.yaml"},
@@ -91,11 +101,17 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 		Source:   resource.Source{Embed: "assets/runtime.yaml"},
 		Embed:    FS(),
 	}}
+}
+
+// Load merges the layered deploy documents.
+func (m *Manager) Load(ctx context.Context) (*View, error) {
+	base := embeddedLayers()
+	overlay := make([]deploy.Layer, 0, 2)
 	if m.explicit != "" {
 		// Above embedded, below the user layer: -config is meant to
 		// override built-ins, but the user layer still wins for the
 		// keys it sets.
-		layers = append(layers, deploy.Layer{
+		overlay = append(overlay, deploy.Layer{
 			Priority: 5,
 			Name:     "explicit",
 			Source:   resource.Source{File: filepath.Base(m.explicit)},
@@ -121,18 +137,26 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 		if len(refs) > 0 {
 			return nil, retiredRefsError(m.userDir, refs)
 		}
-		layers = append(layers, deploy.Layer{
+		overlay = append(overlay, deploy.Layer{
 			Priority: 10,
 			Name:     string(LayerUser),
 			Source:   resource.Source{File: "opencraft.yaml"},
 			BaseDir:  m.userDir,
 		})
 	}
+	// The base is the definition's half — fixed for this binary — and
+	// the overlay is the half a reload re-reads; merging them is what
+	// both halves have to agree on, so it happens in one place.
+	layers := make([]deploy.Layer, 0, len(base)+len(overlay))
+	layers = append(layers, base...)
+	layers = append(layers, overlay...)
 	doc, _, err := deploy.LoadLayers(ctx, layers)
 	if err != nil {
 		return nil, err
 	}
 	return &View{
 		Document: doc,
+		Base:     base,
+		Overlay:  overlay,
 	}, nil
 }

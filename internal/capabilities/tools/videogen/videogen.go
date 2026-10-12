@@ -27,10 +27,10 @@ import (
 	"github.com/GizClaw/flowcraft/core/message/media"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
+	"github.com/GizClaw/flowcraft/core/utils/filetype"
 	"github.com/GizClaw/flowcraft/core/workspace"
 	"github.com/rs/xid"
 
-	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/inferenceext"
 )
 

@@ -9,16 +9,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 func TestHostImportSessionWritesArchive(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "imported"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "imported"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))
@@ -156,7 +156,7 @@ func TestHostImportSessionWritesArchive(t *testing.T) {
 }
 
 func TestHostImportSessionGeneratesLLMTitle(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "summarized session"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "summarized session"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))

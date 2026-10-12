@@ -8,13 +8,13 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // searchTestInstance builds one enabled OpenAI deployment. A searchable
@@ -98,7 +98,7 @@ func assertSearchBagProviders(
 //     flowcraft rejects unregistered extension identities — seeding
 //     one would fail the whole turn, not just disable search.
 func TestHostSearchBagFollowsLiveRuntime(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "ok"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "ok"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))

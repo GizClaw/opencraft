@@ -267,7 +267,7 @@ resources:
   # receives one JSON event object on stdin; failures are logged and
   # never block the agent loop.
   hooks:
-    kind: opencraft.hooks
+    kind: hooks.Runner
     impl: local
     deps:
       plugin.host: plugin.host
@@ -276,11 +276,11 @@ resources:
   # Subagent hook observer: subscribes to delegation kanban events and
   # fires SubagentStart / SubagentStop hooks.
   hooks.observer:
-    kind: opencraft.hooks.observer
+    kind: hooks.SubagentObserver
     impl: local
     deps:
       events: events
-      hooks: hooks
+      runner: hooks
   box:
     kind: sandbox.Runner
     impl: opencraft

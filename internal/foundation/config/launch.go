@@ -1,8 +1,6 @@
 package config
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,6 +36,7 @@ const (
 	// EnvNoSingleInstance lets two GUI processes share one state root.
 	// The duplicate schedulers and the two writers on user.db are then
 	// the user's own risk; it exists for debugging the lock itself.
+	// SingleInstanceEnabled reads it.
 	EnvNoSingleInstance = "OPENCRAFT_NO_SINGLE_INSTANCE"
 )
 
@@ -48,13 +47,6 @@ const (
 	BaseAppName = "OpenCraft"
 	// defaultDataDirName is the state root under $HOME: ~/.opencraft.
 	defaultDataDirName = ".opencraft"
-	// instanceIDPrefix leads the single-instance id. The trailing "d"
-	// keeps every D-Bus name element from starting with a digit.
-	instanceIDPrefix = "com.GizClaw.opencraft.d"
-	// instanceIDHashBytes is how much of the SHA-256 digest of the
-	// canonical state root goes into the instance id (24 hex chars of
-	// headroom are not needed; 12 is plenty for a handful of roots).
-	instanceIDHashBytes = 6
 	// maxProfileNameLength bounds a profile name; it ends up in a
 	// directory name and a D-Bus name element.
 	maxProfileNameLength = 64
@@ -78,16 +70,10 @@ type Launch struct {
 	WorkDir string
 	// AppName is the product name with the profile suffix applied.
 	AppName string
-	// InstanceID is the single-instance identity derived from the
-	// canonical state root.
-	InstanceID string
-	// SingleInstance reports whether this process must hold the
-	// per-state-root GUI mutex.
-	SingleInstance bool
 }
 
-// ResolveLaunch resolves the roots and the single-instance identity from
-// a tolerant scan of args plus getenv. It is a pure function: it reads
+// ResolveLaunch resolves the two roots from a tolerant scan of args plus
+// getenv. It is a pure function: it reads
 // nothing but the injected environment and creates nothing, so tests can
 // point $HOME at a temporary directory and observe every resolution.
 //
@@ -179,14 +165,12 @@ func ResolveLaunch(args []string, getenv func(string) string) (Launch, error) {
 	}
 
 	return Launch{
-		Profile:        profile,
-		DataDir:        dataDir,
-		AppHome:        appHome,
-		ConfigDir:      configDir,
-		WorkDir:        workDir,
-		AppName:        AppNameFor(profile),
-		InstanceID:     InstanceIDFor(dataDir),
-		SingleInstance: !truthy(getenv(EnvNoSingleInstance)),
+		Profile:   profile,
+		DataDir:   dataDir,
+		AppHome:   appHome,
+		ConfigDir: configDir,
+		WorkDir:   workDir,
+		AppName:   AppNameFor(profile),
 	}, nil
 }
 
@@ -201,17 +185,18 @@ func AppNameFor(profile string) string {
 	return fmt.Sprintf("%s (%s)", BaseAppName, profile)
 }
 
-// InstanceIDFor derives the single-instance id from one state root. The
-// canonical path is hashed rather than embedded: the id shows up in
-// $TMPDIR/<id>.lock, in a D-Bus name and in a Windows mutex name, none
-// of which should carry a filesystem path (or run into their length and
-// character limits). The consequence is the invariant the desktop needs:
-// one GUI per state root, any number of state roots side by side.
-func InstanceIDFor(stateRoot string) string {
-	canonical := canonicalPath(stateRoot)
-	sum := sha256.Sum256([]byte(canonical))
-	hash := hex.EncodeToString(sum[:instanceIDHashBytes])
-	return instanceIDPrefix + hash
+// SingleInstanceEnabled reports whether this process should take the
+// per-state-root GUI lock. It is the OPENCRAFT_NO_SINGLE_INSTANCE escape
+// hatch and nothing else: false only for a truthy value, which exists so
+// the lock itself can be debugged (two schedulers on one root are then
+// the user's own risk). The lock is the only single-instance gate; the
+// shell's own copy of this check went away with the Wails
+// single-instance options.
+func SingleInstanceEnabled(getenv func(string) string) bool {
+	if getenv == nil {
+		return true
+	}
+	return !truthy(getenv(EnvNoSingleInstance))
 }
 
 // ValidateProfile rejects profile names that cannot be a directory
@@ -320,34 +305,6 @@ func absolute(path string) (string, error) {
 		return "", err
 	}
 	return filepath.Clean(abs), nil
-}
-
-// canonicalPath resolves symlinks for the deepest existing ancestor of
-// path and rejoins the rest, so "/tmp/../tmp/x" and "/tmp/x" hash to the
-// same instance id even before the directory exists. A path that cannot
-// be resolved falls back to its cleaned absolute form.
-func canonicalPath(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return filepath.Clean(path)
-	}
-	abs = filepath.Clean(abs)
-	rest := ""
-	current := abs
-	for {
-		if resolved, err := filepath.EvalSymlinks(current); err == nil {
-			if rest == "" {
-				return resolved
-			}
-			return filepath.Join(resolved, rest)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return abs
-		}
-		rest = filepath.Join(filepath.Base(current), rest)
-		current = parent
-	}
 }
 
 // firstNonEmpty returns the first trimmed non-empty value.

@@ -7,10 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
+
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	crepo "github.com/GizClaw/opencraft/internal/capabilities/repo"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/gitx"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // Git exposes repository operations for the UI's Git panel. The panel

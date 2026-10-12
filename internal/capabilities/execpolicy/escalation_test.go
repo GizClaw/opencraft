@@ -13,7 +13,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"sigs.k8s.io/yaml"
 
-	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/foundation/interact"
 )
 
@@ -47,7 +46,7 @@ func TestEscalateOnceAllowsWithoutPersisting(t *testing.T) {
 	}
 	var prompt agent.UserPrompt
 	ctx := escalationHost(t, "escalate_once", &prompt)
-	decision, err := m.Escalate(ctx, ocsandbox.EscalationRequest{
+	decision, err := m.Escalate(ctx, sandbox.EscalationRequest{
 		Command: "pip install requests",
 		Rule:    "pip install requests",
 		Reason:  "the sandbox refused the command (operation not permitted)",
@@ -106,7 +105,7 @@ func TestEscalateAlwaysPersistsRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := escalationHost(t, "escalate_always", nil)
-	decision, err := m.Escalate(ctx, ocsandbox.EscalationRequest{
+	decision, err := m.Escalate(ctx, sandbox.EscalationRequest{
 		Command: "pip install requests",
 		Rule:    "pip install requests",
 		Reason:  "the sandbox refused the command (operation not permitted)",
@@ -181,7 +180,7 @@ func TestEscalateWritesAuditTrail(t *testing.T) {
 	}
 	if _, err := m.Escalate(
 		escalationHost(t, "escalate_once", nil),
-		ocsandbox.EscalationRequest{
+		sandbox.EscalationRequest{
 			Command: "pip install requests",
 			Rule:    "pip install requests",
 			Reason:  "the sandbox refused the command (operation not permitted)",
@@ -191,7 +190,7 @@ func TestEscalateWritesAuditTrail(t *testing.T) {
 	}
 	if _, err := m.Escalate(
 		escalationHost(t, "deny", nil),
-		ocsandbox.EscalationRequest{
+		sandbox.EscalationRequest{
 			Command: "rm -rf /tmp/x",
 			Rule:    "rm -rf /tmp/x",
 		}); err != nil {
@@ -242,7 +241,7 @@ func TestEscalateAuditIsBestEffort(t *testing.T) {
 	}
 	decision, err := m.Escalate(
 		escalationHost(t, "escalate_once", nil),
-		ocsandbox.EscalationRequest{Command: "pip install x", Rule: "pip install x"})
+		sandbox.EscalationRequest{Command: "pip install x", Rule: "pip install x"})
 	if err != nil {
 		t.Fatalf("Escalate: %v", err)
 	}
@@ -290,7 +289,7 @@ func TestEscalateDeniedKeepsConfinedFailure(t *testing.T) {
 	}
 	decision, err := m.Escalate(
 		escalationHost(t, "deny", nil),
-		ocsandbox.EscalationRequest{
+		sandbox.EscalationRequest{
 			Command: "pip install requests",
 			Rule:    "pip install requests",
 		})
@@ -312,7 +311,7 @@ func TestEscalateWithoutHostFailsClosed(t *testing.T) {
 	}
 	if _, err := m.Escalate(
 		context.Background(),
-		ocsandbox.EscalationRequest{Command: "pip install requests"},
+		sandbox.EscalationRequest{Command: "pip install requests"},
 	); err == nil {
 		t.Fatal("escalation without a host must fail closed")
 	}

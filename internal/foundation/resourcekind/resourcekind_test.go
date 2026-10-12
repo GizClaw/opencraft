@@ -13,7 +13,6 @@ func TestRuleAcceptsTheTwoDocumentedStyles(t *testing.T) {
 		// This repo's own style: the prefix plus lower_snake segments.
 		{"opencraft.skills", "owned"},
 		{"opencraft.user_memory", "owned"},
-		{"opencraft.hooks.observer", "owned"},
 		{"opencraft.delegation.policy", "owned"},
 		{"opencraft.hostworkspace", "owned"},
 		// Flowcraft's <domain>.<Role>, both role shapes in use.
@@ -74,7 +73,7 @@ func TestInventoryEntriesAreDocumented(t *testing.T) {
 		}
 	}
 	for _, impl := range Impls {
-		if impl == "" {
+		if impl.Value == "" {
 			t.Error("inventory entry without an impl value")
 		}
 	}
@@ -93,9 +92,9 @@ func TestInventoryEntriesAreSorted(t *testing.T) {
 		}
 	}
 	for i := 1; i < len(Impls); i++ {
-		if Impls[i-1] >= Impls[i] {
+		if Impls[i-1].Value >= Impls[i].Value {
 			t.Errorf("Impls is not sorted: %q before %q",
-				Impls[i-1], Impls[i])
+				Impls[i-1].Value, Impls[i].Value)
 		}
 	}
 }

@@ -73,10 +73,10 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 const (

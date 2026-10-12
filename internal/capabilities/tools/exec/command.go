@@ -16,7 +16,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/sandbox"
-	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
@@ -40,10 +39,12 @@ var commandAliases = map[string]string{"cmd": "command"}
 type CommandTool struct {
 	runner sandbox.Runner
 	shell  shelldetect.Spec
-	// escalator asks the user to widen the boundary after the OS
-	// sandbox refused a command. Nil keeps refusals as plain command
-	// failures (headless runs, embedded hosts, tests).
-	escalator ocsandbox.Escalator
+	// escalation is the runner's escalation front end: the confined
+	// attempt, the refusal detection, the one prompt and the approved
+	// retry through the host chain all live in it (flowcraft core). Nil
+	// keeps refusals as plain command failures (headless runs, embedded
+	// hosts, tests, a deployment that wired no escalator).
+	escalation *sandbox.Escalation
 }
 
 // NewCommand creates the exec_command tool. runner is required.
@@ -57,6 +58,9 @@ func NewCommand(
 		runner: runner,
 		shell:  shelldetect.Detect(goruntime.GOOS),
 	}
+	if provider, ok := runner.(ocsandbox.EscalationProvider); ok {
+		t.escalation = provider.Escalation()
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(t)
@@ -67,13 +71,6 @@ func NewCommand(
 
 // CommandOption configures an exec tool at construction.
 type CommandOption func(*CommandTool)
-
-// WithEscalator enables the post-denial escalation prompt: when the OS
-// sandbox refuses a command, the escalator asks the user whether it may
-// run on the host instead, and an approval re-runs it unconfined.
-func WithEscalator(e ocsandbox.Escalator) CommandOption {
-	return func(t *CommandTool) { t.escalator = e }
-}
 
 // WithShell overrides the platform shell used for commands that need
 // shell syntax. An empty Program leaves the platform default in place.
@@ -176,10 +173,7 @@ func (t *CommandTool) execute(ctx context.Context, arguments string) (string, er
 			args.Command,
 		)
 	}
-	run := func(runCtx context.Context) (*sandbox.ExecResult, error) {
-		return sandbox.Exec(runCtx, t.runner, argv[0], argv[1:], opts)
-	}
-	result, err := run(ctx)
+	result, note, err := t.run(ctx, argv, opts)
 	if err != nil {
 		if errdefs.IsPolicyDenied(err) {
 			// The sandbox's denial message names the raw argv (e.g.
@@ -189,10 +183,6 @@ func (t *CommandTool) execute(ctx context.Context, arguments string) (string, er
 				"exec_command: command %q denied by sandbox policy: %v",
 				args.Command, err)
 		}
-		return "", err
-	}
-	result, note, err := t.maybeEscalate(ctx, run, argv, args.Command, result)
-	if err != nil {
 		return "", err
 	}
 	body := map[string]any{
@@ -210,61 +200,44 @@ func (t *CommandTool) execute(ctx context.Context, arguments string) (string, er
 	return string(payload), nil
 }
 
-// maybeEscalate turns one OS-sandbox refusal into an explicit question
-// and, when the user approves, re-runs the same command outside the
-// sandbox. It returns the result the caller should report plus the
-// note to attach ("" when the confined result stands as-is).
-//
-// The re-run repeats the whole command, so the prompt says so: a
-// command that failed halfway may already have had side effects.
-func (t *CommandTool) maybeEscalate(
-	ctx context.Context,
-	run func(context.Context) (*sandbox.ExecResult, error),
-	argv []string,
-	command string,
-	result *sandbox.ExecResult,
+// run executes one command line: through the escalation front end when
+// the runner serves one (a refusal becomes a question, and an approval
+// re-runs the command on the host), through the plain runner otherwise.
+// The note is non-empty only when an approval changed where the command
+// ran.
+func (t *CommandTool) run(
+	ctx context.Context, argv []string, opts sandbox.ExecOptions,
 ) (*sandbox.ExecResult, string, error) {
-	reason, denied := ocsandbox.Denied(result)
-	if !denied || t.escalator == nil || !t.escalationAvailable(ctx) {
-		return result, "", nil
+	if t.escalation == nil {
+		res, err := sandbox.Exec(ctx, t.runner, argv[0], argv[1:], opts)
+		return res, "", err
 	}
-	decision, err := t.escalator.Escalate(ctx, ocsandbox.EscalationRequest{
-		Command: command,
-		Rule:    ocsandbox.RuleFor(argv),
-		Reason:  reason,
-		Detail:  ocsandbox.DenialExcerpt(result),
-	})
+	res, outcome, err := t.escalation.Exec(ctx, argv[0], argv[1:], opts)
 	if err != nil {
-		// Fail closed: the refusal stands unless the user could be
-		// asked. The original result is still the truth on the ground.
-		telemetry.WarnErr(ctx,
-			"exec_command: escalation prompt failed; keeping the sandboxed result",
-			err)
-		return result, "", nil
+		return res, "", err
 	}
-	if !decision.Allow {
-		return result, "", nil
-	}
-	retried, err := run(ocsandbox.WithEscalation(ctx))
-	if err != nil {
-		// The user approved the retry, so a failure to even start it
-		// is the result the caller needs to see.
-		return nil, "", err
-	}
-	note := "the sandbox refused this command; the user approved " +
-		"running it outside the sandbox"
-	if decision.Remember {
-		note += " (remembered for this command)"
-	}
-	return retried, note, nil
+	return res, escalationNote(outcome), nil
 }
 
-// escalationAvailable reports whether the wired runner says an
-// approved retry would actually change the confine. Read-only and
-// unconfined sessions answer false.
-func (t *CommandTool) escalationAvailable(ctx context.Context) bool {
-	gate, ok := t.runner.(ocsandbox.EscalationGate)
-	return ok && gate.EscalationAvailable(ctx)
+// escalationNote renders what the model should know about a retry: a
+// refusal the user overrode, a rule that skipped the confined attempt,
+// or nothing when the confined result stands as it is.
+func escalationNote(outcome sandbox.EscalationOutcome) string {
+	switch {
+	case !outcome.Approved:
+		return ""
+	case outcome.Remembered && !outcome.Refused:
+		// A remembered rule covered this command, so it never ran
+		// confined and nothing was refused.
+		return "a remembered approval ran this command outside the sandbox"
+	default:
+		note := "the sandbox refused this command; the user approved " +
+			"running it outside the sandbox"
+		if outcome.Remembered {
+			note += " (remembered for this command)"
+		}
+		return note
+	}
 }
 
 // directArgs reports whether command is a simple invocation that can

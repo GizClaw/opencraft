@@ -127,6 +127,14 @@ func ValidateStableID(id string) error {
 	return nil
 }
 
+// InferenceSecretAccount returns the credential-store account of one
+// inference deployment id ("inference/deepseek-inst-0a1b2c3d") — the
+// KeyRef a keychain row stores. Names are dot-free so they stay
+// addressable as ${secret:keychain.<name>} references.
+func InferenceSecretAccount(deploymentID string) string {
+	return "inference/" + deploymentID
+}
+
 // Lower validates one submitted row and lowers it into the stored
 // instance. src selects the write policy; pluginID names the calling
 // plugin for SourcePlugin rows (the credential namespace it may use).

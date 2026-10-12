@@ -13,13 +13,13 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/lock"
 	"go.opentelemetry.io/otel/attribute"
 
 	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
-	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
 )
 
 // hostProcessStart is the moment this process began, used to tell a
@@ -27,6 +27,11 @@ import (
 // may still be writing: the desktop app and `opencraft run` share the
 // same workspace state root.
 var hostProcessStart = time.Now()
+
+// workspaceLockName is the advisory lock file inside one workspace
+// state root. It stays at the root (not under sessions/) because it
+// guards the whole root: crash recovery, the session store, checkpoints.
+const workspaceLockName = "live.lock"
 
 // Terminal vocabulary of a recovered turn. The status is the engine's
 // interrupted status, and the cause names the only interruption the
@@ -324,7 +329,8 @@ func (h *Host) RecoveryReport() (RecoveryReport, bool) {
 // process that owns the workspace). The pass is idempotent; claiming
 // keeps a runtime reload from re-scanning a store that was already
 // scanned, and the workspace lease keeps a second process from reading a
-// live sibling's checkpoints as crash leftovers (see wslock for why the
+// live sibling's checkpoints as crash leftovers (see flowcraft's
+// core/utils/lock for why the
 // timestamp heuristic alone cannot).
 func (m *Manager) claimRecovery(
 	ctx context.Context, layout config.WorkspaceLayout,
@@ -368,26 +374,29 @@ func (m *Manager) claimWorkspaceLock(
 	ctx context.Context, layout config.WorkspaceLayout,
 ) (RecoveryReport, bool) {
 	if m.leases == nil {
-		m.leases = make(map[string]*wslock.Handle)
+		m.leases = make(map[string]*lock.Handle)
 	}
 	if handle, ok := m.leases[layout.Root]; ok && handle != nil {
 		return RecoveryReport{}, true
 	}
-	path := filepath.Join(layout.Root, wslock.FileName)
+	path := filepath.Join(layout.Root, workspaceLockName)
 	acquire := m.acquireLease
 	if acquire == nil {
-		acquire = wslock.Acquire
+		acquire = lock.Acquire
 	}
 	kind := m.leaseKind
 	if kind == "" {
 		kind = "host"
 	}
-	handle, err := acquire(ctx, path, kind)
+	// ShareWithinProcess: a second Manager of this same process (an
+	// embedded host, a test) holds the lock already, which is this
+	// process being the owner, not a live sibling to yield to.
+	handle, err := acquire(ctx, path, kind, lock.ShareWithinProcess())
 	if err == nil {
 		m.leases[layout.Root] = handle
 		return RecoveryReport{}, true
 	}
-	if holder, held := wslock.IsHeld(err); held {
+	if holder, held := lock.IsHeld(err); held {
 		telemetry.Info(ctx, "host: workspace held by another live process",
 			attribute.String("workspace", layout.WorkDir),
 			attribute.String("lock", path),
@@ -405,7 +414,7 @@ func (m *Manager) claimWorkspaceLock(
 }
 
 // formatHolder renders a lock holder for the diagnostics report.
-func formatHolder(info wslock.Info) string {
+func formatHolder(info lock.Info) string {
 	switch {
 	case info.PID == 0:
 		return "another live process"

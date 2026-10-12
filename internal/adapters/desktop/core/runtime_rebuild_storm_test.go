@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
@@ -25,7 +25,7 @@ import (
 // The armed watcher always builds from the document on disk when it
 // runs, so one replacement is both necessary and sufficient here.
 func TestRebuildRuntimeArmsOneReplacementForDrainingWorkspace(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
@@ -112,7 +112,7 @@ func TestRebuildRuntimeArmsOneReplacementForDrainingWorkspace(t *testing.T) {
 // (a replacement is already armed and reads the same document). A write
 // that really changed the document still rebuilds.
 func TestUnchangedPluginWriteSkipsRebuildWhileReplacementArmed(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {

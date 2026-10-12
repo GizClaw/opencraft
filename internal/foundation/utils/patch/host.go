@@ -6,8 +6,7 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
-
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 )
 
 // ApplyToDir applies a codex-format patch (or a standard unified diff)

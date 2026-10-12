@@ -1120,14 +1120,14 @@ export interface TelemetryExportStatus {
  * leaves two records — when the request left the process and when the
  * response headers arrived — which is what splits a slow step into
  * local assembly and provider time. env reports the
- * OPENCRAFT_HTTP_PROBE override, and blocker names the MCP
+ * FLOWCRAFT_HTTP_PROBE override, and blocker names the MCP
  * configuration that keeps the probe out (the streamable-HTTP MCP
  * client cannot run under a wrapped transport).
  */
 export interface HTTPProbeStatus {
   /** The persisted DEV switch (desktop.json diagnostics.httpProbe). */
   enabled: boolean;
-  /** OPENCRAFT_HTTP_PROBE forces the probe on. */
+  /** FLOWCRAFT_HTTP_PROBE forces the probe on. */
   env: boolean;
   /** Whether the transport is wrapped right now. */
   active: boolean;

@@ -17,14 +17,13 @@ import (
 	"fmt"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/media/imageutil"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/wsread"
 )
 
 // Name is the canonical view_image tool name.
@@ -117,7 +116,7 @@ func (t *Tool) Execute(
 			"%s: path is required", Name,
 		)
 	}
-	data, err := wsread.Capped(ctx, t.ws, args.Path, maxSourceBytes)
+	data, err := workspace.Capped(ctx, t.ws, args.Path, maxSourceBytes)
 	if err != nil {
 		// The workspace error says "workspace: not found: <path>",
 		// which reads like the workspace itself is missing; name the

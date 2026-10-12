@@ -12,11 +12,11 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 

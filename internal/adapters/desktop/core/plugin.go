@@ -3,9 +3,10 @@ package core
 import (
 	"path/filepath"
 
+	"github.com/GizClaw/flowcraft/backends/secret/keychain"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
-	"github.com/GizClaw/opencraft/internal/capabilities/secrets"
 )
 
 // PluginService owns plugin registry, KV, kraft subprocesses and
@@ -14,7 +15,7 @@ type PluginService struct {
 	Store   *plugins.Store
 	KV      *plugins.KVStore
 	Kraft   *kraft.Manager
-	Secrets *secrets.Manager
+	Secrets *keychain.Manager
 }
 
 // NewPluginService creates the plugin service under appHome: the
@@ -27,7 +28,7 @@ func NewPluginService(appHome, version string) *PluginService {
 	pluginDir := filepath.Join(appHome, "plugins")
 	store := plugins.NewStore(pluginDir)
 	store.SetHostVersion(version)
-	sec := secrets.NewManager(filepath.Join(appHome, "keyring"))
+	sec := keychain.NewManager(filepath.Join(appHome, "keyring"))
 	mgr := kraft.NewManager(
 		pluginDir,
 		kraft.DefaultLoader{

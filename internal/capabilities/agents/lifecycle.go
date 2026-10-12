@@ -23,11 +23,11 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/fsatomic"
 	"go.opentelemetry.io/otel/attribute"
 	"sigs.k8s.io/yaml"
 
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/fsatomic"
 )
 
 // ResourceKind is the deployable resource kind of the persistent

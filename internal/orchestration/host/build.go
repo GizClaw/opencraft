@@ -15,8 +15,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
+	"github.com/GizClaw/flowcraft/core/hooks"
+
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -200,7 +201,7 @@ func (m *Manager) buildHost(
 	}
 	telemetry.WarnErr(ctx, "host: ensure workspace layout failed",
 		layout.Ensure())
-	doc, err := engine.LoadDocument(ctx, userDir)
+	view, err := engine.LoadView(ctx, userDir)
 	if err != nil {
 		return nil, err
 	}
@@ -245,14 +246,22 @@ func (m *Manager) buildHost(
 			}
 		}),
 	}, engineOptions...)
-	rt, err := engine.BuildRuntime(ctx, doc, buildOpts...)
+	ctrl, err := engine.BuildAssembly(ctx, view, workDir, buildOpts...)
 	if err != nil {
 		if sessionStore != nil {
 			m.releaseStore(sessionStore)
 		}
 		return nil, err
 	}
-	ctrl := engine.NewController(rt)
+	rt := ctrl.Runtime()
+	if rt == nil {
+		telemetry.WarnErr(ctx, "host: close controller after empty assembly",
+			ctrl.Close())
+		if sessionStore != nil {
+			m.releaseStore(sessionStore)
+		}
+		return nil, errors.New("host: assembled runtime missing")
+	}
 	if resolver == nil {
 		resolver = h.backendForRun
 	}

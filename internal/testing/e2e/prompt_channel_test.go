@@ -7,8 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
+
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestBasePromptReachesProviderAsFirstSystemMessage runs the real
@@ -19,7 +20,7 @@ import (
 // world sections" refactor against regressions where the system prompt
 // silently drops out of the channel or gets injected twice.
 func TestBasePromptReachesProviderAsFirstSystemMessage(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "ok"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "ok"})
 	workDir := t.TempDir()
 	if err := os.WriteFile(
 		filepath.Join(workDir, "AGENTS.md"),

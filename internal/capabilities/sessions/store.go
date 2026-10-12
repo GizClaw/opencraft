@@ -21,6 +21,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/media/imageutil"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"go.opentelemetry.io/otel/attribute"
@@ -28,7 +29,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 )
 
 // ResourceKind is the deploy resource kind implemented by this package.

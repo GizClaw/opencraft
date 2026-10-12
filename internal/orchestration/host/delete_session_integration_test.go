@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestHostDeleteConversationCancelsLiveRun verifies the desktop
@@ -19,7 +19,7 @@ import (
 // stored conversation, and tombstones the id so a stale StartRun can
 // never mint the same session again.
 func TestHostDeleteConversationCancelsLiveRun(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	gate := provider.HoldNext()
 	defer gate.Release()
 	h, _ := acquireHostFixture(t, provider)
@@ -92,7 +92,7 @@ func TestHostDeleteConversationCancelsLiveRun(t *testing.T) {
 // repeat call also stays a success, and its purge takes the checkpoint a
 // resurrected id could otherwise be recovered from.
 func TestHostDeleteConversationRemovesRowsThatCameBack(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	h, _ := acquireHostFixture(t, provider)
 	ctx := context.Background()
 
@@ -179,7 +179,7 @@ func TestHostDeleteConversationRemovesRowsThatCameBack(t *testing.T) {
 // path: an idle conversation's settings rows disappear with the
 // delete, and deleting an unknown id stays a no-op.
 func TestHostDeleteConversationRemovesIdleConversation(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	h, _ := acquireHostFixture(t, provider)
 	ctx := context.Background()
 

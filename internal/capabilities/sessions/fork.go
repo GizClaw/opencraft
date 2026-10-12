@@ -12,10 +12,10 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/filetype"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 )
 
 // ForkResult describes one newly forked conversation. Turns contains

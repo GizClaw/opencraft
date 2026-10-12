@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestReloadDefersUntilActiveRunFinishes pins the reload-during-run
@@ -28,7 +28,7 @@ import (
 // The fresh Host must be able to read the persisted turn and its
 // auto-title from the shared workspace DB.
 func TestReloadDefersUntilActiveRunFinishes(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	gate := provider.HoldNext()
 	defer gate.Release()
 

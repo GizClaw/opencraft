@@ -85,7 +85,7 @@ Developer ID and notarized by Apple, so Gatekeeper opens it without the manual
 
 ## Build from source
 
-Prerequisites: Go 1.25+, Node 22, and the
+Prerequisites: Go 1.26+, Node 22, and the
 [Wails v3 prerequisites](https://v3.wails.io/getting-started/installation)
 for your platform.
 

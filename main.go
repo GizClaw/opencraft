@@ -43,11 +43,10 @@ func main() {
 		os.Exit(headless.Main(os.Args[2:]))
 	}
 
-	// Resolve the two roots and the single-instance identity before any
-	// machinery starts: the GUI lock below settles the single-instance
-	// question, and the desktop composition must not run before it, or a
-	// second instance would seed directories and logs on its way to
-	// exiting.
+	// Resolve the two roots before any machinery starts: the GUI lock
+	// below settles the single-instance question, and the desktop
+	// composition must not run before it, or a second instance would
+	// seed directories and logs on its way to exiting.
 	launch, err := config.ResolveLaunch(os.Args[1:], os.Getenv)
 	if err != nil {
 		log.Fatalf("opencraft: %v", err)
@@ -80,42 +79,15 @@ func main() {
 			return d.QuitAllowed()
 		},
 	}
-	// The shell's single-instance options stay enabled next to the GUI
-	// lock, but only as a second, opportunistic gate: they speak
-	// different protocols ($TMPDIR flock plus a distributed notification
-	// on macOS, a D-Bus name on Linux, a named mutex on Windows) that
-	// older builds of this repository still use, so keeping them catches
-	// a mix of generations. The guarantee itself is the lock.
-	if launch.SingleInstance && shellSingleInstanceUsable() {
-		appOpts.SingleInstance = &application.SingleInstanceOptions{
-			// The id is derived from the canonical state root: builds of
-			// one root lineage share it, a dev profile (another root)
-			// does not.
-			UniqueID: launch.InstanceID,
-			// A rejected second instance is a mistake (or a stale
-			// launcher), never a silent success.
-			ExitCode: 1,
-			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
-				telemetry.Info(context.Background(),
-					fmt.Sprintf("desktop: second instance args=%v workingDir=%s",
-						data.Args, data.WorkingDir),
-					attribute.String("profile", launch.Profile),
-					attribute.String("state_root", launch.DataDir),
-					attribute.String("app_home", launch.AppHome))
-				desktop.ShowMainWindow(shell)
-			},
-		}
-	}
 	app := application.New(appOpts)
 
 	d, err = desktop.New(desktop.Options{
-		WorkDir:    launch.WorkDir,
-		UserDir:    launch.ConfigDir,
-		DataDir:    launch.DataDir,
-		AppHome:    launch.AppHome,
-		AppName:    launch.AppName,
-		Profile:    launch.Profile,
-		InstanceID: launch.InstanceID,
+		WorkDir: launch.WorkDir,
+		UserDir: launch.ConfigDir,
+		DataDir: launch.DataDir,
+		AppHome: launch.AppHome,
+		AppName: launch.AppName,
+		Profile: launch.Profile,
 	})
 	if err != nil {
 		log.Fatalf("opencraft: %v", err)
@@ -226,18 +198,21 @@ func main() {
 // instance never returns: it asks the holder to come to the front, says
 // one line on stderr and exits 1.
 func takeGUILock(launch config.Launch) *guilock.Lock {
-	if !launch.SingleInstance {
+	if !config.SingleInstanceEnabled(os.Getenv) {
 		log.Printf("opencraft: %s runs without the single-instance lock "+
 			"(state_root=%s); a second scheduler on the same root is on you",
 			launch.AppName, launch.DataDir)
 		return nil
 	}
-	lock, err := guilock.Acquire(context.Background(), launch.DataDir, launch.InstanceID)
+	// An empty identity lets guilock derive the canonical root id: the
+	// endpoint name and the raise channel stay keyed to the root without
+	// the launch result carrying an id around.
+	lock, err := guilock.Acquire(context.Background(), launch.DataDir, "")
 	if err == nil {
 		return lock
 	}
 	if info, held := guilock.IsHeld(err); held {
-		raiseErr := guilock.RequestRaise(context.Background(), launch.DataDir, launch.InstanceID,
+		raiseErr := guilock.RequestRaise(context.Background(), launch.DataDir, "",
 			guilock.Launch{PID: os.Getpid(), Args: os.Args[1:], WorkingDir: launchWorkDir()})
 		log.Fatalf("%s", secondInstanceLine(launch, info, raiseErr == nil))
 	}
@@ -282,16 +257,4 @@ func launchWorkDir() string {
 		return ""
 	}
 	return dir
-}
-
-// shellSingleInstanceUsable reports whether the Wails single-instance
-// machinery may be handed to application.New. On Linux it claims a
-// session-bus name and takes the whole app down when there is no bus
-// (containers, CI); the GUI lock is the guarantee, so the shell option is
-// dropped there instead of the app.
-func shellSingleInstanceUsable() bool {
-	if runtime.GOOS != "linux" {
-		return true
-	}
-	return os.Getenv("DBUS_SESSION_BUS_ADDRESS") != ""
 }

@@ -34,11 +34,13 @@ import (
 	"testing"
 	"time"
 
+	corelock "github.com/GizClaw/flowcraft/core/utils/lock"
+
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
+
 	"github.com/GizClaw/opencraft/internal/foundation/platform/fshidden"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/guilock"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/shelldetect"
-	"github.com/GizClaw/opencraft/internal/foundation/platform/wslock"
 )
 
 // row is one platform's line of the matrix. The comment on each field
@@ -56,7 +58,7 @@ type row struct {
 	// (fshidden): the leading-dot convention, or the Windows attributes
 	// Explorer honours.
 	hidden string
-	// lock is the mechanism wslock takes on a workspace's state root:
+	// lock is the mechanism core/utils/lock takes on a workspace root:
 	// flock on unix (advisory, so another process reading the file
 	// stays legal), a range lock on Windows (mandatory, which is why
 	// the range sits clear of the holder record).
@@ -167,6 +169,14 @@ func TestHostEndpointMechanism(t *testing.T) {
 		t.Fatalf("%s: raise handler was not called (%s)", runtime.GOOS, host.endpoint)
 	}
 
+	// The holder record names the raise channel, so a rejected launch
+	// reads where the holder listens instead of re-deriving the name.
+	info, ok := corelock.ReadInfo(filepath.Join(root, guilock.LockName))
+	if !ok || info.Endpoint == "" {
+		t.Errorf("lock record = %+v (ok=%v), want the raise endpoint recorded",
+			info, ok)
+	}
+
 	socket := filepath.Join(root, "gui.sock")
 	_, statErr := os.Stat(socket)
 	switch runtime.GOOS {
@@ -185,16 +195,19 @@ func TestHostEndpointMechanism(t *testing.T) {
 // (flock on unix, LockFileEx on Windows) through its portable API: the
 // lock file appears, the holder records itself, and releasing hands
 // the root over — so a row whose lock mechanism did not work would fail
-// on its own platform. Contention across processes is covered by
-// wslock's own tests.
+// on its own platform. Contention across processes is covered by the
+// lock package's own tests.
 func TestHostProcessLock(t *testing.T) {
 	host := hostRow(t)
 	root := t.TempDir()
-	path := filepath.Join(root, wslock.FileName)
+	// The workspace lock file name, as host.Manager writes it
+	// (host/workspaceLockName). It is spelled out here because this
+	// package must not import the orchestration layer.
+	path := filepath.Join(root, "live.lock")
 	ctx := context.Background()
-	handle, err := wslock.Acquire(ctx, path, guilock.Kind)
+	handle, err := corelock.Acquire(ctx, path, guilock.Kind)
 	if err != nil {
-		t.Fatalf("wslock.Acquire: %v", err)
+		t.Fatalf("lock.Acquire: %v", err)
 	}
 	if !handle.Owned() {
 		t.Fatal("a fresh lock must be owned by this process")

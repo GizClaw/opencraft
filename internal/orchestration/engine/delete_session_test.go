@@ -59,9 +59,10 @@ func TestDeleteSessionClosesLiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sessions: %v", err)
 	}
-	rt, err := BuildRuntime(
+	ctrl, err := BuildAssembly(
 		context.Background(),
-		view.Document,
+		view,
+		work,
 		WithWorkBase(work),
 		WithConfigBase(userDir),
 		WithWorkspaceLayout(layout),
@@ -72,9 +73,13 @@ func TestDeleteSessionClosesLiveSession(t *testing.T) {
 		}),
 	)
 	if err != nil {
-		t.Fatalf("BuildRuntime: %v", err)
+		t.Fatalf("BuildAssembly: %v", err)
 	}
-	defer func() { _ = rt.Close() }()
+	rt := ctrl.Runtime()
+	if rt == nil {
+		t.Fatal("assembled runtime missing")
+	}
+	defer func() { _ = ctrl.Close() }()
 
 	value, ok := rt.Resource("sessions")
 	if !ok {

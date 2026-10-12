@@ -13,7 +13,6 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
-	"github.com/GizClaw/opencraft/internal/capabilities/secrets"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
@@ -644,7 +643,7 @@ func (b *Config) stashLiteralKeys(
 			spec.StableID = config.NewStableID()
 		}
 		spec.KeySource = config.KeySourceLiteralName
-		account := secrets.AccountFor(config.Instance{
+		account := config.InferenceSecretAccount(config.Instance{
 			Type:     strings.TrimSpace(spec.Type),
 			StableID: spec.StableID,
 		}.DeploymentID(i + 1))

@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestBinaryRunJSONL builds the real opencraft binary and verifies the
@@ -27,7 +28,7 @@ func TestBinaryRunJSONL(t *testing.T) {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "hello from binary"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "hello from binary"})
 	workDir := t.TempDir()
 	configDir := filepath.Join(t.TempDir(), "config")
 	if err := os.MkdirAll(configDir, 0o700); err != nil {

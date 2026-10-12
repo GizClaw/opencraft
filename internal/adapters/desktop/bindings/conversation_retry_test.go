@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestStartTurnRetriesAfterHostRetirement covers the binding contract:
@@ -19,7 +19,7 @@ import (
 // StartRun, StartTurn waits for the replacement Host inside the same
 // RPC and succeeds without duplicating the user message's session.
 func TestStartTurnRetriesAfterHostRetirement(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	configDir := t.TempDir()

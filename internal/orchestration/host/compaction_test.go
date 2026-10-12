@@ -8,12 +8,12 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/worldstate"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // TestRunExposesCompactionBookkeeping is the end-to-end half of the
@@ -25,12 +25,12 @@ import (
 // (it silently drops the usage anchor's fold generation and the UI's
 // compaction notice).
 func TestRunExposesCompactionBookkeeping(t *testing.T) {
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{{
 			Name:      "write_file",
 			Arguments: `{"file_path":"out.txt","content":"ok\n"}`,
 		}}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
@@ -104,7 +104,7 @@ func TestRunExposesCompactionBookkeeping(t *testing.T) {
 // reports usage by default (the streaming path would otherwise never
 // exercise the accounting at all), so the no-usage shape needs its own run.
 func TestRunWithoutProviderUsageWritesNoAnchor(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"}).WithoutUsage()
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"}).WithoutUsage()
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))

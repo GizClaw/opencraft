@@ -5,9 +5,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
+
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
@@ -21,7 +22,7 @@ var errRebuild = errors.New("rebuild failed")
 // changed write, or a no-op after a failed rebuild, still rebuilds so
 // the plugin gets the error back.
 func TestPluginInferenceWriteSkipsNoOpRebuild(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "done"})
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {

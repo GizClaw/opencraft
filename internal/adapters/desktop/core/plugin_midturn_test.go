@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 	"github.com/GizClaw/opencraft/internal/testing/kraftfixture"
 )
 
@@ -30,13 +30,13 @@ func TestPluginInstalledMidTurnIsCallableInThatTurn(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping the mid-turn plugin install test in short mode")
 	}
-	provider := fakeprovider.New(t,
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{
 			// Round 1 runs a tool the assembly already had, which is
 			// what gives the turn a second round.
 			{Name: "exec_command", Arguments: `{"command": "true"}`},
 		}},
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{
 			// Round 2 calls the tool the plugin installed *during*
 			// round 1 brought in. It is deferred like every plugin
 			// tool, so the model has to find it first — and the search
@@ -44,10 +44,10 @@ func TestPluginInstalledMidTurnIsCallableInThatTurn(t *testing.T) {
 			// the catalog to be found.
 			{Name: "tool_search", Arguments: `{"query": "plugin kraft pid"}`},
 		}},
-		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{
+		inferencetest.ScriptedReply{ToolCalls: []inferencetest.ScriptedToolCall{
 			{Name: "plug__pid", Arguments: "{}"},
 		}},
-		fakeprovider.Reply{Text: "done"},
+		inferencetest.ScriptedReply{Text: "done"},
 	)
 	workDir := t.TempDir()
 	configDir := t.TempDir()
@@ -133,7 +133,7 @@ func TestPluginInstalledMidTurnIsCallableInThatTurn(t *testing.T) {
 }
 
 // searchHit reports whether a tool_search result named one tool.
-func searchHit(t *testing.T, provider *fakeprovider.Server, tool string) bool {
+func searchHit(t *testing.T, provider *inferencetest.ScriptedOpenAI, tool string) bool {
 	t.Helper()
 	for _, messages := range messagesOf(t, provider) {
 		for _, m := range messages {
@@ -151,7 +151,7 @@ func searchHit(t *testing.T, provider *fakeprovider.Server, tool string) bool {
 // fixturePidResult returns the pid a plugin tool result reported. A tool
 // message whose text decodes as {"pid": N} is the fixture's own answer;
 // everything else (search results, other tools) does not decode.
-func fixturePidResult(t *testing.T, provider *fakeprovider.Server) int {
+func fixturePidResult(t *testing.T, provider *inferencetest.ScriptedOpenAI) int {
 	t.Helper()
 	for _, messages := range messagesOf(t, provider) {
 		for _, m := range messages {
@@ -172,7 +172,7 @@ func fixturePidResult(t *testing.T, provider *fakeprovider.Server) int {
 
 // messagesOf reads what reached the provider, oldest request first.
 func messagesOf(
-	t *testing.T, provider *fakeprovider.Server,
+	t *testing.T, provider *inferencetest.ScriptedOpenAI,
 ) [][]map[string]any {
 	t.Helper()
 	all, err := provider.MessagesForCalls()
@@ -204,7 +204,7 @@ func contentOf(m map[string]any) string {
 
 // dumpMessages renders what reached the provider, for a failure that
 // needs to show whether the tool result came back at all.
-func dumpMessages(t *testing.T, provider *fakeprovider.Server) string {
+func dumpMessages(t *testing.T, provider *inferencetest.ScriptedOpenAI) string {
 	t.Helper()
 	raw, err := json.Marshal(messagesOf(t, provider))
 	if err != nil {

@@ -9,13 +9,13 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	pluginupdate "github.com/GizClaw/opencraft/internal/capabilities/plugins/update"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // Plugin exposes plugin registry, KV and kraft invocation.

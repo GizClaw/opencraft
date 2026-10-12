@@ -30,9 +30,26 @@ agents:
           # turn ends when its work does or the user stops it.
           max_iterations: 0
     prepare:
-      - type: opencraft.media
+      # Attachments are made drivable here, before the engine reads the
+      # board: a local file is inlined as bytes (no provider can fetch a
+      # path off the host), and a kind the deployment does not pass
+      # through is flattened into a path line the file tools can still
+      # reach. audio/video/file are flattened by default, because the
+      # hook runs before routing and a model that declares no such input
+      # rejects the request rather than ignoring the part; a deployment
+      # whose models take e.g. video sets `passthrough_kinds: [video]`
+      # in its user layer knowingly.
+      #
+      # The markers stay the Chinese ones sessions already recorded, so
+      # moving the hook to flowcraft's core/media/hook does not change
+      # the prompt text a turn carries.
+      - type: media.attachments
         settings:
           work_dir: ${ocraft:WORKDIR}
+          image_marker: "[图片文件] "
+          audio_marker: "[音频文件] "
+          video_marker: "[视频文件] "
+          file_marker: "[一般文件] "
       - type: opencraft.prepare
         deps:
           memory: mem

@@ -9,12 +9,11 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-
-	"github.com/GizClaw/opencraft/internal/foundation/utils/fsatomic"
-	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
-
+	"github.com/GizClaw/flowcraft/core/utils/fsatomic"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 	"sigs.k8s.io/yaml"
+
+	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
 )
 
 // Skill authoring: skill_create / skill_modify tools write validated

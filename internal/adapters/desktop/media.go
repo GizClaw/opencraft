@@ -17,9 +17,8 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-
-	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
+	"github.com/GizClaw/flowcraft/core/utils/filetype"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 )
 
 // mediaServer streams workspace files to the webview's media stack over

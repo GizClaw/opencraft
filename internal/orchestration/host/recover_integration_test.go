@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/inference/inferencetest"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
 // crashCheckpointBoard builds the board a run killed after its first
@@ -92,7 +92,7 @@ func acquireHost(
 // alone, and a checkpoint without the request annotation still recovers
 // from the board form.
 func TestHostRecoverySkipsWhatItCannotRecover(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "first reply"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "first reply"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))
@@ -172,7 +172,7 @@ func TestHostRecoverySkipsWhatItCannotRecover(t *testing.T) {
 // in the same transaction — and a second recovery of the same run
 // changes nothing.
 func TestHostRecoversCrashedTurn(t *testing.T) {
-	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "first reply"})
+	provider := inferencetest.NewScriptedOpenAI(t, inferencetest.ScriptedReply{Text: "first reply"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	t.Setenv("HOME", filepath.Join(dataDir, "home"))

@@ -23,9 +23,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/utils/pathsafe"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // idRe constrains plugin/provider ids: lowercase start, then lowercase
