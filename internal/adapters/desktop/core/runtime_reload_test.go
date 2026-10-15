@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -360,5 +361,59 @@ func TestEnsureHostRebuildsRetiredWorkspace(t *testing.T) {
 	if res, err := second.Wait(ctx); err != nil || res == nil ||
 		res.Status != "completed" {
 		t.Fatalf("replacement run wait = %v, %v; want completed", res, err)
+	}
+}
+
+// TestSetWorkDirStaysSpelledLikeTheHistoryRows pins the spelling the
+// window switches on. A workspace reaches the window as the string
+// ActiveWorkDir carries in the ready event, and the window compares it
+// against the history row the user clicked, character for character. A
+// launch flag the user typed with a trailing separator, or a path
+// pasted from a shell that completed it, used to travel into that
+// string verbatim: the sidebar then took every row of the active
+// workspace for another workspace's, and clicking one became a switch
+// the backend answered with "already announced" while the window waited
+// out its deadline and reported "workspace switch did not complete".
+func TestSetWorkDirStaysSpelledLikeTheHistoryRows(t *testing.T) {
+	configDir := t.TempDir()
+	dataDir := t.TempDir()
+	workDir := t.TempDir()
+	c := NewCore(configDir, dataDir, "")
+
+	for _, spelling := range []string{
+		workDir + "/",
+		workDir + "//",
+		filepath.Join(workDir, "."),
+		filepath.Join(workDir, "sub", ".."),
+	} {
+		c.SetWorkDir(spelling)
+		if got := c.ActiveWorkDir(); got != workDir {
+			t.Fatalf("ActiveWorkDir after SetWorkDir(%q) = %q, want %q",
+				spelling, got, workDir)
+		}
+	}
+
+	// No workspace keeps comparing as none: cleaning a blank path must
+	// not name the process's own directory.
+	c.SetWorkDir("   ")
+	if got := c.ActiveWorkDir(); got != "" {
+		t.Fatalf("ActiveWorkDir of a blank path = %q, want it empty", got)
+	}
+
+	// The history record for the same directory — what the rows and the
+	// ready event are both read from — is that same string.
+	c.SetWorkDir(workDir + "/")
+	c.RecordWorkspace(workDir + "/")
+	metas, err := c.Workspaces()
+	if err != nil {
+		t.Fatalf("workspaces: %v", err)
+	}
+	if len(metas) != 1 {
+		t.Fatalf("workspaces = %d entries, want 1", len(metas))
+	}
+	if metas[0].Path != c.ActiveWorkDir() {
+		t.Fatalf("history path %q != active workspace %q: the window "+
+			"would take its own rows for another workspace's",
+			metas[0].Path, c.ActiveWorkDir())
 	}
 }

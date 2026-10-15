@@ -11,10 +11,12 @@ import {
 } from './appearance';
 import { sanitizeToolResult } from './ansi';
 import { COMPACT_SUMMARY_PREFIX } from './compact';
+import { reportFrontendError } from './frontendErrors';
 import { followLinkTarget } from './linkTarget';
 import { measureInteraction, scheduleFlushCommit } from './perfMetrics';
 import { coalesceStreamEvents, streamFlushInterval } from './stream';
 import { toolResultImages, toolResultText, type ToolImage } from './toolresult';
+import { sameWorkspacePath } from './workspacePath';
 import type {
   AgentSummary,
   AutomationRun,
@@ -1714,6 +1716,99 @@ export const useStore = create<StoreState>((set, get) => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   };
+  // applyWorkspaceSwitch lands the window on one workspace: the focus
+  // resets, the active workspace moves, and the workspace's saved
+  // session is restored. The ready event is the normal caller; a switch
+  // whose event never arrived enters through the same door (see
+  // switchWorkspace), so the two cannot drift apart.
+  const applyWorkspaceSwitch = (workDir: string) => {
+    // Keep conversation actors and transcripts alive across a
+    // workspace switch: a turn that is still running in the old
+    // workspace continues to stream into its conversation. Only the
+    // focus is reset; the session restore below decides which
+    // conversation the new workspace shows.
+    stateRoot.sendFocus({ type: 'WORKSPACE_RESET' });
+    set({
+      workspace: workDir,
+      toolsView: null,
+      configOpen: false,
+      paletteOpen: false,
+      shortcutsOpen: false,
+    });
+    void get().loadSessions();
+    const restoreFor = suppressRestoreFor;
+    suppressRestoreFor = null;
+    if (restoreFor !== workDir) {
+      const restore = get().restoreWorkspaceSession(workDir);
+      workspaceRestoreInFlight = true;
+      workspaceRestorePromise = restore;
+      void restore.finally(() => {
+        if (workspaceRestorePromise === restore) {
+          workspaceRestorePromise = null;
+          workspaceRestoreInFlight = false;
+        }
+      });
+    }
+  };
+  // switchWorkspace waits out one workspace switch and answers the path
+  // the window is on: the path asked for when the switch landed (the
+  // backend announces it through "ready", and Workspace.Open has
+  // already stamped the new workdir by the time the binding answers),
+  // the path it moved to instead when another switch has taken the
+  // window since, or '' when nothing settled.
+  //
+  // The announcement is not guaranteed to arrive. The backend skips it
+  // when the workspace asked for is the one it already announced, and
+  // it compares canonical paths there while the window compares the
+  // raw strings — a window holding the same directory under another
+  // spelling would wait out the deadline and lose the click. So the
+  // wait is two-phase: a short grace for the event, then the backend's
+  // own answer (the binding has applied the switch by now, so its
+  // Active workspace is authoritative) landed here. Landing it is
+  // idempotent with a late event: the ready handler compares the
+  // workspace and does nothing when it already matches.
+  const switchWorkspace = async (
+    workspacePath: string,
+    timeoutMs: number,
+  ): Promise<string> => {
+    const startedAt = Date.now();
+    const deadline = startedAt + timeoutMs;
+    const grace = Math.min(250, timeoutMs);
+    while (
+      get().workspace !== workspacePath &&
+      Date.now() - startedAt < grace
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (get().workspace === workspacePath) return workspacePath;
+    const active = await api.workspace().catch(() => '');
+    if (active && sameWorkspacePath(active, workspacePath)) {
+      if (active !== get().workspace) applyWorkspaceSwitch(active);
+      return active;
+    }
+    if (active && active !== get().workspace) {
+      // The backend is on a workspace this click never asked for: a
+      // newer switch owns the window now.
+      return active;
+    }
+    // The backend did not move either (or would not say). The
+    // announcement is the only thing left that could settle this.
+    while (get().workspace !== workspacePath && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (get().workspace === workspacePath) return workspacePath;
+    // Nothing settled. Every caller turns this into an error the reader
+    // sees once and the click path catches, so the log would never hear
+    // about a missed switch; report it here, where both strings are
+    // known, so the next one can be diagnosed from the log the way this
+    // one could not.
+    reportFrontendError(
+      'workspace-switch',
+      new Error('workspace switch did not complete'),
+      `wanted ${workspacePath}, active ${get().workspace}`,
+    );
+    return '';
+  };
   const runContextSwitch = <T>(op: () => Promise<T>) => {
     const next = contextSwitchQueue.then(op);
     contextSwitchQueue = next.then(
@@ -2369,33 +2464,7 @@ export const useStore = create<StoreState>((set, get) => {
           const data = ev.data as ConfigStatus;
           const workChanged = data.work_dir !== get().workspace;
           if (workChanged) {
-            // Keep conversation actors and transcripts alive across a
-            // workspace switch: a turn that is still running in the
-            // old workspace continues to stream into its conversation.
-            // Only the focus is reset; the session restore below
-            // decides which conversation the new workspace shows.
-            stateRoot.sendFocus({ type: 'WORKSPACE_RESET' });
-            set({
-              workspace: data.work_dir,
-              toolsView: null,
-              configOpen: false,
-              paletteOpen: false,
-              shortcutsOpen: false,
-            });
-            void get().loadSessions();
-            const restoreFor = suppressRestoreFor;
-            suppressRestoreFor = null;
-            if (restoreFor !== data.work_dir) {
-              const restore = get().restoreWorkspaceSession(data.work_dir);
-              workspaceRestoreInFlight = true;
-              workspaceRestorePromise = restore;
-              void restore.finally(() => {
-                if (workspaceRestorePromise === restore) {
-                  workspaceRestorePromise = null;
-                  workspaceRestoreInFlight = false;
-                }
-              });
-            }
+            applyWorkspaceSwitch(data.work_dir);
           }
           void get().loadSessions();
           void get().loadAutomations();
@@ -3917,22 +3986,31 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     openSessionInWorkspace: async (sessionID, workspacePath) => {
-      const state = get();
-      if (workspacePath && workspacePath !== state.workspace) {
+      if (workspacePath && workspacePath !== get().workspace) {
         await api.openWorkspace(workspacePath);
         // The backend emits "ready" asynchronously relative to the
         // binding response; wait until the store has applied it so a
         // pending newChat is queued before resume tries to open the
         // target session in the new workspace.
-        const deadline = Date.now() + 5000;
-        while (get().workspace !== workspacePath && Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        if (get().workspace !== workspacePath) {
+        const landed = await switchWorkspace(workspacePath, 5000);
+        if (!landed) {
           throw new Error('workspace switch did not complete');
+        }
+        if (!sameWorkspacePath(landed, workspacePath)) {
+          // Another workspace's switch took the window while this one
+          // was in flight: the click that is on screen now wins.
+          return;
         }
         void get().loadWorkspaces();
         await waitForWorkspaceRestore();
+        if (get().workspace !== landed) {
+          // The window left again while this switch (and its restore)
+          // was in flight: another workspace was picked in the
+          // meantime. Resuming now would run through bindings that read
+          // whatever workspace is active, so the click still on screen
+          // wins and this one is dropped.
+          return;
+        }
       }
       await get().resume(sessionID);
     },
@@ -3955,11 +4033,8 @@ export const useStore = create<StoreState>((set, get) => {
         suppressRestoreFor = target;
         try {
           await api.openWorkspace(target);
-          const deadline = Date.now() + 8000;
-          while (get().workspace !== target && Date.now() < deadline) {
-            await new Promise((resolve) => setTimeout(resolve, 20));
-          }
-          if (get().workspace !== target) {
+          const landed = await switchWorkspace(target, 8000);
+          if (!landed || !sameWorkspacePath(landed, target)) {
             throw new Error('workspace switch did not complete');
           }
           void get().loadWorkspaces();

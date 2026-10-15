@@ -20,9 +20,32 @@ func (c *Core) Workspaces() ([]config.WorkspaceMeta, error) {
 
 // SetWorkDir changes the active workspace directory.
 func (c *Core) SetWorkDir(workDir string) {
+	canonical := canonicalWorkDir(workDir)
 	c.mu.Lock()
-	c.WorkDir = workDir
+	c.WorkDir = canonical
 	c.mu.Unlock()
+}
+
+// canonicalWorkDir normalizes one workspace path: trimmed, cleaned, and
+// absolute, which is the form config.WorkspaceID hashes and
+// config.SaveWorkspace records. The window switches workspaces on the
+// string the ready event carries — it compares it against the history
+// row the user clicked — so the active path has to be spelled the way
+// the history is, whatever a launch flag or a picker handed in. A path
+// that only differs by a trailing separator or a ".." is the same
+// directory, but the string comparison the window makes cannot know
+// that; it took the row for another workspace and a click on it became
+// a switch the backend then answered with "already announced".
+func canonicalWorkDir(workDir string) string {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return ""
+	}
+	workDir = filepath.Clean(workDir)
+	if abs, err := filepath.Abs(workDir); err == nil {
+		return abs
+	}
+	return workDir
 }
 
 // ActiveWorkDir returns the active workspace directory.

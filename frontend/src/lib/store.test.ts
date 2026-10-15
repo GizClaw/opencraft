@@ -53,6 +53,18 @@ const apiMock = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
+// The frontend error bridge is the only place a missed switch leaves a
+// trace: every caller turns the failure into a flash the reader sees
+// once, and the click path catches it before it can reach the log.
+const diagnosticsMock = vi.hoisted(() => ({
+  ReportFrontendError: vi.fn(
+    async (_source: string, _message: string, _stack: string) => {},
+  ),
+}));
+vi.mock(
+  '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/diagnostics',
+  () => diagnosticsMock,
+);
 
 function resetStore() {
   stateRoot.resetWorkspace();
@@ -2770,6 +2782,106 @@ describe('store: memory budgets', () => {
     const newest = conv.messages[19].items[0];
     if (newest.kind !== 'tool_call') throw new Error('expected a tool call');
     expect(newest.tool.images).toHaveLength(1);
+  });
+});
+
+describe('store: cross-workspace session clicks', () => {
+  const readyEvent = (workDir: string) => ({
+    type: 'ready',
+    data: {
+      needed: false,
+      default_model: 'm',
+      default_reasoning: true,
+      work_dir: workDir,
+      user_dir: '/tmp/u',
+      version: 'test',
+      agents: 0,
+    },
+  });
+
+  // The backend announces a switch with a ready event, and it skips the
+  // announcement when the workspace asked for is the one it already
+  // announced — that comparison is on canonical paths, while the window
+  // compares the raw strings — so a window holding the same directory
+  // under another spelling never hears back. The click must not be lost
+  // to that: the binding has already applied the switch when it
+  // answered, so the store asks the backend which workspace is active
+  // and lands that one.
+  it('lands a switch the backend never announced', async () => {
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    apiMock.workspace.mockResolvedValue('/tmp/b');
+    apiMock.currentSession.mockResolvedValue('');
+    apiMock.resumeSession.mockResolvedValue({
+      conversation_id: 's-b',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    useStore.setState({ workspace: '/tmp/a' });
+
+    await useStore.getState().openSessionInWorkspace('s-b', '/tmp/b');
+
+    expect(useStore.getState().workspace).toBe('/tmp/b');
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/b');
+    await vi.waitFor(() =>
+      expect(apiMock.resumeSession).toHaveBeenCalledWith('s-b'),
+    );
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-b');
+  });
+
+  // A click whose switch is still settling when the window moves on
+  // again must not resume its session: the resume bindings read the
+  // workspace that is active *now*, so the click that is still on
+  // screen wins and the older one is dropped.
+  it('drops a click whose workspace was left while the switch settled', async () => {
+    apiMock.modelOptions.mockResolvedValue([]);
+    apiMock.openWorkspace.mockImplementation(async (path: string) => {
+      useStore.getState().handleEvent(readyEvent(path));
+    });
+    // The restore that follows the switch is where a second switch can
+    // land: it awaits the backend, and by the time it answers the window
+    // is on another workspace.
+    apiMock.currentSession.mockImplementation(async () => {
+      useStore.setState({ workspace: '/tmp/c' });
+      return '';
+    });
+    useStore.setState({ workspace: '/tmp/a' });
+
+    await useStore.getState().openSessionInWorkspace('s-b', '/tmp/b');
+
+    expect(useStore.getState().workspace).toBe('/tmp/c');
+    expect(apiMock.resumeSession).not.toHaveBeenCalled();
+  });
+
+  // The failure is rare and timing-dependent, and every caller turns it
+  // into a flash the reader sees once: the report is what keeps the next
+  // occurrence diagnosable from the log.
+  it('reports a switch that never settled', async () => {
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    apiMock.workspace.mockResolvedValue('');
+    useStore.setState({ workspace: '/tmp/a' });
+    vi.useFakeTimers();
+    try {
+      const click = useStore.getState().openSessionInWorkspace('s-b', '/tmp/b');
+      const failed = expect(click).rejects.toThrow(
+        'workspace switch did not complete',
+      );
+      await vi.advanceTimersByTimeAsync(6000);
+      await failed;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(diagnosticsMock.ReportFrontendError).toHaveBeenCalledWith(
+      'workspace-switch',
+      expect.stringContaining('did not complete'),
+      expect.any(String),
+    );
+    // The report names both strings, so a future failure says which
+    // workspace the click asked for and which one the window kept.
+    const [, message] = diagnosticsMock.ReportFrontendError.mock.calls[0] ?? [];
+    expect(message).toContain('wanted /tmp/b, active /tmp/a');
   });
 });
 
