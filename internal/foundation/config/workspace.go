@@ -9,17 +9,39 @@ import (
 	"strings"
 )
 
-// WorkspaceID derives a stable, path-safe id from a workspace path.
-// The id is a prefix of the SHA-256 of the cleaned absolute path, so
-// two different paths never collide in practice while the id stays
-// short enough for file names and URLs.
-func WorkspaceID(workDir string) string {
+// CanonicalWorkDir is the one spelling of a workspace path: trimmed,
+// cleaned, and absolute. Everything that records or announces a
+// workspace writes this string — the workspace id, the history row the
+// sidebar renders and the path the ready event carries — because the
+// window switches workspaces on a string comparison of the last two: it
+// takes the row for the active workspace only when the characters match.
+// A path that differs by a trailing separator or a ".." names the same
+// directory, but the window cannot know that, so the spellings are
+// folded here instead of at every comparison.
+//
+// Only the path string is normalized. Case and symlinks are left alone:
+// a case-insensitive filesystem does spell one directory two ways, but
+// nothing config can know answers whether this filesystem is one.
+func CanonicalWorkDir(workDir string) string {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return ""
+	}
 	cleaned := filepath.Clean(workDir)
 	abs, err := filepath.Abs(cleaned)
-	if err == nil {
-		cleaned = abs
+	if err != nil {
+		return cleaned
 	}
-	sum := sha256.Sum256([]byte(cleaned))
+	return abs
+}
+
+// WorkspaceID derives a stable, path-safe id from a workspace path.
+// The id is a prefix of the SHA-256 of the canonical path
+// (CanonicalWorkDir), so two different paths never collide in practice
+// while the id stays short enough for file names and URLs — and every
+// spelling of one directory shares one id.
+func WorkspaceID(workDir string) string {
+	sum := sha256.Sum256([]byte(CanonicalWorkDir(workDir)))
 	return hex.EncodeToString(sum[:16])
 }
 
@@ -95,7 +117,7 @@ func ResolveWorkspace(dataDir, workDir string) (WorkspaceLayout, error) {
 	id := WorkspaceID(workDir)
 	return WorkspaceLayout{
 		DataDir:       dataDir,
-		WorkDir:       filepath.Clean(workDir),
+		WorkDir:       CanonicalWorkDir(workDir),
 		ID:            id,
 		Root:          root,
 		ApprovalsFile: filepath.Join(root, "approvals.yaml"),

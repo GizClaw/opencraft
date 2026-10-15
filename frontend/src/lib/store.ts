@@ -1782,17 +1782,29 @@ export const useStore = create<StoreState>((set, get) => {
     }
     if (get().workspace === workspacePath) return workspacePath;
     const active = await api.workspace().catch(() => '');
-    if (active && sameWorkspacePath(active, workspacePath)) {
-      if (active !== get().workspace) applyWorkspaceSwitch(active);
-      return active;
+    const held = get().workspace;
+    if (sameWorkspacePath(held, workspacePath)) {
+      // The switch landed while the backend was answering: the window
+      // already holds it, under whatever spelling, which is what this
+      // call answers.
+      return held;
     }
-    if (active && active !== get().workspace) {
+    if (active && !sameWorkspacePath(active, workspacePath)) {
       // The backend is on a workspace this click never asked for: a
-      // newer switch owns the window now.
+      // newer switch owns the window now, whether or not the window has
+      // already followed it there. Waiting for an announcement that
+      // will never come would only delay a click that has lost.
       return active;
     }
-    // The backend did not move either (or would not say). The
-    // announcement is the only thing left that could settle this.
+    if (active) {
+      // The backend is on the workspace this click asked for: land the
+      // window on it.
+      if (active !== held) applyWorkspaceSwitch(active);
+      return active;
+    }
+    // The backend would not say where it is, and the window has not moved
+    // either. The announcement is the only thing left that could settle
+    // this.
     while (get().workspace !== workspacePath && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }

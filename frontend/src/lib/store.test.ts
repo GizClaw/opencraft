@@ -2883,6 +2883,31 @@ describe('store: cross-workspace session clicks', () => {
     const [, message] = diagnosticsMock.ReportFrontendError.mock.calls[0] ?? [];
     expect(message).toContain('wanted /tmp/b, active /tmp/a');
   });
+
+  // A click whose workspace a newer switch already took is dropped
+  // silently: the reader is on the workspace they picked last, and
+  // waiting out this click's deadline would only report a failure where
+  // the window did what was asked of it.
+  it('drops a click a newer switch took without waiting out its deadline', async () => {
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    apiMock.workspace.mockResolvedValue('/tmp/c');
+    useStore.setState({ workspace: '/tmp/c' });
+    vi.useFakeTimers();
+    try {
+      const click = useStore.getState().openSessionInWorkspace('s-b', '/tmp/b');
+      const settled = expect(click).resolves.toBeUndefined();
+      // Only the grace window has to pass: the backend's answer settles
+      // the wait, so the 5s deadline is never reached.
+      await vi.advanceTimersByTimeAsync(300);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(diagnosticsMock.ReportFrontendError).not.toHaveBeenCalled();
+    expect(apiMock.resumeSession).not.toHaveBeenCalled();
+    expect(useStore.getState().workspace).toBe('/tmp/c');
+  });
 });
 
 describe('store: init session bootstrap', () => {
