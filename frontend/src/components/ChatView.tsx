@@ -1543,17 +1543,22 @@ interface TurnRow {
 
 // turnIsLive reports whether a turn is the one the conversation is
 // working on: the conversation is inside a turn, this is the newest
-// turn, and its own run has not reported a finish yet. The last clause
-// is what keeps a finished turn folded. The conversation's busy flag
-// alone is not enough, because a live run does not always have a turn
-// artifact of its own: a run the frontend met through RUN_STARTED
-// recovery — resuming a session whose turn is still going, or switching
-// to a workspace that has one — leaves the newest artifact the turn
-// that already finished, and a terminal event that never arrived leaves
-// the actor inside "running" after the answer is complete. Either way
-// the turn whose run ended would keep its steps expanded under its own
-// completed answer. The live run's rows are rendered by the tail; a
-// turn that has a finishedAt folds the way every ended turn does.
+// turn, and nothing has recorded its run as finished. The last clause
+// is what keeps a finished turn folded — every archived turn carries a
+// finishedAt, because the backend stamps one on each turn it writes,
+// while the window's own strip carries one only from the moment that
+// run's end event lands.
+//
+// The conversation's busy flag alone is not enough, because the live run
+// does not always belong to the newest turn this page made: a session
+// resumed while its run is still going gets a strip of its own at the
+// seam the archive ends at (liveTurnEntry in store.ts), and the turn
+// above it is a finished one. Reading liveness off busy would keep that
+// turn's steps expanded under its own completed answer and take the
+// live run's rows for its steps. A turn with a finishedAt folds the way
+// every ended turn does; a terminal event that never arrives leaves the
+// window's strip looking live, and nothing in the transcript can tell
+// that apart from a run that is still going.
 function turnIsLive(
   turn: TurnArtifacts,
   lastTurn: TurnArtifacts | undefined,
@@ -2438,6 +2443,27 @@ export function ChatView() {
     while (cursor < messages.length) {
       pushRow(cursor, turnForIndex(turnArtifacts, cursor), -1);
       cursor += 1;
+    }
+    // A live turn whose run has produced no row yet has no interval for
+    // the loop above to walk into: it opens at the seam, which is the end
+    // of the transcript. The transcript still has to say the conversation
+    // is working, where its rows will appear.
+    const liveTail = turnArtifacts[turnArtifacts.length - 1];
+    if (
+      liveTail &&
+      liveTail.start >= messages.length &&
+      turnIsLive(liveTail, lastTurn, busy)
+    ) {
+      transcriptItems.push({
+        kind: 'work',
+        key: `${liveTail.id}:work`,
+        turn: liveTail,
+        turnIdx: turnArtifacts.length - 1,
+        processCount: 0,
+        pad: TRANSCRIPT_ROW_PAD,
+      });
+      pushTail(liveTail, turnArtifacts.length - 1, false);
+      endTurn();
     }
   }
   for (const spec of pendingInteracts) {

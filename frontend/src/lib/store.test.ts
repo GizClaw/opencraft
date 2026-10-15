@@ -3242,6 +3242,99 @@ describe('store: workspace switch session restore', () => {
     );
     expect(texts).toContain('answer after switch');
   });
+
+  // A run that outlives a workspace switch keeps streaming into the
+  // conversation the window left it in, and the transcript the switch
+  // hydrates has to keep that run's rows apart from the archive: they
+  // belong to the live strip at the seam, not to the turn above it,
+  // whose fold header and steps are its own finished record.
+  it('opens the run that outlived the switch its own turn at the seam', async () => {
+    stateRoot.registry.ensure('s-2', {
+      workspaceGeneration: stateRoot.generation(),
+      workspace: '/tmp/w',
+    });
+    stateRoot.registry.get('s-2')?.send({ type: 'RUN_STARTED', runID: 'r-2' });
+    useStore.setState({
+      conversations: {
+        ...useStore.getState().conversations,
+        's-2': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-q',
+              role: 'user',
+              text: 'the question',
+              items: [],
+              attachments: [],
+            },
+            {
+              id: 'm-a',
+              role: 'assistant',
+              text: '',
+              items: [{ kind: 'text', id: 't-a', text: 'half an answer' }],
+              attachments: [],
+            },
+          ],
+          turnArtifacts: [
+            {
+              id: 'live',
+              start: 0,
+              docs: [{ path: '/tmp/w/notes.md', bytes: 12 }],
+              runID: 'r-2',
+              requestedAt: '2026-10-15T00:01:00Z',
+            },
+          ],
+        },
+      },
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'earlier question', 'earlier answer'),
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    const conv = useStore.getState().conversations['s-2'];
+    // The archived page, then the rows the run produced while the window
+    // was elsewhere — never the other way around.
+    expect(conv.messages).toHaveLength(4);
+    expect(conv.messages[0].text).toBe('earlier question');
+    expect(conv.messages[2].text).toBe('the question');
+    expect(conv.turnArtifacts).toHaveLength(2);
+    const [archived, live] = conv.turnArtifacts;
+    expect(archived).toMatchObject({ seq: 1, start: 0 });
+    expect(archived.finishedAt).toBeTruthy();
+    // The live strip starts exactly where the archive ends and carries
+    // the run the actor is tracking, which is what the run's own events
+    // look their turn up by.
+    expect(live).toMatchObject({
+      start: 2,
+      runID: 'r-2',
+    });
+    expect(live.seq).toBeUndefined();
+    expect(live.finishedAt).toBeUndefined();
+    // The strip the window already had is grown, not replaced: the files
+    // it collected, the stamp it was requested at and the id its fold
+    // state hangs off all survive the re-hydrate.
+    expect(live.id).toBe('live');
+    expect(live.requestedAt).toBe('2026-10-15T00:01:00Z');
+    expect(live.docs).toEqual([{ path: '/tmp/w/notes.md', bytes: 12 }]);
+
+    useStore.getState().handleEvent({
+      type: 'artifact',
+      data: {
+        conversation_id: 's-2',
+        run_id: 'r-2',
+        path: '/tmp/w/report.md',
+        bytes: 40,
+      },
+    });
+    const strips = useStore.getState().conversations['s-2'].turnArtifacts;
+    expect(strips[0].docs).toEqual([]);
+    expect(strips[1].docs).toEqual([
+      { path: '/tmp/w/notes.md', bytes: 12 },
+      { path: '/tmp/w/report.md', bytes: 40 },
+    ]);
+  });
 });
 
 describe('firstMessageTitle', () => {

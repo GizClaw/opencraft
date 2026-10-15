@@ -1382,6 +1382,30 @@ function artifactTurnIndex(
   return live;
 }
 
+// liveTurnEntry is the strip of the run the window is tracking, opened
+// where the archive ends: start is the seam between the archived history
+// and the rows the run produces, so the archived turn above it closes
+// there and folds on its own record. A strip a previous hydrate opened
+// for the same run is grown instead of replaced — its id, the files it
+// already collected and the stamp it was requested at survive.
+function liveTurnEntry(
+  start: number,
+  previous: TurnArtifacts | undefined,
+  runID: string | undefined,
+): TurnArtifacts {
+  const carried =
+    previous && previous.seq === undefined && !previous.finishedAt
+      ? previous
+      : undefined;
+  return {
+    id: carried?.id ?? newTurnID(),
+    start,
+    docs: carried ? [...carried.docs] : [],
+    requestedAt: carried?.requestedAt,
+    runID: runID ?? carried?.runID,
+  };
+}
+
 // applyStream folds one stream delta into a message list and returns
 // the new list (immutable).
 function applyStream(
@@ -3732,8 +3756,7 @@ export const useStore = create<StoreState>((set, get) => {
             return;
           }
           const page = historyPage(turns, INITIAL_HISTORY_TURNS);
-          const messages = page.messages;
-          const turnArtifacts = page.turnArtifacts;
+          const archivedMessages = page.messages;
           // A live shell may already hold the current run's streamed
           // messages. Keep them after the archived history; completed
           // shells are replaced by the archive instead of duplicated.
@@ -3741,14 +3764,36 @@ export const useStore = create<StoreState>((set, get) => {
             Boolean(existing) &&
             (actorValue?.turn === 'running' || actorValue?.turn === 'starting');
           const mergedMessages = keepLive
-            ? [...messages, ...existing.messages]
+            ? [...archivedMessages, ...existing.messages]
             : [
                 // Undelivered steer rows are not in the archive, so they
                 // travel across the rebuild explicitly (see
                 // carryUndeliveredSteers).
-                ...messages,
-                ...carryUndeliveredSteers(existing?.messages, messages),
+                ...archivedMessages,
+                ...carryUndeliveredSteers(existing?.messages, archivedMessages),
               ];
+          // The live run owns every row past the seam the archive ends
+          // at, so it gets the strip that owns them. Without one those
+          // rows read as the last archived turn's: that turn's fold
+          // header names a run that already finished and its steps
+          // collapse under a complete answer (see turnIsLive in
+          // ChatView). The strip names the run the actor is tracking,
+          // which is what the artifact and turn_end events look their
+          // turn up by.
+          const liveRunID = (
+            actor?.getSnapshot().context as
+              { currentRunID?: string } | undefined
+          )?.currentRunID;
+          const turnArtifacts = keepLive
+            ? [
+                ...page.turnArtifacts,
+                liveTurnEntry(
+                  archivedMessages.length,
+                  existing.turnArtifacts[existing.turnArtifacts.length - 1],
+                  liveRunID,
+                ),
+              ]
+            : page.turnArtifacts;
           set((state) => ({
             toolsView: null,
             conversations: {

@@ -1468,6 +1468,142 @@ describe('ChatView transcript windowing', () => {
     expect(screen.getByText('earlier step')).toBeInTheDocument();
   });
 
+  it('keeps the live run working below the turn it found folded', async () => {
+    // The shape a resumed running session has once the store has given
+    // the run a strip of its own (see liveTurnEntry in store.ts): the
+    // archived turn ends at the seam and the run's rows follow it. The
+    // finished turn folds on its own record while those rows stay live —
+    // an answer being typed is not the finished turn's next step.
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'prompt',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-step',
+          role: 'assistant',
+          text: '',
+          items: [
+            { kind: 'text', id: 't-step', text: 'earlier step' },
+            {
+              kind: 'tool_call',
+              id: 'part-1',
+              tool: {
+                id: 'call-1',
+                name: 'exec_command',
+                args: '{}',
+                status: 'done',
+              },
+            },
+          ],
+          attachments: [],
+        },
+        {
+          id: 'm-final',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-final', text: 'final answer' }],
+          attachments: [],
+        },
+        {
+          id: 'm-live',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-live', text: 'live answer' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          durationMs: 123000,
+          runID: 'r-1',
+          finishedAt: '2026-10-15T00:00:10Z',
+        },
+        { id: 'turn-2', start: 3, docs: [], runID: 'r-2' },
+      ],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-2' });
+    render(<ChatView />);
+
+    expect(screen.getByText('Working…')).toBeInTheDocument();
+    // The run's row is on screen while it is being written.
+    expect(screen.getByText('live answer')).toBeInTheDocument();
+    expect(screen.getByText('final answer')).toBeInTheDocument();
+    // The finished turn folded with its own steps, and its fold control
+    // still opens them.
+    expect(screen.queryByText('earlier step')).not.toBeInTheDocument();
+    const worked = screen.getByRole('button', { name: 'Worked for 2m 3s' });
+    await userEvent.setup().click(worked);
+    expect(screen.getByText('earlier step')).toBeInTheDocument();
+  });
+
+  it('says the conversation is working when a resumed run has no row yet', () => {
+    // The same seam before the run's first delta: the strip has no rows
+    // to draw, and the transcript would otherwise read as finished — the
+    // turn above it folds and nothing on screen says a run is going.
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'prompt',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-step',
+          role: 'assistant',
+          text: '',
+          items: [
+            { kind: 'text', id: 't-step', text: 'earlier step' },
+            {
+              kind: 'tool_call',
+              id: 'part-1',
+              tool: {
+                id: 'call-1',
+                name: 'exec_command',
+                args: '{}',
+                status: 'done',
+              },
+            },
+          ],
+          attachments: [],
+        },
+        {
+          id: 'm-final',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-final', text: 'final answer' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          durationMs: 123000,
+          runID: 'r-1',
+          finishedAt: '2026-10-15T00:00:10Z',
+        },
+        { id: 'turn-2', start: 3, docs: [], runID: 'r-2' },
+      ],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-2' });
+    render(<ChatView />);
+
+    expect(screen.getByText('Working…')).toBeInTheDocument();
+    expect(screen.getByText('final answer')).toBeInTheDocument();
+    expect(screen.queryByText('earlier step')).not.toBeInTheDocument();
+  });
+
   it('keeps a running turn expanded and shows Working at the top', () => {
     setConversation(
       [
