@@ -1403,6 +1403,71 @@ describe('ChatView transcript windowing', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('folds a finished turn while another run is the live one', async () => {
+    // A live run the frontend met through RUN_STARTED recovery — a
+    // resumed session whose turn is still going, or a workspace switch
+    // onto one — has no turn artifact of its own yet. The newest
+    // artifact is then the turn that already finished, and the
+    // conversation's busy flag used to keep its steps expanded under
+    // its own completed answer. Its own finish is what decides.
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'prompt',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-step',
+          role: 'assistant',
+          text: '',
+          items: [
+            { kind: 'text', id: 't-step', text: 'earlier step' },
+            {
+              kind: 'tool_call',
+              id: 'part-1',
+              tool: {
+                id: 'call-1',
+                name: 'exec_command',
+                args: '{}',
+                status: 'done',
+              },
+            },
+          ],
+          attachments: [],
+        },
+        {
+          id: 'm-final',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-final', text: 'final answer' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          durationMs: 123000,
+          runID: 'r-1',
+          finishedAt: '2026-10-15T00:00:10Z',
+        },
+      ],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-2' });
+    render(<ChatView />);
+
+    const worked = screen.getByRole('button', { name: 'Worked for 2m 3s' });
+    expect(worked).toBeInTheDocument();
+    expect(screen.getByText('final answer')).toBeInTheDocument();
+    expect(screen.queryByText('earlier step')).not.toBeInTheDocument();
+    await userEvent.setup().click(worked);
+    expect(screen.getByText('earlier step')).toBeInTheDocument();
+  });
+
   it('keeps a running turn expanded and shows Working at the top', () => {
     setConversation(
       [

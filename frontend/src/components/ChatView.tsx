@@ -1541,6 +1541,27 @@ interface TurnRow {
   i: number;
 }
 
+// turnIsLive reports whether a turn is the one the conversation is
+// working on: the conversation is inside a turn, this is the newest
+// turn, and its own run has not reported a finish yet. The last clause
+// is what keeps a finished turn folded. The conversation's busy flag
+// alone is not enough, because a live run does not always have a turn
+// artifact of its own: a run the frontend met through RUN_STARTED
+// recovery — resuming a session whose turn is still going, or switching
+// to a workspace that has one — leaves the newest artifact the turn
+// that already finished, and a terminal event that never arrived leaves
+// the actor inside "running" after the answer is complete. Either way
+// the turn whose run ended would keep its steps expanded under its own
+// completed answer. The live run's rows are rendered by the tail; a
+// turn that has a finishedAt folds the way every ended turn does.
+function turnIsLive(
+  turn: TurnArtifacts,
+  lastTurn: TurnArtifacts | undefined,
+  busy: boolean,
+): boolean {
+  return busy && turn === lastTurn && !turn.finishedAt;
+}
+
 // TurnSummaryHeader doubles as the ended turn's fold control: when
 // intermediate rows exist the Worked for label becomes a button with
 // a chevron, and clicking it expands/collapses those rows.
@@ -2081,7 +2102,7 @@ export function ChatView() {
     return {
       user,
       answer,
-      running: busyRef.current && turn === lastTurnRef.current,
+      running: turnIsLive(turn, lastTurnRef.current, busyRef.current),
     };
   }, []);
 
@@ -2349,7 +2370,7 @@ export function ChatView() {
         else askRows.push({ msg, i });
       }
       const finalRow = assistantRows[assistantRows.length - 1];
-      const running = busy && turn === lastTurn;
+      const running = turnIsLive(turn, lastTurn, busy);
       // The steps this turn folds away: the rows that did work before its
       // reply. Everything is expanded while the turn runs, so those rows
       // render in transcript order and an interjection sits exactly where
@@ -3356,7 +3377,7 @@ export function ChatView() {
     if (item.kind === 'work') {
       return (
         <TurnSummaryHeader
-          running={busy && item.turn === lastTurn}
+          running={turnIsLive(item.turn, lastTurn, busy)}
           durationMs={item.turn.durationMs}
           processCount={item.processCount}
           open={openTurns.has(item.turn.id)}
