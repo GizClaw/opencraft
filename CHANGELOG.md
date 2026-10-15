@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flowcraft; `OPENCRAFT_HTTP_PROBE` turns nothing on. The persisted
   switch (`desktop.json`, `diagnostics.httpProbe`) is unchanged.
 
+### Added
+
+- A path written in backticks in the transcript opens the file. One
+  inline code span is classified as a path or a URL (`linkTarget.ts`):
+  a chip renders where plain code would, a click resolves it the way a
+  markdown link does — a file in the viewer, a directory in the chat
+  rail — and a `:line[:column]` tag is peeled so the click lands on the
+  file the tag points into. Everything a code span can also be (a
+  command, an identifier, a version tag, `12:30`) stays plain text.
+
 ### Changed
 
 - The engine's assembly half runs on flowcraft's `craft`. A Host loads a
@@ -60,6 +70,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `platform/wslock` to `core/utils/*` (`wslock` is `core/utils/lock`
   now), and the e2e fake provider to `core/inference/inferencetest`. The
   CI lanes lose the wslock cases with the package.
+
+### Fixed
+
+- A finished turn folds even while its conversation runs. A session
+  resumed with a run still going has no archived turn for that run, so
+  the newest archive strip was the turn above it, and the conversation's
+  busy flag kept that turn's steps expanded under its own completed
+  answer. The window now opens the live run a strip of its own at the
+  seam the archive ends at (`liveTurnEntry`), names the run in it so the
+  artifact and turn_end events find their turn, and folds by the strip's
+  own record (`turnIsLive`) — a resumed run renders Working… above its
+  own rows while the turn above it folds.
+- A workspace switch lands on the spelling the workspace history
+  carries. The active workspace and the row recorded for it were spelled
+  by two rules (`filepath.Clean` against clean-and-absolute), so a path
+  that reached the window the way the picker's fallback input hands it —
+  relative, or with a trailing separator — made the sidebar read every
+  row of the active workspace as another workspace's, and a click on one
+  was answered with "already announced" while the window waited out its
+  deadline and reported "workspace switch did not complete". Both halves
+  now go through `config.CanonicalWorkDir` — which the workspace id, the
+  layout and the history row share — the announcement is compared the
+  way the window compares it, and a click a newer switch already took is
+  dropped instead of reported.
+- The tool knob menus stay inside the window: the panel is portaled to
+  the body as a fixed layer, so its percentage min-width measured the
+  viewport and `min-w-full` stretched every menu across the whole
+  window. A rem floor with a viewport cap replaces it.
 
 ## [0.6.1] - 2026-10-07
 
