@@ -3761,6 +3761,54 @@ describe('store: workspace switch session restore', () => {
     expect(call.tool.result).toBeUndefined();
   });
 
+  // The app can be restarted between a tool call and its result: the
+  // result is then the first thing this window sees of the run. It still
+  // opens the run's turn (the strip is what later deltas, files and the
+  // archived copy hang off), and a result no row holds stamps nothing.
+  it("takes a tool result as the first delta of a run's stream", () => {
+    useStore.getState().handleEvent({
+      type: 'stream',
+      data: {
+        run_id: 'r-new',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: {
+            type: 'tool_result',
+            result: {
+              call_id: 'call-gone',
+              content: { parts: [{ type: 'text', text: '{"content":"ok"}' }] },
+              is_error: false,
+            },
+          },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages).toHaveLength(0);
+    expect(conv.turnArtifacts).toHaveLength(1);
+    expect(conv.turnArtifacts[0]).toMatchObject({ start: 0, runID: 'r-new' });
+
+    // The run's text lands in the turn that result opened.
+    useStore.getState().handleEvent({
+      type: 'stream',
+      data: {
+        run_id: 'r-new',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: { type: 'text', text: 'the answer' },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+    const after = useStore.getState().conversations['s-1'];
+    expect(assistantTexts(after.messages)).toEqual(['the answer']);
+    expect(after.turnArtifacts).toHaveLength(1);
+  });
+
   // The adopted run's turn is written to the archive when it ends — the
   // question included, which this window never had — and the reconcile
   // replaces the live rows with that copy.
