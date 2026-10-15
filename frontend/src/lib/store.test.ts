@@ -137,6 +137,20 @@ function historyTurn(seq: number, userText: string, assistantText: string) {
   };
 }
 
+// assistantTexts reads every assistant row's visible text the way the
+// transcript does: streamed blocks live in chunks, archived ones in
+// text.
+function assistantTexts(messages: MessageView[]): string[] {
+  return messages.flatMap((m) =>
+    m.items
+      .filter(
+        (it): it is Extract<MessageView['items'][number], { kind: 'text' }> =>
+          it.kind === 'text',
+      )
+      .map((it) => itemText(it)),
+  );
+}
+
 function actorValue(conversationID: string) {
   const actor = stateRoot.registry.get(conversationID);
   if (!actor) return undefined;
@@ -410,6 +424,43 @@ describe('store: send and stream', () => {
 
     // The restored run's own terminal event still ends the turn.
     actor?.send({ type: 'TURN_ENDED', runID: 'r-old', status: 'completed' });
+    expect(actorValue('s-1')?.turn).toBe('succeeded');
+  });
+
+  it('keeps watching a run it adopted when a barge-in over it fails', async () => {
+    // The run was adopted off the wire — no send of this window opened
+    // it — so the conversation's run map is the only record that it is
+    // still live. A barge-in that cannot start has to find it there and
+    // resume watching its streams.
+    useStore.getState().handleEvent({
+      type: 'stream',
+      data: {
+        run_id: 'r-new',
+        conversation_id: 's-1',
+        delta: { type: 'part', part: { type: 'text', text: 'streaming' } },
+      },
+    });
+    useStore.getState().flushStreams();
+    expect(actorValue('s-1')?.turn).toBe('running');
+    expect(useStore.getState().runConvs['r-new']).toBe('s-1');
+    apiMock.startTurn.mockRejectedValueOnce(new Error('start boom'));
+
+    const ok = await useStore.getState().sendInterrupt('second');
+
+    expect(ok).toBe(true);
+    const actor = stateRoot.registry.get('s-1');
+    expect(actorValue('s-1')?.turn).toBe('running');
+    expect(actor?.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-new',
+      supersededRunID: undefined,
+    });
+    // The send that never started is reported on its own turn.
+    expect(
+      useStore.getState().conversations['s-1'].turnArtifacts.at(-1),
+    ).toMatchObject({ status: 'failed', error: 'Error: start boom' });
+
+    // The adopted run's own terminal event still ends the turn.
+    actor?.send({ type: 'TURN_ENDED', runID: 'r-new', status: 'completed' });
     expect(actorValue('s-1')?.turn).toBe('succeeded');
   });
 
@@ -3405,6 +3456,365 @@ describe('store: workspace switch session restore', () => {
       text: 'row of the replaced run',
     });
     expect(conv.messages[3].text).toBe('follow up');
+  });
+
+  // A run can outlive the window that watches it: the app was restarted,
+  // or the session was opened while its run was already going. Nothing
+  // of that run is in the transcript the hydrate rebuilt — the archive
+  // does not hold a live turn — and the machine adopts the run off the
+  // wire, so its rows need a turn of their own. Without one the first
+  // delta grows the last archived answer (lastAssistant appends to the
+  // trailing row) and the strip the run's own events look it up by is
+  // missing.
+  it('opens a turn for a run the window only met on the wire', async () => {
+    stateRoot.registry.ensure('s-2', {
+      workspaceGeneration: stateRoot.generation(),
+      workspace: '/tmp/w',
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'earlier question', 'earlier answer'),
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    // Nothing knows the run yet: the transcript is the archive alone.
+    expect(actorValue('s-2')?.turn).toBe('idle');
+    const hydrated = useStore.getState().conversations['s-2'];
+    expect(hydrated.messages).toHaveLength(2);
+    expect(hydrated.turnArtifacts).toHaveLength(1);
+
+    const handle = useStore.getState().handleEvent;
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-2',
+        conversation_id: 's-2',
+        delta: {
+          type: 'part',
+          part: { type: 'text', text: 'the new answer' },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    expect(actorValue('s-2')?.turn).toBe('running');
+    const conv = useStore.getState().conversations['s-2'];
+    // The delta opened a row of the run's own; the archived answer kept
+    // its text, and the run got the strip that owns it.
+    expect(assistantTexts(conv.messages)).toEqual([
+      'earlier answer',
+      'the new answer',
+    ]);
+    expect(conv.turnArtifacts).toHaveLength(2);
+    const live = conv.turnArtifacts[1];
+    expect(live).toMatchObject({ start: 2, runID: 'r-2' });
+    expect(live.seq).toBeUndefined();
+    expect(live.finishedAt).toBeUndefined();
+
+    // The run keeps that turn: the next delta folds into the row the run
+    // opened, and no second strip appears.
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-2',
+        conversation_id: 's-2',
+        delta: { type: 'part', part: { type: 'text', text: ' and more' } },
+      },
+    });
+    useStore.getState().flushStreams();
+    const after = useStore.getState().conversations['s-2'];
+    expect(assistantTexts(after.messages)).toEqual([
+      'earlier answer',
+      'the new answer and more',
+    ]);
+    expect(after.turnArtifacts).toHaveLength(2);
+    expect(after.turnArtifacts[1].id).toBe(live.id);
+  });
+
+  // The same seam before the run's first row exists: the hydrate opened
+  // the strip where the archive ends, and the delta has to open a row it
+  // owns rather than fold into the archived answer above the seam.
+  it('keeps a delta out of the rows above a live strip with no rows yet', async () => {
+    stateRoot.registry.ensure('s-2', {
+      workspaceGeneration: stateRoot.generation(),
+      workspace: '/tmp/w',
+    });
+    stateRoot.registry.get('s-2')?.send({ type: 'RUN_STARTED', runID: 'r-2' });
+    // A shell the window holds for this conversation, with no rows of
+    // its own yet.
+    useStore.setState({
+      conversations: {
+        ...useStore.getState().conversations,
+        's-2': { ...useStore.getState().conversations['s-1'] },
+      },
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'earlier question', 'earlier answer'),
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    const hydrated = useStore.getState().conversations['s-2'];
+    expect(hydrated.messages).toHaveLength(2);
+    expect(hydrated.turnArtifacts[1]).toMatchObject({
+      start: 2,
+      runID: 'r-2',
+    });
+
+    useStore.getState().handleEvent({
+      type: 'stream',
+      data: {
+        run_id: 'r-2',
+        conversation_id: 's-2',
+        delta: {
+          type: 'part',
+          part: { type: 'text', text: 'the live answer' },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    const conv = useStore.getState().conversations['s-2'];
+    expect(assistantTexts(conv.messages)).toEqual([
+      'earlier answer',
+      'the live answer',
+    ]);
+    expect(conv.turnArtifacts).toHaveLength(2);
+    expect(conv.turnArtifacts[1].start).toBe(2);
+  });
+
+  // A strip that already finished is not a live entry: a send that never
+  // started leaves its turn stamped but unnamed, and a run met on the
+  // wire must not fold into that turn.
+  it('does not take a failed send for a run it meets on the wire', () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-failed',
+              role: 'user',
+              text: 'the send that never started',
+              items: [],
+              attachments: [],
+            },
+          ],
+          turnArtifacts: [
+            {
+              id: 'failed',
+              start: 0,
+              docs: [],
+              status: 'failed',
+              error: 'Error: start boom',
+              finishedAt: '2026-10-15T00:00:01Z',
+            },
+          ],
+        },
+      },
+    });
+
+    useStore.getState().handleEvent({
+      type: 'stream',
+      data: {
+        run_id: 'r-new',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: { type: 'text', text: 'the real answer' },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.turnArtifacts).toHaveLength(2);
+    expect(conv.turnArtifacts[0]).toMatchObject({
+      id: 'failed',
+      status: 'failed',
+    });
+    expect(conv.turnArtifacts[1]).toMatchObject({ start: 1, runID: 'r-new' });
+    expect(assistantTexts(conv.messages)).toEqual(['the real answer']);
+    expect(useStore.getState().runConvs['r-new']).toBe('s-1');
+  });
+
+  // While a send's response is in flight its strip is the trailing live
+  // entry with no run id, and the first deltas of that very run fold into
+  // it: nothing is adopted (the response names this strip when it lands)
+  // and the run is not mapped before then.
+  it("folds a pending send's deltas into its unnamed strip", () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'SEND_STARTED' });
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-send',
+              role: 'user',
+              text: 'the send in flight',
+              items: [],
+              attachments: [],
+            },
+          ],
+          turnArtifacts: [{ id: 'pending', start: 0, docs: [] }],
+        },
+      },
+    });
+
+    useStore.getState().handleEvent({
+      type: 'stream',
+      data: {
+        run_id: 'r-late',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: { type: 'text', text: 'streaming early' },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.turnArtifacts).toEqual([
+      expect.objectContaining({ id: 'pending', start: 0 }),
+    ]);
+    expect(assistantTexts(conv.messages)).toEqual(['streaming early']);
+    expect(useStore.getState().runConvs['r-late']).toBeUndefined();
+  });
+
+  // A result only ever stamps a call the run itself opened: the walk
+  // stops at the run's rows, so a call above the seam (an interrupted
+  // turn's, left running) is not rewritten by a stream naming its id.
+  it("does not stamp a tool call above the run's rows", () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-call',
+              role: 'assistant',
+              text: '',
+              items: [
+                {
+                  kind: 'tool_call',
+                  id: 'part-1',
+                  tool: {
+                    id: 'call-1',
+                    name: 'exec_command',
+                    args: '{}',
+                    status: 'running',
+                  },
+                },
+              ],
+              attachments: [],
+            },
+          ],
+          turnArtifacts: [
+            {
+              id: 'old',
+              start: 0,
+              docs: [],
+              seq: 1,
+              finishedAt: '2026-10-15T00:00:01Z',
+            },
+          ],
+        },
+      },
+    });
+
+    const handle = useStore.getState().handleEvent;
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-new',
+        conversation_id: 's-1',
+        delta: { type: 'part', part: { type: 'text', text: 'the answer' } },
+      },
+    });
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-new',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: {
+            type: 'tool_result',
+            result: {
+              call_id: 'call-1',
+              content: {
+                parts: [{ type: 'text', text: '{"content":"ok"}' }],
+              },
+              is_error: false,
+            },
+          },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    const call = useStore.getState().conversations['s-1'].messages[0].items[0];
+    if (call.kind !== 'tool_call') throw new Error('expected a tool call');
+    expect(call.tool.status).toBe('running');
+    expect(call.tool.result).toBeUndefined();
+  });
+
+  // The adopted run's turn is written to the archive when it ends — the
+  // question included, which this window never had — and the reconcile
+  // replaces the live rows with that copy.
+  it('replaces an adopted run with its archived turn once it ends', async () => {
+    stateRoot.registry.ensure('s-2', {
+      workspaceGeneration: stateRoot.generation(),
+      workspace: '/tmp/w',
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'earlier question', 'earlier answer'),
+    ]);
+
+    await useStore.getState().resume('s-2');
+    useStore.getState().handleEvent({
+      type: 'stream',
+      data: {
+        run_id: 'r-2',
+        conversation_id: 's-2',
+        delta: {
+          type: 'part',
+          part: { type: 'text', text: 'half an answer' },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    apiMock.turnByRunID.mockResolvedValue({
+      ...historyTurn(2, 'the question', 'the whole answer'),
+      run_id: 'r-2',
+      status: 'completed',
+    });
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-2',
+        conversation_id: 's-2',
+        status: 'completed',
+        finished_at: '2026-10-15T00:02:00Z',
+        duration_ms: 1000,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        assistantTexts(useStore.getState().conversations['s-2'].messages),
+      ).toEqual(['earlier answer', 'the whole answer']);
+    });
+    const conv = useStore.getState().conversations['s-2'];
+    expect(
+      conv.messages.some((m) => m.role === 'user' && m.text === 'the question'),
+    ).toBe(true);
+    expect(conv.turnArtifacts).toHaveLength(2);
+    expect(conv.turnArtifacts[1]).toMatchObject({ seq: 2, runID: 'r-2' });
+    expect(actorValue('s-2')?.turn).toBe('succeeded');
   });
 });
 

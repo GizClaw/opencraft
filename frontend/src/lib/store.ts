@@ -1117,12 +1117,21 @@ function foldArchivedTurns(
 // lastAssistant returns a mutable copy of the last assistant message
 // (creating one when needed) plus a NEW messages array, so every
 // stream delta produces fresh references and React re-renders.
-function lastAssistant(messages: MessageView[]): {
+//
+// runStart is the index the run's own rows begin at (its strip's start):
+// a trailing assistant row above it belongs to another turn — a finished
+// one, or another run's — so the delta opens a row of its own instead of
+// growing that turn's answer.
+function lastAssistant(
+  messages: MessageView[],
+  runStart: number,
+): {
   msg: MessageView;
   messages: MessageView[];
 } {
-  const last = messages[messages.length - 1];
-  if (!last || last.role !== 'assistant') {
+  const lastIndex = messages.length - 1;
+  const last = messages[lastIndex];
+  if (lastIndex < runStart || !last || last.role !== 'assistant') {
     const msg: MessageView = {
       id: newID('msg'),
       role: 'assistant',
@@ -1357,8 +1366,8 @@ function mergeTurnDoc(docs: TurnDoc[], path: string, bytes: number): TurnDoc[] {
   return [...docs.slice(0, idx), entry, ...docs.slice(idx + 1)];
 }
 
-// artifactTurnIndex finds the turn a produced file belongs to. The
-// backend attributes the write to the run that made it, so the strip is
+// artifactTurnIndex finds the turn a run's events belong to. The backend
+// attributes everything a run produced to that run, so the strip is
 // found by run id: while another turn sits above the running one (a
 // delegation note the app appended mid-turn, a barge-in replacement),
 // the last strip is not the writer.
@@ -1366,8 +1375,14 @@ function mergeTurnDoc(docs: TurnDoc[], path: string, bytes: number): TurnDoc[] {
 // A run id the store has not recorded yet means the start-turn response
 // for that run is still in flight, so the file belongs to the trailing
 // live entry — the one with neither a run id nor an archived seq. With
-// no writer to point at, the event is dropped rather than merged into
-// whatever turn happens to be last.
+// no owner to point at, an artifact event is dropped rather than merged
+// into whatever turn happens to be last; a stream delta opens the
+// missing strip instead (see liveRunTurn).
+//
+// A strip that already finished is not a live entry, whatever it is
+// missing: a send that never started leaves its turn stamped but
+// unnamed (markFailedSend), and a run met on the wire must not fold into
+// that turn — nor a file land on it.
 function artifactTurnIndex(
   list: TurnArtifacts[],
   runID: string | undefined,
@@ -1378,7 +1393,9 @@ function artifactTurnIndex(
   }
   const live = list.length - 1;
   const last = list[live];
-  if (!last || last.runID || last.seq !== undefined) return -1;
+  if (!last || last.runID || last.seq !== undefined || last.finishedAt) {
+    return -1;
+  }
   return live;
 }
 
@@ -1414,11 +1431,43 @@ function liveTurnEntry(
   };
 }
 
+// liveRunTurn returns the strip that owns one run's rows, opening it at
+// the end of the transcript when the conversation holds none. A run can
+// outlive the window that watches it — the app was restarted, or the
+// session was opened while its run was already going — and the
+// conversation machine then adopts the run off the wire (the first
+// stream of an idle conversation starts it). No send of this window
+// opened that run a turn, so nothing owns its rows: its first text delta
+// would fold into the last archived answer (lastAssistant grows the
+// trailing row) and its files would be attributed to the turn above it.
+// The strip starts where the transcript ends, which is where the run's
+// first row lands, and it names the run, which is how the artifact,
+// turn_end and archive-reconcile paths find it (artifactTurnIndex).
+// Everything above that seam belongs to the archive or to another run's
+// turn. `adopted` reports that the strip was opened here, which is the
+// caller's cue to register the run: the lookups that ask "is this run
+// still alive" read the conversation's run map (supersededEndState), and
+// a run this window never sent has no other way into it.
+function liveRunTurn(
+  conv: ConversationState,
+  runID: string,
+): { turnArtifacts: TurnArtifacts[]; turn: TurnArtifacts; adopted: boolean } {
+  const list = conv.turnArtifacts;
+  const owner = artifactTurnIndex(list, runID);
+  if (owner >= 0) {
+    return { turnArtifacts: list, turn: list[owner], adopted: false };
+  }
+  const turn = liveTurnEntry(conv.messages.length, undefined, runID);
+  return { turnArtifacts: [...list, turn], turn, adopted: true };
+}
+
 // applyStream folds one stream delta into a message list and returns
-// the new list (immutable).
+// the new list (immutable). runStart bounds the fold: deltas only touch
+// rows the run owns (see lastAssistant).
 function applyStream(
   messages: MessageView[],
   delta: StreamDelta,
+  runStart: number,
 ): MessageView[] {
   if (delta.type !== 'part' || !delta.part) return messages;
   const part = delta.part;
@@ -1426,7 +1475,7 @@ function applyStream(
     case 'text': {
       const text = part.text ?? '';
       if (!text) return messages;
-      const { msg, messages: next } = lastAssistant(messages);
+      const { msg, messages: next } = lastAssistant(messages, runStart);
       mergeAppend(msg, 'text', text);
       trimItems(msg);
       return next;
@@ -1434,7 +1483,7 @@ function applyStream(
     case 'reasoning': {
       const text = part.text ?? '';
       if (!text) return messages;
-      const { msg, messages: next } = lastAssistant(messages);
+      const { msg, messages: next } = lastAssistant(messages, runStart);
       mergeAppend(msg, 'reasoning', text);
       trimItems(msg);
       return next;
@@ -1442,7 +1491,7 @@ function applyStream(
     case 'tool_call': {
       // A tool call ends the preceding text block: fold it so a settled
       // block holds plain text instead of a chunk array.
-      const { msg, messages: next } = lastAssistant(messages);
+      const { msg, messages: next } = lastAssistant(messages, runStart);
       foldLastTextItem(msg);
       msg.items = [
         ...msg.items,
@@ -1467,7 +1516,10 @@ function applyStream(
       // Walk backwards: a result virtually always belongs to the newest
       // assistant message, so the common case finds it in the first step
       // instead of scanning the whole transcript for every tool result.
-      for (let i = messages.length - 1; i >= 0; i--) {
+      // The walk stops at the run's own rows: a call below the seam was
+      // not this run's (the id would have to be reused across turns),
+      // and stamping it would be a delta landing outside its turn.
+      for (let i = messages.length - 1; i >= runStart; i--) {
         const m = messages[i];
         if (m.role !== 'assistant') continue;
         let changed = false;
@@ -1861,11 +1913,20 @@ export const useStore = create<StoreState>((set, get) => {
     );
     return next;
   };
-  const updateConv = (id: string, patch: Partial<ConversationState>) =>
+  // updateConv applies one patch to a conversation and settles it (see
+  // settleConversation). `extra` writes state beside the conversation in
+  // the same update — one event is one store write, which is what the
+  // stream flush's flush-to-frame probe measures.
+  const updateConv = (
+    id: string,
+    patch: Partial<ConversationState>,
+    extra?: (state: StoreState) => Partial<StoreState> | undefined,
+  ) =>
     set((state) => {
       const conv = state.conversations[id];
       if (!conv) return state;
       return {
+        ...extra?.(state),
         conversations: {
           ...state.conversations,
           [id]: settleConversation({ ...conv, ...patch }),
@@ -2175,7 +2236,8 @@ export const useStore = create<StoreState>((set, get) => {
             conversation_id?: string;
             delta: StreamDelta;
           };
-          if (!data.run_id) break;
+          const runID = data.run_id;
+          if (!runID) break;
           const actor = stateRoot.registry.get(conversationID);
           if (actor) {
             const snapshot = actor.getSnapshot();
@@ -2185,10 +2247,7 @@ export const useStore = create<StoreState>((set, get) => {
               lastEndedRunID?: string;
               supersededRunID?: string;
             };
-            if (
-              context.supersededRunID &&
-              data.run_id === context.supersededRunID
-            ) {
+            if (context.supersededRunID && runID === context.supersededRunID) {
               // A barge-in is replacing this run; its late deltas must
               // never land after the replacement's user message.
               break;
@@ -2196,15 +2255,12 @@ export const useStore = create<StoreState>((set, get) => {
             if (value.turn === 'running') {
               // A delayed delta from an earlier run must never be
               // folded into a newer run's live transcript.
-              if (
-                context.currentRunID &&
-                data.run_id !== context.currentRunID
-              ) {
+              if (context.currentRunID && runID !== context.currentRunID) {
                 break;
               }
             } else if (
               (value.turn === 'starting' || value.turn === 'idle') &&
-              data.run_id === context.lastEndedRunID
+              runID === context.lastEndedRunID
             ) {
               // The machine already ignores a stream for the last ended
               // run; mirror it here so data never reaches the renderer.
@@ -2213,9 +2269,28 @@ export const useStore = create<StoreState>((set, get) => {
           }
           const conv = ensureConversation(conversationID);
           if (!conv) break;
-          updateConv(conversationID, {
-            messages: applyStream(conv.messages, data.delta),
-          });
+          // The run's rows start at its own strip, opened here when the
+          // conversation holds none (a run this window only met on the
+          // wire — see liveRunTurn). The delta folds into the rows at or
+          // after that seam, and into no row above it: those belong to
+          // another turn.
+          const live = liveRunTurn(conv, runID);
+          updateConv(
+            conversationID,
+            {
+              turnArtifacts: live.turnArtifacts,
+              messages: applyStream(conv.messages, data.delta, live.turn.start),
+            },
+            // An adopted run enters the conversation's run map with its
+            // strip: a barge-in over it has to see it as live
+            // (supersededEndState reads the map), and the turn_end that
+            // removes the entry is the one that stamps the strip.
+            live.adopted
+              ? (state) => ({
+                  runConvs: { ...state.runConvs, [runID]: conversationID },
+                })
+              : undefined,
+          );
           break;
         }
         case UIEventType.interact: {

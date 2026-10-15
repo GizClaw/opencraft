@@ -82,6 +82,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is tracking so the artifact and turn_end events find their turn, and
   folds by the strip's own record (`turnIsLive`) — a resumed run renders
   Working… above its own rows while the turn above it folds.
+- A run the window only met on the wire gets a turn of its own before
+  its first delta is folded in. The app restarted, or the session was
+  opened while its run was already going, so the transcript holds
+  nothing of that run — the archive does not carry a live turn — and its
+  streamed text used to grow the last archived answer instead. The
+  stream path opens the run the same strip the hydrate opens
+  (`liveRunTurn`), registers it as live (so a barge-in that cannot start
+  resumes watching it rather than reading it as interrupted) and bounds
+  every delta to the rows at or after that strip (`applyStream`) — a
+  turn that already failed is not a live entry for the next run either.
+  The run's answer, its files and its fold header are its own turn, and
+  the archived turn replaces those rows, question included, when the run
+  ends.
 - A workspace switch lands on the spelling the workspace history
   carries. The active workspace and the row recorded for it were spelled
   by two rules (`filepath.Clean` against clean-and-absolute), so a path

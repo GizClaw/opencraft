@@ -140,8 +140,10 @@ func startupWorkDirFromHistory(dataDir string) string {
 // announced through the ready event and compared against the history
 // rows, so it is folded here rather than at whichever caller remembers.
 // A row recorded before the rule existed — a relative spelling — is
-// read as what it names (startupWorkDirFromHistory stats it) and
-// answered in the canonical spelling.
+// stat'd as it stands, which resolves it against the process's working
+// directory (the only thing a relative row can be resolved against), and
+// answered in the canonical spelling. A relative row that does not
+// resolve there is skipped like any other row that no longer exists.
 func (c *Core) InitialWorkDir(explicit string) string {
 	if explicit != "" {
 		return config.CanonicalWorkDir(explicit)
