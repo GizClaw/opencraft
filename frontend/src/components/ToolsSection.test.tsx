@@ -100,6 +100,24 @@ describe('ToolsSection', () => {
     ).toBeInTheDocument();
   });
 
+  // The listbox panel is portaled to the body, where a percentage
+  // min-width measures the viewport, not the trigger: `min-w-full`
+  // stretched the knob menu across the whole window. jsdom has no
+  // layout, so the guard is the contract the class list carries — a rem
+  // floor, a viewport cap, and no viewport-relative floor.
+  it('sizes the knob menu off the control, not the window', async () => {
+    const user = userEvent.setup();
+    render(<ToolsSection />);
+    await screen.findByText('Image generation');
+    await user.click(screen.getByText('Image generation'));
+    await user.click(screen.getByLabelText('Background'));
+    const panel = screen.getByRole('listbox', { name: 'Background' });
+    expect(panel.className).toContain('min-w-[16rem]');
+    expect(panel.className).toContain('max-w-[calc(100vw-1rem)]');
+    expect(panel.className.split(/\s+/)).not.toContain('min-w-full');
+    expect(panel.className.split(/\s+/)).not.toContain('w-full');
+  });
+
   it('saves edits together with the other tool unchanged', async () => {
     const user = userEvent.setup();
     render(<ToolsSection />);

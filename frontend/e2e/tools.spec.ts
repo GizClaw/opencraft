@@ -129,6 +129,18 @@ test('edits a generation tool from the tools tab', async ({ page }) => {
   await expect(
     page.getByRole('option', { name: 'Follow the provider default' }),
   ).toBeVisible();
+  // The menu is sized off the control, not the window: it is portaled to
+  // the body as a fixed layer, where a percentage min-width measures the
+  // viewport, and `min-w-full` stretched every knob menu across the
+  // whole window. jsdom has no layout, so the width contract belongs
+  // here, where the panel has one.
+  const menu = page.getByRole('listbox', { name: 'Background' });
+  const menuBox = await menu.boundingBox();
+  const viewport = page.viewportSize();
+  if (!menuBox || !viewport) throw new Error('menu or viewport has no box');
+  expect(menuBox.width).toBeLessThan(viewport.width / 2);
+  expect(menuBox.x).toBeGreaterThanOrEqual(0);
+  expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(viewport.width);
   await page.getByRole('option', { name: 'opaque' }).click();
   await dialog.getByLabel('Compression').fill('70');
   // A preset stages its knobs in the form; the save below carries them.
