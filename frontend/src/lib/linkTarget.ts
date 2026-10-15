@@ -26,6 +26,222 @@ export function isExternalHref(href: string): boolean {
   );
 }
 
+const SEPARATOR = /[/\\]/;
+// MAX_CODE_LINK_CHARS keeps a pasted wall of text in one code span from
+// being treated as a path.
+const MAX_CODE_LINK_CHARS = 240;
+// LINE_SUFFIX matches the `:line[:column]` tag agents write after a path
+// (`internal/orchestration/host/pool.go:212`). It is peeled only when
+// what remains still looks like a path, so a time (`12:30`) or a
+// version tag is left alone.
+const LINE_SUFFIX = /^(.*?):\d{1,6}(?::\d{1,6})?$/;
+
+// codeLinkTarget decides whether one inline code span names something
+// the reader can open, and returns what to resolve. Assistants write
+// file paths and URLs in backticks as freely as they write identifiers
+// and commands, so the bar is deliberately narrow: one token, spelled
+// like a path or a URL, with no punctuation a snippet would carry.
+// Everything else stays plain text (`npm test`, `Object.keys`,
+// `graph.name`).
+export function codeLinkTarget(text: string): string | null {
+  const raw = text.trim();
+  if (!raw || raw.length > MAX_CODE_LINK_CHARS) return null;
+  // A phrase, a quoted string, a redirected snippet or a comparison is
+  // never one target.
+  if (/[\s`"'<>|]/.test(raw)) return null;
+  if (/[{}[\]()]/.test(raw)) return null;
+  // A path is tried first, tag and all: `store.ts:42` reads as the
+  // scheme `store.ts` to any general URL test, and only the path branch
+  // can tell it from a URL.
+  const head = splitLineSuffix(raw);
+  for (const candidate of [head, raw]) {
+    if (/[?;=]/.test(candidate)) continue;
+    if (isPathLikeToken(candidate)) return candidate;
+  }
+  // A URL may carry a query string, and only schemes that name a real
+  // service count: a code span has no `//` to separate a URL from a
+  // token with a colon in it.
+  if (CODE_URL.test(raw)) return raw;
+  return null;
+}
+
+const CODE_URL = /^(?:https?|ftps?|ssh|git|mailto|tel|file|vscode|craft):/i;
+
+// splitLineSuffix peels the `:line[:column]` tag off a path so the click
+// resolves the file the tag points into. A tag whose head is not a path
+// is left in place.
+export function splitLineSuffix(token: string): string {
+  const match = LINE_SUFFIX.exec(token);
+  if (!match || match[1] === '') return token;
+  return isPathLikeToken(match[1]) ? match[1] : token;
+}
+
+// SEGMENT is one path segment: the characters a file or directory name
+// uses, without separators.
+const SEGMENT = /^[\w.@+-]+$/;
+
+// isPathLikeToken answers whether one token is spelled like a local
+// path. An explicit path — absolute, home, or dot-relative — counts
+// whatever it names, a directory included; anything else has to end in
+// a file name the reader recognizes, so `and/or` stays prose while
+// `docs/architecture.md` and `main.go` do not.
+export function isPathLikeToken(token: string): boolean {
+  if (!token) return false;
+  if (SEPARATOR.test(token)) {
+    if (
+      /^([/\\]|\.{1,2}[/\\]|~[/\\])/.test(token) ||
+      WINDOWS_DRIVE.test(token)
+    ) {
+      return true;
+    }
+    const parts = token.split(/[/\\]/);
+    const last = parts[parts.length - 1] ?? '';
+    return parts.every((part) => SEGMENT.test(part)) && isKnownFileName(last);
+  }
+  return isKnownFileName(token);
+}
+
+// FILE_EXTENSIONS is the vocabulary that tells a file name written in
+// backticks from an identifier that merely contains a dot: `craft.yaml`
+// and `main.go` are files, `state.ready` and `graph.name` are not.
+const FILE_EXTENSIONS = new Set([
+  'md',
+  'markdown',
+  'mdx',
+  'txt',
+  'rst',
+  'adoc',
+  'go',
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'mts',
+  'cts',
+  'vue',
+  'svelte',
+  'py',
+  'rb',
+  'rs',
+  'java',
+  'kt',
+  'kts',
+  'c',
+  'h',
+  'cc',
+  'cpp',
+  'cxx',
+  'hpp',
+  'cs',
+  'swift',
+  'm',
+  'mm',
+  'php',
+  'lua',
+  'pl',
+  'r',
+  'scala',
+  'dart',
+  'ex',
+  'exs',
+  'erl',
+  'hs',
+  'clj',
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'ps1',
+  'bat',
+  'cmd',
+  'json',
+  'jsonc',
+  'json5',
+  'yaml',
+  'yml',
+  'toml',
+  'ini',
+  'cfg',
+  'conf',
+  'env',
+  'properties',
+  'lock',
+  'mod',
+  'sum',
+  'plist',
+  'xml',
+  'html',
+  'htm',
+  'css',
+  'scss',
+  'sass',
+  'less',
+  'sql',
+  'proto',
+  'graphql',
+  'gql',
+  'http',
+  'diff',
+  'patch',
+  'csv',
+  'tsv',
+  'log',
+  'db',
+  'sqlite',
+  'sqlite3',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'svg',
+  'ico',
+  'bmp',
+  'tiff',
+  'avif',
+  'pdf',
+  'zip',
+  'tar',
+  'gz',
+  'tgz',
+  'bz2',
+  'xz',
+  '7z',
+  'rar',
+  'mp3',
+  'wav',
+  'flac',
+  'ogg',
+  'm4a',
+  'mp4',
+  'mov',
+  'm4v',
+  'webm',
+  'mkv',
+  'avi',
+]);
+
+// FILE_NAMES are the extensionless files common enough to recognize.
+const FILE_NAMES = new Set([
+  'Makefile',
+  'Dockerfile',
+  'LICENSE',
+  'Procfile',
+  '.env',
+  '.gitignore',
+  '.gitattributes',
+]);
+
+function isKnownFileName(name: string): boolean {
+  if (!name || name.endsWith('.')) return false;
+  if (FILE_NAMES.has(name)) return true;
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return false;
+  return FILE_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+}
+
 // resolveLinkTarget classifies one click without side effects, so each
 // caller decides where a directory or a file ends up (chat rail tab,
 // dialog page, system file manager). Empty targets and `#anchors` are

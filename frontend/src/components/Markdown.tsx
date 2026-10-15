@@ -1,15 +1,28 @@
-import { memo, useLayoutEffect, useState } from 'react';
+import {
+  createContext,
+  memo,
+  useContext,
+  useLayoutEffect,
+  useState,
+} from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Check, Copy } from 'lucide-react';
 import { beginMarkdownRender, endMarkdownRender } from '../lib/perfMetrics';
+import { codeLinkTarget } from '../lib/linkTarget';
 import { ICON } from './ui/icon';
 
 // MarkdownLinkHandler is the shape every markdown surface hands its
 // anchors: the href plus the base path (directory of the document
 // being rendered) the handler resolves it against.
 export type MarkdownLinkHandler = (href: string, basePath?: string) => void;
+
+// InCodeBlock tells an inline `code` element that it belongs to a fenced
+// block. react-markdown builds the block's code element through the same
+// component map, and only the surrounding `pre` (CodeBlock) knows the
+// difference.
+const InCodeBlock = createContext(false);
 
 // withoutNode strips the hast `node` react-markdown hands every component
 // alongside the DOM props. Spreading it onto a real element writes the node
@@ -63,6 +76,9 @@ export const Markdown = memo(function Markdown({
             {children}
           </a>
         ),
+        code: (props) => (
+          <InlineCode {...props} onOpen={onOpen} basePath={basePath} />
+        ),
         pre: CodeBlock,
         table: (props) => (
           <div className="overflow-x-auto">
@@ -76,11 +92,54 @@ export const Markdown = memo(function Markdown({
   );
 });
 
+// InlineCode renders one inline `code` span. An assistant writes paths in
+// backticks as freely as it writes commands, and a reader who wants the
+// file should not have to copy the path into a shell: a span that names
+// exactly one target (see codeLinkTarget) becomes a button that hands it
+// to the surface's link handler, and everything else stays text. Only the
+// surrounding `pre` knows a code element belongs to a fenced block, so
+// that travels in a context — a block has no single target to offer, and
+// the highlighter has already replaced its text with spans.
+function InlineCode({
+  className,
+  children,
+  onOpen,
+  basePath,
+}: {
+  node?: unknown;
+  className?: string;
+  children?: React.ReactNode;
+  onOpen?: MarkdownLinkHandler;
+  basePath?: string;
+}) {
+  const inBlock = useContext(InCodeBlock);
+  const target =
+    inBlock || !onOpen ? null : codeLinkTarget(extractText(children));
+  if (!target || !onOpen) {
+    return <code className={className}>{children}</code>;
+  }
+  return (
+    <code className={className}>
+      <button
+        type="button"
+        onClick={() => onOpen(target, basePath)}
+        // The chip keeps its code styling: only the hover affordance
+        // says the path is a door.
+        className="cursor-pointer text-left decoration-dotted underline-offset-2 hover:underline"
+        data-tip={target}
+      >
+        {children}
+      </button>
+    </code>
+  );
+}
+
 function CodeBlock(
   props: React.HTMLAttributes<HTMLPreElement> & { node?: unknown },
 ) {
+  const { children, ...pre } = props;
   const [copied, setCopied] = useState(false);
-  const text = extractText(props.children);
+  const text = extractText(children);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -92,7 +151,9 @@ function CodeBlock(
   };
   return (
     <div className="codeblock">
-      <pre {...withoutNode(props)} />
+      <pre {...withoutNode(pre)}>
+        <InCodeBlock.Provider value={true}>{children}</InCodeBlock.Provider>
+      </pre>
       {text && (
         <button
           onClick={() => void copy()}

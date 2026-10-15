@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { isExternalHref, resolveLinkTarget } from './linkTarget';
+import {
+  codeLinkTarget,
+  isExternalHref,
+  resolveLinkTarget,
+  splitLineSuffix,
+} from './linkTarget';
 import type { ResolvedTarget } from './types';
 
 const apiMock = vi.hoisted(() => ({ resolveTarget: vi.fn() }));
@@ -77,5 +82,80 @@ describe('resolveLinkTarget', () => {
   it('surfaces resolve failures to the caller', async () => {
     apiMock.resolveTarget.mockRejectedValueOnce(new Error('file: missing'));
     await expect(resolveLinkTarget('missing.md')).rejects.toThrow('missing');
+  });
+});
+
+// Inline code carries paths and URLs as often as it carries commands,
+// and only the spans that are unmistakably one target may become links:
+// a wrong guess turns a command into a button that errors when clicked.
+describe('codeLinkTarget', () => {
+  it('links paths written the way the assistant writes them', () => {
+    expect(codeLinkTarget('internal/orchestration/host/pool.go')).toBe(
+      'internal/orchestration/host/pool.go',
+    );
+    expect(codeLinkTarget('docs/target-architecture.md')).toBe(
+      'docs/target-architecture.md',
+    );
+    expect(codeLinkTarget('./scripts/check-boundaries.sh')).toBe(
+      './scripts/check-boundaries.sh',
+    );
+    expect(codeLinkTarget('~/Tools/go/bin/wails3')).toBe(
+      '~/Tools/go/bin/wails3',
+    );
+    expect(codeLinkTarget('/etc/hosts')).toBe('/etc/hosts');
+    expect(codeLinkTarget('C:\\work\\notes.md')).toBe('C:\\work\\notes.md');
+    expect(codeLinkTarget('main.go')).toBe('main.go');
+    expect(codeLinkTarget('Makefile')).toBe('Makefile');
+  });
+
+  it('peels a line tag so the click opens the file it points into', () => {
+    expect(codeLinkTarget('internal/orchestration/host/pool.go:212')).toBe(
+      'internal/orchestration/host/pool.go',
+    );
+    expect(codeLinkTarget('store.ts:42:7')).toBe('store.ts');
+    // A tag whose head is not a path stays whole, and the whole is not a
+    // path either: a time is a time.
+    expect(splitLineSuffix('12:30')).toBe('12:30');
+    expect(codeLinkTarget('12:30')).toBeNull();
+    expect(codeLinkTarget('std::vector:12')).toBeNull();
+  });
+
+  it('links URLs, query strings included', () => {
+    expect(codeLinkTarget('https://example.com/a/b?c=1')).toBe(
+      'https://example.com/a/b?c=1',
+    );
+    expect(codeLinkTarget('mailto:hi@example.com')).toBe(
+      'mailto:hi@example.com',
+    );
+    expect(codeLinkTarget('file:///Users/me/notes.md')).toBe(
+      'file:///Users/me/notes.md',
+    );
+  });
+
+  it('leaves commands, identifiers and snippets as text', () => {
+    for (const span of [
+      'npm test',
+      'go build ./...',
+      'Object.keys',
+      'graph.name',
+      'state.ready',
+      '12:30',
+      '--app-home',
+      'make lint',
+      'foo=bar',
+      'c[i]',
+      'x => y',
+      'v1.26.9',
+      'and/or',
+      'a'.repeat(300),
+    ]) {
+      expect(codeLinkTarget(span)).toBeNull();
+    }
+  });
+
+  it('keeps a quoted or multi-line snippet out of the link path', () => {
+    expect(codeLinkTarget('"docs/a.md"')).toBeNull();
+    expect(codeLinkTarget("'docs/a.md'")).toBeNull();
+    expect(codeLinkTarget('docs/a.md docs/b.md')).toBeNull();
   });
 });
