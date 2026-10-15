@@ -10,6 +10,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
@@ -134,7 +135,10 @@ func NewCoreWithPaths(p Paths) *Core {
 		DataDir:      p.DataDir,
 		AppHome:      p.AppHome,
 		Profile:      p.Profile,
-		WorkDir:      p.WorkDir,
+		// The field is canonical from the moment it exists, so the
+		// spelling rule is stated here rather than left to whichever
+		// caller remembers (SetWorkDir folds what it is handed too).
+		WorkDir: config.CanonicalWorkDir(p.WorkDir),
 	}
 	c.Shell.SetPetSink(func(typ string, data any) {
 		pet.OnEvent(typ, data)

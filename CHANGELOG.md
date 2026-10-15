@@ -78,10 +78,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the newest archive strip was the turn above it, and the conversation's
   busy flag kept that turn's steps expanded under its own completed
   answer. The window now opens the live run a strip of its own at the
-  seam the archive ends at (`liveTurnEntry`), names the run in it so the
-  artifact and turn_end events find their turn, and folds by the strip's
-  own record (`turnIsLive`) — a resumed run renders Working… above its
-  own rows while the turn above it folds.
+  seam the archive ends at (`liveTurnEntry`), carries the run the actor
+  is tracking so the artifact and turn_end events find their turn, and
+  folds by the strip's own record (`turnIsLive`) — a resumed run renders
+  Working… above its own rows while the turn above it folds.
 - A workspace switch lands on the spelling the workspace history
   carries. The active workspace and the row recorded for it were spelled
   by two rules (`filepath.Clean` against clean-and-absolute), so a path
@@ -92,8 +92,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deadline and reported "workspace switch did not complete". Both halves
   now go through `config.CanonicalWorkDir` — which the workspace id, the
   layout and the history row share — the announcement is compared the
-  way the window compares it, and a click a newer switch already took is
-  dropped instead of reported.
+  way the window compares it, and a session click a newer switch already
+  took is dropped instead of reported (a draft that lost its race still
+  says so: the text goes back to the composer).
 - The tool knob menus stay inside the window: the panel is portaled to
   the body as a fixed layer, so its percentage min-width measured the
   viewport and `min-w-full` stretched every menu across the whole

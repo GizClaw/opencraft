@@ -136,10 +136,15 @@ func startupWorkDirFromHistory(dataDir string) string {
 }
 
 // InitialWorkDir resolves the startup workspace from explicit input or
-// history.
+// history, in the one spelling a workspace is written in: this value is
+// announced through the ready event and compared against the history
+// rows, so it is folded here rather than at whichever caller remembers.
+// A row recorded before the rule existed — a relative spelling — is
+// read as what it names (startupWorkDirFromHistory stats it) and
+// answered in the canonical spelling.
 func (c *Core) InitialWorkDir(explicit string) string {
 	if explicit != "" {
-		return explicit
+		return config.CanonicalWorkDir(explicit)
 	}
-	return startupWorkDirFromHistory(c.DataDir)
+	return config.CanonicalWorkDir(startupWorkDirFromHistory(c.DataDir))
 }
