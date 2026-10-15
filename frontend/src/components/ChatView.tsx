@@ -1544,10 +1544,11 @@ interface TurnRow {
 // turnIsLive reports whether a turn is the one the conversation is
 // working on: the conversation is inside a turn, this is the newest
 // turn, and nothing has recorded its run as finished. The last clause
-// is what keeps a finished turn folded — every archived turn carries a
-// finishedAt, because the backend stamps one on each turn it writes,
-// while the window's own strip carries one only from the moment that
-// run's end event lands.
+// is what keeps a finished turn folded — the turns the backend writes
+// carry a finishedAt (an imported archive row without one is possible,
+// and still folds: the window's own strip is appended after it), while
+// the window's own strip carries one only from the moment that run's end
+// event lands.
 //
 // The conversation's busy flag alone is not enough, because the live run
 // does not always belong to the newest turn this page made: a session

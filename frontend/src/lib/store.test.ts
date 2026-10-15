@@ -3335,6 +3335,77 @@ describe('store: workspace switch session restore', () => {
       { path: '/tmp/w/report.md', bytes: 40 },
     ]);
   });
+
+  // The merge appends the shell's rows whole, so a strip the shell
+  // already had keeps its rows by shifting with them. A strip that
+  // snapped back to the seam would swallow whatever the shell holds
+  // above its own rows — here the row of a run a barge-in replaced.
+  it('shifts a carried run with its rows instead of re-anchoring it', async () => {
+    stateRoot.registry.ensure('s-2', {
+      workspaceGeneration: stateRoot.generation(),
+      workspace: '/tmp/w',
+    });
+    stateRoot.registry.get('s-2')?.send({ type: 'RUN_STARTED', runID: 'r-b' });
+    useStore.setState({
+      conversations: {
+        ...useStore.getState().conversations,
+        's-2': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-a',
+              role: 'assistant',
+              text: '',
+              items: [
+                { kind: 'text', id: 't-a', text: 'row of the replaced run' },
+              ],
+              attachments: [],
+            },
+            {
+              id: 'm-q',
+              role: 'user',
+              text: 'follow up',
+              items: [],
+              attachments: [],
+            },
+            {
+              id: 'm-b',
+              role: 'assistant',
+              text: '',
+              items: [{ kind: 'text', id: 't-b', text: 'live answer' }],
+              attachments: [],
+            },
+          ],
+          turnArtifacts: [
+            {
+              id: 'older',
+              start: 0,
+              docs: [],
+              runID: 'r-a',
+              finishedAt: '2026-10-15T00:00:10Z',
+            },
+            { id: 'live-b', start: 1, docs: [], runID: 'r-b' },
+          ],
+        },
+      },
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'earlier question', 'earlier answer'),
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    const conv = useStore.getState().conversations['s-2'];
+    // The archived page is two rows, so the shell's rows begin at 2 and
+    // the carried strip — which began at 1 inside the shell — begins at
+    // 3, the first row of the run it owns.
+    expect(conv.turnArtifacts[1]).toMatchObject({ id: 'live-b', start: 3 });
+    expect(conv.messages[2].items[0]).toMatchObject({
+      kind: 'text',
+      text: 'row of the replaced run',
+    });
+    expect(conv.messages[3].text).toBe('follow up');
+  });
 });
 
 describe('firstMessageTitle', () => {

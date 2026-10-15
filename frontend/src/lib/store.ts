@@ -1383,13 +1383,21 @@ function artifactTurnIndex(
 }
 
 // liveTurnEntry is the strip of the run the window is tracking, opened
-// where the archive ends: start is the seam between the archived history
-// and the rows the run produces, so the archived turn above it closes
-// there and folds on its own record. A strip a previous hydrate opened
-// for the same run is grown instead of replaced — its id, the files it
-// already collected and the stamp it was requested at survive.
+// where the archive ends. Its start is an index into the merged
+// transcript, and the merge appends the shell's rows whole
+// ([...archive, ...shell]): a strip the shell already had keeps its rows
+// by shifting with them (seam + start) rather than snapping to the seam.
+// The run that opened it is not always the oldest one the shell holds —
+// a barge-in replaces a run without erasing its rows — and a strip that
+// snapped back would swallow rows that are not its own. Such a strip is
+// grown instead of replaced too: its id, the files it already collected
+// and the stamp it was requested at survive the re-hydrate. The strip
+// names the run the actor is tracking; while a send's response is still
+// in flight the window has none to name, and that send's continuation
+// (beginTurn) names the newest strip when the answer lands, which is
+// this one.
 function liveTurnEntry(
-  start: number,
+  seam: number,
   previous: TurnArtifacts | undefined,
   runID: string | undefined,
 ): TurnArtifacts {
@@ -1399,7 +1407,7 @@ function liveTurnEntry(
       : undefined;
   return {
     id: carried?.id ?? newTurnID(),
-    start,
+    start: carried ? seam + carried.start : seam,
     docs: carried ? [...carried.docs] : [],
     requestedAt: carried?.requestedAt,
     runID: runID ?? carried?.runID,
@@ -3777,9 +3785,10 @@ export const useStore = create<StoreState>((set, get) => {
           // rows read as the last archived turn's: that turn's fold
           // header names a run that already finished and its steps
           // collapse under a complete answer (see turnIsLive in
-          // ChatView). The strip names the run the actor is tracking,
+          // ChatView). The strip carries the run the actor is tracking,
           // which is what the artifact and turn_end events look their
-          // turn up by.
+          // turn up by, and a strip the shell already had keeps its own
+          // rows (see liveTurnEntry).
           const liveRunID = (
             actor?.getSnapshot().context as
               { currentRunID?: string } | undefined
@@ -4091,6 +4100,11 @@ export const useStore = create<StoreState>((set, get) => {
         try {
           await api.openWorkspace(target);
           const landed = await switchWorkspace(target, 8000);
+          // A draft is a send to a named workspace, so a switch that did
+          // not land — nothing settled, or a newer switch took the window
+          // first — is reported rather than dropped the way a session
+          // click is: the text goes back to the composer and the status
+          // line says why it did not go.
           if (!landed || !sameWorkspacePath(landed, target)) {
             throw new Error('workspace switch did not complete');
           }
