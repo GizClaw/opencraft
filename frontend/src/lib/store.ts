@@ -523,8 +523,6 @@ export const useStore = create<StoreState>((set, get, store) => {
     ...automations,
     ...toasts,
 
-    ...turn,
-
     draftComposer: (text) => {
       set({ composerDraft: text });
     },

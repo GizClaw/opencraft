@@ -56,9 +56,6 @@ export function createConvCore(api: StoreApi<StoreState>) {
   };
 
   let pendingStreamEvents: UIEvent[] = [];
-  // Whether the queue holds nothing but reasoning deltas. Kept on
-  // enqueue so the cadence question is answered once per delta instead
-  // of by rescunning the whole queue (see stream.ts).
 
   // Whether the queue holds nothing but reasoning deltas. Kept on
   // enqueue so the cadence question is answered once per delta instead
@@ -68,9 +65,6 @@ export function createConvCore(api: StoreApi<StoreState>) {
   let streamFlushRAF: number | null = null;
 
   let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  // lastStreamFlushAt paces stream commits (see stream.ts for the two
-  // cadences); streamFlushDeadline is when the armed handle hands the
-  // queue to the store.
 
   // lastStreamFlushAt paces stream commits (see stream.ts for the two
   // cadences); streamFlushDeadline is when the armed handle hands the
@@ -78,10 +72,6 @@ export function createConvCore(api: StoreApi<StoreState>) {
   let lastStreamFlushAt = 0;
 
   let streamFlushDeadline = 0;
-  // Session switches must land on the backend in the same order the
-  // user requested them. Without this queue, an older resumeSession
-  // can finish after a newer NewChat and move the backend context back
-  // to the old session.
 
   // Session switches must land on the backend in the same order the
   // user requested them. Without this queue, an older resumeSession
@@ -99,10 +89,6 @@ export function createConvCore(api: StoreApi<StoreState>) {
     );
     return next;
   };
-  // updateConv applies one patch to a conversation and settles it (see
-  // settleConversation). Everything one event writes belongs in that
-  // single update: one event is one store write, which is what the
-  // stream flush's flush-to-frame probe measures.
 
   // updateConv applies one patch to a conversation and settles it (see
   // settleConversation). Everything one event writes belongs in that
@@ -119,11 +105,6 @@ export function createConvCore(api: StoreApi<StoreState>) {
         },
       };
     });
-
-  // syncPendingIndex rebuilds the prompt-id -> conversation map for one
-  // conversation after its pendingInteracts change. Stream deltas never
-  // touch this map, so sidebar/interact selectors stay O(1) instead of
-  // scanning every loaded conversation on each token.
 
   // syncPendingIndex rebuilds the prompt-id -> conversation map for one
   // conversation after its pendingInteracts change. Stream deltas never
@@ -170,11 +151,6 @@ export function createConvCore(api: StoreApi<StoreState>) {
   // when it is unknown (a live turn resumed after a frontend reload
   // routes by conversation_id). Returns undefined only when the id is
   // empty.
-
-  // ensureConversation returns the conversation, creating a busy shell
-  // when it is unknown (a live turn resumed after a frontend reload
-  // routes by conversation_id). Returns undefined only when the id is
-  // empty.
   const ensureConversation = (convID: string | undefined) => {
     if (!convID) return undefined;
     let conv = get().conversations[convID];
@@ -208,9 +184,6 @@ export function createConvCore(api: StoreApi<StoreState>) {
       stateRoot.registry.get(conversationID)?.getSnapshot(),
       kind,
     );
-
-  // submissionStarts is the two cells that begin a turn: a quiet turn
-  // takes one, and a live run gives it up to a barge.
 
   // submissionStarts is the two cells that begin a turn: a quiet turn
   // takes one, and a live run gives it up to a barge.
@@ -313,11 +286,6 @@ export function createConvCore(api: StoreApi<StoreState>) {
   // nor backed by a live run, so merely opening many sessions over time
   // does not grow the in-memory store without bound. Resuming one of
   // those sessions hydrates from the archive again.
-
-  // retainLiveConversations drops transcripts that are neither focused
-  // nor backed by a live run, so merely opening many sessions over time
-  // does not grow the in-memory store without bound. Resuming one of
-  // those sessions hydrates from the archive again.
   const retainLiveConversations = (currentID: string) => {
     const state = get();
     const conversations: Record<string, ConversationState> = {};
@@ -364,10 +332,6 @@ export function createConvCore(api: StoreApi<StoreState>) {
       },
     }));
   };
-
-  // openMintedSession materializes a conversation the backend already
-  // minted: the current pointer moved server-side, so this only drives
-  // the focus machine and local shell state without another RPC.
 
   // openMintedSession materializes a conversation the backend already
   // minted: the current pointer moved server-side, so this only drives
