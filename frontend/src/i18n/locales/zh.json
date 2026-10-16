@@ -602,7 +602,7 @@
     "secInferenceInstances": "实例与模型",
     "secInferenceRouter": "路由重试策略",
     "skillsDelete": "删除",
-    "skillsDeleteConfirm": "确定删除技能 {{name}}？其目录将被移除，内置技能不可删除。",
+    "skillsDeleteConfirm": "确定删除技能 {{name}}？其目录将被移除；内置、插件提供或来自 extra_roots 的技能不能在这里删除。",
     "skillsDetailLoading": "正在读取 SKILL.md…",
     "skillsDiscover": "发现技能",
     "skillsDiscoverHint": "来自 openai/codex 仓库的官方技能。安装会克隆并校验 SKILL.md。",

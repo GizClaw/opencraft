@@ -33,10 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Unset `HTTP(S)_PROXY`/`ALL_PROXY` for those calls, or set
   `allow_private` — which also waives the private-destination guard, so
   prefer the former unless the proxy is this deployment's own.
-- `DeleteSkill` only removes skills inside the app's own roots now;
-  plugin-provided and configured `extra_roots` skills are removed by
-  their owner (the plugin Store), and the settings page hides the
-  delete button for them.
+- `DeleteSkill` only removes skills inside the app's own roots now:
+  plugin skills go away with their plugin, and skills from a configured
+  `skills.settings.extra_roots` have to be deleted where they live. The
+  settings page hides the delete entry for those rows — the rest of the
+  row menu (pin, archive) stays.
+- The SSRF guard refuses more special-purpose ranges (multicast, the
+  TEST-NET documentation blocks, 192.0.0.0/24, 192.88.99.0/24,
+  198.18.0.0/15, 240.0.0.0/4): a self-hosted service on one of those
+  addresses is not reachable through `web_fetch` or `generate_video`,
+  which is the point of the list.
 
 ### Added
 

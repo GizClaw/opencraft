@@ -602,7 +602,7 @@
     "secInferenceInstances": "Instances & models",
     "secInferenceRouter": "Router retry policy",
     "skillsDelete": "Delete",
-    "skillsDeleteConfirm": "Delete skill {{name}}? Its directory will be removed; builtin skills cannot be deleted.",
+    "skillsDeleteConfirm": "Delete skill {{name}}? Its directory will be removed; builtin, plugin-provided and extra-root skills cannot be deleted here.",
     "skillsDetailLoading": "Loading SKILL.md…",
     "skillsDiscover": "Discover skills",
     "skillsDiscoverHint": "Official skills from the openai/codex repo. Install clones and validates them.",
