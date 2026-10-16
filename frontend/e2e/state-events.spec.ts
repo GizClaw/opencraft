@@ -123,10 +123,15 @@ test('a run that starts after the previous turn ended keeps its own live strip',
   const reportStrip = page
     .getByRole('button', { name: 'report.md' })
     .locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]');
+  // The ancestor has to resolve first: a renamed container would make
+  // the child locator match nothing, and the count below would pass
+  // without testing anything.
+  await expect(reportStrip).toHaveCount(1);
   await expect(reportStrip.getByText('first-file.md')).toHaveCount(0);
   const firstStrip = page
     .getByRole('button', { name: 'first-file.md' })
     .locator('xpath=ancestor::div[contains(@class,"rounded-card")][1]');
+  await expect(firstStrip).toHaveCount(1);
   await expect(firstStrip.getByText('report.md')).toHaveCount(0);
 
   // Its own ending reconciles from the archive like any other turn.
@@ -144,7 +149,11 @@ test('a run that starts after the previous turn ended keeps its own live strip',
   await emit(page, streamEvent('s-1', 'r-1', 'stale first-run tail'));
   await emit(page, {
     type: 'automation_run_started',
-    data: { run_id: 'r-3', conversation_id: 's-1' },
+    data: {
+      run_id: 'r-3',
+      conversation_id: 's-1',
+      message: 'scheduled prompt',
+    },
   });
   await emit(page, streamEvent('s-1', 'r-3', 'third live answer'));
   await expect(page.getByText('third live answer')).toBeVisible();
