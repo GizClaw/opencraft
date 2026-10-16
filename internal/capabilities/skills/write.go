@@ -369,8 +369,10 @@ func copyTree(src, dst string) error {
 
 // Delete removes one non-builtin skill directory (the parent of the
 // given SKILL.md path). Only paths inside the app's own writable skill
-// roots are accepted; embedded builtin skills are refused, and so are
-// plugin-provided or extra-root skills, whose owner removes them.
+// roots are accepted. Embedded builtin skills and plugin-provided skills
+// are refused (the plugin Store owns those trees); a skill from a
+// configured ExtraRoot is refused too — it has to be deleted where it
+// lives.
 //
 // The containment decision runs on resolved paths: RemoveAll resolves a
 // path's intermediate components when it executes, so a lexical
@@ -415,12 +417,10 @@ func (s *Service) Deletable(skillPath string) bool {
 
 // deleteTarget is the containment decision both Delete and Deletable
 // run: resolveDeleteTarget turns one SKILL.md path into the resolved
-// skill directory, the resolved document, and the app-owned root that
-// contains them.
+// skill directory and the app-owned root that contains it.
 type deleteTarget struct {
 	root string // the app-owned root containing the skill
 	dir  string // the resolved skill directory to remove
-	doc  string // the resolved SKILL.md
 }
 
 func (s *Service) resolveDeleteTarget(skillPath string) (deleteTarget, error) {
@@ -480,14 +480,15 @@ func (s *Service) resolveDeleteTarget(skillPath string) (deleteTarget, error) {
 	if !info.Mode().IsRegular() {
 		return deleteTarget{}, fmt.Errorf("skills: %q is not a regular file", skillPath)
 	}
-	return deleteTarget{root: realRoot, dir: dir, doc: real}, nil
+	return deleteTarget{root: realRoot, dir: dir}, nil
 }
 
 // writableRoots returns every skill root the app itself owns and may
 // write: the user root and the per-user-dir skills root. Configured
-// ExtraRoots (plugin-provided skills) are deliberately absent: those
-// trees belong to the plugin Store, and a destructive write through
-// this service would bypass its lifecycle. Discovery still scans them.
+// ExtraRoots — plugin-provided skills, and any extra root a user
+// configures — are deliberately absent: this service does not own those
+// trees, and a destructive write through it would bypass their owner.
+// Discovery still scans them.
 func (s *Service) writableRoots() []string {
 	var roots []string
 	if home, err := os.UserHomeDir(); err == nil {
