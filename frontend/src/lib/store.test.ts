@@ -2550,6 +2550,149 @@ describe('store: transcript cap', () => {
     expect(conv.messages[0].text).toBe('message-100');
     expect(conv.turnArtifacts.map((t) => t.start)).toEqual([0, 800]);
   });
+
+  it('cuts at the next boundary when backing up would keep it all', async () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: manyMessages(1000),
+          turnArtifacts: [
+            { id: 'top', start: 0, docs: [] },
+            { id: 'new', start: 900, docs: [] },
+          ],
+        },
+      },
+    });
+    await useStore.getState().setThink('high');
+
+    const conv = useStore.getState().conversations['s-1'];
+    // The exact cut (200) is inside the first turn, and backing up to
+    // the only boundary below it (0) would keep the whole transcript —
+    // so the trim moves down to the next boundary (900) instead. The
+    // whole turn goes, and the kept rows still begin at their own strip:
+    // nothing is left behind without the turn that owns it.
+    expect(conv.messages).toHaveLength(100);
+    expect(conv.messages[0].text).toBe('message-900');
+    expect(
+      conv.turnArtifacts.map((t) => ({ id: t.id, start: t.start })),
+    ).toEqual([{ id: 'new', start: 0 }]);
+  });
+
+  it('keeps a lone live turn whole rather than cut inside it', async () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: manyMessages(900),
+          turnArtifacts: [{ id: 'live', start: 0, docs: [], runID: 'r-live' }],
+        },
+      },
+    });
+    await useStore.getState().setThink('high');
+
+    // No boundary past the cut exists: the transcript is this one turn,
+    // the live run's. Cutting inside it would drop the strip its run,
+    // its deltas and its archived copy are found by while keeping its
+    // rows, so the cap yields — the rows are what the reader watches.
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages).toHaveLength(900);
+    expect(conv.turnArtifacts).toHaveLength(1);
+    expect(conv.turnArtifacts[0].id).toBe('live');
+    expect(conv.turnArtifacts[0].start).toBe(0);
+  });
+
+  it('does not cut at a strip that owns no rows', async () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: manyMessages(850),
+          turnArtifacts: [
+            { id: 'big', start: 0, docs: [] },
+            // The seam a run met on the wire opens its strip at, before
+            // the run's first row has landed: this strip owns nothing,
+            // so a cut here would drop every row in the store.
+            { id: 'live', start: 850, docs: [], runID: 'r-live' },
+          ],
+        },
+      },
+    });
+    await useStore.getState().setThink('high');
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages).toHaveLength(850);
+    expect(
+      conv.turnArtifacts.map((t) => ({ id: t.id, start: t.start })),
+    ).toEqual([
+      { id: 'big', start: 0 },
+      { id: 'live', start: 850 },
+    ]);
+  });
+
+  it('moves the history cursor past the turns the trim dropped', async () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: manyMessages(900),
+          turnArtifacts: [
+            { id: 'h-1', start: 0, docs: [], seq: 1 },
+            { id: 'live', start: 300, docs: [], runID: 'r-live' },
+            { id: 'h-3', start: 700, docs: [], seq: 3 },
+          ],
+          historySeq: 1,
+          historyHasMore: true,
+        },
+      },
+    });
+    await useStore.getState().setThink('high');
+
+    // h-1 (seq 1) is dropped and the live strip — seq-less — is what the
+    // kept rows start at, so the cursor has to name the oldest archived
+    // turn that is still loaded (h-3, seq 3); keeping 1 would ask the
+    // backend for turns below a turn that is gone, and h-2/h-1 could
+    // never be paged back in.
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages).toHaveLength(600);
+    expect(
+      conv.turnArtifacts.map((t) => ({ id: t.id, start: t.start })),
+    ).toEqual([
+      { id: 'live', start: 0 },
+      { id: 'h-3', start: 400 },
+    ]);
+    expect(conv.historySeq).toBe(3);
+  });
+
+  it('keeps the dropped turns reachable when the trim took them all', async () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: manyMessages(850),
+          turnArtifacts: [
+            { id: 'h-1', start: 0, docs: [], seq: 1 },
+            { id: 'live', start: 830, docs: [], runID: 'r-live' },
+          ],
+          historySeq: 1,
+          historyHasMore: false,
+        },
+      },
+    });
+    await useStore.getState().setThink('high');
+
+    // The only archived turn is gone; the page below now has to start
+    // one past it (seq 2), and the transcript has to offer to fetch it
+    // at all — otherwise the rows the reader scrolls up for are lost
+    // until the session is reloaded.
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages).toHaveLength(20);
+    expect(conv.turnArtifacts).toEqual([
+      { id: 'live', start: 0, docs: [], runID: 'r-live' },
+    ]);
+    expect(conv.historySeq).toBe(2);
+    expect(conv.historyHasMore).toBe(true);
+  });
 });
 
 describe('store: memory budgets', () => {
