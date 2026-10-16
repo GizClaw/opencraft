@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -129,6 +130,30 @@ func (f *fakeTurnStore) UpsertSummaryNode(_ context.Context, n SummaryNode) erro
 	}
 	f.nodes = append(f.nodes, n)
 	return nil
+}
+
+// CondenseSummaryNode mirrors the sqlite store's atomic gate: the swap
+// lands only while the row still holds exactly the buffer the job
+// condensed (content, coverage, write time).
+func (f *fakeTurnStore) CondenseSummaryNode(
+	_ context.Context, want, replacement SummaryNode,
+) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.nodes {
+		cur := f.nodes[i]
+		if cur.ID != want.ID {
+			continue
+		}
+		if cur.Content.Text() != want.Content.Text() ||
+			!cur.UpdatedAt.Equal(want.UpdatedAt) ||
+			!slices.Equal(cur.SourceIDs, want.SourceIDs) {
+			return false, nil
+		}
+		f.nodes[i] = replacement
+		return true, nil
+	}
+	return false, nil
 }
 
 func (f *fakeTurnStore) ListSummaryNodes(_ context.Context, conversationID string) ([]SummaryNode, error) {
@@ -456,7 +481,7 @@ func TestAssemblyCondensesFullSummary(t *testing.T) {
 	// fires LLM condensation.
 	for i := 0; i < 12; i++ {
 		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
-		a.condenseWG.Wait()
+		a.workWG.Wait()
 	}
 	if calls != 1 {
 		t.Fatalf("condense calls = %d, want 1", calls)
@@ -511,7 +536,7 @@ func TestAssemblyCondenseMergesPreviousSummary(t *testing.T) {
 	// condensed output, so the facts of the dropped messages survive.
 	for i := 0; i < 8; i++ {
 		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
-		a.condenseWG.Wait()
+		a.workWG.Wait()
 	}
 	if len(prompts) < 2 {
 		t.Fatalf("condense calls = %d, want >= 2", len(prompts))
@@ -547,7 +572,7 @@ func TestAssemblyCondenseFailureFallsBackToBuffer(t *testing.T) {
 	// algorithm stays summary_buffer so memory is never lost.
 	for i := 0; i < 8; i++ {
 		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
-		a.condenseWG.Wait()
+		a.workWG.Wait()
 	}
 	if calls != 2 {
 		t.Fatalf("condense calls = %d, want 2 (one per window advance)", calls)
@@ -627,7 +652,7 @@ func TestAssemblyCondenseCapsOutputToBudget(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
 	}
-	a.condenseWG.Wait()
+	a.workWG.Wait()
 	if len(store.nodes) != 1 {
 		t.Fatalf("nodes = %d, want 1", len(store.nodes))
 	}
@@ -982,4 +1007,104 @@ func TestAssemblyFoldKeepsToolPairRaw(t *testing.T) {
 		t.Fatalf("roles = %s/%s, want assistant/tool pair preserved",
 			raws[0].MessageRole, raws[1].MessageRole)
 	}
+}
+
+// TestAssemblyCloseStopsScheduling pins the close barrier: once Close
+// ran, a late fold is refused and no condensation may start — the store
+// is being torn down and a generation would outlive its reader.
+func TestAssemblyCloseStopsScheduling(t *testing.T) {
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
+	var calls atomic.Int32
+	gen := func(
+		_ context.Context, _ inference.GenerateRequest,
+	) (inference.GenerateResponse, error) {
+		calls.Add(1)
+		return inference.GenerateResponse{
+			Message: message.NewTextMessage(
+				message.RoleAssistant, "CONDENSED"),
+			FinishReason: inference.FinishCompleted,
+		}, nil
+	}
+	a := NewAssembly(store,
+		WithAssemblyPolicy(condensePolicy()),
+		withGenerate(gen))
+	for i := 0; i < 7; i++ {
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	before := calls.Load()
+	for i := 7; i < 14; i++ {
+		msg := message.NewTextMessage(message.RoleUser, fmt.Sprintf("m%d", i))
+		store.appendRows("c1", msg)
+		err := a.CommitTurn(context.Background(), memory.Turn{
+			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+			ConversationID: "c1",
+			IdempotencyKey: fmt.Sprintf("t%d", i),
+			Messages:       []message.Message{msg},
+		})
+		if err == nil {
+			t.Fatalf("commit %d after Close succeeded; the fold must be refused", i)
+		}
+	}
+	if after := calls.Load(); after != before {
+		t.Fatalf("condensation calls %d -> %d after Close; new work must not start",
+			before, after)
+	}
+}
+
+// TestAssemblyCloseRacesFolds drives folds and Close concurrently: the
+// closed bit and the wait group are one mutex-protected step, so the
+// race can neither trip the WaitGroup misuse panic nor leave a
+// condensation goroutine that outlives Close.
+func TestAssemblyCloseRacesFolds(t *testing.T) {
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
+	gen := func(
+		_ context.Context, _ inference.GenerateRequest,
+	) (inference.GenerateResponse, error) {
+		return inference.GenerateResponse{
+			Message: message.NewTextMessage(
+				message.RoleAssistant, "CONDENSED"),
+			FinishReason: inference.FinishCompleted,
+		}, nil
+	}
+	a := NewAssembly(store,
+		WithAssemblyPolicy(condensePolicy()),
+		withGenerate(gen))
+	for i := 0; i < 7; i++ {
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
+	}
+
+	emit := func(worker, i int) {
+		msg := message.NewTextMessage(
+			message.RoleUser, fmt.Sprintf("w%d-m%d", worker, i))
+		// One conversation per worker keeps the folding windows
+		// independent; CommitTurn folds whatever the fake store holds.
+		conv := fmt.Sprintf("c%d", worker+2)
+		store.appendRows(conv, msg)
+		_ = a.CommitTurn(context.Background(), memory.Turn{
+			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+			ConversationID: conv,
+			IdempotencyKey: fmt.Sprintf("w%d-t%d", worker, i),
+			Messages:       []message.Message{msg},
+		})
+	}
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < 10; i++ {
+				emit(w, i)
+			}
+		}(w)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = a.Close()
+	}()
+	wg.Wait()
 }

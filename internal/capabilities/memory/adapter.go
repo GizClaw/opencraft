@@ -295,6 +295,70 @@ func (a *sqliteTurnStore) UpsertSummaryNode(
 	return nil
 }
 
+// CondenseSummaryNode replaces the stored copy of want with replacement
+// while the row still holds want exactly — same content, same coverage,
+// same update time — as one statement. ok=false means a newer fold (or
+// an earlier condensation) landed first: the caller drops the
+// replacement instead of rolling the stored window back. A conversation
+// deleted while the generation ran removes the row too, which reads the
+// same way, and a plain UPDATE can never resurrect it.
+func (a *sqliteTurnStore) CondenseSummaryNode(
+	ctx context.Context, want, replacement summary.SummaryNode,
+) (bool, error) {
+	wantSources, err := json.Marshal(want.SourceIDs)
+	if err != nil {
+		return false, fmt.Errorf("memory: marshal summary sources: %w", err)
+	}
+	wantContent, err := json.Marshal(want.Content)
+	if err != nil {
+		return false, fmt.Errorf("memory: marshal summary content: %w", err)
+	}
+	parents, err := json.Marshal(replacement.ParentIDs)
+	if err != nil {
+		return false, fmt.Errorf("memory: marshal summary parents: %w", err)
+	}
+	sources, err := json.Marshal(replacement.SourceIDs)
+	if err != nil {
+		return false, fmt.Errorf("memory: marshal summary sources: %w", err)
+	}
+	metadata, err := json.Marshal(replacement.Metadata)
+	if err != nil {
+		return false, fmt.Errorf("memory: marshal summary metadata: %w", err)
+	}
+	content, err := json.Marshal(replacement.Content)
+	if err != nil {
+		return false, fmt.Errorf("memory: marshal summary content: %w", err)
+	}
+	res, err := a.db.SQLDB().ExecContext(ctx, `
+		UPDATE summary_nodes SET
+			parent_ids = ?, source_ids = ?, summary = ?, created_at = ?, updated_at = ?, metadata = ?
+		WHERE id = ? AND thread_id = ?
+			AND source_ids = ? AND summary = ? AND updated_at = ?`,
+		string(parents), string(sources), string(content),
+		replacement.CreatedAt.UTC().Format(time.RFC3339Nano),
+		replacement.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		string(metadata),
+		replacement.ID, replacement.ThreadID,
+		string(wantSources), string(wantContent),
+		want.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return false, fmt.Errorf("memory: condense summary node: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("memory: condense summary node: %w", err)
+	}
+	if affected == 0 {
+		telemetry.Info(ctx,
+			"memory: condensation write skipped; the buffer moved on or the conversation is gone",
+			attribute.String("conversation.id", replacement.ThreadID),
+			attribute.String("node.id", replacement.ID))
+		return false, nil
+	}
+	return true, nil
+}
+
 func (a *sqliteTurnStore) ListSummaryNodes(
 	ctx context.Context, conversationID string,
 ) ([]summary.SummaryNode, error) {

@@ -30,6 +30,22 @@ func (s *nodeWriteLog) UpsertSummaryNode(
 	return s.fakeTurnStore.UpsertSummaryNode(ctx, node)
 }
 
+// CondenseSummaryNode records the swap the same way upserts are
+// recorded: only a condensation that actually landed counts as written,
+// so "the stale condensation was written" stays a question about what
+// reached the store.
+func (s *nodeWriteLog) CondenseSummaryNode(
+	ctx context.Context, want, replacement SummaryNode,
+) (bool, error) {
+	ok, err := s.fakeTurnStore.CondenseSummaryNode(ctx, want, replacement)
+	if ok {
+		s.mu.Lock()
+		s.writes = append(s.writes, replacement.Content.Text())
+		s.mu.Unlock()
+	}
+	return ok, err
+}
+
 func (s *nodeWriteLog) wrote(text string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -100,7 +116,7 @@ func TestAssemblyCondenseDropsStaleJob(t *testing.T) {
 	// parked; its own condensation queues behind the gate.
 	commit(t, a, store, "c1", "t7", "m7")
 	close(release)
-	a.condenseWG.Wait()
+	a.workWG.Wait()
 
 	mu.Lock()
 	got := calls
@@ -155,7 +171,7 @@ func TestAssemblyCondensesOneAtATime(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
 	}
-	a.condenseWG.Wait()
+	a.workWG.Wait()
 	if calls.Load() < 2 {
 		t.Fatalf("condense calls = %d, want at least 2", calls.Load())
 	}

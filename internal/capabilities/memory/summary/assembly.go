@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +51,13 @@ type TurnStore interface {
 	// LoadAll returns every replayable row, oldest first.
 	LoadAll(ctx context.Context, conversationID string) ([]StoredMessage, error)
 	UpsertSummaryNode(ctx context.Context, node SummaryNode) error
+	// CondenseSummaryNode replaces the stored copy of want with
+	// replacement, but only while the row still holds want exactly
+	// (same content, same coverage, same update time). ok=false means a
+	// newer fold or condensation landed first: the replacement is stale
+	// and must be dropped. Comparison and write are one statement, so
+	// nothing can land between them.
+	CondenseSummaryNode(ctx context.Context, want, replacement SummaryNode) (bool, error)
 	ListSummaryNodes(ctx context.Context, conversationID string) ([]SummaryNode, error)
 	// DeleteSummaryNodes removes a thread's nodes at level except the node
 	// whose id equals keepID (pass "" to delete all at that level).
@@ -73,7 +79,13 @@ type Assembly struct {
 	usage             func(context.Context, inference.Usage)
 	now               func() time.Time
 	replayFullHistory bool
-	condenseWG        sync.WaitGroup
+	// workWG tracks everything that can still write: the in-flight
+	// folds and the condensation goroutines they launch. Close flips
+	// closed under closeMu and then waits here, so a teardown blocks
+	// exactly as long as a write is possible.
+	workWG  sync.WaitGroup
+	closeMu sync.Mutex
+	closed  bool
 	// condensePerm serializes the LLM condensation stage: at most one
 	// generation runs at a time, so two folds racing the same rolling
 	// node cannot both pay a model call for a window the other is
@@ -193,7 +205,20 @@ func (a *Assembly) FoldOnly(ctx context.Context, conversationID string) error {
 // level-0 node. The cost is bounded by the byte budget plus bounded
 // backward chunks (fold tail and pair lookback) — independent of
 // conversation length — instead of scanning the whole thread on every turn.
+//
+// It refuses to start once Close ran: the store is no longer a safe
+// target after the close, and teardown is already waiting on the folds
+// that registered before it.
 func (a *Assembly) fold(ctx context.Context, conversationID string) error {
+	a.closeMu.Lock()
+	if a.closed {
+		a.closeMu.Unlock()
+		return memory.NewError(memory.KindInternal, "turn",
+			errors.New("memory: assembly is closed"))
+	}
+	a.workWG.Add(1)
+	a.closeMu.Unlock()
+	defer a.workWG.Done()
 	p := a.policy.Normalize()
 	maxSeq, err := a.store.MaxSeq(ctx, conversationID)
 	if err != nil {
@@ -304,12 +329,25 @@ func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 		// path so a slow generation never delays turn completion. The
 		// buffer node above is already persisted; the goroutine swaps
 		// in the condensed content when the generation lands. One
-		// generation runs at a time (condensePerm), and Close waits for
-		// every in-flight or queued job, so a generation teardown never
-		// closes the store out from under a late write.
-		a.condenseWG.Add(1)
+		// generation runs at a time (condensePerm).
+		//
+		// Registration and the closed check share closeMu: Close can
+		// only start waiting after the flip, so it never races an Add
+		// (a zero-counter Add concurrent with Wait is a WaitGroup
+		// misuse), and a fold that arrived after the flip launches
+		// nothing into a store that is being torn down.
+		a.closeMu.Lock()
+		if a.closed {
+			a.closeMu.Unlock()
+			telemetry.Info(ctx,
+				"memory: condensation skipped; the assembly is closing",
+				attribute.String("conversation.id", conversationID))
+			return nil
+		}
+		a.workWG.Add(1)
+		a.closeMu.Unlock()
 		go func() {
-			defer a.condenseWG.Done()
+			defer a.workWG.Done()
 			a.condensePerm <- struct{}{}
 			defer func() { <-a.condensePerm }()
 			a.runCondense(ctx, condense)
@@ -318,13 +356,22 @@ func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 	return nil
 }
 
-// Close waits for the in-flight condensations to finish. The assembly's
-// condensation goroutines are the only writers left after a turn ends,
-// so teardown must drain them before the shared session store goes
+// Close waits for every in-flight fold and condensation to finish, then
+// refuses new work. Folds and their condensation goroutines are the
+// writers this teardown must drain before the shared session store goes
 // away; the assembly layer closes io.Closer resources in reverse
 // construction order, which is what calls this.
+//
+// The closed bit and the wait group live under one mutex: a fold either
+// registers before Close flips the bit — and Wait sees it — or observes
+// the bit and does not register. Adding to the group concurrently with
+// Wait on a zero counter would be a WaitGroup misuse, and a late fold
+// would otherwise write into the store while it is being torn down.
 func (a *Assembly) Close() error {
-	a.condenseWG.Wait()
+	a.closeMu.Lock()
+	a.closed = true
+	a.closeMu.Unlock()
+	a.workWG.Wait()
 	return nil
 }
 
@@ -352,18 +399,11 @@ func (a *Assembly) runCondense(ctx context.Context, job *condenseJob) {
 	// The generation may take minutes, and the node id is stable: a
 	// newer fold can have advanced the same rolling node while this one
 	// ran. Swapping the older condensation in then would roll the
-	// stored window and its coverage back, so the job only applies
-	// while the stored row is still the exact buffer it condensed.
-	current, err := a.stillBuffered(runCtx, job)
-	if err != nil {
-		telemetry.WarnErr(runCtx,
-			"memory: condensation freshness check failed", err,
-			attribute.String("conversation.id", job.node.ThreadID))
-		return
-	}
-	if !current {
-		return
-	}
+	// stored window and its coverage back, so the swap is one
+	// conditional write that lands only while the stored row is still
+	// the exact buffer this job condensed. A separate check followed by
+	// an unconditional write would leave the fold a window to land
+	// between the two.
 	// Cap the generated output to the summary budget so a verbose
 	// generation cannot blow past MaxSummaryBytes and crowd the next
 	// condensation input.
@@ -380,35 +420,17 @@ func (a *Assembly) runCondense(ctx context.Context, job *condenseJob) {
 	}
 	replacement.Metadata["algorithm"] = "summary_llm_condense"
 	replacement.Metadata["condense_raw_hash"] = hashText(job.rawText)
-	if err := a.store.UpsertSummaryNode(runCtx, replacement); err != nil {
+	ok, err := a.store.CondenseSummaryNode(runCtx, *job.node, replacement)
+	if err != nil {
+		telemetry.WarnErr(runCtx, "memory: write condensed summary failed", err,
+			attribute.String("conversation.id", job.node.ThreadID))
 		return
 	}
-}
-
-// stillBuffered reports whether the stored row is still the exact buffer
-// this job condensed: same raw text, same covered messages, same write.
-// A newer fold (or a condensation that already landed) fails the check,
-// and the job is dropped — its replacement is stale. The check runs
-// right before the write, which leaves only the fold/write race window;
-// losing that race costs one fold cycle, because the next fold rewrites
-// the buffer from the transcript.
-func (a *Assembly) stillBuffered(
-	ctx context.Context, job *condenseJob,
-) (bool, error) {
-	nodes, err := a.store.ListSummaryNodes(ctx, job.node.ThreadID)
-	if err != nil {
-		return false, err
+	if !ok {
+		telemetry.Info(runCtx,
+			"memory: dropped a stale condensation; the buffer fold moved on",
+			attribute.String("conversation.id", job.node.ThreadID))
 	}
-	for i := range nodes {
-		node := nodes[i]
-		if node.ID != job.node.ID {
-			continue
-		}
-		return node.Content.Text() == job.rawText &&
-			node.UpdatedAt.Equal(job.node.UpdatedAt) &&
-			slices.Equal(node.SourceIDs, job.node.SourceIDs), nil
-	}
-	return false, nil
 }
 
 // foldTailChunk bounds each range query while walking the foldable region
