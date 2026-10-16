@@ -264,8 +264,12 @@ test('fires one-shot intents only when the intent sequence moves', async ({
 test('parks the renderer while the window is hidden', async ({ page }) => {
   await mountPet(page);
 
+  // The stub logs explicit play()/pause() calls only: Rive's own
+  // autoplay starts the loop, and this surface never restarts a runtime
+  // it did not park (F-31), so a fresh mount logs no play even though
+  // the character is running.
   await emitPetState(page, { phase: 'thinking', disposition: 'work' });
-  expect(await riveLog(page)).toMatchObject({ pauses: 0, plays: 1 });
+  expect(await riveLog(page)).toMatchObject({ pauses: 0, plays: 0 });
 
   const setHidden = (hidden: boolean) =>
     page.evaluate((next) => {
@@ -277,14 +281,14 @@ test('parks the renderer while the window is hidden', async ({ page }) => {
     }, hidden);
 
   await setHidden(true);
-  expect(await riveLog(page)).toMatchObject({ pauses: 1, plays: 1 });
+  expect(await riveLog(page)).toMatchObject({ pauses: 1, plays: 0 });
 
   // Payloads arriving while hidden must not restart the rAF loop.
   await emitPetState(page, { phase: 'answering', disposition: 'work' });
-  expect(await riveLog(page)).toMatchObject({ pauses: 1, plays: 1 });
+  expect(await riveLog(page)).toMatchObject({ pauses: 1, plays: 0 });
 
   await setHidden(false);
-  expect(await riveLog(page)).toMatchObject({ pauses: 1, plays: 2 });
+  expect(await riveLog(page)).toMatchObject({ pauses: 1, plays: 1 });
 });
 
 test('parks the renderer once the character has been still', async ({
