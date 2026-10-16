@@ -40,6 +40,18 @@ type fakeTurnStore struct {
 	mu    sync.Mutex
 	msgs  map[string][]StoredMessage
 	nodes []SummaryNode
+	// writes counts every mutating store call, so a test can assert a
+	// barrier held without reading stable ids back: a fold that ran
+	// rewrites the same level-0 node in place, and a node count would
+	// not move.
+	writes int
+}
+
+// writeCount returns the number of mutating store calls so far.
+func (f *fakeTurnStore) writeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.writes
 }
 
 // appendRows writes one fixture turn to the transcript the way the
@@ -122,6 +134,7 @@ func (f *fakeTurnStore) LoadBack(_ context.Context, conversationID string, befor
 func (f *fakeTurnStore) UpsertSummaryNode(_ context.Context, n SummaryNode) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.writes++
 	for i := range f.nodes {
 		if f.nodes[i].ID == n.ID {
 			f.nodes[i] = n
@@ -150,6 +163,7 @@ func (f *fakeTurnStore) CondenseSummaryNode(
 			!slices.Equal(cur.SourceIDs, want.SourceIDs) {
 			return false, nil
 		}
+		f.writes++
 		f.nodes[i] = replacement
 		return true, nil
 	}
@@ -171,6 +185,7 @@ func (f *fakeTurnStore) ListSummaryNodes(_ context.Context, conversationID strin
 func (f *fakeTurnStore) DeleteSummaryNodes(_ context.Context, conversationID string, level int, keepID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.writes++
 	var out []SummaryNode
 	for _, n := range f.nodes {
 		if n.ThreadID == conversationID && n.Level == level && n.ID != keepID {
@@ -185,6 +200,7 @@ func (f *fakeTurnStore) DeleteSummaryNodes(_ context.Context, conversationID str
 func (f *fakeTurnStore) DeleteSummaryNodesByID(_ context.Context, conversationID string, ids []string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.writes++
 	drop := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		drop[id] = true
@@ -1040,10 +1056,7 @@ func TestAssemblyCloseStopsScheduling(t *testing.T) {
 	}
 
 	before := calls.Load()
-	beforeNodes, err := store.ListSummaryNodes(context.Background(), "c1")
-	if err != nil {
-		t.Fatalf("list nodes: %v", err)
-	}
+	beforeWrites := store.writeCount()
 	for i := 7; i < 14; i++ {
 		msg := message.NewTextMessage(message.RoleUser, fmt.Sprintf("m%d", i))
 		store.appendRows("c1", msg)
@@ -1061,13 +1074,12 @@ func TestAssemblyCloseStopsScheduling(t *testing.T) {
 		t.Fatalf("condensation calls %d -> %d after Close; new work must not start",
 			before, after)
 	}
-	afterNodes, err := store.ListSummaryNodes(context.Background(), "c1")
-	if err != nil {
-		t.Fatalf("list nodes: %v", err)
-	}
-	if len(afterNodes) != len(beforeNodes) {
-		t.Fatalf("summary nodes %d -> %d after Close; the fold must not touch the store",
-			len(beforeNodes), len(afterNodes))
+	// A fold rewrites the same stable-id node in place, so the node
+	// count cannot move; the write counter is what pins "no fold
+	// reached the store".
+	if after := store.writeCount(); after != beforeWrites {
+		t.Fatalf("store writes %d -> %d after Close; the fold must not touch the store",
+			beforeWrites, after)
 	}
 }
 
