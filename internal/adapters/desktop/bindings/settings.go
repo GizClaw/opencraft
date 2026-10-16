@@ -78,17 +78,28 @@ func (b *Settings) GetThink() (string, error) {
 // SetThink updates and persists the reasoning effort.
 func (b *Settings) SetThink(level string) error {
 	ctx := b.core.Shell.Context()
-	workDir := b.core.ActiveWorkDir()
 	lv := sessions.ThinkLevel(level)
 	if !lv.Valid() {
 		return fmt.Errorf("unknown think level %q", level)
 	}
-	b.core.Conversation.SetThink(workDir, string(lv))
-	if h := b.core.ActiveHost(); h != nil && h.Sessions() != nil {
-		return h.Sessions().SetThink(
-			ctx, b.core.Conversation.Current(workDir), lv,
-		)
+	// Sample the workspace and its Host once: resolving the host from
+	// the active workspace a second time lets a workspace switch in
+	// between persist one workspace's value and remember another's.
+	workDir := b.core.ActiveWorkDir()
+	h := b.core.Runtime.HostFor(workDir)
+	if h == nil || h.Sessions() == nil {
+		return fmt.Errorf(
+			"settings: workspace %q has no running session store; think level not saved",
+			workDir)
 	}
+	// Persist first: a failed write must not leave the in-memory knob
+	// claiming a value the store never accepted.
+	if err := h.Sessions().SetThink(
+		ctx, b.core.Conversation.Current(workDir), lv,
+	); err != nil {
+		return err
+	}
+	b.core.Conversation.SetThink(workDir, string(lv))
 	return nil
 }
 
@@ -100,14 +111,20 @@ func (b *Settings) GetModel() (string, error) {
 // SetModel updates and persists the model hint.
 func (b *Settings) SetModel(model string) error {
 	ctx := b.core.Shell.Context()
-	workDir := b.core.ActiveWorkDir()
 	model = strings.TrimSpace(model)
-	b.core.Conversation.SetModel(workDir, model)
-	if h := b.core.ActiveHost(); h != nil && h.Sessions() != nil {
-		return h.Sessions().SetModel(
-			ctx, b.core.Conversation.Current(workDir), model,
-		)
+	workDir := b.core.ActiveWorkDir()
+	h := b.core.Runtime.HostFor(workDir)
+	if h == nil || h.Sessions() == nil {
+		return fmt.Errorf(
+			"settings: workspace %q has no running session store; model not saved",
+			workDir)
 	}
+	if err := h.Sessions().SetModel(
+		ctx, b.core.Conversation.Current(workDir), model,
+	); err != nil {
+		return err
+	}
+	b.core.Conversation.SetModel(workDir, model)
 	return nil
 }
 

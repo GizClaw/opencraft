@@ -39,6 +39,33 @@ func TestSettingsSessionDefaultsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSetThinkModelWithoutRunningWorkspaceIsRejected pins the write
+// discipline: with no Host there is nothing to persist through, and a
+// silent success would leave the in-memory knob claiming a value the
+// store never accepted.
+func TestSetThinkModelWithoutRunningWorkspaceIsRejected(t *testing.T) {
+	userDir := t.TempDir()
+	b := NewSettingsBinding(core.NewCore(userDir, t.TempDir(), ""))
+
+	before, err := b.GetThink()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SetThink("high"); err == nil {
+		t.Fatal("SetThink succeeded without a running workspace")
+	}
+	after, err := b.GetThink()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("in-memory think changed to %q despite the failed write", after)
+	}
+	if err := b.SetModel("gpt-x"); err == nil {
+		t.Fatal("SetModel succeeded without a running workspace")
+	}
+}
+
 func TestSettingsSessionDefaultsRejectsInvalidValues(t *testing.T) {
 	userDir := t.TempDir()
 	b := NewSettingsBinding(core.NewCore(userDir, t.TempDir(), ""))
