@@ -36,8 +36,10 @@ const ResourceKind = "session.Store"
 
 // Artifact is one file produced by a turn.
 type Artifact struct {
-	Path  string `json:"path"`
-	Bytes int    `json:"bytes,omitempty"`
+	Path string `json:"path"`
+	// Bytes is the file's size at the observed write, so an Append
+	// records the file and not the appended chunk.
+	Bytes int64 `json:"bytes,omitempty"`
 }
 
 // Usage is the cumulative token usage recorded for one session.
@@ -471,7 +473,7 @@ func (s *Store) takeTurnTiming(id, runID string) (turnTiming, bool) {
 // run that wrote it is archived. The run id is required: a file with
 // no run behind it has no turn to belong to, and guessing one would
 // put it under whatever turn happened to archive next.
-func (s *Store) BufferArtifact(id, runID, path string, bytes int) error {
+func (s *Store) BufferArtifact(id, runID, path string, bytes int64) error {
 	if err := requireID(id); err != nil {
 		return err
 	}

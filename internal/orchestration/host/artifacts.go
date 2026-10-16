@@ -23,14 +23,14 @@ func BufferObservedArtifact(
 	store *ocsessions.Store,
 	ctx context.Context,
 	path string,
-	data []byte,
+	bytes int64,
 ) {
 	conversationID, runID := artifactOwner(ctx)
 	if conversationID == "" || runID == "" || store == nil {
 		return
 	}
 	telemetry.WarnErr(ctx, "host: buffer observed artifact failed",
-		store.BufferArtifact(conversationID, runID, path, len(data)),
+		store.BufferArtifact(conversationID, runID, path, bytes),
 		attribute.String("conversation.id", conversationID),
 		attribute.String("run.id", runID),
 		attribute.String("path", path))
@@ -59,12 +59,12 @@ func artifactOwner(ctx context.Context) (conversationID, runID string) {
 // command, an MCP server) is not an artifact until an event stream can
 // attribute the write to a turn. ArchiveTurn flushes the buffer when the
 // turn is archived.
-func (h *Host) onArtifactWrite(ctx context.Context, path string, data []byte) {
+func (h *Host) onArtifactWrite(ctx context.Context, path string, bytes int64) {
 	h.mu.Lock()
 	fn := h.artifact
 	h.mu.Unlock()
 	if fn != nil {
-		fn(ctx, path, data)
+		fn(ctx, path, bytes)
 	}
-	BufferObservedArtifact(h.store, ctx, path, data)
+	BufferObservedArtifact(h.store, ctx, path, bytes)
 }

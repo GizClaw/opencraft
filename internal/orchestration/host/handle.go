@@ -79,7 +79,7 @@ type Host struct {
 	// importMu serializes archive write + memory seed across callers
 	// so a duplicate import with the same Source cannot double-seed.
 	importMu   sync.Mutex
-	artifact   func(context.Context, string, []byte)
+	artifact   func(context.Context, string, int64)
 	sessionUpd func(context.Context, string)
 	// stale records a Manager retirement on the Host itself. The pool
 	// entry carries the same flag while the Host is pooled; the
@@ -285,7 +285,7 @@ func (h *Host) backendForRun(runID string) interact.Backend {
 
 // SetArtifactObserver installs a callback invoked for every observed
 // workspace write before the artifact is buffered.
-func (h *Host) SetArtifactObserver(fn func(context.Context, string, []byte)) {
+func (h *Host) SetArtifactObserver(fn func(context.Context, string, int64)) {
 	h.mu.Lock()
 	h.artifact = fn
 	h.mu.Unlock()
