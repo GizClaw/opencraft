@@ -368,8 +368,16 @@ func copyTree(src, dst string) error {
 }
 
 // Delete removes one non-builtin skill directory (the parent of the
-// given SKILL.md path). Only paths inside the app's own writable
-// skill roots are accepted; embedded builtin skills are refused.
+// given SKILL.md path). Only paths inside the app's own writable skill
+// roots are accepted; embedded builtin skills are refused.
+//
+// The containment decision runs on resolved paths: RemoveAll resolves a
+// path's intermediate components when it executes, so a lexical
+// comparison would accept a symlinked spelling whose target is the root
+// itself, another tree, or a directory outside the roots entirely. The
+// removal then goes through an os.Root handle pinned to the owning root,
+// so even a link swapped in between the check and the delete cannot walk
+// the removal back out of the tree.
 func (s *Service) Delete(skillPath string) error {
 	if strings.HasPrefix(skillPath, builtinPrefix) {
 		return fmt.Errorf("skills: builtin skills cannot be deleted")
@@ -381,14 +389,23 @@ func (s *Service) Delete(skillPath string) error {
 	if filepath.Base(clean) != "SKILL.md" {
 		return fmt.Errorf("skills: %q is not a SKILL.md path", skillPath)
 	}
-	dir := filepath.Dir(clean)
-	inside := false
-	for _, root := range s.writableRoots() {
-		abs, err := filepath.Abs(filepath.Clean(root))
+	real, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return fmt.Errorf("skills: %q does not exist", skillPath)
+	}
+	dir := filepath.Dir(real)
+	root := ""
+	for _, candidate := range s.writableRoots() {
+		abs, err := filepath.Abs(filepath.Clean(candidate))
 		if err != nil {
 			continue
 		}
-		if dir == abs {
+		realRoot, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			// A root that cannot be resolved serves nothing.
+			continue
+		}
+		if dir == realRoot {
 			// A SKILL.md sitting directly in a scanned root is listed
 			// as a skill; deleting "it" would RemoveAll the whole root
 			// and every sibling skill with it.
@@ -396,31 +413,45 @@ func (s *Service) Delete(skillPath string) error {
 				"skills: %q sits directly in a skill root; refusing to delete the root itself",
 				skillPath)
 		}
-		if pathsafe.Within(abs, dir) {
-			inside = true
+		if pathsafe.Within(realRoot, dir) {
+			root = realRoot
 			break
 		}
 	}
-	if !inside {
+	if root == "" {
 		return fmt.Errorf("skills: %q is outside the writable skill roots", skillPath)
 	}
-	info, err := os.Stat(clean)
+	info, err := os.Stat(real)
 	if err != nil {
 		return fmt.Errorf("skills: %q does not exist", skillPath)
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("skills: %q is not a regular file", skillPath)
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil {
+		return fmt.Errorf("skills: resolve %q under %q: %w", skillPath, root, err)
+	}
+	handle, err := os.OpenRoot(root)
+	if err != nil {
+		return fmt.Errorf("skills: open skill root %q: %w", root, err)
+	}
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"skills: close skill root handle failed", handle.Close())
+	}()
+	if err := handle.RemoveAll(rel); err != nil {
 		return fmt.Errorf("skills: remove %q: %w", dir, err)
 	}
 	s.Reload()
 	return nil
 }
 
-// writableRoots returns every skill root the app itself scans and may
-// write: the user root, the user-dir skills root, and any configured
-// extra roots.
+// writableRoots returns every skill root the app itself owns and may
+// write: the user root and the per-user-dir skills root. Configured
+// ExtraRoots (plugin-provided skills) are deliberately absent: those
+// trees belong to the plugin Store, and a destructive write through
+// this service would bypass its lifecycle. Discovery still scans them.
 func (s *Service) writableRoots() []string {
 	var roots []string
 	if home, err := os.UserHomeDir(); err == nil {
@@ -429,6 +460,5 @@ func (s *Service) writableRoots() []string {
 	if s.opts.UserDir != "" {
 		roots = append(roots, filepath.Join(s.opts.UserDir, "skills"))
 	}
-	roots = append(roots, s.opts.ExtraRoots...)
 	return roots
 }
