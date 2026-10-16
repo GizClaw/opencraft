@@ -82,6 +82,29 @@ func TestDeleteRefusesExtraRootSkills(t *testing.T) {
 	}
 }
 
+// TestDeleteRefusesNonRegularDocument pins the last input the shared
+// decision reads: a directory named SKILL.md resolves inside a writable
+// root, so containment alone would accept it, but there is no document
+// to delete. Delete and Deletable — which feeds the settings delete
+// button — have to answer that identically.
+func TestDeleteRefusesNonRegularDocument(t *testing.T) {
+	svc := newWriteService(t)
+	root := writeRoot(t)
+	dir := filepath.Join(root, "notafile", "SKILL.md")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if svc.Deletable(dir) {
+		t.Fatal("Deletable accepted a directory named SKILL.md")
+	}
+	if err := svc.Delete(dir); err == nil {
+		t.Fatal("deleting a directory named SKILL.md must be refused")
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("directory vanished after refused delete: %v", err)
+	}
+}
+
 // TestDeleteRefusesSymlinkEscape pins the resolved-path containment
 // check: a link planted in a skill root must not turn Delete into a
 // recursive removal of its target outside the writable roots.
