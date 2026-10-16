@@ -30,6 +30,13 @@ type SessionDefaults struct {
 	Think string `json:"think"`
 }
 
+const (
+	// defaultLogLines is the tail ReadLog returns when the caller names
+	// no count; maxLogLines is the most it will return for any count.
+	defaultLogLines = 200
+	maxLogLines     = 5_000
+)
+
 // NewSettingsBinding wires the settings binding.
 func NewSettingsBinding(c *core.Core) *Settings {
 	return &Settings{core: c}
@@ -338,8 +345,14 @@ func (b *Settings) RenderSkillPatch(
 // instead of loading the whole file: a window is read, and grown only
 // when it turned out to hold fewer lines than requested.
 func (b *Settings) ReadLog(n int) (string, error) {
+	// The tail is bounded on both ends: n lines means a window of up to
+	// n * 64 KiB read into memory, so a caller asking for a million
+	// lines would pull in the whole multi-megabyte log.
 	if n <= 0 {
-		n = 200
+		n = defaultLogLines
+	}
+	if n > maxLogLines {
+		n = maxLogLines
 	}
 	path := filepath.Join(b.core.DataDir, "logs", "opencraft.log")
 	f, err := os.Open(path)

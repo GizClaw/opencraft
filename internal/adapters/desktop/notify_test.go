@@ -26,8 +26,10 @@ func TestNotifyStatusUsesTexts(t *testing.T) {
 	if got := notifyStatus(en, "timeout", ""); got != "Task timed out" {
 		t.Fatalf("automation timeout status = %q, want timeout copy", got)
 	}
-	if got := notifyStatus(en, "some-other", ""); got != "some-other" {
-		t.Fatalf("unknown status = %q, want passthrough", got)
+	// A status this build cannot name is not copy: the banner says the
+	// generic thing rather than printing the enum.
+	if got := notifyStatus(en, "some-other", ""); got != "Task failed" {
+		t.Fatalf("unknown status = %q, want the generic failure copy", got)
 	}
 }
 
