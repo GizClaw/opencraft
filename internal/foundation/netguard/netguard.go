@@ -6,6 +6,11 @@
 // addresses, so neither a redirect hop nor a DNS rebind between the
 // check and the dial can slip past the guard.
 //
+// A configured HTTP(S) proxy is refused while the guard is active: the
+// pin cannot survive a proxy re-resolving the target. Callers whose
+// policy allows private destinations have no pin to preserve and keep
+// their proxy.
+//
 // It is deliberately policy-free: callers pass their own host gate and
 // their own allow-private resolver, and the two tools that download
 // (web_fetch, generate_video) share the machinery instead of keeping
@@ -49,6 +54,12 @@ type Options struct {
 	// (YOLO sessions and local providers opt in). Nil means always
 	// blocked.
 	AllowPrivate func(ctx context.Context) bool
+	// TLSConfig, when non-nil, is the base configuration for https
+	// handshakes; the client clones it and forces ServerName to the
+	// host it dialed (never the pinned address), so SNI and certificate
+	// validation keep naming the original host. Tests use it to trust a
+	// test server's CA.
+	TLSConfig *tls.Config
 	// Timeout bounds one whole request; zero means 30s.
 	Timeout time.Duration
 	// MaxRedirects bounds the redirect chain; zero means 10.
@@ -73,15 +84,27 @@ func Client(opts Options) *http.Client {
 	}
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	tr := &http.Transport{
-		// Re-read the environment on every request (httpproxy, unlike
-		// http.ProxyFromEnvironment, does not cache the first lookup), so
-		// a caller-side proxy rejection and this transport agree on the
-		// current proxy configuration.
+		// HTTP/1.1 only, on purpose: Go keeps HTTP/2 off for a
+		// transport with a custom dialer unless ForceAttemptHTTP2 asks
+		// otherwise, and the pinned dialers below are the guard's only
+		// connection path. Do not switch h2 on without teaching its
+		// connection establishment the same pinning.
+		//
+		// The proxy is resolved per request (httpproxy, unlike
+		// http.ProxyFromEnvironment, does not cache the first lookup)
+		// and fails closed while the guard is active: through a proxy
+		// the target would be re-resolved on the far side and the DNS
+		// pin would be gone. RefuseProxy carries the same rule as a
+		// caller-side pre-check.
 		Proxy: func(req *http.Request) (*url.URL, error) {
+			if err := RefuseProxy(label, req.URL.String(),
+				opts.AllowPrivate != nil && opts.AllowPrivate(req.Context())); err != nil {
+				return nil, err
+			}
 			return EnvProxy(req.URL.String())
 		},
 		DialContext:           pinnedDial(label, opts.Gate, opts.AllowPrivate, dialer),
-		DialTLSContext:        pinnedTLSDial(label, opts.Gate, opts.AllowPrivate, dialer),
+		DialTLSContext:        pinnedTLSDial(label, opts.Gate, opts.AllowPrivate, dialer, opts.TLSConfig),
 		MaxIdleConns:          10,
 		MaxIdleConnsPerHost:   4,
 		IdleConnTimeout:       90 * time.Second,
@@ -121,6 +144,30 @@ var EnvProxy = func(rawURL string) (*url.URL, error) {
 	return httpproxy.FromEnvironment().ProxyFunc()(u)
 }
 
+// RefuseProxy is the caller-side twin of the transport's proxy
+// fail-closed rule: it reports the proxy configured for rawURL as an
+// error when the request must be pinned (allowPrivate false) and a
+// proxy would take over the resolution. netguard.Client applies the
+// same rule to every request it makes, so this is only an earlier,
+// caller-labeled refusal for callers that want the policy error before
+// doing any work.
+func RefuseProxy(label, rawURL string, allowPrivate bool) error {
+	if allowPrivate {
+		return nil
+	}
+	proxy, err := EnvProxy(rawURL)
+	if err != nil {
+		return errdefs.Validationf("%s: proxy resolution: %v", label, err)
+	}
+	if proxy != nil {
+		return errdefs.Validationf(
+			"%s: the SSRF guard cannot pin DNS through proxy %s; "+
+				"unset HTTP(S)_PROXY/ALL_PROXY or enable allow_private",
+			label, proxy.Redacted())
+	}
+	return nil
+}
+
 // LookupHost resolves a hostname to IPs for the SSRF guard. It is a
 // variable so tests can answer without DNS.
 var LookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
@@ -128,11 +175,69 @@ var LookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
 }
 
 // BlockedIP reports whether ip is in the space the guard refuses:
-// loopback, private, link-local, or unspecified.
+// loopback, private, link-local, unspecified, the IPv4 0.0.0.0/8
+// "this host on this network" range, CGNAT shared space, or an IPv6
+// encoding (NAT64, 6to4) that carries a blocked IPv4 address.
 func BlockedIP(ip net.IP) bool {
+	if blockedKind(ip) {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return blockedV4(v4)
+	}
+	if v4 := embeddedV4(ip); v4 != nil {
+		return blockedKind(v4) || blockedV4(v4)
+	}
+	return false
+}
+
+// blockedKind is the address-class check shared by IPv4 and IPv6.
+func blockedKind(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsPrivate() ||
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsUnspecified()
+}
+
+// blockedV4 covers the IPv4-only ranges IsPrivate does not:
+// 0.0.0.0/8 (RFC 1122 "this host on this network"; Linux routes it to
+// loopback, so reaching 0.x is reaching this host) and 100.64.0.0/10
+// (carrier-grade NAT shared space, where a service behind the carrier's
+// NAT can sit).
+func blockedV4(v4 net.IP) bool {
+	if len(v4) != 4 {
+		return false
+	}
+	if v4[0] == 0 {
+		return true
+	}
+	return v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
+}
+
+// embeddedV4 decodes the IPv4 address carried inside the two IPv6
+// encodings that re-encode one: 6to4 2002::/16 and NAT64 64:ff9b::/96.
+// Without this a private IPv4 target could reach the guard spelled as a
+// "public" IPv6 one. The encodings themselves stay usable while the
+// embedded address is public.
+func embeddedV4(ip net.IP) net.IP {
+	if len(ip) != net.IPv6len {
+		return nil
+	}
+	// 2002::/16: 6to4 embeds the v4 address in bytes 2..5.
+	if ip[0] == 0x20 && ip[1] == 0x02 {
+		return net.IP(ip[2:6])
+	}
+	// 64:ff9b::/96: NAT64 embeds the v4 address in the last 4 bytes.
+	for i, b := range []byte{0x00, 0x64, 0xff, 0x9b} {
+		if ip[i] != b {
+			return nil
+		}
+	}
+	for i := 4; i < 12; i++ {
+		if ip[i] != 0 {
+			return nil
+		}
+	}
+	return net.IP(ip[12:16])
 }
 
 // ResolvePublic resolves host — a literal address or a name — and
@@ -197,11 +302,15 @@ func pinnedDial(
 // pinnedTLSDial is pinnedDial plus the TLS handshake against the
 // hostname, so SNI/certificate validation still uses the original
 // host while the connection itself targets the validated address.
+// base, when non-nil, is cloned into the handshake config (a test
+// injects its trust anchors this way); ServerName is always forced to
+// the dialed host, so no injected config can redirect validation.
 func pinnedTLSDial(
 	label string,
 	gate func(context.Context, string) error,
 	allowPrivate func(context.Context) bool,
 	dialer *net.Dialer,
+	base *tls.Config,
 ) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
@@ -222,10 +331,12 @@ func pinnedTLSDial(
 		if err != nil {
 			return nil, err
 		}
-		tconn := tls.Client(conn, &tls.Config{
-			ServerName: host,
-			MinVersion: tls.VersionTLS12,
-		})
+		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+		if base != nil {
+			cfg = base.Clone()
+		}
+		cfg.ServerName = host
+		tconn := tls.Client(conn, cfg)
 		if err := tconn.HandshakeContext(ctx); err != nil {
 			telemetry.WarnErr(ctx,
 				label+": close connection after TLS handshake failure",
