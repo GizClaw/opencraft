@@ -92,7 +92,7 @@ describe('redactDiagnostic', () => {
     expect(out).toContain('Basic authentication required');
   });
 
-  it('drops a quoted JSON key value and a multi-word PEM label', () => {
+  it('drops a quoted JSON key value', () => {
     const json = redactDiagnostic('{"password":"hunter2","user":"ada"}', 512);
     expect(json).not.toContain('hunter2');
     expect(json).toContain('"user":"ada"');
@@ -101,14 +101,24 @@ describe('redactDiagnostic', () => {
     // line, like the header rule does in every other spelling.
     const auth = redactDiagnostic('{"authorization":"Bearer abcdef"}', 512);
     expect(auth).not.toContain('abcdef');
+  });
 
-    const pgp = [
-      '-----BEGIN PGP PRIVATE KEY BLOCK-----',
-      'AAAB',
-      '-----END PGP PRIVATE KEY BLOCK-----',
+  it('removes a multi-word PEM label with its block', () => {
+    // The label is built from its words and the body is computed, so the
+    // assertions cannot be satisfied by an input carrying neither - the
+    // two halves have to meet.
+    const label = 'PGP PRIVATE KEY BLOCK';
+    const body = btoa('pgp-private-key-body');
+    const pem = [
+      `-----BEGIN ${label}-----`,
+      body,
+      `-----END ${label}-----`,
     ].join('\n');
-    const out = redactDiagnostic(pgp, 512);
-    expect(out).not.toContain('AAAB');
+
+    const out = redactDiagnostic(pem, 512);
+
+    expect(out).not.toContain(body);
+    expect(out).not.toContain(label);
     expect(out).toContain('<redacted-private-key>');
   });
 
