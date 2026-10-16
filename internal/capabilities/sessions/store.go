@@ -300,6 +300,18 @@ func (s *Store) appendTurn(
 	if len(archived) == 0 {
 		return nil
 	}
+	// A run archives once. CommitConversationTurn is what guarantees it
+	// (its dedup runs inside the transaction); asking first means a
+	// repeat does not consume the per-run buffers it would then throw
+	// away — the turn timing, and any artifact a writer buffered after
+	// the first commit.
+	if runID != "" {
+		if _, _, err := s.db.ArchiveTurnByRun(ctx, id, runID); err == nil {
+			return nil
+		} else if !errors.Is(err, state.ErrNotFound) {
+			return err
+		}
+	}
 	conv, convErr := s.db.Conversation(ctx, id)
 	c := state.Conversation{ID: id}
 	now := time.Now().UTC()
@@ -1135,18 +1147,42 @@ func skippedUsageWrite(ctx context.Context, id string) error {
 }
 
 // Remove removes one conversation and its on-disk directory.
+// Remove deletes one conversation for good: its rows, which retire the
+// id in the same transaction, and its session directory.
+//
+// The store's lock covers the in-memory buffers it owns, not the
+// deletion: the database write and the directory walk happen outside
+// it, so removing a session with a large media directory does not stall
+// every other conversation's reads and writes. The buffers are dropped
+// afterwards, which also sweeps anything a writer buffered while the
+// deletion ran.
 func (s *Store) Remove(ctx context.Context, id string) error {
 	if err := requireID(id); err != nil {
 		return err
 	}
+	if err := s.removeRows(ctx, id); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.removeLocked(ctx, id)
+	delete(s.turnTiming, id)
+	delete(s.artifactBuf, id)
+	return nil
 }
 
+// removeLocked deletes one conversation while the caller already holds
+// s.mu, which Store.Import does: replacing a half-written import and
+// writing the new one are a single critical section.
 func (s *Store) removeLocked(ctx context.Context, id string) error {
 	delete(s.turnTiming, id)
 	delete(s.artifactBuf, id)
+	return s.removeRows(ctx, id)
+}
+
+// removeRows deletes one conversation's rows and directory. It touches
+// no in-memory state, so each caller decides how much locking the
+// deletion needs.
+func (s *Store) removeRows(ctx context.Context, id string) error {
 	if err := s.db.DeleteConversationRows(ctx, id); err != nil {
 		return fmt.Errorf("sessions: remove %s state: %w", id, err)
 	}
