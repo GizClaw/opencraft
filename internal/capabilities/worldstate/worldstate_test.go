@@ -12,6 +12,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/workspace"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
@@ -1185,5 +1186,68 @@ func TestRenderTurnRecordsModelRequestedSkill(t *testing.T) {
 	if counts["plan"] != 1 {
 		t.Fatalf("model-requested plan counted %d times, want 1 (%v)",
 			counts["plan"], counts)
+	}
+}
+
+// A doc that exists in the wrong shape is no doc, not a failed turn.
+// The two read paths used to disagree: a directory named AGENTS.md at
+// the working directory made the workspace read return an error (the
+// whole build failed), while the same name in an ancestor directory
+// read as empty. Both now treat anything that is not a regular file as
+// absent.
+func TestDiscoverAgentsSkipsNonFilesAndOversizedDocs(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, ".git"), "")
+	if err := os.MkdirAll(filepath.Join(root, "AGENTS.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "AGENTS.override.md"), "override wins")
+
+	// Host path (no workspace configured).
+	s := New(Options{WorkBase: root})
+	got, err := s.discoverAgents(context.Background())
+	if err != nil {
+		t.Fatalf("a directory named AGENTS.md failed the build: %v", err)
+	}
+	if !contains(got, "override wins") {
+		t.Fatalf("got %q, want the doc that exists in the right shape", got)
+	}
+
+	// Workspace path (the in-root read goes through the workspace).
+	ws, err := workspace.NewLocalWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ws.Close() })
+	s = New(Options{WorkBase: root, Workspace: ws})
+	if got, err = s.discoverAgents(context.Background()); err != nil {
+		t.Fatalf("workspace path: %v", err)
+	}
+	if !contains(got, "override wins") {
+		t.Fatalf("workspace path got %q, want the override doc", got)
+	}
+
+	// A doc past the read ceiling is skipped rather than read to the end
+	// and truncated: what the model sees would be the same 16 KiB, and
+	// the read would cost the whole file.
+	if err := os.Remove(filepath.Join(root, "AGENTS.override.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	big := strings.Repeat("x", maxDocReadBytes+1)
+	write(t, filepath.Join(root, "AGENTS.md"), big)
+	for _, opts := range []Options{
+		{WorkBase: root},
+		{WorkBase: root, Workspace: ws},
+	} {
+		got, err := New(opts).discoverAgents(context.Background())
+		if err != nil {
+			t.Fatalf("oversized doc failed the build: %v", err)
+		}
+		if got != "" {
+			t.Fatalf("oversized doc was included (%d chars)", len(got))
+		}
 	}
 }
