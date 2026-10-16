@@ -379,6 +379,7 @@ export const api = {
   modelUsageSeries: async (
     model: string,
     granularity: 'hour' | 'day',
+    timeZone: string,
     utcOffsetMinutes: number,
     start: string,
     end: string,
@@ -386,6 +387,7 @@ export const api = {
     (await Config.ModelUsageSeries(
       model,
       granularity,
+      timeZone,
       utcOffsetMinutes,
       start,
       end,

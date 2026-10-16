@@ -845,13 +845,17 @@ describe('ConfigPage usage', () => {
     expect(picker).toBeInTheDocument();
 
     // The empty model string is what the backend aggregates on, so the
-    // default request must not name a model.
+    // default request must not name a model. The zone arrives by name —
+    // the backend cuts the day buckets with it, and this side fills the
+    // empty ones by stepping the same calendar.
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     await waitFor(() =>
       expect(
         (apiMock.modelUsageSeries as ReturnType<typeof vi.fn>).mock.calls[0],
       ).toEqual([
         '',
         'day',
+        zone,
         expect.any(Number),
         expect.any(String),
         expect.any(String),

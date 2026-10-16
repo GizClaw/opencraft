@@ -85,7 +85,7 @@ func TestModelUsageRequiresUserDB(t *testing.T) {
 		t.Fatal("ModelUsage succeeded before OpenUserDB, want not-ready error")
 	}
 	if _, err := b.ModelUsageSeries(
-		"openai-1/gpt-test", "hour", 0, "", "",
+		"openai-1/gpt-test", "hour", "", 0, "", "",
 	); err == nil {
 		t.Fatal("ModelUsageSeries succeeded before OpenUserDB, want not-ready error")
 	}

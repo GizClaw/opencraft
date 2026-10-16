@@ -908,6 +908,12 @@ export function ConfigPage() {
       .modelUsageSeries(
         usageModel,
         granularity,
+        // The zone, not just the offset: the day buckets are calendar
+        // days, and this side fills the empty ones by stepping the local
+        // calendar (fillUsageSeries). The offset alone cannot express the
+        // 23- and 25-hour days a DST switch makes, so the two grids would
+        // disagree by a bucket around it.
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
         -new Date().getTimezoneOffset(),
         new Date(window.start).toISOString(),
         new Date(window.end).toISOString(),
