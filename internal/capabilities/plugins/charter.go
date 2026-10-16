@@ -28,6 +28,17 @@ package plugins
 // cleanup deleted them: a manifest that still writes the segment keeps
 // loading, the segment is ignored (LegacyManifestInputs).
 //
+// The two surfaces are two trust domains, and the rows below say which
+// is which. The webview surface runs in the app's own realm: the bundle
+// is imported into the renderer that draws the app, so plugin code is
+// host code. The service split there is cooperative — a plugin that
+// asks for a service it did not declare does not get it through its own
+// ctx — and the id arguments it passes (invoke, storage, secrets) are
+// the caller's claim, not an identity the host looks up. The enforced
+// boundary is the kraft surface: there the subprocess belongs to one
+// plugin, and every gated primitive is checked against that plugin's
+// own manifest grants (kraft.Manager.requirePermission).
+//
 // The tables are not prose. charter_test.go scans the code each row
 // points at — the Manifest struct, AllowedPermissions, the frontend's
 // service list, the kraft primitive dispatch — and fails in both
@@ -481,6 +492,11 @@ var HostInterfaces = []HostInterface{
 		Services: []string{"invoke"},
 		Scope: "the plugin's own subprocess; the host routes by method " +
 			"name and interprets nothing",
+		Note: "the id is the caller's claim, not an identity the host " +
+			"resolves: the webview surface runs in the app's own realm " +
+			"(see the file comment), so the host routes to whichever " +
+			"plugin the caller names — and the grants spent while that " +
+			"subprocess runs are the named plugin's own",
 		Status: StatusCurrent,
 	},
 	{
@@ -490,7 +506,10 @@ var HostInterfaces = []HostInterface{
 		Services: []string{"storage"},
 		Grant:    "storage:kv",
 		Scope:    "one namespace per plugin, for non-secret data",
-		Status:   StatusCurrent,
+		Note: "the id is the caller's claim, as in invoke. The namespace " +
+			"is what keeps plugins that use their own ctx apart, not what " +
+			"stops code in the shared realm from naming another id.",
+		Status: StatusCurrent,
 	},
 	{
 		ID:       "secrets",
@@ -498,8 +517,14 @@ var HostInterfaces = []HostInterface{
 		Surface:  SurfaceWebview,
 		Services: []string{"secrets"},
 		Grant:    "secrets:auth",
-		Scope: "auth/<plugin>/... only; a value never crosses into the " +
+		Scope: "the auth/<plugin>/... names the calling plugin uses; a " +
+			"value never crosses into the " +
 			"webview",
+		Note: "the name prefix is the same kind of claim as the ids " +
+			"above: the surface checks the scope and the name's shape, " +
+			"not whose namespace the name is in. Values stay host-side " +
+			"(the surface reports existence and deletes); reads of a " +
+			"value are the kraft surface's secret.get.",
 		Status: StatusCurrent,
 	},
 	{
@@ -514,10 +539,10 @@ var HostInterfaces = []HostInterface{
 		Scope: "auth/<plugin>/... and inference/<plugin>/... only; the " +
 			"namespace prefix narrows what the grant already allows",
 		Status: StatusCurrent,
-		Note: "the grant is checked when the primitive runs, the same " +
-			"check the webview ctx.secrets surface passes; P2 wired it " +
-			"into handleSecret, so kraft.go's package comment no longer " +
-			"claims a gate that does not exist.",
+		Note: "the grant is checked when the primitive runs, against the " +
+			"manifest of the plugin whose subprocess is running — this is " +
+			"the surface where no id comes from the caller, so the check " +
+			"gates the plugin itself rather than a name it wrote.",
 	},
 	{
 		ID:      "open.url",
