@@ -948,7 +948,7 @@ func TestMentionStagesSkillToCache(t *testing.T) {
 	if block := board.GetVarString("world.tail_block"); !contains(block, "staged copy for execution") {
 		t.Fatalf("mention must stage the skill:\n%s", block)
 	}
-	staged := filepath.Join(userDir, "cache", "staged", "s-c1",
+	staged := filepath.Join(userDir, "staged", "s-c1",
 		"review", "scripts", "run.sh")
 	if _, err := os.Stat(staged); err != nil {
 		t.Fatalf("staged script missing: %v", err)

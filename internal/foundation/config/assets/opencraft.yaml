@@ -243,9 +243,12 @@ resources:
       # shared ws workspace.
       observer: artifacts
     settings:
-      # Staged skill copies live under the cache dir, which the exec
-      # sandbox may write; file tools only need read access to it.
-      readonly_roots: ["${ocraft:CACHE}"]
+      # Staged skill copies live under the user root (APP_HOME/staged),
+      # outside the sandbox-writable cache; file tools only need read
+      # access to them. The cache itself stays out of this list on
+      # purpose: the exec sandbox may write it, so its contents are not
+      # trusted material for the model to read.
+      readonly_roots: ["${ocraft:APP_HOME}/staged"]
   # Network posture: exec sandbox mode (default = host networking) and
   # the web_fetch domain gate. exec.mode accepts default | deny-all |
   # allow-list | proxy; web_fetch.allow_private=false keeps the SSRF

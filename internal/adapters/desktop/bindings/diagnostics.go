@@ -855,7 +855,11 @@ func (b *Diagnostics) RepairConfigCompat() (ConfigCompatRepair, error) {
 func (b *Diagnostics) ClearCaches() (CacheClearResult, error) {
 	dirs := []string{
 		filepath.Join(b.core.DataDir, "cache", "tools"),
-		filepath.Join(b.core.DataDir, "cache", "staged"),
+		// Staged skill copies moved out of the sandbox-writable cache;
+		// both locations are cleared so upgrades leave no old copies
+		// behind.
+		filepath.Join(b.core.AppHome, "cache", "staged"),
+		filepath.Join(b.core.AppHome, "staged"),
 	}
 	if wd := b.core.ActiveWorkDir(); wd != "" {
 		if layout, err := b.core.ResolveLayout(wd); err == nil {
