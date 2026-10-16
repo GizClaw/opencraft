@@ -571,7 +571,11 @@ func (r *Run) Close() {
 					attribute.String("run.id", r.RunID()))
 			}
 		}
-		_, _ = r.settle(context.WithoutCancel(context.Background()))
+		if _, err := r.settle(context.WithoutCancel(context.Background())); err != nil {
+			telemetry.WarnErr(context.WithoutCancel(context.Background()),
+				"host: release run on close failed", err,
+				attribute.String("run.id", r.RunID()))
+		}
 		return
 	}
 	// A concurrent Wait (or Close) owns the release: wait for it, so
