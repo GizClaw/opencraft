@@ -251,22 +251,40 @@ describe('conversation machine', () => {
     expect(regions(actor).turn).toBe('succeeded');
   });
 
-  it('a failed barge-in absorbs the superseded run interrupted ending', () => {
+  // Whether the superseded run is still alive is a question its own
+  // events answer, and this machine is what sees them: the terminal
+  // event that lands during the barge wait is recorded in `starting`,
+  // and only the failed start acts on it.
+  it('records the superseded run\u2019s ending while the replacement starts', () => {
     const actor = start();
     actor.send({ type: 'SEND_STARTED' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
     actor.send({ type: 'SEND_STARTED' });
 
     actor.send({
-      type: 'START_FAILED',
-      error: 'start boom',
-      supersededEndedStatus: 'interrupted',
-      supersededEndedError: 'engine boom',
+      type: 'TURN_ENDED',
+      runID: 'r-old',
+      status: 'interrupted',
+      error: 'engine boom',
     });
+
+    // Recorded, not acted on: the replacement is still starting and
+    // owns the turn.
+    expect(regions(actor).turn).toBe('starting');
+    expect(actor.getSnapshot().context).toMatchObject({
+      supersededRunID: 'r-old',
+      supersededEnd: { status: 'interrupted', error: 'engine boom' },
+    });
+    expect(actor.getSnapshot().context).not.toMatchObject({
+      failureStatus: 'interrupted',
+    });
+
+    actor.send({ type: 'START_FAILED', error: 'start boom' });
     expect(regions(actor).turn).toBe('failed');
     expect(actor.getSnapshot().context).toMatchObject({
       currentRunID: undefined,
       supersededRunID: undefined,
+      supersededEnd: undefined,
       lastEndedRunID: 'r-old',
       failureStatus: 'interrupted',
       turnError: 'engine boom',
@@ -279,17 +297,36 @@ describe('conversation machine', () => {
     actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
     actor.send({ type: 'SEND_STARTED' });
 
-    actor.send({
-      type: 'START_FAILED',
-      error: 'start boom',
-      supersededEndedStatus: 'completed',
-    });
+    endTurn(actor, 'r-old', 'completed');
+    actor.send({ type: 'START_FAILED', error: 'start boom' });
+
     expect(regions(actor).turn).toBe('succeeded');
     expect(actor.getSnapshot().context).toMatchObject({
       currentRunID: undefined,
       supersededRunID: undefined,
+      supersededEnd: undefined,
       lastEndedRunID: 'r-old',
     });
+  });
+
+  it('clears the recorded ending when the replacement does start', () => {
+    const actor = start();
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    actor.send({ type: 'SEND_STARTED' });
+    endTurn(actor, 'r-old', 'canceled');
+
+    actor.send({ type: 'RUN_STARTED', runID: 'r-new' });
+
+    expect(regions(actor).turn).toBe('running');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-new',
+      supersededRunID: undefined,
+      supersededEnd: undefined,
+    });
+    // The canceled ending of the old run never became this turn's
+    // failure.
+    expect(actor.getSnapshot().context.failureStatus).toBeUndefined();
   });
 
   it('restores an idle conversation from the first stream after reload', () => {

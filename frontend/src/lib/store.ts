@@ -1634,9 +1634,9 @@ function liveTurnEntry(
 // turn_end and archive-reconcile paths find it (artifactTurnIndex).
 // Everything above that seam belongs to the archive or to another run's
 // turn. `adopted` reports that the strip was opened here, which is the
-// caller's cue to register the run: the lookups that ask "is this run
-// still alive" read the conversation's run map (supersededEndState), and
-// a run this window never sent has no other way into it.
+// caller's cue to bind the run in the registry: routing a delta back to
+// its conversation goes through that index, and a run this window never
+// sent has no other way into it.
 function liveRunTurn(
   conv: ConversationState,
   runID: string,
@@ -2232,28 +2232,6 @@ export const useStore = create<StoreState>((set, get) => {
     void startTurnFor(convID, queued.text, queued.attachments);
   };
 
-  // supersededEndState reports whether a superseded run already hit
-  // its terminal event while the replacement was still starting. The
-  // registry drops the run exactly when turn_end is processed, so its
-  // absence (with the status recorded on the artifact) means the old
-  // run is no longer alive and must not be "restored".
-  const supersededEndState = (
-    convID: string,
-    runID: string,
-  ): { status: TurnStatus; error?: string; errorKind?: string } | undefined => {
-    if (stateRoot.registry.conversationForRun(runID) === convID) {
-      return undefined;
-    }
-    const artifact = get().conversations[convID]?.turnArtifacts.find(
-      (t) => t.runID === runID,
-    );
-    const status = artifact?.status
-      ? normalizeTurnStatus(artifact.status)
-      : undefined;
-    if (!artifact || !status) return { status: 'interrupted' };
-    return { status, error: artifact.error, errorKind: artifact.errorKind };
-  };
-
   // markFailedSend marks the live turn entry of a send that never
   // produced a run. Used when a failed barge-in leaves the previous
   // run running: the conversation has to resume that run, so the only
@@ -2378,24 +2356,12 @@ export const useStore = create<StoreState>((set, get) => {
         supersededRunID?: string;
       };
       if (turnValue === 'starting' && context.supersededRunID) {
-        // The barge-in start failed. If the superseded run is still
-        // live, resume watching it (its late streams and terminal
-        // event must keep driving the conversation); if its terminal
-        // event already passed while this send was starting, absorb
-        // that status instead of reporting a fresh failure.
-        const superseded = context.supersededRunID;
-        const ended = supersededEndState(convID, superseded);
-        startingActor?.send({
-          type: 'START_FAILED',
-          error,
-          ...(ended
-            ? {
-                supersededEndedStatus: ended.status,
-                supersededEndedError: ended.error,
-                supersededEndedErrorKind: ended.errorKind,
-              }
-            : {}),
-        });
+        // The barge-in start failed. Whether the superseded run is
+        // still live is the actor's own knowledge — it recorded the
+        // run's terminal event if one arrived while this send was
+        // starting (see the machine's `starting` state) — so both outs
+        // (resume watching it, absorb its ending) are START_FAILED's.
+        startingActor?.send({ type: 'START_FAILED', error });
         markFailedSend(convID, error);
         // Tab drafts stay staged for the resumed run; interrupt
         // intents aimed at the start that just failed are dropped.
@@ -2472,9 +2438,10 @@ export const useStore = create<StoreState>((set, get) => {
           // another turn.
           const live = liveRunTurn(conv, runID);
           // An adopted run is bound with the strip it opens: a barge-in
-          // over it has to see it as live (supersededEndState reads the
-          // index), and the turn_end that releases the run is the one
-          // that stamps that strip.
+          // over it has to see it as live (the machine records the
+          // superseded run's ending, the registry is what routes it),
+          // and the turn_end that releases the run is the one that
+          // stamps that strip.
           if (live.adopted) {
             stateRoot.registry.bindRun(runID, conversationID);
           }

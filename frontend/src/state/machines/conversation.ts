@@ -17,6 +17,17 @@ interface ConversationContext {
   // the replacement is still starting, streams and the terminal event
   // from the superseded run must not move the conversation state.
   supersededRunID?: string;
+  // supersededEnd records the terminal event of that superseded run when
+  // it lands while the replacement is still starting: whether the old
+  // run is still alive is a question only the run's own events answer,
+  // and this machine is what sees them. A failed start reads it here
+  // (see the `starting` state) rather than the store reconstructing the
+  // answer from a run index and an artifact strip.
+  supersededEnd?: {
+    status: TurnEndStatus;
+    error?: string;
+    errorKind?: string;
+  };
   lastEndedRunID?: string;
   turnStage?: string;
   failureStatus?: 'failed' | 'aborted' | 'canceled' | 'interrupted';
@@ -37,16 +48,7 @@ export type ConversationEvent =
   | { type: 'HYDRATE_FAIL'; request: number; generation: number; error: string }
   | { type: 'NEW_CHAT_READY' }
   | { type: 'SEND_STARTED' }
-  | {
-      type: 'START_FAILED';
-      error: string;
-      // supersededEndedStatus is set when the superseded run's
-      // terminal event was already consumed while the barge-in was
-      // still starting. Its absence means the old run is still live.
-      supersededEndedStatus?: TurnEndStatus;
-      supersededEndedError?: string;
-      supersededEndedErrorKind?: string;
-    }
+  | { type: 'START_FAILED'; error: string }
   | { type: 'RUN_STARTED'; runID: string }
   | { type: 'STREAM'; runID: string; stage?: string }
   | {
@@ -252,14 +254,17 @@ export const conversationMachine = createMachine({
             // fresh failure for the old run.
             START_FAILED: [
               {
-                guard: ({ context, event }) =>
+                // Nothing recorded: the old run has not reported an
+                // ending, so it is still live — watch it again.
+                guard: ({ context }) =>
                   !context.deletedAt &&
                   context.supersededRunID !== undefined &&
-                  event.supersededEndedStatus === undefined,
+                  context.supersededEnd === undefined,
                 target: 'running',
                 actions: assign({
                   currentRunID: ({ context }) => context.supersededRunID,
                   supersededRunID: () => undefined,
+                  supersededEnd: () => undefined,
                   turnStage: () => '',
                   failureStatus: () => undefined,
                   failureErrorKind: () => undefined,
@@ -267,14 +272,15 @@ export const conversationMachine = createMachine({
                 }),
               },
               {
-                guard: ({ context, event }) =>
+                guard: ({ context }) =>
                   !context.deletedAt &&
                   context.supersededRunID !== undefined &&
-                  event.supersededEndedStatus === 'completed',
+                  context.supersededEnd?.status === 'completed',
                 target: 'succeeded',
                 actions: assign({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
+                  supersededEnd: () => undefined,
                   lastEndedRunID: ({ context }) => context.supersededRunID,
                   failureStatus: () => undefined,
                   failureErrorKind: () => undefined,
@@ -288,18 +294,19 @@ export const conversationMachine = createMachine({
                 actions: assign({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
+                  supersededEnd: () => undefined,
                   lastEndedRunID: ({ context }) => context.supersededRunID,
-                  failureStatus: ({ event }) =>
-                    event.supersededEndedStatus === 'failed' ||
-                    event.supersededEndedStatus === 'aborted' ||
-                    event.supersededEndedStatus === 'canceled' ||
-                    event.supersededEndedStatus === 'interrupted'
-                      ? event.supersededEndedStatus
+                  failureStatus: ({ context }) =>
+                    context.supersededEnd?.status === 'failed' ||
+                    context.supersededEnd?.status === 'aborted' ||
+                    context.supersededEnd?.status === 'canceled' ||
+                    context.supersededEnd?.status === 'interrupted'
+                      ? context.supersededEnd.status
                       : 'failed',
-                  failureErrorKind: ({ event }) =>
-                    event.supersededEndedErrorKind,
-                  turnError: ({ event }) =>
-                    event.supersededEndedError ?? event.error,
+                  failureErrorKind: ({ context }) =>
+                    context.supersededEnd?.errorKind,
+                  turnError: ({ context, event }) =>
+                    context.supersededEnd?.error ?? event.error,
                 }),
               },
             ],
@@ -312,6 +319,7 @@ export const conversationMachine = createMachine({
               actions: assign({
                 currentRunID: ({ event }) => event.runID,
                 supersededRunID: () => undefined,
+                supersededEnd: () => undefined,
                 turnStage: () => '',
               }),
             },
@@ -326,10 +334,31 @@ export const conversationMachine = createMachine({
               actions: assign({
                 currentRunID: ({ event }) => event.runID,
                 supersededRunID: () => undefined,
+                supersededEnd: () => undefined,
                 turnStage: ({ event }) => event.stage ?? '',
               }),
             },
             TURN_ENDED: [
+              {
+                // The superseded run's terminal event lands while the
+                // replacement is still starting. The run was this
+                // conversation's current one when the send began, so
+                // the machine is what saw the ending: record it and
+                // stay in `starting` — a failed start absorbs it (see
+                // START_FAILED), a replacement that does start clears
+                // it with the run swap.
+                guard: ({ context, event }) =>
+                  !context.deletedAt &&
+                  context.supersededRunID !== undefined &&
+                  event.runID === context.supersededRunID,
+                actions: assign({
+                  supersededEnd: ({ event }) => ({
+                    status: event.status,
+                    error: event.error,
+                    errorKind: event.errorKind,
+                  }),
+                }),
+              },
               {
                 guard: ({ context, event }) =>
                   !context.deletedAt &&
@@ -339,6 +368,7 @@ export const conversationMachine = createMachine({
                 actions: assign({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
+                  supersededEnd: () => undefined,
                   lastEndedRunID: ({ event }) => event.runID,
                   failureStatus: ({ event }) =>
                     event.status === 'failed' ||
@@ -358,6 +388,7 @@ export const conversationMachine = createMachine({
                 actions: assign({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
+                  supersededEnd: () => undefined,
                   lastEndedRunID: ({ event }) => event.runID,
                   failureStatus: () => undefined,
                   failureErrorKind: () => undefined,
@@ -379,6 +410,7 @@ export const conversationMachine = createMachine({
               actions: assign({
                 currentRunID: () => undefined,
                 supersededRunID: ({ context }) => context.currentRunID,
+                supersededEnd: () => undefined,
                 turnStage: () => '',
               }),
             },
@@ -393,6 +425,7 @@ export const conversationMachine = createMachine({
               actions: assign({
                 currentRunID: ({ event }) => event.runID,
                 supersededRunID: () => undefined,
+                supersededEnd: () => undefined,
                 turnStage: () => '',
               }),
             },
