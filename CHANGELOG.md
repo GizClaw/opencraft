@@ -20,6 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FLOWCRAFT_HTTP_PROBE` now, because the probe itself lives in
   flowcraft; `OPENCRAFT_HTTP_PROBE` turns nothing on. The persisted
   switch (`desktop.json`, `diagnostics.httpProbe`) is unchanged.
+- Staged skill copies have left the sandbox-writable cache
+  (`APP_HOME/staged` now, which the file tools' `readonly_roots`
+  follows): a confined command can still read and run a staged script,
+  but not rewrite the material the model reads as skill reference, so a
+  script that writes beside itself has to use the workspace or
+  `$TMPDIR`. Clearing caches still removes copies the old layout left
+  behind in the cache.
+- A guarded fetch fails closed while an HTTP(S) proxy is configured, on
+  both download paths (`web_fetch` and `generate_video`): a proxy
+  re-resolves the target, so the SSRF guard's DNS pin cannot hold.
+  Unset `HTTP(S)_PROXY`/`ALL_PROXY` for those calls, or set
+  `allow_private` — which also waives the private-destination guard, so
+  prefer the former unless the proxy is this deployment's own.
+- `DeleteSkill` only removes skills inside the app's own roots now;
+  plugin-provided and configured `extra_roots` skills are removed by
+  their owner (the plugin Store), and the settings page hides the
+  delete button for them.
 
 ### Added
 
