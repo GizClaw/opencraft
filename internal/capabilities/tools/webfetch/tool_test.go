@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
+	"github.com/GizClaw/opencraft/internal/foundation/netguard"
 )
 
 func TestToolExtractsArticle(t *testing.T) {
@@ -206,14 +207,14 @@ func TestToolRedirectRevalidatesHost(t *testing.T) {
 }
 
 func TestToolDialResolvesOnceAndBlocksPrivate(t *testing.T) {
-	orig := lookupHost
-	lookupHost = func(_ context.Context, host string) ([]net.IP, error) {
+	orig := netguard.LookupHost
+	netguard.LookupHost = func(_ context.Context, host string) ([]net.IP, error) {
 		if host == "example.test" {
 			return []net.IP{net.ParseIP("127.0.0.1")}, nil
 		}
 		return nil, errors.New("unexpected host " + host)
 	}
-	t.Cleanup(func() { lookupHost = orig })
+	t.Cleanup(func() { netguard.LookupHost = orig })
 
 	tool := New()
 	tool.SetGate(DomainGate(sandbox.WebFetchPolicy{}))
@@ -224,11 +225,11 @@ func TestToolDialResolvesOnceAndBlocksPrivate(t *testing.T) {
 }
 
 func TestToolRejectsProxyWhileSSRFGuardActive(t *testing.T) {
-	orig := lookupHost
-	lookupHost = func(_ context.Context, host string) ([]net.IP, error) {
+	orig := netguard.LookupHost
+	netguard.LookupHost = func(_ context.Context, host string) ([]net.IP, error) {
 		return []net.IP{net.ParseIP("8.8.8.8")}, nil
 	}
-	t.Cleanup(func() { lookupHost = orig })
+	t.Cleanup(func() { netguard.LookupHost = orig })
 
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:3128")
 	t.Setenv("https_proxy", "")

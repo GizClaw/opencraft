@@ -23,6 +23,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
+	"github.com/GizClaw/opencraft/internal/foundation/netguard"
 )
 
 const (
@@ -202,7 +203,7 @@ func validateURL(ctx context.Context, u *url.URL, pol Policy) error {
 
 func checkHost(ctx context.Context, host string, pol Policy) error {
 	if ip := net.ParseIP(host); ip != nil {
-		if !pol.AllowPrivate && blockedIP(ip) {
+		if !pol.AllowPrivate && netguard.BlockedIP(ip) {
 			return fmt.Errorf("plugin update: private address %q is blocked", host)
 		}
 		return nil
@@ -217,19 +218,13 @@ func checkHost(ctx context.Context, host string, pol Policy) error {
 		return fmt.Errorf("plugin update: resolve %q: %w", host, err)
 	}
 	for _, ip := range ips {
-		if blockedIP(ip) {
+		if netguard.BlockedIP(ip) {
 			return fmt.Errorf(
 				"plugin update: host %q resolves to private address %s (blocked)",
 				host, ip)
 		}
 	}
 	return nil
-}
-
-func blockedIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified()
 }
 
 func parseChecksum(s string) (string, error) {

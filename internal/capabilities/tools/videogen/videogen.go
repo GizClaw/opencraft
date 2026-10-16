@@ -31,6 +31,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 	"github.com/rs/xid"
 
+	"github.com/GizClaw/opencraft/internal/foundation/netguard"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/inferenceext"
 )
 
@@ -75,6 +76,11 @@ type generateFunc func(
 // set to that provider only.
 type Settings struct {
 	ProviderOptions map[string]map[string]any `json:"provider_options,omitempty"`
+	// AllowPrivate permits provider-issued download URLs that resolve to
+	// private, loopback or link-local space — a video provider running
+	// on this machine. The SSRF guard blocks them by default, because
+	// the URL comes from the provider, not the user.
+	AllowPrivate bool `json:"allow_private,omitempty"`
 }
 
 // Tool generates videos through the deployment router. It is safe for
@@ -106,21 +112,20 @@ func New(
 	t := &Tool{
 		ws:              ws,
 		providerOptions: settings.ProviderOptions,
-		client: &http.Client{
-			Timeout: defaultTimeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= maxDownloadRedirects {
-					return fmt.Errorf(
-						"%s: download: stopped after %d redirects",
-						Name, maxDownloadRedirects)
-				}
-				if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-					return fmt.Errorf(
-						"%s: download: non-http(s) redirect %q", Name, req.URL)
-				}
-				return nil
+		// The download follows a URL the provider hands back, which is
+		// exactly the SSRF surface a tool must not trust: the client
+		// resolves once, refuses private/loopback/link-local
+		// destinations, and re-validates every redirect hop. A provider
+		// running on this machine opts in through
+		// settings.allow_private.
+		client: netguard.Client(netguard.Options{
+			Label:        Name + ": download",
+			Timeout:      defaultTimeout,
+			MaxRedirects: maxDownloadRedirects,
+			AllowPrivate: func(context.Context) bool {
+				return settings.AllowPrivate
 			},
-		},
+		}),
 	}
 	if router != nil {
 		t.generate = func(
