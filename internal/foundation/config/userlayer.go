@@ -15,6 +15,99 @@ import (
 // Generated resources are deep-merged into the existing document so the
 // sections a caller does not manage survive the write.
 
+// expandDanglingAliases rewrites every alias in the merged document
+// that has no anchor to refer to at that point, taking the anchored
+// content from the previous document. An alias whose anchor is defined
+// earlier in the merged document is left alone: the user's own
+// structure survives the write whenever it can.
+func expandDanglingAliases(oldDoc, newDoc *yamlv4.Node) {
+	oldAnchors := map[string]*yamlv4.Node{}
+	collectAnchors(oldDoc, oldAnchors)
+	if len(oldAnchors) == 0 {
+		return
+	}
+	expandAliases(newDoc, oldAnchors, map[string]bool{}, map[string]bool{})
+}
+
+// collectAnchors indexes every anchored node below root, by name.
+func collectAnchors(root *yamlv4.Node, out map[string]*yamlv4.Node) {
+	if root == nil {
+		return
+	}
+	if root.Anchor != "" {
+		out[root.Anchor] = root
+	}
+	for _, child := range root.Content {
+		collectAnchors(child, out)
+	}
+}
+
+// expandAliases walks the document in reading order and replaces
+// dangling aliases in place. defined grows as the walk passes anchored
+// nodes, because that is how the format works: an alias can only refer
+// to an anchor that came before it. A merge reorders the document (the
+// generator's sections first, preserved ones after), so a pair that
+// was fine in the user's file can end up with the reference ahead of
+// the anchor - the name is still in the document, and the file still
+// fails to load.
+//
+// seen guards the recursion: an anchored node may itself refer to an
+// anchor that was dropped, and two anchors may refer to each other.
+func expandAliases(
+	node *yamlv4.Node,
+	oldAnchors map[string]*yamlv4.Node,
+	defined map[string]bool,
+	seen map[string]bool,
+) {
+	if node == nil {
+		return
+	}
+	if node.Kind == yamlv4.AliasNode {
+		name := node.Value
+		if defined[name] || seen[name] {
+			return
+		}
+		target := oldAnchors[name]
+		if target == nil {
+			// An alias to an anchor this document never had: leave the
+			// text as the user wrote it rather than inventing content.
+			return
+		}
+		seen[name] = true
+		replacement := copyNode(target)
+		expandAliases(replacement, oldAnchors, defined, seen)
+		*node = *replacement
+		// The alias position is not where the anchor was defined: the
+		// expanded content stands on its own.
+		node.Anchor = ""
+		return
+	}
+	if node.Anchor != "" {
+		defined[node.Anchor] = true
+	}
+	for _, child := range node.Content {
+		expandAliases(child, oldAnchors, defined, seen)
+	}
+}
+
+// copyNode deep-copies a node and its content, without the anchor (the
+// copy is a value, not a new definition of the same name).
+func copyNode(node *yamlv4.Node) *yamlv4.Node {
+	if node == nil {
+		return nil
+	}
+	clone := *node
+	clone.Anchor = ""
+	clone.Alias = nil
+	if len(node.Content) > 0 {
+		clone.Content = make([]*yamlv4.Node, len(node.Content))
+		for i, child := range node.Content {
+			clone.Content[i] = copyNode(child)
+		}
+	}
+	return &clone
+}
+
 // mergeUserLayer merges a freshly generated user document over the
 // existing user layer, preserving top-level sections and resources the
 // generator does not own. replaceKeys are resources taken verbatim
@@ -116,6 +209,15 @@ func mergeUserLayer(
 			}
 		}
 	}
+
+	// A merge can drop the section that carried a YAML anchor (a
+	// provider resource is replaced wholesale, a cleared section is
+	// removed) while a preserved key still refers to it. The encoder
+	// then writes the reference out unchanged, and the file the app
+	// just wrote fails to load with an unknown anchor. Expand the
+	// references whose anchor is no longer defined, using the previous
+	// document as the source.
+	expandDanglingAliases(oldDoc, newDoc)
 
 	var buf bytes.Buffer
 	enc := yamlv4.NewEncoder(&buf)

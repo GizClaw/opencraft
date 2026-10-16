@@ -85,12 +85,20 @@ func (h *Host) recordRollout(
 }
 
 // rolloutFor lazily opens the conversation's recorder.
+//
+// At most maxOpenRollouts recorders stay open: each one pins a file
+// descriptor for the Host's lifetime, so a long-lived Host streaming
+// many conversations would otherwise walk into the process fd limit
+// and start failing writes silently. An evicted conversation reopens
+// on its next event — the file is append-only and Open recovers the
+// sequence number from its tail, so nothing is lost.
 func (h *Host) rolloutFor(
 	ctx context.Context, conversationID string,
 ) *rollout.Recorder {
 	id := ConversationID(conversationID)
 	h.mu.Lock()
 	if rec := h.rollouts[id]; rec != nil {
+		h.touchRollout(id)
 		h.mu.Unlock()
 		return rec
 	}
@@ -132,11 +140,67 @@ func (h *Host) rolloutFor(
 		return nil
 	}
 	h.rollouts[id] = rec
+	announce := !h.rolloutOpened[id]
+	h.rolloutOpened[id] = true
+	h.touchRollout(id)
+	h.evictRolloutsLocked(ctx)
 	h.mu.Unlock()
-	h.recordRollout(ctx, rec, rollout.Event{
-		Type:           rollout.TypeThreadStarted,
-		ConversationID: conversationID,
-	}, "thread started")
+	if announce {
+		h.recordRollout(ctx, rec, rollout.Event{
+			Type:           rollout.TypeThreadStarted,
+			ConversationID: conversationID,
+		}, "thread started")
+	}
+	return rec
+}
+
+// maxOpenRollouts bounds how many rollout recorders stay open on one
+// Host. It is a variable so tests can exercise eviction without
+// opening dozens of conversations.
+var maxOpenRollouts = 16
+
+// touchRollout moves id to the front of the open order (most recently
+// used first). Caller holds h.mu.
+func (h *Host) touchRollout(id ConversationID) {
+	for i, cur := range h.rolloutOrder {
+		if cur == id {
+			h.rolloutOrder = append(h.rolloutOrder[:i], h.rolloutOrder[i+1:]...)
+			break
+		}
+	}
+	h.rolloutOrder = append([]ConversationID{id}, h.rolloutOrder...)
+}
+
+// evictRolloutsLocked closes the least recently used recorders while
+// more than maxOpenRollouts remain. The recorder being opened was just
+// touched to the front, so eviction never closes the caller's handle.
+// Close flushes the file, and the next event for an evicted
+// conversation reopens it. Caller holds h.mu.
+func (h *Host) evictRolloutsLocked(ctx context.Context) {
+	for len(h.rollouts) > maxOpenRollouts && len(h.rolloutOrder) > 0 {
+		oldest := h.rolloutOrder[len(h.rolloutOrder)-1]
+		h.rolloutOrder = h.rolloutOrder[:len(h.rolloutOrder)-1]
+		rec := h.rollouts[oldest]
+		delete(h.rollouts, oldest)
+		telemetry.WarnErr(ctx, "rollout: close evicted recorder failed",
+			rec.Close())
+	}
+}
+
+// dropRolloutLocked forgets one conversation's recorder without
+// closing it — the delete path closes it outside the lock, before the
+// session's rows and files go away — and drops it from the open order.
+// Caller holds h.mu.
+func (h *Host) dropRolloutLocked(id ConversationID) *rollout.Recorder {
+	rec := h.rollouts[id]
+	delete(h.rollouts, id)
+	delete(h.rolloutOpened, id)
+	for i, cur := range h.rolloutOrder {
+		if cur == id {
+			h.rolloutOrder = append(h.rolloutOrder[:i], h.rolloutOrder[i+1:]...)
+			break
+		}
+	}
 	return rec
 }
 
@@ -246,4 +310,5 @@ func (h *Host) closeRollouts() {
 			"rollout: close recorder failed", rec.Close())
 		delete(h.rollouts, id)
 	}
+	h.rolloutOrder = nil
 }

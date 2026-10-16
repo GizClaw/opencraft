@@ -897,3 +897,54 @@ func mustImageSource(t *testing.T, data []byte) media.ImageSource {
 	}
 	return source
 }
+
+// A preview is a snapshot of a generation that is still going. When the
+// run fails, the snapshots describe an image that will never exist, so
+// they are removed instead of being left under generated/previews/ for
+// the artifact view to show - and under a unique name the next run
+// never overwrites.
+func TestExecuteFailedRunDiscardsPreviews(t *testing.T) {
+	ws := newWorkspace(t)
+	ctx := context.Background()
+	preview := []byte("\x89PNG\r\n\x1a\npreview-a")
+	stream := &fakeStream{
+		events: []inference.GenerateStreamEvent{
+			{Delta: inference.ImagePartDelta{
+				Part: message.ImagePart{
+					Source: mustImageSource(t, preview),
+				},
+				Interim: true,
+			}},
+		},
+		err: errors.New("provider stream broke"),
+	}
+	tool := &Tool{
+		ws: ws,
+		generate: func(
+			_ context.Context, _ inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			t.Fatal("preview requests must use the streaming shape")
+			return inference.GenerateResponse{}, route.Trace{}, nil
+		},
+		stream: func(
+			_ context.Context, _ inference.GenerateRequest,
+		) (inference.GenerateStream, route.Trace, error) {
+			return stream, traceFor("openai", "gpt-image-2"), nil
+		},
+	}
+
+	if _, err := tool.Execute(ctx,
+		`{"prompt":"a red fox","partial_images":1}`); err == nil {
+		t.Fatal("a broken stream must fail the tool call")
+	}
+
+	entries, err := ws.List(ctx, PreviewDir)
+	if err != nil && !errors.Is(err, workspace.ErrNotFound) {
+		t.Fatalf("list previews: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "preview-") {
+			t.Fatalf("failed run left %q behind", entry.Name())
+		}
+	}
+}

@@ -69,7 +69,7 @@ func TestDelegationNoteDoesNotOwnTheRunningRunsFiles(t *testing.T) {
 	}
 	const parentRun = "run-parent"
 	h.onArtifactWrite(
-		runContext(ctx, conversationID, parentRun), "docs/report.md", []byte("hello"))
+		runContext(ctx, conversationID, parentRun), "docs/report.md", 5)
 
 	// The note lands while the parent run is still writing files.
 	result := reflowResult(conversationID)

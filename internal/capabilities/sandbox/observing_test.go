@@ -22,15 +22,15 @@ type captureObserver struct {
 
 type observedWrite struct {
 	path string
-	data []byte
+	size int64
 }
 
 func newCaptureObserver() *captureObserver {
 	c := &captureObserver{ArtifactObserver: &ArtifactObserver{}}
-	c.SetSink(func(_ context.Context, path string, data []byte) {
+	c.SetSink(func(_ context.Context, path string, bytes int64) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		c.seen = append(c.seen, observedWrite{path: path, data: data})
+		c.seen = append(c.seen, observedWrite{path: path, size: bytes})
 	})
 	return c
 }
@@ -78,20 +78,23 @@ func TestObservingWorkspaceReportsSessionWrites(t *testing.T) {
 	if err := ow.Write(sessionCtx("s1"), "a.md", []byte("hello")); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.last(); got.path != "a.md" || string(got.data) != "hello" {
-		t.Fatalf("write observed %+v, want a.md/hello", got)
+	if got := c.last(); got.path != "a.md" || got.size != 5 {
+		t.Fatalf("write observed %+v, want a.md/5", got)
 	}
+	// An append reports the file it grew, not the chunk it appended:
+	// the size is what is on disk, the same number for every kind of
+	// write.
 	if err := ow.Append(sessionCtx("s1"), "a.md", []byte(" world")); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.last(); got.path != "a.md" || string(got.data) != " world" {
-		t.Fatalf("append observed %+v, want a.md/' world'", got)
+	if got := c.last(); got.path != "a.md" || got.size != 11 {
+		t.Fatalf("append observed %+v, want a.md/11", got)
 	}
 	if err := ow.Rename(sessionCtx("s1"), "a.md", "docs/final.md"); err != nil {
 		t.Fatal(err)
 	}
-	if got := c.last(); got.path != "docs/final.md" || got.data != nil {
-		t.Fatalf("rename observed %+v, want docs/final.md/nil data", got)
+	if got := c.last(); got.path != "docs/final.md" || got.size != 11 {
+		t.Fatalf("rename observed %+v, want docs/final.md/11", got)
 	}
 	if c.count() != 3 {
 		t.Fatalf("observed %d writes, want 3", c.count())

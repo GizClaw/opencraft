@@ -49,6 +49,13 @@ func (c *Core) ActiveHost() *host.Host {
 	return c.Runtime.HostFor(c.ActiveWorkDir())
 }
 
+// BusyWorkspaces lists the workspaces with a live run, the window's own
+// and every other one: the git panel is repository-wide, and a run in a
+// sibling workspace of the same repository edits the same files.
+func (c *Core) BusyWorkspaces() []string {
+	return c.Runtime.BusyWorkspaces()
+}
+
 // RecordWorkspace persists one workspace open. Failures are best-effort.
 func (c *Core) RecordWorkspace(path string) {
 	path = strings.TrimSpace(path)

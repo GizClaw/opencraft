@@ -388,16 +388,20 @@ func renderSkillActivation(
 	return strings.TrimRight(out, "\n")
 }
 
-// stageSkill copies an activated skill into the sandbox-writable
-// cache (<userDir>/cache/staged/<contextID>/<name>) so its scripts
-// are executable under exec even when the skill root itself is
-// outside the workspace. Builtins ship no files and are skipped.
+// stageSkill copies an activated skill into the user root's staging
+// area (<userDir>/staged/<contextID>/<name>) so its scripts are
+// executable under exec even when the skill root itself is outside the
+// workspace. The area is deliberately NOT the sandbox-writable cache:
+// the sandbox must be able to read and execute staged files (both
+// backends leave the host filesystem readable and confine only writes)
+// but not to rewrite what the model reads as skill references.
+// Builtins ship no files and are skipped.
 func (s *Service) stageSkill(sk skills.SkillMetadata, contextID string) string {
 	if sk.Scope == "builtin" || s.opts.UserDir == "" {
 		return ""
 	}
 	root, err := s.opts.Skills.Stage(sk,
-		filepath.Join(s.opts.UserDir, "cache", "staged", contextID))
+		filepath.Join(s.opts.UserDir, "staged", contextID))
 	if err != nil {
 		return ""
 	}

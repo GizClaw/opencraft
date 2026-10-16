@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -944,5 +945,35 @@ func TestConcurrentUpdateIsSerialized(t *testing.T) {
 	// one that lost the race.
 	if got := s.Revision(); got != 2 {
 		t.Fatalf("revision after concurrent updates = %d, want 2", got)
+	}
+}
+
+// Assets are plugin-chosen sizes, so the limit has to hold before the
+// bytes are in memory: a check after ReadFile only rejects a file the
+// host has already carried (and, on the pet path, base64-expanded).
+func TestReadBoundedAssetBoundsTheRead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pack.bin")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), 2048), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := readBoundedAsset(path, "pack.bin", 1024, "asset"); err == nil {
+		t.Fatal("an oversized asset was accepted")
+	} else if !strings.Contains(err.Error(), "exceeds 1024 bytes") {
+		t.Fatalf("error = %v, want it to name the limit", err)
+	}
+
+	data, err := readBoundedAsset(path, "pack.bin", 4096, "asset")
+	if err != nil {
+		t.Fatalf("asset within the limit: %v", err)
+	}
+	if len(data) != 2048 {
+		t.Fatalf("read %d bytes, want 2048", len(data))
+	}
+
+	if _, err := readBoundedAsset(filepath.Join(dir, "missing.bin"),
+		"missing.bin", 4096, "asset"); err == nil {
+		t.Fatal("a missing asset was accepted")
 	}
 }

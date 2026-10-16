@@ -262,6 +262,16 @@ func (b *Broker) deliver(ctx context.Context, spec Spec, reply Reply) {
 	turn := b.turns[spec.TurnID]
 	b.mu.Unlock()
 	if turn == nil {
+		// The reply arrived after the turn unbound: its prompt already
+		// resolved as ended, and the runtime prompt state machine owns
+		// the outcome. Refuse it explicitly instead of dropping it in
+		// silence — an unobservable reply is exactly what a stale UI
+		// needs a trace for.
+		telemetry.Warn(context.WithoutCancel(ctx),
+			"runtime: prompt reply dropped; the turn already ended",
+			attribute.String("prompt", spec.ID),
+			attribute.String("turn", spec.TurnID),
+			attribute.String("run", spec.RunID))
 		return
 	}
 	reply.ID = spec.ID

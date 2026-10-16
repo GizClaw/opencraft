@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/resource"
@@ -75,6 +76,28 @@ func TestWebSearchSourceFactory(t *testing.T) {
 	}
 	if names := toolNames(disabled.(toolList)); len(names) != 0 {
 		t.Fatalf("disabled names = %v", names)
+	}
+}
+
+// TestWebFetchSourceFactoryWithoutNetPolicyFailsClosed pins the
+// no-policy fallback: a deployment that carries no net policy resource
+// must still get the hardened client (private destinations refused),
+// not the default HTTP client.
+func TestWebFetchSourceFactoryWithoutNetPolicyFailsClosed(t *testing.T) {
+	built, err := (webfetchSourceFactory{}).New(context.Background(), resource.Input{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, ok := built.(toolList)
+	if !ok || len(src) != 1 {
+		t.Fatalf("built = %T (%v), want one fetched tool", built, src)
+	}
+	_, err = src[0].Execute(context.Background(), `{"url":"http://127.0.0.1:9/"}`)
+	if err == nil {
+		t.Fatal("web_fetch without a net policy fetched a loopback destination")
+	}
+	if !strings.Contains(err.Error(), "SSRF guard") {
+		t.Fatalf("error = %v, want an SSRF guard refusal", err)
 	}
 }
 

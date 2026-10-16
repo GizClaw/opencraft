@@ -264,18 +264,13 @@ type HostSandboxSettings struct {
 }
 
 // Env converts the configured environment policy into the sandbox
-// EnvPolicy applied to every confined spawn.
+// EnvPolicy applied to every confined spawn. Both a missing section
+// and a section without allow resolve to the curated default
+// allowlist — nil would mean "inherit the whole host environment" to
+// the core, which no configuration spelling should reach by accident
+// (see EnvPolicyConfig.resolve).
 func (s HostSandboxSettings) Env() coresandbox.EnvPolicy {
-	if s.EnvPolicy == nil {
-		// No explicit policy: sandboxed commands get the curated
-		// allowlist instead of the parent environment wholesale, so
-		// provider keys never leak into project code by default.
-		return DefaultEnvPolicy()
-	}
-	return coresandbox.EnvPolicy{
-		Allow:  s.EnvPolicy.Allow,
-		Inject: s.EnvPolicy.Inject,
-	}
+	return s.EnvPolicy.resolve()
 }
 
 // HostSandboxFactory builds the sandbox.Runner resource (impl

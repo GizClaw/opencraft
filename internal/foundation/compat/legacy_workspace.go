@@ -159,8 +159,6 @@ func importLegacyConversation(
 		Title:        meta.Title,
 		CreatedAt:    createdAt,
 		UpdatedAt:    updatedAt,
-		TurnCount:    meta.TurnCount,
-		MessageCount: meta.MessageCount,
 		UsageJSON:    usageJSON,
 		ImportSource: meta.ImportSource,
 		ImportReady:  meta.ImportReady,

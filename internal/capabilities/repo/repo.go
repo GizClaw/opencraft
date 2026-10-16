@@ -110,7 +110,7 @@ func validBranchName(name string) bool {
 
 var (
 	lockMu sync.Mutex
-	locks  = map[string]*sync.Mutex{}
+	locks  = map[string]*repoLock{}
 )
 
 // Run executes one serialized, bounded git mutation.
@@ -133,8 +133,13 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 	lock := lockFor(req.Root)
-	lock.Lock()
-	defer lock.Unlock()
+	lock.mu.Lock()
+	defer func() {
+		// Unlock before release so the next waiter (which already holds
+		// its own reference) can enter while the table is being updated.
+		lock.mu.Unlock()
+		lock.release()
+	}()
 
 	timeout := req.Timeout
 	if timeout <= 0 {
@@ -245,16 +250,40 @@ func checkedPaths(paths []string) ([]string, error) {
 	return out, nil
 }
 
-func lockFor(root string) *sync.Mutex {
+// repoLock is one repository's serialization point. refs counts the
+// callers holding or waiting for it, and it is only ever touched under
+// lockMu: an entry is deleted when its own count reaches zero and never
+// while somebody still holds the pointer, so two callers can never end
+// up with two different mutexes for the same repository.
+type repoLock struct {
+	key  string
+	mu   sync.Mutex
+	refs int
+}
+
+func lockFor(root string) *repoLock {
 	lockMu.Lock()
 	defer lockMu.Unlock()
 	key := filepath.Clean(root)
-	mu := locks[key]
-	if mu == nil {
-		mu = &sync.Mutex{}
-		locks[key] = mu
+	lock := locks[key]
+	if lock == nil {
+		lock = &repoLock{key: key}
+		locks[key] = lock
 	}
-	return mu
+	lock.refs++
+	return lock
+}
+
+// release drops one reference, removing the entry when it was the last
+// one. A process that visits many repositories otherwise keeps a mutex
+// per repository for as long as it runs.
+func (l *repoLock) release() {
+	lockMu.Lock()
+	defer lockMu.Unlock()
+	l.refs--
+	if l.refs == 0 {
+		delete(locks, l.key)
+	}
 }
 
 type boundedResult struct {

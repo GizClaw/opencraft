@@ -269,6 +269,15 @@ func scanLaunchArgs(args []string) (launchFlags, error) {
 				return launchFlags{},
 					fmt.Errorf("config: %s requires a value", name)
 			}
+			// A value that is itself a flag means the flag was written
+			// without one: `--data-dir --profile dev` used to take
+			// "--profile" as the state root and silently drop the
+			// profile. The bound form ("--data-dir=-odd-name") is how a
+			// value that genuinely starts with a dash is written.
+			if next := args[i+1]; looksLikeFlag(next) {
+				return launchFlags{}, fmt.Errorf(
+					"config: %s requires a value (found flag %q)", name, next)
+			}
 			i++
 			value = args[i]
 		}
@@ -279,6 +288,13 @@ func scanLaunchArgs(args []string) (launchFlags, error) {
 		*target = value
 	}
 	return flags, nil
+}
+
+// looksLikeFlag reports whether an argument is a flag rather than a
+// value. A bare "-" is a value (the conventional stdin placeholder), and
+// "--" is the scan's own terminator, not a value either.
+func looksLikeFlag(arg string) bool {
+	return strings.HasPrefix(arg, "-") && arg != "-"
 }
 
 // homeDir resolves the home directory from the injected environment

@@ -10,16 +10,17 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/netguard"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
 func TestDomainGateAllowDeny(t *testing.T) {
-	orig := lookupHost
-	lookupHost = func(_ context.Context, host string) ([]net.IP, error) {
+	orig := netguard.LookupHost
+	netguard.LookupHost = func(_ context.Context, host string) ([]net.IP, error) {
 		return []net.IP{net.ParseIP("8.8.8.8")}, nil
 	}
-	t.Cleanup(func() { lookupHost = orig })
+	t.Cleanup(func() { netguard.LookupHost = orig })
 
 	gate := DomainGate(sandbox.WebFetchPolicy{
 		AllowHosts: []string{"example.com", "*.openai.com"},

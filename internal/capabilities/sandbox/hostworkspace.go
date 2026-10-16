@@ -42,7 +42,6 @@ func (w *HostWorkspace) pick(ctx context.Context) workspace.Workspace {
 	if len(w.readonly) > 0 {
 		return &confinedWithReadonly{
 			confined: w.confined,
-			host:     w.host,
 			root:     w.root,
 			readonly: w.readonly,
 		}
@@ -142,23 +141,59 @@ var _ workspace.Workspace = (*HostWorkspace)(nil)
 var _ workspace.LimitedReader = (*HostWorkspace)(nil)
 
 // confinedWithReadonly is the workspace-mode view: paths under a
-// readonly root are served read-only from the host, everything else
-// delegates to the confined LocalWorkspace. Writes never escape to
-// readonly roots.
+// readonly root are served read-only through a pinned os.Root handle,
+// everything else delegates to the confined LocalWorkspace. Writes
+// never reach readonly roots.
 type confinedWithReadonly struct {
 	confined workspace.Workspace
-	host     workspace.Workspace
 	root     string
 	readonly []string
 }
 
-func (w *confinedWithReadonly) readonlyPath(full string) bool {
+// readonlyView matches the requested absolute path against the
+// readonly roots and opens a pinned handle on the matching root.
+//
+// The lexical match only selects the root; containment is enforced by
+// the handle on every operation, so a symlink planted inside a readonly
+// root cannot reach outside it even when a confined process may write
+// that root (a deployment that grants its cache dir can still list it
+// here), and there is no check-then-use window between classifying the
+// path and reading it.
+func (w *confinedWithReadonly) readonlyView(full string) (*os.Root, string, bool) {
 	for _, root := range w.readonly {
-		if pathsafe.Within(root, full) {
-			return true
+		if !pathsafe.Within(root, full) {
+			continue
 		}
+		rel, err := filepath.Rel(root, full)
+		if err != nil {
+			continue
+		}
+		handle, err := os.OpenRoot(root)
+		if err != nil {
+			// A root that cannot be opened (missing, unreadable)
+			// serves nothing; fall through to the confined view,
+			// which rejects paths outside the workspace.
+			continue
+		}
+		return handle, rel, true
 	}
-	return false
+	return nil, "", false
+}
+
+// closeReadonlyRoot releases one handle opened by readonlyView.
+func closeReadonlyRoot(handle *os.Root) {
+	telemetry.WarnErr(context.Background(),
+		"workspace: close readonly root failed", handle.Close())
+}
+
+// readonlyError maps a failed os.Root operation onto the error shapes
+// the workspace stack uses: a missing path reports ErrNotFound, a
+// rejected symlink escape stays an error.
+func readonlyError(op, path string, err error) error {
+	if os.IsNotExist(err) {
+		return fmt.Errorf("%w: %s", workspace.ErrNotFound, path)
+	}
+	return fmt.Errorf("workspace: %s %s: %w", op, path, err)
 }
 
 func (w *confinedWithReadonly) Read(ctx context.Context, path string) ([]byte, error) {
@@ -166,14 +201,19 @@ func (w *confinedWithReadonly) Read(ctx context.Context, path string) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	if w.readonlyPath(full) {
-		return w.host.Read(ctx, path)
+	if handle, rel, ok := w.readonlyView(full); ok {
+		defer closeReadonlyRoot(handle)
+		data, err := handle.ReadFile(rel)
+		if err != nil {
+			return nil, readonlyError("read", path, err)
+		}
+		return data, nil
 	}
 	return w.confined.Read(ctx, path)
 }
 
-// ReadLimited mirrors Read: readonly roots are served from the host
-// view, everything else from the confined view, both bounded.
+// ReadLimited mirrors Read: readonly roots are served through their
+// pinned handle, everything else from the confined view, both bounded.
 func (w *confinedWithReadonly) ReadLimited(
 	ctx context.Context, path string, maxBytes int64,
 ) ([]byte, error) {
@@ -181,18 +221,43 @@ func (w *confinedWithReadonly) ReadLimited(
 	if err != nil {
 		return nil, err
 	}
-	if w.readonlyPath(full) {
-		if lr, ok := w.host.(workspace.LimitedReader); ok {
-			return lr.ReadLimited(ctx, path, maxBytes)
-		}
-		return nil, errdefs.NotAvailablef(
-			"opencraft workspace: bounded reads unsupported by %T", w.host)
+	if handle, rel, ok := w.readonlyView(full); ok {
+		defer closeReadonlyRoot(handle)
+		return readLimitedRoot(handle, rel, path, maxBytes)
 	}
 	if lr, ok := w.confined.(workspace.LimitedReader); ok {
 		return lr.ReadLimited(ctx, path, maxBytes)
 	}
 	return nil, errdefs.NotAvailablef(
 		"opencraft workspace: bounded reads unsupported by %T", w.confined)
+}
+
+// readLimitedRoot drains at most maxBytes+1 bytes from one readonly
+// file, so an oversized file cannot force an oversized allocation.
+func readLimitedRoot(
+	handle *os.Root, rel, path string, maxBytes int64,
+) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, errdefs.Validationf(
+			"workspace: ReadLimited maxBytes must be positive")
+	}
+	f, err := handle.Open(rel)
+	if err != nil {
+		return nil, readonlyError("read", path, err)
+	}
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"workspace: close readonly file failed", f.Close())
+	}()
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return nil, readonlyError("read", path, err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, errdefs.Validationf(
+			"workspace: %s exceeds %d bytes", path, maxBytes)
+	}
+	return data, nil
 }
 
 func (w *confinedWithReadonly) Write(
@@ -228,8 +293,19 @@ func (w *confinedWithReadonly) List(
 	if err != nil {
 		return nil, err
 	}
-	if w.readonlyPath(full) {
-		return w.host.List(ctx, dir)
+	if handle, rel, ok := w.readonlyView(full); ok {
+		defer closeReadonlyRoot(handle)
+		f, err := handle.Open(rel)
+		if err != nil {
+			return nil, readonlyError("list", dir, err)
+		}
+		entries, err := f.ReadDir(-1)
+		telemetry.WarnErr(context.Background(),
+			"workspace: close readonly dir failed", f.Close())
+		if err != nil {
+			return nil, readonlyError("list", dir, err)
+		}
+		return entries, nil
 	}
 	return w.confined.List(ctx, dir)
 }
@@ -239,8 +315,17 @@ func (w *confinedWithReadonly) Exists(ctx context.Context, path string) (bool, e
 	if err != nil {
 		return false, err
 	}
-	if w.readonlyPath(full) {
-		return w.host.Exists(ctx, path)
+	if handle, rel, ok := w.readonlyView(full); ok {
+		defer closeReadonlyRoot(handle)
+		_, err := handle.Stat(rel)
+		switch {
+		case err == nil:
+			return true, nil
+		case os.IsNotExist(err):
+			return false, nil
+		default:
+			return false, err
+		}
 	}
 	return w.confined.Exists(ctx, path)
 }
@@ -252,8 +337,13 @@ func (w *confinedWithReadonly) Stat(
 	if err != nil {
 		return nil, err
 	}
-	if w.readonlyPath(full) {
-		return w.host.Stat(ctx, path)
+	if handle, rel, ok := w.readonlyView(full); ok {
+		defer closeReadonlyRoot(handle)
+		info, err := handle.Stat(rel)
+		if err != nil {
+			return nil, readonlyError("stat", path, err)
+		}
+		return info, nil
 	}
 	return w.confined.Stat(ctx, path)
 }

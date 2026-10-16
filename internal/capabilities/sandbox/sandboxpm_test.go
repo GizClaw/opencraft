@@ -111,3 +111,84 @@ func TestSandboxPolicyRoundTrip(t *testing.T) {
 		t.Errorf("round trip = %+v, want %+v", got, pol)
 	}
 }
+
+// TestSandboxPolicyRoundTripKeepsEmptyAllow pins the wire form of the
+// three-state allow list: an explicit empty list must survive
+// marshal/unmarshal as "inherit nothing" and resolve to a non-nil empty
+// slice, not collapse back into the curated default (which is what an
+// omitted field used to do).
+func TestSandboxPolicyRoundTripKeepsEmptyAllow(t *testing.T) {
+	pol := SandboxPolicy{EnvPolicy: &EnvPolicyConfig{Allow: []string{}}}
+	data, err := json.Marshal(pol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got SandboxPolicy
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.EnvPolicy == nil {
+		t.Fatal("env policy did not survive the round trip")
+	}
+	if got.EnvPolicy.Allow == nil || len(got.EnvPolicy.Allow) != 0 {
+		t.Fatalf("empty allow round trip = %#v, want a non-nil empty list",
+			got.EnvPolicy.Allow)
+	}
+	if allow := got.EnvPolicy.resolve().Allow; allow == nil || len(allow) != 0 {
+		t.Fatalf("resolved empty allow = %#v, want a non-nil empty list", allow)
+	}
+}
+
+func TestEnvPolicyInjectOnlyKeepsDefaultAllowlist(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ctx := context.Background()
+
+	// A section that only injects must not widen inheritance to the
+	// whole host environment: to the core a nil Allow means exactly
+	// that, so the translation resolves it to the curated default.
+	settings := HostSandboxSettings{
+		EnvPolicy: &EnvPolicyConfig{
+			Inject: map[string]string{"GOCACHE": "/cache/go"},
+		},
+	}
+	env := settings.Env()
+	if env.Allow == nil {
+		t.Fatal("inject-only env_policy left Allow nil: the child would inherit the full host environment")
+	}
+	if !reflect.DeepEqual(env.Allow, DefaultEnvPolicy().Allow) {
+		t.Fatalf("inject-only allow = %v, want the default allowlist", env.Allow)
+	}
+	if env.Inject["GOCACHE"] != "/cache/go" {
+		t.Fatalf("inject lost: %+v", env.Inject)
+	}
+
+	// The wire form handed to the execd child carries the resolved
+	// policy, and the child-side translation resolves it the same way.
+	wire := settings.SandboxPolicy()
+	if wire.EnvPolicy == nil || wire.EnvPolicy.Allow == nil {
+		t.Fatalf("wire policy = %+v, want a resolved allowlist", wire.EnvPolicy)
+	}
+	runner, policy, err := SandboxRunner(ctx, t.TempDir(), wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = runner.Close() }()
+	if len(policy.Allow) == 0 || policy.Inject["GOCACHE"] != "/cache/go" {
+		t.Fatalf("child policy = %+v", policy)
+	}
+
+	// An explicit empty allow list still means "inherit nothing".
+	empty := HostSandboxSettings{EnvPolicy: &EnvPolicyConfig{Allow: []string{}}}
+	if got := empty.Env(); got.Allow == nil || len(got.Allow) != 0 {
+		t.Fatalf("explicit empty allow = %#v, want a non-nil empty list", got.Allow)
+	}
+	runner2, emptyPolicy, err := SandboxRunner(ctx, t.TempDir(),
+		SandboxPolicy{EnvPolicy: &EnvPolicyConfig{Allow: []string{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = runner2.Close() }()
+	if emptyPolicy.Allow == nil || len(emptyPolicy.Allow) != 0 {
+		t.Fatalf("child empty allow = %#v, want a non-nil empty list", emptyPolicy.Allow)
+	}
+}

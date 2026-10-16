@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,14 +37,29 @@ func storedSlice(msgs []message.Message) []StoredMessage {
 }
 
 type fakeTurnStore struct {
+	mu    sync.Mutex
 	msgs  map[string][]StoredMessage
 	nodes []SummaryNode
+	// writes counts every mutating store call, so a test can assert a
+	// barrier held without reading stable ids back: a fold that ran
+	// rewrites the same level-0 node in place, and a node count would
+	// not move.
+	writes int
+}
+
+// writeCount returns the number of mutating store calls so far.
+func (f *fakeTurnStore) writeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.writes
 }
 
 // appendRows writes one fixture turn to the transcript the way the
 // session store appends one: seqs count up from zero. The assembly never
 // writes — it reads what this fake holds — so seeding is the test's job.
 func (f *fakeTurnStore) appendRows(conversationID string, msgs ...message.Message) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	rows := f.msgs[conversationID]
 	next := int64(len(rows))
 	for _, msg := range msgs {
@@ -84,14 +101,20 @@ func (r *recordingStore) LoadBack(ctx context.Context, conversationID string, be
 }
 
 func (f *fakeTurnStore) MaxSeq(_ context.Context, conversationID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return int64(len(f.msgs[conversationID])) - 1, nil
 }
 
 func (f *fakeTurnStore) LoadAll(_ context.Context, conversationID string) ([]StoredMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.msgs[conversationID], nil
 }
 
 func (f *fakeTurnStore) LoadBack(_ context.Context, conversationID string, beforeSeq int64, n int) ([]StoredMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if n <= 0 {
 		return nil, nil
 	}
@@ -109,6 +132,9 @@ func (f *fakeTurnStore) LoadBack(_ context.Context, conversationID string, befor
 }
 
 func (f *fakeTurnStore) UpsertSummaryNode(_ context.Context, n SummaryNode) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writes++
 	for i := range f.nodes {
 		if f.nodes[i].ID == n.ID {
 			f.nodes[i] = n
@@ -119,7 +145,34 @@ func (f *fakeTurnStore) UpsertSummaryNode(_ context.Context, n SummaryNode) erro
 	return nil
 }
 
+// CondenseSummaryNode mirrors the sqlite store's atomic gate: the swap
+// lands only while the row still holds exactly the buffer the job
+// condensed (content, coverage, write time).
+func (f *fakeTurnStore) CondenseSummaryNode(
+	_ context.Context, want, replacement SummaryNode,
+) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.nodes {
+		cur := f.nodes[i]
+		if cur.ID != want.ID {
+			continue
+		}
+		if cur.Content.Text() != want.Content.Text() ||
+			!cur.UpdatedAt.Equal(want.UpdatedAt) ||
+			!slices.Equal(cur.SourceIDs, want.SourceIDs) {
+			return false, nil
+		}
+		f.writes++
+		f.nodes[i] = replacement
+		return true, nil
+	}
+	return false, nil
+}
+
 func (f *fakeTurnStore) ListSummaryNodes(_ context.Context, conversationID string) ([]SummaryNode, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []SummaryNode
 	for _, n := range f.nodes {
 		if n.ThreadID == conversationID {
@@ -130,6 +183,9 @@ func (f *fakeTurnStore) ListSummaryNodes(_ context.Context, conversationID strin
 }
 
 func (f *fakeTurnStore) DeleteSummaryNodes(_ context.Context, conversationID string, level int, keepID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writes++
 	var out []SummaryNode
 	for _, n := range f.nodes {
 		if n.ThreadID == conversationID && n.Level == level && n.ID != keepID {
@@ -142,6 +198,9 @@ func (f *fakeTurnStore) DeleteSummaryNodes(_ context.Context, conversationID str
 }
 
 func (f *fakeTurnStore) DeleteSummaryNodesByID(_ context.Context, conversationID string, ids []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.writes++
 	drop := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		drop[id] = true
@@ -438,7 +497,7 @@ func TestAssemblyCondensesFullSummary(t *testing.T) {
 	// fires LLM condensation.
 	for i := 0; i < 12; i++ {
 		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
-		a.condenseWG.Wait()
+		a.workWG.Wait()
 	}
 	if calls != 1 {
 		t.Fatalf("condense calls = %d, want 1", calls)
@@ -493,7 +552,7 @@ func TestAssemblyCondenseMergesPreviousSummary(t *testing.T) {
 	// condensed output, so the facts of the dropped messages survive.
 	for i := 0; i < 8; i++ {
 		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
-		a.condenseWG.Wait()
+		a.workWG.Wait()
 	}
 	if len(prompts) < 2 {
 		t.Fatalf("condense calls = %d, want >= 2", len(prompts))
@@ -529,7 +588,7 @@ func TestAssemblyCondenseFailureFallsBackToBuffer(t *testing.T) {
 	// algorithm stays summary_buffer so memory is never lost.
 	for i := 0; i < 8; i++ {
 		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
-		a.condenseWG.Wait()
+		a.workWG.Wait()
 	}
 	if calls != 2 {
 		t.Fatalf("condense calls = %d, want 2 (one per window advance)", calls)
@@ -609,7 +668,7 @@ func TestAssemblyCondenseCapsOutputToBudget(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
 	}
-	a.condenseWG.Wait()
+	a.workWG.Wait()
 	if len(store.nodes) != 1 {
 		t.Fatalf("nodes = %d, want 1", len(store.nodes))
 	}
@@ -964,4 +1023,116 @@ func TestAssemblyFoldKeepsToolPairRaw(t *testing.T) {
 		t.Fatalf("roles = %s/%s, want assistant/tool pair preserved",
 			raws[0].MessageRole, raws[1].MessageRole)
 	}
+}
+
+// TestAssemblyCloseStopsScheduling pins the close barrier: once Close
+// ran, a late commit still lands its transcript (that write happened
+// before the fold) but no fold reaches the store and no condensation
+// starts — the store is being torn down and a generation would outlive
+// its reader. Skipping is not a failed turn: the summary is derived
+// state, and reporting an error here would surface a teardown race as
+// one.
+func TestAssemblyCloseStopsScheduling(t *testing.T) {
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
+	var calls atomic.Int32
+	gen := func(
+		_ context.Context, _ inference.GenerateRequest,
+	) (inference.GenerateResponse, error) {
+		calls.Add(1)
+		return inference.GenerateResponse{
+			Message: message.NewTextMessage(
+				message.RoleAssistant, "CONDENSED"),
+			FinishReason: inference.FinishCompleted,
+		}, nil
+	}
+	a := NewAssembly(store,
+		WithAssemblyPolicy(condensePolicy()),
+		withGenerate(gen))
+	for i := 0; i < 7; i++ {
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	before := calls.Load()
+	beforeWrites := store.writeCount()
+	for i := 7; i < 14; i++ {
+		msg := message.NewTextMessage(message.RoleUser, fmt.Sprintf("m%d", i))
+		store.appendRows("c1", msg)
+		err := a.CommitTurn(context.Background(), memory.Turn{
+			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+			ConversationID: "c1",
+			IdempotencyKey: fmt.Sprintf("t%d", i),
+			Messages:       []message.Message{msg},
+		})
+		if err != nil {
+			t.Fatalf("commit %d after Close: %v; the transcript write must still land", i, err)
+		}
+	}
+	if after := calls.Load(); after != before {
+		t.Fatalf("condensation calls %d -> %d after Close; new work must not start",
+			before, after)
+	}
+	// A fold rewrites the same stable-id node in place, so the node
+	// count cannot move; the write counter is what pins "no fold
+	// reached the store".
+	if after := store.writeCount(); after != beforeWrites {
+		t.Fatalf("store writes %d -> %d after Close; the fold must not touch the store",
+			beforeWrites, after)
+	}
+}
+
+// TestAssemblyCloseRacesFolds drives folds and Close concurrently: the
+// closed bit and the wait group are one mutex-protected step, so the
+// race can neither trip the WaitGroup misuse panic nor leave a
+// condensation goroutine that outlives Close.
+func TestAssemblyCloseRacesFolds(t *testing.T) {
+	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
+	gen := func(
+		_ context.Context, _ inference.GenerateRequest,
+	) (inference.GenerateResponse, error) {
+		return inference.GenerateResponse{
+			Message: message.NewTextMessage(
+				message.RoleAssistant, "CONDENSED"),
+			FinishReason: inference.FinishCompleted,
+		}, nil
+	}
+	a := NewAssembly(store,
+		WithAssemblyPolicy(condensePolicy()),
+		withGenerate(gen))
+	for i := 0; i < 7; i++ {
+		commit(t, a, store, "c1", fmt.Sprintf("t%d", i), fmt.Sprintf("m%d", i))
+	}
+
+	emit := func(worker, i int) {
+		msg := message.NewTextMessage(
+			message.RoleUser, fmt.Sprintf("w%d-m%d", worker, i))
+		// One conversation per worker keeps the folding windows
+		// independent; CommitTurn folds whatever the fake store holds.
+		conv := fmt.Sprintf("c%d", worker+2)
+		store.appendRows(conv, msg)
+		_ = a.CommitTurn(context.Background(), memory.Turn{
+			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+			ConversationID: conv,
+			IdempotencyKey: fmt.Sprintf("w%d-t%d", worker, i),
+			Messages:       []message.Message{msg},
+		})
+	}
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < 10; i++ {
+				emit(w, i)
+			}
+		}(w)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = a.Close()
+	}()
+	wg.Wait()
 }

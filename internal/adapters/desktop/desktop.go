@@ -148,7 +148,7 @@ func New(opts Options) (*Desktop, error) {
 	// below stay quiet for a Host that no longer serves the window's
 	// workspace.
 	c.Runtime.Manager().SetHostConfigurator(func(h *host.Host) {
-		h.SetArtifactObserver(func(ctx context.Context, path string, data []byte) {
+		h.SetArtifactObserver(func(ctx context.Context, path string, bytes int64) {
 			if h != c.ActiveHost() {
 				return
 			}
@@ -160,7 +160,7 @@ func New(opts Options) (*Desktop, error) {
 				"conversation_id": info.ConversationID,
 				"run_id":          info.RunID,
 				"path":            path,
-				"bytes":           len(data),
+				"bytes":           bytes,
 			})
 		})
 		h.SetSessionUpdated(func(_ context.Context, contextID string) {
@@ -495,6 +495,11 @@ func (d *Desktop) runAutomation(
 	if err != nil {
 		return automationStartFailure(err, task.ConversationID)
 	}
+	// WaitBounded below releases the run; this is the safety net for an
+	// early return added between here and there. Close on a settled run
+	// only waits for a release that already happened (see
+	// TestRunCloseAfterWaitIsDeferred), so it never changes the result.
+	defer run.Close()
 	runID := run.RunID()
 	contextID := run.ContextID()
 	if current {

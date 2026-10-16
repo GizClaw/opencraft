@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -117,6 +118,18 @@ func (s *Schedule) ensureOrigin(now time.Time) {
 	if s.Type == ScheduleWeekly && s.Origin == "" {
 		s.Origin = now.Format("2006-01-02")
 	}
+}
+
+// sameSchedule reports whether two schedules describe the same cadence,
+// phase anchor included. SaveTask uses it to decide whether a stored
+// next trigger still belongs to the schedule being saved.
+func sameSchedule(a, b Schedule) bool {
+	return a.Type == b.Type &&
+		a.IntervalHours == b.IntervalHours &&
+		a.IntervalWeeks == b.IntervalWeeks &&
+		a.Time == b.Time &&
+		a.Origin == b.Origin &&
+		slices.Equal(a.Days, b.Days)
 }
 
 func validClock(s string) bool {

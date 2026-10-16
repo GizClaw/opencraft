@@ -30,6 +30,13 @@ type SessionDefaults struct {
 	Think string `json:"think"`
 }
 
+const (
+	// defaultLogLines is the tail ReadLog returns when the caller names
+	// no count; maxLogLines is the most it will return for any count.
+	defaultLogLines = 200
+	maxLogLines     = 5_000
+)
+
 // NewSettingsBinding wires the settings binding.
 func NewSettingsBinding(c *core.Core) *Settings {
 	return &Settings{core: c}
@@ -78,17 +85,28 @@ func (b *Settings) GetThink() (string, error) {
 // SetThink updates and persists the reasoning effort.
 func (b *Settings) SetThink(level string) error {
 	ctx := b.core.Shell.Context()
-	workDir := b.core.ActiveWorkDir()
 	lv := sessions.ThinkLevel(level)
 	if !lv.Valid() {
 		return fmt.Errorf("unknown think level %q", level)
 	}
-	b.core.Conversation.SetThink(workDir, string(lv))
-	if h := b.core.ActiveHost(); h != nil && h.Sessions() != nil {
-		return h.Sessions().SetThink(
-			ctx, b.core.Conversation.Current(workDir), lv,
-		)
+	// Sample the workspace and its Host once: resolving the host from
+	// the active workspace a second time lets a workspace switch in
+	// between persist one workspace's value and remember another's.
+	workDir := b.core.ActiveWorkDir()
+	h := b.core.Runtime.HostFor(workDir)
+	if h == nil || h.Sessions() == nil {
+		return fmt.Errorf(
+			"settings: workspace %q has no running session store; think level not saved",
+			workDir)
 	}
+	// Persist first: a failed write must not leave the in-memory knob
+	// claiming a value the store never accepted.
+	if err := h.Sessions().SetThink(
+		ctx, b.core.Conversation.Current(workDir), lv,
+	); err != nil {
+		return err
+	}
+	b.core.Conversation.SetThink(workDir, string(lv))
 	return nil
 }
 
@@ -100,14 +118,20 @@ func (b *Settings) GetModel() (string, error) {
 // SetModel updates and persists the model hint.
 func (b *Settings) SetModel(model string) error {
 	ctx := b.core.Shell.Context()
-	workDir := b.core.ActiveWorkDir()
 	model = strings.TrimSpace(model)
-	b.core.Conversation.SetModel(workDir, model)
-	if h := b.core.ActiveHost(); h != nil && h.Sessions() != nil {
-		return h.Sessions().SetModel(
-			ctx, b.core.Conversation.Current(workDir), model,
-		)
+	workDir := b.core.ActiveWorkDir()
+	h := b.core.Runtime.HostFor(workDir)
+	if h == nil || h.Sessions() == nil {
+		return fmt.Errorf(
+			"settings: workspace %q has no running session store; model not saved",
+			workDir)
 	}
+	if err := h.Sessions().SetModel(
+		ctx, b.core.Conversation.Current(workDir), model,
+	); err != nil {
+		return err
+	}
+	b.core.Conversation.SetModel(workDir, model)
 	return nil
 }
 
@@ -211,6 +235,11 @@ type SkillSummary struct {
 	Path        string `json:"path"`
 	PluginID    string `json:"plugin_id,omitempty"`
 	PluginName  string `json:"plugin_name,omitempty"`
+	// Removable is the backend's own answer to "would Delete accept
+	// this path": the app's writable roots say yes, builtin / plugin /
+	// extra-root skills say no. The settings page draws the delete
+	// affordance from it instead of guessing from scope and plugin id.
+	Removable bool `json:"removable"`
 }
 
 // Skills returns the discovered skill registry.
@@ -232,6 +261,7 @@ func (b *Settings) Skills() ([]SkillSummary, error) {
 			summary.PluginID = pluginID
 			summary.PluginName = pluginName
 		}
+		summary.Removable = svc.Deletable(s.Path)
 		out = append(out, summary)
 	}
 	return out, nil
@@ -321,8 +351,14 @@ func (b *Settings) RenderSkillPatch(
 // instead of loading the whole file: a window is read, and grown only
 // when it turned out to hold fewer lines than requested.
 func (b *Settings) ReadLog(n int) (string, error) {
+	// The tail is bounded on both ends: n lines means a window of up to
+	// n * 64 KiB read into memory, so a caller asking for a million
+	// lines would pull in the whole multi-megabyte log.
 	if n <= 0 {
-		n = 200
+		n = defaultLogLines
+	}
+	if n > maxLogLines {
+		n = maxLogLines
 	}
 	path := filepath.Join(b.core.DataDir, "logs", "opencraft.log")
 	f, err := os.Open(path)

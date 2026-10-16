@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -288,4 +289,27 @@ func (m *Manager) anyActiveRuns() bool {
 		}
 	}
 	return false
+}
+
+// BusyWorkspaces lists the workspaces that have a live run right now,
+// pooled or still draining. A caller that must not touch a repository a
+// turn is working in asks this instead of asking one Host: the
+// desktop's git panel is repository-wide, and a run in a sibling
+// workspace of the same repository edits the same files.
+func (m *Manager) BusyWorkspaces() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]string, 0, len(m.hosts)+len(m.retiring))
+	for workDir, ref := range m.hosts {
+		if ref.host.hasActiveRuns() {
+			out = append(out, workDir)
+		}
+	}
+	for workDir, h := range m.retiring {
+		if h.hasActiveRuns() {
+			out = append(out, workDir)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

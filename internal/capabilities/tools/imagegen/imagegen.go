@@ -488,6 +488,7 @@ func (t *Tool) generateWithPreviews(
 			break
 		}
 		if err != nil {
+			t.discardPreviews(ctx, previews)
 			return inference.GenerateResponse{}, trace, previews, err
 		}
 		delta, ok := event.Delta.(inference.ImagePartDelta)
@@ -503,9 +504,23 @@ func (t *Tool) generateWithPreviews(
 	}
 	resp, err := stream.Result()
 	if err != nil {
+		// The previews are snapshots of a generation that did not
+		// finish: left behind they look like the turn produced files it
+		// did not, under a name the next run never reuses.
+		t.discardPreviews(ctx, previews)
 		return inference.GenerateResponse{}, trace, previews, err
 	}
 	return resp, trace, previews, nil
+}
+
+// discardPreviews removes the preview files of a run that failed. It is
+// best-effort: a preview that cannot be removed is a stale file, not a
+// reason to replace the generation error with a filesystem one.
+func (t *Tool) discardPreviews(ctx context.Context, previews []string) {
+	for _, path := range previews {
+		telemetry.WarnErr(ctx, Name+": remove preview of a failed run failed",
+			t.ws.Delete(ctx, path))
+	}
 }
 
 // providerExtensions renders the requested provider-addressed knobs:

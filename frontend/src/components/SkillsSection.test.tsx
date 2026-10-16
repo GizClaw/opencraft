@@ -215,4 +215,48 @@ describe('SkillsSection lifecycle', () => {
     expect(screen.queryByRole('menuitem', { name: 'Pin' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Archive' })).toBeNull();
   });
+
+  // An extra-root skill is a user skill the app does not own: the
+  // backend reports removable=false, and the row must keep the
+  // lifecycle menu (pin/archive are the curator's, not the owner's) while
+  // the delete entry stays away — the click would be refused.
+  it('keeps the lifecycle menu but drops delete for a skill it does not own', async () => {
+    const user = userEvent.setup();
+    apiMock.skills.mockResolvedValue([
+      ...skills,
+      {
+        name: 'extra',
+        description: 'From an extra root',
+        scope: 'user',
+        path: '/x/extra/SKILL.md',
+        removable: false,
+      },
+    ]);
+    apiMock.skillLifecycle.mockResolvedValue({
+      ...lifecycle,
+      skills: [
+        ...usageRows,
+        {
+          name: 'extra',
+          scope: 'user',
+          path: '/x/extra/SKILL.md',
+          uses: 0,
+          pinned: false,
+          retired: false,
+          builtin: false,
+          suggested_retire: false,
+        },
+      ],
+    });
+    render(<SkillsSection />);
+    const extraRow = (await screen.findByText('extra')).closest('li');
+    expect(extraRow).not.toBeNull();
+    await user.click(
+      within(extraRow as HTMLElement).getByRole('button', {
+        name: 'More actions',
+      }),
+    );
+    expect(screen.getByRole('menuitem', { name: 'Pin' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Delete' })).toBeNull();
+  });
 });

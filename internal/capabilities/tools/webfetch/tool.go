@@ -2,11 +2,7 @@ package webfetch
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,12 +10,11 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
-	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
-	"golang.org/x/net/http/httpproxy"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/netguard"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/extract"
 )
 
@@ -70,6 +65,29 @@ func (t *Tool) rebuildClient() {
 	}
 }
 
+// SetSSRFGuard installs the hardened client without a domain gate: the
+// fallback when a deployment carries no net policy resource. No host
+// list applies (there is none to enforce), but the transport still
+// refuses private/loopback/link-local destinations, pins DNS to the
+// validated addresses and revalidates every redirect hop, so a missing
+// policy resource cannot widen the SSRF surface.
+func (t *Tool) SetSSRFGuard(allowPrivate func(context.Context) bool) {
+	t.gate = func(context.Context, string) error { return nil }
+	t.allowPrivate = allowPrivate
+	t.rebuildClient()
+}
+
+// clampMaxLength caps one caller-supplied max_length: 0 and negative
+// values pass through (the extractor's default applies), anything
+// above the ceiling is clamped so a single fetch cannot flood the
+// model context with an arbitrarily large result.
+func clampMaxLength(n int) int {
+	if n > maxLengthCeiling {
+		return maxLengthCeiling
+	}
+	return n
+}
+
 // Definition implements tool.Tool.
 func (t *Tool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
@@ -83,7 +101,7 @@ func (t *Tool) Definition() message.ToolDefinition {
 		message.ToolProperty("url", "string",
 			"The absolute http:// or https:// URL to fetch (required)."),
 		message.ToolPropertyWithDefault("max_length", "integer",
-			"Maximum characters of text to return (default 8000).",
+			"Maximum characters of text to return (default 8000, capped at 100000).",
 			8000),
 		message.ToolPropertyWithDefault("format", "string",
 			"Output format: \"text\" (default) or \"markdown\".",
@@ -131,27 +149,20 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 			return "", err
 		}
 		// The SSRF guard pins DNS to the validated addresses only on
-		// direct dials. Through an HTTP(S) proxy the transport dials the
-		// proxy instead, so the target would be re-resolved by the proxy
-		// and a DNS rebinding window would reopen. Fail closed: refuse
-		// proxy use while the guard is active. YOLO/allow_private paths
-		// resolve allowPrivate to true and are exempt (no SSRF concern).
-		if t.allowPrivate == nil || !t.allowPrivate(ctx) {
-			if proxy, err := envProxy(u.String()); err != nil {
-				return "", errdefs.Validationf(
-					"web_fetch: proxy resolution: %v", err)
-			} else if proxy != nil {
-				return "", errdefs.Validationf(
-					"web_fetch: the SSRF guard cannot pin DNS through proxy %s; "+
-						"unset HTTP(S)_PROXY/ALL_PROXY for this fetch or enable "+
-						"web_fetch.allow_private", proxy.Redacted())
-			}
+		// direct dials; through an HTTP(S) proxy the target would be
+		// re-resolved on the proxy side. Fail closed before doing any
+		// work — netguard.Client applies the same rule to every
+		// request, so a redirect hop cannot slip past this check.
+		// YOLO/allow_private paths are exempt (no SSRF concern).
+		if err := netguard.RefuseProxy(Name, u.String(),
+			t.allowPrivate != nil && t.allowPrivate(ctx)); err != nil {
+			return "", err
 		}
 	}
 
 	var opts []extract.Option
 	if args.MaxLength > 0 {
-		opts = append(opts, extract.WithMaxCharacters(args.MaxLength))
+		opts = append(opts, extract.WithMaxCharacters(clampMaxLength(args.MaxLength)))
 	}
 	if strings.EqualFold(args.Format, "markdown") {
 		opts = append(opts, extract.WithFormat(extract.FormatMarkdown))
@@ -182,184 +193,33 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 // maxRedirects bounds redirect chains followed by the hardened client.
 const maxRedirects = 10
 
-// hardenedClient builds an http.Client whose transport validates the
-// destination host on every connection and whose redirect policy
-// re-runs the gate for each hop. DNS is resolved once per dial and the
-// connection targets the exact validated addresses, closing the
+// clientTimeout bounds one whole fetch through the hardened client.
+const clientTimeout = 30 * time.Second
+
+// maxLengthCeiling bounds the max_length argument. It is the
+// extractor's own default cap, so a caller asking for more than the
+// default path would return cannot make the result bigger than any
+// default fetch.
+const maxLengthCeiling = 100_000
+
+// hardenedClient builds the tool's http.Client: the shared netguard
+// transport, which validates the destination host on every connection,
+// re-runs the gate for each redirect hop, resolves DNS once per dial,
+// and connects to exactly the validated addresses — closing the
 // redirect and DNS-rebinding bypasses of a check that only runs on the
-// original URL.
+// original URL. The same client backs the provider artifact downloads
+// in generate_video (internal/foundation/netguard).
 func hardenedClient(
 	gate func(context.Context, string) error,
 	allowPrivate func(context.Context) bool,
 ) *http.Client {
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	tr := &http.Transport{
-		// Re-read the environment on every request (httpproxy, unlike
-		// http.ProxyFromEnvironment, does not cache the first lookup), so
-		// the Execute-side proxy rejection and this transport agree on
-		// the current proxy configuration.
-		Proxy: func(req *http.Request) (*url.URL, error) {
-			return envProxy(req.URL.String())
-		},
-		DialContext:           pinnedDial(gate, allowPrivate, dialer),
-		DialTLSContext:        pinnedTLSDial(gate, allowPrivate, dialer),
-		MaxIdleConns:          10,
-		MaxIdleConnsPerHost:   4,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-	}
-	return &http.Client{
-		Transport: tr,
-		Timeout:   30 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
-				return fmt.Errorf(
-					"web_fetch: stopped after %d redirects", maxRedirects)
-			}
-			if gate != nil {
-				if err := gate(req.Context(), req.URL.Hostname()); err != nil {
-					return err
-				}
-			}
-			return nil
-		},
-	}
-}
-
-// envProxy resolves the proxy configured for rawURL from the process
-// environment. It is a variable so tests can stub it without mutating
-// the process environment.
-var envProxy = func(rawURL string) (*url.URL, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return nil, err
-	}
-	return httpproxy.FromEnvironment().ProxyFunc()(u)
-}
-
-// pinnedDial resolves addr once, validates the resolved addresses
-// against the SSRF guard, and dials those exact addresses. The gate is
-// consulted for the host lists as well, so allow/deny rules keep
-// working even when the host is not a private literal.
-func pinnedDial(
-	gate func(context.Context, string) error,
-	allowPrivate func(context.Context) bool,
-	dialer *net.Dialer,
-) func(context.Context, string, string) (net.Conn, error) {
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, fmt.Errorf("web_fetch: parse dial address %q: %w", addr, err)
-		}
-		if gate != nil {
-			if err := gate(ctx, host); err != nil {
-				return nil, err
-			}
-		}
-		ips, err := validatedAddresses(ctx, host, allowPrivate != nil && allowPrivate(ctx))
-		if err != nil {
-			return nil, err
-		}
-		return dialIPs(ctx, dialer, network, ips, port)
-	}
-}
-
-// pinnedTLSDial is pinnedDial plus the TLS handshake against the
-// hostname, so SNI/certificate validation still uses the original
-// host while the connection itself targets the validated address.
-func pinnedTLSDial(
-	gate func(context.Context, string) error,
-	allowPrivate func(context.Context) bool,
-	dialer *net.Dialer,
-) func(context.Context, string, string) (net.Conn, error) {
-	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			return nil, fmt.Errorf("web_fetch: parse dial address %q: %w", addr, err)
-		}
-		if gate != nil {
-			if err := gate(ctx, host); err != nil {
-				return nil, err
-			}
-		}
-		ips, err := validatedAddresses(ctx, host, allowPrivate != nil && allowPrivate(ctx))
-		if err != nil {
-			return nil, err
-		}
-		conn, err := dialIPs(ctx, dialer, network, ips, port)
-		if err != nil {
-			return nil, err
-		}
-		tconn := tls.Client(conn, &tls.Config{
-			ServerName: host,
-			MinVersion: tls.VersionTLS12,
-		})
-		if err := tconn.HandshakeContext(ctx); err != nil {
-			telemetry.WarnErr(ctx,
-				"web_fetch: close connection after TLS handshake failure",
-				conn.Close())
-			return nil, fmt.Errorf("web_fetch: TLS handshake with %s: %w", host, err)
-		}
-		return tconn, nil
-	}
-}
-
-// validatedAddresses resolves host (or returns the literal IP) and
-// rejects any resolved address in private/loopback/link-local space.
-// The caller dials exactly these addresses, so the check and the
-// connection share one resolution.
-func validatedAddresses(
-	ctx context.Context, host string, allowPrivate bool,
-) ([]net.IP, error) {
-	if ip := net.ParseIP(host); ip != nil {
-		if !allowPrivate && blockedIP(ip) {
-			return nil, errdefs.Validationf(
-				"web_fetch: private address %q is blocked by the SSRF guard", host)
-		}
-		return []net.IP{ip}, nil
-	}
-	ips, err := lookupHost(ctx, host)
-	if err != nil {
-		return nil, errdefs.Validationf("web_fetch: resolve %q: %v", host, err)
-	}
-	if len(ips) == 0 {
-		return nil, errdefs.Validationf("web_fetch: no addresses for %q", host)
-	}
-	if !allowPrivate {
-		for _, ip := range ips {
-			if blockedIP(ip) {
-				return nil, errdefs.Validationf(
-					"web_fetch: host %q resolves to private address %s (blocked by the SSRF guard)",
-					host, ip)
-			}
-		}
-	}
-	return ips, nil
-}
-
-// dialIPs tries each validated address in order and returns the first
-// successful connection.
-func dialIPs(
-	ctx context.Context,
-	dialer *net.Dialer,
-	network string,
-	ips []net.IP,
-	port string,
-) (net.Conn, error) {
-	var lastErr error
-	for _, ip := range ips {
-		conn, err := dialer.DialContext(
-			ctx, network, net.JoinHostPort(ip.String(), port))
-		if err == nil {
-			return conn, nil
-		}
-		lastErr = err
-	}
-	if lastErr != nil {
-		return nil, fmt.Errorf("web_fetch: dial %s: %w", ips, lastErr)
-	}
-	return nil, errors.New("web_fetch: no reachable address")
+	return netguard.Client(netguard.Options{
+		Label:        Name,
+		Gate:         gate,
+		AllowPrivate: allowPrivate,
+		Timeout:      clientTimeout,
+		MaxRedirects: maxRedirects,
+	})
 }
 
 // DomainGate builds the URL host gate from the configured policy:
@@ -425,39 +285,7 @@ func hostMatches(host string, patterns []string) bool {
 // checkPublicHost rejects IP literals and resolved destinations in
 // private/loopback/link-local space (SSRF guard).
 func checkPublicHost(ctx context.Context, host string) error {
-	if ip := net.ParseIP(host); ip != nil {
-		if blockedIP(ip) {
-			return errdefs.Validationf(
-				"web_fetch: private address %q is blocked by the SSRF guard", host)
-		}
-		return nil
-	}
-	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	ips, err := lookupHost(dctx, host)
-	if err != nil {
-		return errdefs.Validationf("web_fetch: resolve %q: %v", host, err)
-	}
-	for _, ip := range ips {
-		if blockedIP(ip) {
-			return errdefs.Validationf(
-				"web_fetch: host %q resolves to private address %s (blocked by the SSRF guard)",
-				host, ip)
-		}
-	}
-	return nil
-}
-
-// lookupHost resolves a hostname to IPs for the SSRF guard. It is a
-// variable so tests can stub DNS resolution and stay hermetic.
-var lookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
-	return net.DefaultResolver.LookupIP(ctx, "ip", host)
-}
-
-func blockedIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified()
+	return netguard.ResolvePublic(ctx, Name, host)
 }
 
 // Compile-time assertion.
