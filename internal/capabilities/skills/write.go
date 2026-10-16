@@ -369,7 +369,8 @@ func copyTree(src, dst string) error {
 
 // Delete removes one non-builtin skill directory (the parent of the
 // given SKILL.md path). Only paths inside the app's own writable skill
-// roots are accepted; embedded builtin skills are refused.
+// roots are accepted; embedded builtin skills are refused, and so are
+// plugin-provided or extra-root skills, whose owner removes them.
 //
 // The containment decision runs on resolved paths: RemoveAll resolves a
 // path's intermediate components when it executes, so a lexical
@@ -379,22 +380,72 @@ func copyTree(src, dst string) error {
 // so even a link swapped in between the check and the delete cannot walk
 // the removal back out of the tree.
 func (s *Service) Delete(skillPath string) error {
-	if strings.HasPrefix(skillPath, builtinPrefix) {
-		return fmt.Errorf("skills: builtin skills cannot be deleted")
-	}
-	clean, err := filepath.Abs(filepath.Clean(skillPath))
+	target, err := s.resolveDeleteTarget(skillPath)
 	if err != nil {
-		return fmt.Errorf("skills: resolve %q: %w", skillPath, err)
+		return err
 	}
-	if filepath.Base(clean) != "SKILL.md" {
-		return fmt.Errorf("skills: %q is not a SKILL.md path", skillPath)
-	}
-	real, err := filepath.EvalSymlinks(clean)
+	info, err := os.Stat(target.doc)
 	if err != nil {
 		return fmt.Errorf("skills: %q does not exist", skillPath)
 	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("skills: %q is not a regular file", skillPath)
+	}
+	rel, err := filepath.Rel(target.root, target.dir)
+	if err != nil {
+		return fmt.Errorf("skills: resolve %q under %q: %w",
+			skillPath, target.root, err)
+	}
+	handle, err := os.OpenRoot(target.root)
+	if err != nil {
+		return fmt.Errorf("skills: open skill root %q: %w", target.root, err)
+	}
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"skills: close skill root handle failed", handle.Close())
+	}()
+	if err := handle.RemoveAll(rel); err != nil {
+		return fmt.Errorf("skills: remove %q: %w", target.dir, err)
+	}
+	s.Reload()
+	return nil
+}
+
+// Deletable reports whether Delete would accept this SKILL.md path. The
+// settings page asks before it draws the delete affordance, so the
+// button and the backend cannot disagree about which skills the app
+// owns.
+func (s *Service) Deletable(skillPath string) bool {
+	_, err := s.resolveDeleteTarget(skillPath)
+	return err == nil
+}
+
+// deleteTarget is the containment decision both Delete and Deletable
+// run: resolveDeleteTarget turns one SKILL.md path into the resolved
+// skill directory, the resolved document, and the app-owned root that
+// contains them.
+type deleteTarget struct {
+	root string // the app-owned root containing the skill
+	dir  string // the resolved skill directory to remove
+	doc  string // the resolved SKILL.md
+}
+
+func (s *Service) resolveDeleteTarget(skillPath string) (deleteTarget, error) {
+	if strings.HasPrefix(skillPath, builtinPrefix) {
+		return deleteTarget{}, fmt.Errorf("skills: builtin skills cannot be deleted")
+	}
+	clean, err := filepath.Abs(filepath.Clean(skillPath))
+	if err != nil {
+		return deleteTarget{}, fmt.Errorf("skills: resolve %q: %w", skillPath, err)
+	}
+	if filepath.Base(clean) != "SKILL.md" {
+		return deleteTarget{}, fmt.Errorf("skills: %q is not a SKILL.md path", skillPath)
+	}
+	real, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return deleteTarget{}, fmt.Errorf("skills: %q does not exist", skillPath)
+	}
 	dir := filepath.Dir(real)
-	root := ""
 	for _, candidate := range s.writableRoots() {
 		abs, err := filepath.Abs(filepath.Clean(candidate))
 		if err != nil {
@@ -409,42 +460,18 @@ func (s *Service) Delete(skillPath string) error {
 			// A SKILL.md sitting directly in a scanned root is listed
 			// as a skill; deleting "it" would RemoveAll the whole root
 			// and every sibling skill with it.
-			return fmt.Errorf(
+			return deleteTarget{}, fmt.Errorf(
 				"skills: %q sits directly in a skill root; refusing to delete the root itself",
 				skillPath)
 		}
 		if pathsafe.Within(realRoot, dir) {
-			root = realRoot
-			break
+			return deleteTarget{root: realRoot, dir: dir, doc: real}, nil
 		}
 	}
-	if root == "" {
-		return fmt.Errorf("skills: %q is outside the writable skill roots", skillPath)
-	}
-	info, err := os.Stat(real)
-	if err != nil {
-		return fmt.Errorf("skills: %q does not exist", skillPath)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("skills: %q is not a regular file", skillPath)
-	}
-	rel, err := filepath.Rel(root, dir)
-	if err != nil {
-		return fmt.Errorf("skills: resolve %q under %q: %w", skillPath, root, err)
-	}
-	handle, err := os.OpenRoot(root)
-	if err != nil {
-		return fmt.Errorf("skills: open skill root %q: %w", root, err)
-	}
-	defer func() {
-		telemetry.WarnErr(context.Background(),
-			"skills: close skill root handle failed", handle.Close())
-	}()
-	if err := handle.RemoveAll(rel); err != nil {
-		return fmt.Errorf("skills: remove %q: %w", dir, err)
-	}
-	s.Reload()
-	return nil
+	return deleteTarget{}, fmt.Errorf(
+		"skills: %q is outside the app's own skill roots; "+
+			"plugin-provided and extra-root skills are removed by their owner, not here",
+		skillPath)
 }
 
 // writableRoots returns every skill root the app itself owns and may

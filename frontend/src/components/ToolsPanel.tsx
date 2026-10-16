@@ -1106,6 +1106,7 @@ interface SkillRow {
   path: string;
   plugin_id?: string;
   plugin_name?: string;
+  removable?: boolean;
 }
 
 // SkillsSection lists skills discovered by the runtime; builtin and
@@ -1412,7 +1413,10 @@ export function SkillsSection() {
       ) : (
         <ul className="flex flex-col gap-2">
           {filteredSkills.map((s) => {
-            const removable = s.scope !== 'builtin' && !s.plugin_id;
+            // The backend decides: it owns the writable-root list. The
+            // fallback keeps older bindings honest (no removable field).
+            const removable =
+              s.removable ?? (s.scope !== 'builtin' && !s.plugin_id);
             const usage = usageOf(s.name);
             const scopeLabel =
               s.scope === 'builtin'

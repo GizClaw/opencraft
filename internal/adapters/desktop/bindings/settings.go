@@ -235,6 +235,11 @@ type SkillSummary struct {
 	Path        string `json:"path"`
 	PluginID    string `json:"plugin_id,omitempty"`
 	PluginName  string `json:"plugin_name,omitempty"`
+	// Removable is the backend's own answer to "would Delete accept
+	// this path": the app's writable roots say yes, builtin / plugin /
+	// extra-root skills say no. The settings page draws the delete
+	// affordance from it instead of guessing from scope and plugin id.
+	Removable bool `json:"removable"`
 }
 
 // Skills returns the discovered skill registry.
@@ -256,6 +261,7 @@ func (b *Settings) Skills() ([]SkillSummary, error) {
 			summary.PluginID = pluginID
 			summary.PluginName = pluginName
 		}
+		summary.Removable = svc.Deletable(s.Path)
 		out = append(out, summary)
 	}
 	return out, nil
