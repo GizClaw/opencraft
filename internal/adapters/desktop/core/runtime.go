@@ -117,6 +117,13 @@ func (r *Runtime) HostFor(workDir string) *host.Host {
 	return r.manager.Current(workDir)
 }
 
+// BusyWorkspaces lists the workspaces with a live run right now, pooled
+// or still draining. It answers "is a turn working in this repository"
+// for callers whose scope is wider than one workspace (the git panel).
+func (r *Runtime) BusyWorkspaces() []string {
+	return r.manager.BusyWorkspaces()
+}
+
 // Usage returns the user-level usage store after OpenUserDB.
 func (r *Runtime) Usage() *usage.Store {
 	return r.manager.UsageStore()

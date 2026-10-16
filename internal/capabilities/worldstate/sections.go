@@ -3,13 +3,18 @@ package worldstate
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/workspace"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
 )
@@ -17,7 +22,29 @@ import (
 const (
 	agentsSeparator  = "\n\n--- project-doc ---\n\n"
 	defaultDocBudget = 16 << 10 // 16 KiB
+	// maxDocReadBytes is how much of an AGENTS doc is read at all. A
+	// doc at or below defaultDocBudget is used whole, and one above it
+	// is truncated to the budget after the read, so the budget stays
+	// the only thing the model sees. This is the ceiling on what the
+	// read may allocate: a doc past it is skipped with a warning rather
+	// than carried into memory to keep the first 16 KiB of it.
+	maxDocReadBytes = 1 << 20 // 1 MiB
 )
+
+// oversizedDocMessage names the limit once, in the message the skip
+// logs, so the number cannot drift between the check and the report.
+var oversizedDocMessage = fmt.Sprintf(
+	"worldstate: AGENTS doc skipped: larger than %d bytes", maxDocReadBytes)
+
+// warnOversizedDoc records the one skip a reader would otherwise have
+// to guess at: the doc is there, and the model does not see it.
+func warnOversizedDoc(ctx context.Context, path string, size int64) {
+	attrs := []attribute.KeyValue{attribute.String("path", path)}
+	if size >= 0 {
+		attrs = append(attrs, attribute.Int64("bytes", size))
+	}
+	telemetry.Warn(ctx, oversizedDocMessage, attrs...)
+}
 
 func (s *Service) agentsSection(ctx context.Context) (Section, error) {
 	text, err := s.discoverAgents(ctx)
@@ -130,7 +157,7 @@ func (s *Service) discoverAgents(ctx context.Context) (string, error) {
 		}
 	}
 	if s.opts.UserDir != "" {
-		if text := readHostDoc(filepath.Join(s.opts.UserDir, "AGENTS.md")); text != "" {
+		if text := readHostDoc(ctx, filepath.Join(s.opts.UserDir, "AGENTS.md")); text != "" {
 			entries = append(entries, text)
 		}
 	}
@@ -143,19 +170,76 @@ func (s *Service) discoverAgents(ctx context.Context) (string, error) {
 // readDoc reads one AGENTS doc from dir. Paths inside the workspace root
 // go through the workspace interface; anything else (ancestor dirs, user
 // config) uses the host filesystem.
+//
+// Both paths answer the same way about the file itself: anything that is
+// not a regular file counts as no doc. They used to disagree - a
+// directory named AGENTS.md beside the working directory failed the
+// whole world-state build (the workspace read reported it as an error,
+// not as "missing"), while the same name one directory up read as
+// empty. A doc is context, and context that exists in the wrong shape
+// is not worth a failed turn.
+//
+// What they still do not share is whose error it is: a workspace read
+// that fails for another reason is returned (the workspace is the app's
+// own tree, and a refusal there is worth reporting), while an ancestor
+// path outside it stays best-effort.
 func (s *Service) readDoc(ctx context.Context, dir, name string) (string, error) {
 	path := filepath.Join(dir, name)
 	if s.opts.Workspace != nil && dir == s.opts.WorkBase {
-		data, err := s.opts.Workspace.Read(ctx, name)
+		data, err := s.readWorkspaceDoc(ctx, name)
 		if err != nil {
-			if errors.Is(err, workspace.ErrNotFound) || os.IsNotExist(err) {
-				return "", nil
-			}
 			return "", err
 		}
 		return strings.TrimSpace(string(data)), nil
 	}
-	return readHostDoc(path), nil
+	return readHostDoc(ctx, path), nil
+}
+
+// readWorkspaceDoc reads one doc through the workspace interface,
+// bounded by maxDocReadBytes. The bound matters because the doc is
+// truncated to defaultDocBudget afterwards: reading a huge file to keep
+// its first 16 KiB allocates the whole thing first.
+func (s *Service) readWorkspaceDoc(ctx context.Context, name string) ([]byte, error) {
+	info, err := s.opts.Workspace.Stat(ctx, name)
+	if err != nil {
+		if errors.Is(err, workspace.ErrNotFound) || os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, nil
+	}
+	if info.Size() > maxDocReadBytes {
+		warnOversizedDoc(ctx, name, info.Size())
+		return nil, nil
+	}
+	// ReadLimited is preferred over Read where the workspace has it:
+	// the stat above bounds what is read, and the bounded read covers a
+	// file that grows between the two calls.
+	if limited, ok := s.opts.Workspace.(workspace.LimitedReader); ok {
+		data, err := limited.ReadLimited(ctx, name, maxDocReadBytes)
+		switch {
+		case err == nil:
+			return data, nil
+		case errors.Is(err, workspace.ErrNotFound) || os.IsNotExist(err):
+			return nil, nil
+		case errdefs.IsValidation(err):
+			// The file outgrew the stat's answer: same rule as above.
+			warnOversizedDoc(ctx, name, -1)
+			return nil, nil
+		default:
+			return nil, err
+		}
+	}
+	data, err := s.opts.Workspace.Read(ctx, name)
+	if err != nil {
+		if errors.Is(err, workspace.ErrNotFound) || os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return []byte(truncateBytes(string(data), maxDocReadBytes)), nil
 }
 
 // projectRoot walks upward from dir to the nearest directory containing
@@ -173,9 +257,35 @@ func projectRoot(dir string) string {
 	}
 }
 
-func readHostDoc(path string) string {
-	data, err := os.ReadFile(path)
+// readHostDoc reads one doc from the host filesystem, applying the same
+// rules as the workspace path: not a regular file, or bigger than
+// maxDocReadBytes, is not a doc. Errors stay silent here (an ancestor
+// directory outside the workspace is not the app's to fail on), but the
+// oversize case is warned about, because skipping a doc the user wrote
+// is worth a line in the log.
+func readHostDoc(ctx context.Context, path string) string {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	if info.Size() > maxDocReadBytes {
+		warnOversizedDoc(ctx, path, info.Size())
+		return ""
+	}
+	file, err := os.Open(path)
 	if err != nil {
+		return ""
+	}
+	defer func() {
+		if cerr := file.Close(); cerr != nil {
+			telemetry.WarnErr(ctx, "worldstate: close doc failed", cerr)
+		}
+	}()
+	data, err := io.ReadAll(io.LimitReader(file, maxDocReadBytes+1))
+	if err != nil || int64(len(data)) > maxDocReadBytes {
+		if err == nil {
+			warnOversizedDoc(ctx, path, -1)
+		}
 		return ""
 	}
 	return strings.TrimSpace(string(data))

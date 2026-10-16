@@ -20,6 +20,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `FLOWCRAFT_HTTP_PROBE` now, because the probe itself lives in
   flowcraft; `OPENCRAFT_HTTP_PROBE` turns nothing on. The persisted
   switch (`desktop.json`, `diagnostics.httpProbe`) is unchanged.
+- Staged skill copies have left the sandbox-writable cache
+  (`APP_HOME/staged` now, which the file tools' `readonly_roots`
+  follows): a confined command can still read and run a staged script,
+  but not rewrite the material the model reads as skill reference, so a
+  script that writes beside itself has to use the workspace or
+  `$TMPDIR`. Clearing caches still removes copies the old layout left
+  behind in the cache.
+- A guarded fetch fails closed while an HTTP(S) proxy is configured, on
+  both download paths (`web_fetch` and `generate_video`): a proxy
+  re-resolves the target, so the SSRF guard's DNS pin cannot hold.
+  Unset `HTTP(S)_PROXY`/`ALL_PROXY` for those calls, or set
+  `allow_private` — which also waives the private-destination guard, so
+  prefer the former unless the proxy is this deployment's own.
+- `DeleteSkill` only removes skills inside the app's own roots now:
+  plugin skills go away with their plugin, and skills from a configured
+  `skills.settings.extra_roots` have to be deleted where they live. The
+  settings page hides the delete entry for those rows — the rest of the
+  row menu (pin, archive) stays.
+- The SSRF guard refuses more address classes: 0.0.0.0/8 and
+  100.64.0.0/10, multicast, TEST-NET-1/2/3, 192.0.0.0/24, 192.88.99.0/24,
+  198.18.0.0/15, 240.0.0.0/4, and the IPv6 documentation and Teredo
+  prefixes. A self-hosted service on one of those addresses is not
+  reachable through `web_fetch`, `generate_video`, or the plugin update
+  download — which is the point of the list.
 
 ### Added
 

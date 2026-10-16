@@ -416,6 +416,7 @@ export interface SkillDTO {
   path: string;
   plugin_id?: string;
   plugin_name?: string;
+  removable?: boolean;
 }
 
 export interface TurnStart {

@@ -104,14 +104,15 @@ func TestEmbeddedAssetsKeepContentOffTheStateRoot(t *testing.T) {
 // so a rename of the resolver value cannot slip through unnoticed.
 func TestEmbeddedAssetsResolveAppHome(t *testing.T) {
 	root := FS()
-	// opencraft.yaml: keychain dir, user skills root, hooks path. The
-	// file-tool staging roots moved to ${ocraft:CACHE} instead, which is
-	// state (the execd runner cache lives there too).
+	// opencraft.yaml: keychain dir, user skills root, hooks path, the
+	// skill lifecycle archive, and the skill staging root. Staging sits
+	// under the app home on purpose: the exec sandbox may write the
+	// cache, so nothing the model reads as a skill reference may live
+	// there.
 	want := map[string]int{
-		// The skill lifecycle archive is the fourth: retiring a skill
-		// snapshots it under the app home, so the snapshot survives a
-		// workspace being removed.
-		"assets/opencraft.yaml": 4,
+		// The skill lifecycle archive is a snapshot taken when a skill
+		// is retired, so it survives a workspace being removed.
+		"assets/opencraft.yaml": 5,
 		"assets/agents.yaml":    1,
 		"assets/tools.yaml":     2,
 	}

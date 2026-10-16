@@ -102,7 +102,7 @@ func (c *apiClient) getBody(
 					resp.StatusCode))
 		}
 	}
-	return body, nextLink(resp.Header.Get("Link")), nil
+	return body, c.nextLink(resp.Header.Get("Link")), nil
 }
 
 // firstURL builds the initial page URL for one API path.
@@ -149,12 +149,30 @@ func (c *apiClient) collect(
 
 var linkNextRe = regexp.MustCompile(`<([^>]+)>\s*;\s*rel="next"`)
 
-func nextLink(header string) string {
+// nextLink returns the next-page URL from a Link header, but only when
+// it points back at the configured API origin. Every follow-up request
+// carries the provider token, and the header is a place a hostile,
+// misconfigured or proxied response can name any URL it likes, so a
+// foreign origin is ignored: the walk ends where it stands rather than
+// handing the credential to whoever the header named.
+func (c *apiClient) nextLink(header string) string {
 	m := linkNextRe.FindStringSubmatch(header)
 	if len(m) != 2 {
 		return ""
 	}
-	return m[1]
+	next, err := url.Parse(m[1])
+	if err != nil {
+		return ""
+	}
+	base, err := url.Parse(c.base + "/")
+	if err != nil {
+		return ""
+	}
+	if !strings.EqualFold(next.Scheme, base.Scheme) ||
+		!strings.EqualFold(next.Host, base.Host) {
+		return ""
+	}
+	return next.String()
 }
 
 // ---- raw GitHub models ----

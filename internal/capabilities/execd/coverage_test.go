@@ -103,6 +103,42 @@ func TestUnconfinedRoutingPicksTheUnconfinedBackend(t *testing.T) {
 	}
 }
 
+// A child that has no unconfined runner must refuse the escalation
+// rather than run the command confined. A silent downgrade would look
+// like an approved escalation that still failed on permissions, which
+// is the error the user would then chase.
+func TestUnconfinedWithoutARunnerIsRefused(t *testing.T) {
+	requirePOSIXChild(t)
+	confined := &recordingRunner{Runner: localRunnerFor(t)}
+	client, _ := testPairWithFactory(t, func(
+		_ context.Context, _ string, _ *SandboxPolicy,
+	) (RunnerSet, error) {
+		// No Unconfined: the child cannot escalate.
+		return RunnerSet{Confined: confined}, nil
+	})
+	runner, err := NewRemoteRunner(
+		context.Background(), client, nil, t.TempDir(), &SandboxPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runner.Close() })
+	runner.SetModeFunc(func(context.Context) bool { return true })
+
+	_, err = runner.Start(context.Background(), sandbox.SessionSpec{
+		ID: "yolo", Argv: []string{"/bin/sh", "-c", "true"},
+	})
+	if err == nil {
+		t.Fatal("an escalation without a runner was accepted")
+	}
+	if !strings.Contains(err.Error(), "unconfined") {
+		t.Fatalf("error = %v, want it to name the missing runner", err)
+	}
+	if got := confined.started(); len(got) != 0 {
+		t.Fatalf("confined starts = %+v, want the request to be refused "+
+			"rather than downgraded", got)
+	}
+}
+
 // TestChildExitsWhenParentChannelCloses pins the lifetime claim: the
 // child is kept alive by the channel alone, so a parent that dies
 // without stopping it (the SIGKILL case the journal covers) still takes

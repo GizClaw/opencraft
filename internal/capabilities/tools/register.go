@@ -14,6 +14,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/sandbox"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/agents"
@@ -208,31 +209,50 @@ func (webfetchSourceFactory) Spec() resource.Spec {
 	}
 }
 
-func (webfetchSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (webfetchSourceFactory) New(ctx context.Context, in resource.Input) (any, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
 	t := webfetch.New()
-	if dep, ok := in.Dep("netpolicy"); ok {
-		if pol, ok := dep.(ocsandbox.Policy); ok {
-			gate := webfetch.DomainGate(pol.WebFetch)
-			if dep, ok := in.Dep("sessions"); ok {
-				store, isStore := dep.(*sessions.Store)
-				if isStore && store != nil {
-					gate = webfetch.YOLOBypassGate(store, gate)
-					// YOLO sessions disable the sandbox by definition:
-					// their web_fetch should not be re-gated at the
-					// network layer, so private destinations stay
-					// reachable for them too.
-					t.SetAllowPrivate(func(ctx context.Context) bool {
-						return pol.WebFetch.AllowPrivate ||
-							ocsandbox.IsYOLO(ctx, store)
-					})
-				}
-			}
-			t.SetGate(gate)
+	var store *sessions.Store
+	if dep, ok := in.Dep("sessions"); ok {
+		if s, isStore := dep.(*sessions.Store); isStore && s != nil {
+			store = s
 		}
 	}
+	dep, ok := in.Dep("netpolicy")
+	policy, hasPolicy := dep.(ocsandbox.Policy)
+	if !ok || !hasPolicy {
+		// No net policy resource in this deployment: fail closed.
+		// There is no domain allowlist to enforce, but the SSRF
+		// surface must not widen just because the resource is
+		// missing — install the hardened client anyway (private,
+		// loopback and link-local destinations refused, DNS pinned,
+		// redirect hops revalidated). YOLO sessions keep their
+		// private-destination bypass when the store is available.
+		telemetry.Warn(ctx,
+			"web_fetch: no net policy resource; serving with the default SSRF guard only")
+		var allowPrivate func(context.Context) bool
+		if store != nil {
+			allowPrivate = func(ctx context.Context) bool {
+				return ocsandbox.IsYOLO(ctx, store)
+			}
+		}
+		t.SetSSRFGuard(allowPrivate)
+		return toolList{t}, nil
+	}
+	gate := webfetch.DomainGate(policy.WebFetch)
+	if store != nil {
+		gate = webfetch.YOLOBypassGate(store, gate)
+		// YOLO sessions disable the sandbox by definition: their
+		// web_fetch should not be re-gated at the network layer, so
+		// private destinations stay reachable for them too.
+		t.SetAllowPrivate(func(ctx context.Context) bool {
+			return policy.WebFetch.AllowPrivate ||
+				ocsandbox.IsYOLO(ctx, store)
+		})
+	}
+	t.SetGate(gate)
 	return toolList{t}, nil
 }
 

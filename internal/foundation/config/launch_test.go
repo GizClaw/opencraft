@@ -244,6 +244,8 @@ func TestResolveLaunchRejectsBadArguments(t *testing.T) {
 		args []string
 	}{
 		{"missing value", []string{"--data-dir"}},
+		{"flag as value", []string{"--data-dir", "--profile", "dev"}},
+		{"flag as value, scanner terminator", []string{"--workdir", "--"}},
 		{"empty value", []string{"--app-home="}},
 		{"empty profile", []string{"--profile="}},
 		{"profile with slash", []string{"--profile", "dev/prod"}},

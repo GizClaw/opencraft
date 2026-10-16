@@ -89,6 +89,13 @@ message HelloOk {
   string build = 2;
   repeated string capabilities = 3;
   string session_id = 4;
+  // nonce echoes the per-launch value the parent put on the child's
+  // command line (see LaunchExe). The parent verifies it before the
+  // connection is used, which is what makes the channel a conversation
+  // with the child it forked rather than with whoever connected first
+  // (on Windows the pipe name is dialable by any process the pipe ACL
+  // admits, and the child cannot start before the pipe exists).
+  string nonce = 5;
 }
 
 // --- workspace binding ---

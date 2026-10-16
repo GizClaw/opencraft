@@ -36,8 +36,10 @@ const ResourceKind = "session.Store"
 
 // Artifact is one file produced by a turn.
 type Artifact struct {
-	Path  string `json:"path"`
-	Bytes int    `json:"bytes,omitempty"`
+	Path string `json:"path"`
+	// Bytes is the file's size at the observed write, so an Append
+	// records the file and not the appended chunk.
+	Bytes int64 `json:"bytes,omitempty"`
 }
 
 // Usage is the cumulative token usage recorded for one session.
@@ -300,11 +302,24 @@ func (s *Store) appendTurn(
 	if len(archived) == 0 {
 		return nil
 	}
+	// A run archives once. CommitConversationTurn is what guarantees it
+	// (its dedup runs inside the transaction); asking first means a
+	// repeat does not consume the per-run buffers it would then throw
+	// away — the turn timing, and any artifact a writer buffered after
+	// the first commit.
+	if runID != "" {
+		if _, _, err := s.db.ArchiveTurnByRun(ctx, id, runID); err == nil {
+			return nil
+		} else if !errors.Is(err, state.ErrNotFound) {
+			return err
+		}
+	}
 	conv, convErr := s.db.Conversation(ctx, id)
 	c := state.Conversation{ID: id}
 	now := time.Now().UTC()
 	if convErr == nil {
 		c.CreatedAt = conv.CreatedAt
+		c.TurnCount = conv.TurnCount
 		c.UsageJSON = conv.UsageJSON
 		c.ImportSource = conv.ImportSource
 		c.ImportReady = conv.ImportReady
@@ -319,6 +334,13 @@ func (s *Store) appendTurn(
 	// falls back to the user's first line, and a note the app wrote to
 	// the model is not something the user said. Skipping also leaves an
 	// empty title empty, so the first real turn still names the chat.
+	//
+	// The condition mirrors the title CASE in CommitConversationTurn,
+	// which is what actually guards the column: the value computed here
+	// only ever lands when the conversation is untitled or still has no
+	// turns. TurnCount is read from the stored row so the two agree —
+	// with it unset this clause was always true and every ordinary turn
+	// recomputed a title the CASE then threw away.
 	if origin.Kind == "" && (c.Title == "" || c.TurnCount == 0) {
 		if title := firstArchiveTitle(archived); title != "" {
 			c.Title = title
@@ -451,7 +473,7 @@ func (s *Store) takeTurnTiming(id, runID string) (turnTiming, bool) {
 // run that wrote it is archived. The run id is required: a file with
 // no run behind it has no turn to belong to, and guessing one would
 // put it under whatever turn happened to archive next.
-func (s *Store) BufferArtifact(id, runID, path string, bytes int) error {
+func (s *Store) BufferArtifact(id, runID, path string, bytes int64) error {
 	if err := requireID(id); err != nil {
 		return err
 	}
@@ -629,7 +651,17 @@ func (s *Store) History(ctx context.Context, id string, n int) ([]message.Messag
 	if n == 0 {
 		n = s.window
 	}
-	msgs, err := s.db.ListArchiveMessages(ctx, id)
+	// A bounded window is a bounded read: the limit goes into SQL
+	// instead of decoding the whole transcript and slicing the result
+	// in Go, which would hold the store's single connection across
+	// every message the conversation ever wrote.
+	var msgs []state.ArchiveMessage
+	var err error
+	if n > 0 {
+		msgs, err = s.db.ListArchiveMessagesTail(ctx, id, n)
+	} else {
+		msgs, err = s.db.ListArchiveMessages(ctx, id)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -639,9 +671,6 @@ func (s *Store) History(ctx context.Context, id string, n int) ([]message.Messag
 			Role:    message.Role(m.Role),
 			Content: m.Content,
 		})
-	}
-	if n > 0 && len(out) > n {
-		out = out[len(out)-n:]
 	}
 	return out, nil
 }
@@ -883,21 +912,10 @@ func (s *Store) FirstUserMessage(id string) (string, error) {
 	if err := requireID(id); err != nil {
 		return "", err
 	}
-	msgs, err := s.db.ListArchiveMessagesWithoutTurnKind(
-		context.Background(), id,
-	)
-	if err != nil {
-		return "", err
-	}
-	for _, m := range msgs {
-		if m.Role != string(message.RoleUser) {
-			continue
-		}
-		if text := strings.TrimSpace(m.Content.Text()); text != "" {
-			return text, nil
-		}
-	}
-	return "", nil
+	// The read stops at the first hit (state.FirstUnkindedUserText):
+	// the caller is naming the conversation, not reading it, so the
+	// rest of the transcript is never decoded.
+	return s.db.FirstUnkindedUserText(context.Background(), id)
 }
 
 // SeedStartTitle records the provisional archive fallback title on the
@@ -1131,18 +1149,42 @@ func skippedUsageWrite(ctx context.Context, id string) error {
 }
 
 // Remove removes one conversation and its on-disk directory.
+// Remove deletes one conversation for good: its rows, which retire the
+// id in the same transaction, and its session directory.
+//
+// The store's lock covers the in-memory buffers it owns, not the
+// deletion: the database write and the directory walk happen outside
+// it, so removing a session with a large media directory does not stall
+// every other conversation's reads and writes. The buffers are dropped
+// afterwards, which also sweeps anything a writer buffered while the
+// deletion ran.
 func (s *Store) Remove(ctx context.Context, id string) error {
 	if err := requireID(id); err != nil {
 		return err
 	}
+	if err := s.removeRows(ctx, id); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.removeLocked(ctx, id)
+	delete(s.turnTiming, id)
+	delete(s.artifactBuf, id)
+	return nil
 }
 
+// removeLocked deletes one conversation while the caller already holds
+// s.mu, which Store.Import does: replacing a half-written import and
+// writing the new one are a single critical section.
 func (s *Store) removeLocked(ctx context.Context, id string) error {
 	delete(s.turnTiming, id)
 	delete(s.artifactBuf, id)
+	return s.removeRows(ctx, id)
+}
+
+// removeRows deletes one conversation's rows and directory. It touches
+// no in-memory state, so each caller decides how much locking the
+// deletion needs.
+func (s *Store) removeRows(ctx context.Context, id string) error {
 	if err := s.db.DeleteConversationRows(ctx, id); err != nil {
 		return fmt.Errorf("sessions: remove %s state: %w", id, err)
 	}
@@ -1180,32 +1222,10 @@ func requireID(id string) error {
 	return nil
 }
 
+// firstArchiveTitle names a conversation from its archived messages.
+// The rule lives with the archive (state.FirstTitle) because the JSON
+// import and the legacy adopt name transcripts too: one transcript
+// reads the same whichever path wrote it.
 func firstArchiveTitle(msgs []message.Message) string {
-	for _, m := range msgs {
-		if m.Role != message.RoleUser {
-			continue
-		}
-		if title := firstLine(m.Content.Text()); title != "" {
-			return title
-		}
-		for _, part := range m.Content.Parts {
-			if _, ok := part.(message.TextPart); !ok {
-				return "[attachment]"
-			}
-		}
-	}
-	return ""
-}
-
-func firstLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = strings.TrimSpace(s[:i])
-	}
-	const maxTitle = 70
-	runes := []rune(s)
-	if len(runes) > maxTitle {
-		return string(runes[:maxTitle]) + "…"
-	}
-	return s
+	return state.FirstTitle(msgs)
 }

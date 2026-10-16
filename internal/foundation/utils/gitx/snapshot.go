@@ -706,14 +706,41 @@ func CommitDiff(
 	return RunBounded(ctx, root, maxBytes, 15*time.Second, args...)
 }
 
-// isSafePath rejects paths that could escape the repository root when
-// passed as a git pathspec.
+// isSafePath reports whether a slash-separated, repository-relative git
+// path can be handed to git as a pathspec.
+//
+// The check is written out rather than delegated to filepath.IsLocal,
+// which answers a different question: it decides whether a name can be
+// created on this machine, so on Windows it also refuses reserved
+// device names (con, aux, lpt1), trailing dots and drive-relative
+// forms. Those are paths a repository can still track, and refusing
+// them here would show up as "no diff" for a file that plainly has one.
+// What a pathspec actually needs is narrower: stay inside the
+// repository, and do not look like an option or a git pathspec magic
+// prefix ("-", ":").
 func isSafePath(path string) bool {
-	if path == "" {
+	if path == "" || strings.HasPrefix(path, "-") ||
+		strings.HasPrefix(path, ":") {
 		return false
 	}
-	// filepath.IsLocal rejects absolute paths, ".." traversal and
-	// drive/UNC roots. Git paths from porcelain are slash-separated,
-	// so convert before validating on Windows.
-	return filepath.IsLocal(filepath.FromSlash(path))
+	// A leading "./" is how a caller writes "here", not a path that
+	// escapes; git resolves it to the same file.
+	for strings.HasPrefix(path, "./") {
+		path = strings.TrimPrefix(path, "./")
+	}
+	if strings.HasPrefix(path, "/") || path == ".." {
+		return false
+	}
+	for _, element := range strings.Split(path, "/") {
+		if element == "" || element == "." || element == ".." {
+			return false
+		}
+		// A colon inside an element is a drive or NTFS stream separator
+		// on Windows and a pathspec magic prefix at the start; neither
+		// belongs in a path this function is asked about.
+		if strings.Contains(element, ":") {
+			return false
+		}
+	}
+	return !filepath.IsAbs(filepath.FromSlash(path))
 }

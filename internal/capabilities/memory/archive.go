@@ -83,6 +83,14 @@ func (o *archiveObserver) OnRunStart(_ context.Context, id agent.Identity, req *
 }
 
 func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *agent.Result) {
+	// Drop the captured request first: the map lives for the whole
+	// Host generation, so every run has to leave it — including the
+	// completed runs this observer never archives.
+	o.mu.Lock()
+	req := o.requests[id.RunID]
+	delete(o.requests, id.RunID)
+	o.mu.Unlock()
+
 	// Archive only turns that were neither completed nor accepted by a
 	// Referee: the opencraft.commit committer owns every Committed
 	// turn, whatever its status, so the two paths never write the same
@@ -91,10 +99,6 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 	if res == nil || res.Committed || res.Status == agent.StatusCompleted {
 		return
 	}
-	o.mu.Lock()
-	req := o.requests[id.RunID]
-	delete(o.requests, id.RunID)
-	o.mu.Unlock()
 	if req == nil {
 		telemetry.Warn(ctx, "memory: archive skipped run with no captured request",
 			attribute.String("conversation", id.ConversationID),

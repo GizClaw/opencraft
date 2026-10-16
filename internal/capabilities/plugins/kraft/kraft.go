@@ -581,6 +581,21 @@ func (m *Manager) start(id string, k Kraft, bin string) (*process, error) {
 	go func() {
 		defer m.exitWatchers.Done()
 		<-p.done
+		// Reap the child: every successful Start needs a Wait, or a
+		// dead plugin stays a zombie (and its pipes leak) for the
+		// life of the host process. p.done closes when the stdout
+		// scanner sees EOF, so the read-before-Wait discipline
+		// os/exec documents is satisfied; the exit status is already
+		// reported through onExit, so only an unexpected wait
+		// failure is logged.
+		if err := p.cmd.Wait(); err != nil {
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				telemetry.WarnErr(m.baseCtx,
+					"plugin kraft: wait failed", err,
+					attribute.String("plugin.id", id))
+			}
+		}
 		m.mu.Lock()
 		if m.procs[id] == p {
 			delete(m.procs, id)

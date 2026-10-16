@@ -181,9 +181,17 @@ func (s *Server) start(
 
 	backend := st.runners.Confined
 	if p.GetUnconfined() {
-		if st.runners.Unconfined != nil {
-			backend = st.runners.Unconfined
+		if st.runners.Unconfined == nil {
+			// The caller asked for the escalated runner this child does
+			// not have. Running the command confined instead would look
+			// like an approval that did nothing - the command would
+			// still fail on the thing it was approved for, with an
+			// error about permissions instead of about the missing
+			// runner - so the request is refused where it can be named.
+			return nil, errorResponse(CodeUnavailable,
+				"start: unconfined execution is not available in this process")
 		}
+		backend = st.runners.Unconfined
 		spec.Opts.Env = sandbox.EnvPolicy{}
 	} else {
 		if p.GetSandbox() == nil && len(p.GetEnv()) > 0 {

@@ -63,6 +63,36 @@ func TestGitRepoOutsideRepository(t *testing.T) {
 	}
 }
 
+// TestBusyWorkspaceIn pins the scope of the write gate: a run in any
+// workspace inside the repository blocks a repository-wide write, while
+// a run in a workspace that merely shares a prefix does not.
+func TestBusyWorkspaceIn(t *testing.T) {
+	repo := t.TempDir()
+	sibling := t.TempDir()
+	cases := []struct {
+		name string
+		busy []string
+		want string
+	}{
+		{"no busy workspace", nil, ""},
+		{"the repository itself", []string{repo}, repo},
+		{"a workspace inside it", []string{filepath.Join(repo, "packages", "app")},
+			filepath.Join(repo, "packages", "app")},
+		{"a workspace outside it", []string{sibling}, ""},
+		{"a name that shares a prefix", []string{repo + "-other"}, ""},
+		{"the first busy one inside it",
+			[]string{sibling, filepath.Join(repo, "sub"), repo},
+			filepath.Join(repo, "sub")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := busyWorkspaceIn(repo, tc.busy); got != tc.want {
+				t.Errorf("busyWorkspaceIn(%v) = %q, want %q", tc.busy, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestGitStatusUsesFullRepository(t *testing.T) {
 	root := t.TempDir()
 	initRepoInTest(t, root)

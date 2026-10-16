@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -170,7 +171,14 @@ func notifyStatus(texts core.DesktopTexts, status, errorKind string) string {
 	case "interrupted":
 		return texts.NotifyInterrupted
 	}
-	return status
+	// An unknown status is a status this build cannot name: a banner is
+	// user-facing copy, so it says the generic thing instead of printing
+	// the enum that arrived, and the log keeps the value for whoever has
+	// to widen the switch.
+	telemetry.WarnErr(context.Background(),
+		"desktop: unknown turn status for notification",
+		fmt.Errorf("status %q", status))
+	return texts.NotifyFailed
 }
 
 func truncateRunes(s string, max int) string {

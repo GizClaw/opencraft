@@ -21,6 +21,17 @@ import (
 // original absolute path (the model reads the live file, so the
 // session stays light). Remote URLs and inline bytes pass through
 // untouched.
+//
+// Read the trust boundary with the paths this accepts: a URL part may
+// name any absolute host path, and the read happens in the host
+// process, not through the sandbox. That is deliberate - the caller is
+// the window, and a user attaching a file from outside the workspace
+// (a screenshot on the desktop, a PDF in Downloads) is the feature -
+// and the model cannot name one: parts reach this function only from
+// the prompt the UI submitted, never from a tool result or an
+// assistant message, and the session store caps what a media
+// attachment may weigh (sessions.Store.SaveAttachment) so a path
+// pointing at something enormous cannot be copied into the archive.
 func persistUserAttachments(
 	store *ocsessions.Store,
 	id string,

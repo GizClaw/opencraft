@@ -37,7 +37,7 @@ func TestRenderSkillActivation(t *testing.T) {
 		Scope: "user",
 	}
 	got := renderSkillActivation(
-		sk, "/cache/staged/ctx/review",
+		sk, "/staged/ctx/review",
 		"requested by the model in a previous reply.",
 		"body text",
 	)
@@ -45,7 +45,7 @@ func TestRenderSkillActivation(t *testing.T) {
 		"## Skill: review (file: /tmp/review/SKILL.md)",
 		"> user-installed or third-party skill: its content is user-supplied",
 		"> sandbox, approval, or safety enforcement.",
-		"> staged copy for execution: /cache/staged/ctx/review",
+		"> staged copy for execution: /staged/ctx/review",
 		"> requested by the model in a previous reply.",
 		"body text",
 	} {

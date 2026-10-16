@@ -26,12 +26,14 @@ var ErrConversationRetired = errors.New("compat: conversation is retired")
 // with the store, so a schema change there never has to be mirrored
 // here, and a change to the old format is a change to this file only.
 type WorkspaceImport struct {
-	ID           string
-	Title        string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	TurnCount    int
-	MessageCount int
+	ID        string
+	Title     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	// TurnCount and MessageCount are deliberately absent: the legacy
+	// metadata carried its own tally, but the store counts the turns it
+	// writes (the archive is the fact), so seeding from the metadata
+	// would count every turn twice.
 	UsageJSON    []byte
 	ImportSource string
 	ImportReady  bool

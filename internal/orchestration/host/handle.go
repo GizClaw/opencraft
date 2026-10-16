@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -51,8 +52,16 @@ type Host struct {
 	// the conversations started on one generation.
 	startGates map[ConversationID]*sync.Mutex
 	rollouts   map[ConversationID]*rollout.Recorder
-	titling    map[ConversationID]bool
-	titleWG    sync.WaitGroup
+	// rolloutOrder tracks the open recorders by recency, most recently
+	// used first: only maxOpenRollouts stay open and the rest reopen on
+	// demand (see rolloutFor).
+	rolloutOrder []ConversationID
+	// rolloutOpened records which conversations already emitted their
+	// thread.started event on this Host generation, so an evicted and
+	// reopened recorder does not announce the same thread twice.
+	rolloutOpened map[ConversationID]bool
+	titling       map[ConversationID]bool
+	titleWG       sync.WaitGroup
 	// rebindMu serializes onRuntimeReload. ReloadDocument rebinds
 	// synchronously before returning while the runtime event router
 	// may dispatch the same rebuild event concurrently, and both must
@@ -70,7 +79,7 @@ type Host struct {
 	// importMu serializes archive write + memory seed across callers
 	// so a duplicate import with the same Source cannot double-seed.
 	importMu   sync.Mutex
-	artifact   func(context.Context, string, []byte)
+	artifact   func(context.Context, string, int64)
 	sessionUpd func(context.Context, string)
 	// stale records a Manager retirement on the Host itself. The pool
 	// entry carries the same flag while the Host is pooled; the
@@ -276,7 +285,7 @@ func (h *Host) backendForRun(runID string) interact.Backend {
 
 // SetArtifactObserver installs a callback invoked for every observed
 // workspace write before the artifact is buffered.
-func (h *Host) SetArtifactObserver(fn func(context.Context, string, []byte)) {
+func (h *Host) SetArtifactObserver(fn func(context.Context, string, int64)) {
 	h.mu.Lock()
 	h.artifact = fn
 	h.mu.Unlock()
@@ -431,11 +440,25 @@ func (h *Host) beginClose() {
 	h.closeWhenDrained()
 }
 
+// hostDrainBudget bounds how long a teardown waits for flowcraft's
+// drain before closing anyway. Drain runs synchronously on the
+// turn-end path — the last settling run of a retiring Host calls this
+// — so an unbounded wait would let one session the engine cannot
+// settle hold a turn-end RPC (and the workspace's reload) hostage. The
+// store teardown that must not run under live writers is guarded
+// separately by the runs set below, so cutting the drain wait costs
+// only drain's own bookkeeping. It is a variable because the craft
+// side owns how long a healthy drain needs; tests shrink it.
+var hostDrainBudget = 30 * time.Second
+
 // closeWhenDrained waits for active runtime sessions through
 // flowcraft's Drain API, then releases broker, runtime, and store.
-// Drain never interrupts turns, so background streams finish first.
+// Drain never interrupts turns, so background streams finish first; a
+// drain that outlives its budget is cut and the close proceeds.
 func (h *Host) closeWhenDrained() {
-	ctx := context.WithoutCancel(context.Background())
+	ctx, cancel := context.WithTimeout(
+		context.WithoutCancel(context.Background()), hostDrainBudget)
+	defer cancel()
 	telemetry.WarnErr(ctx, "host: drain before close failed", h.drain(ctx))
 	h.doClose()
 }

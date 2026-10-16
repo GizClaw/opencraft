@@ -606,13 +606,25 @@ func TestHistoryWindow(t *testing.T) {
 	}
 	id, _ := store.Create()
 	for i := 0; i < 5; i++ {
-		_ = store.AppendTurn(context.Background(), id, []message.Message{
-			message.NewTextMessage(message.RoleUser, "msg"),
-		})
+		text := fmt.Sprintf("msg-%d", i)
+		if err := store.AppendTurn(context.Background(), id, []message.Message{
+			message.NewTextMessage(message.RoleUser, text),
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	hist, _ := store.History(context.Background(), id, 3)
 	if len(hist) != 3 {
 		t.Fatalf("windowed history = %d, want 3", len(hist))
+	}
+	// The window is the newest messages in conversation order: the
+	// tail is read newest-first (ORDER BY seq DESC LIMIT n) and comes
+	// back oldest-first, so the order has to be checked, not just the
+	// count.
+	for i, want := range []string{"msg-2", "msg-3", "msg-4"} {
+		if got := hist[i].Content.Text(); got != want {
+			t.Fatalf("windowed history[%d] = %q, want %q", i, got, want)
+		}
 	}
 }
 

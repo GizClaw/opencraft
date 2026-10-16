@@ -402,6 +402,19 @@ func (b *Git) CommitDiff(
 	return GitDiffDTO{Content: content, Truncated: truncated}, nil
 }
 
+// busyWorkspaceIn returns the first workspace with a live run that lies
+// inside root, or "" when none does. The comparison is lexical: both
+// sides are resolved workspace spellings the app produced itself
+// (CanonicalWorkDir), not paths from outside.
+func busyWorkspaceIn(root string, busy []string) string {
+	for _, workDir := range busy {
+		if pathsafe.Within(root, workDir) {
+			return workDir
+		}
+	}
+	return ""
+}
+
 // repoRoot resolves the repository root for the active workspace.
 func (b *Git) repoRoot() (string, error) {
 	workDir := b.core.ActiveWorkDir()
@@ -416,13 +429,15 @@ func (b *Git) repoRoot() (string, error) {
 }
 
 // runWrite gates one repository mutation: the UI is disabled while a
-// turn runs, and the backend refuses writes when any active run still
-// exists on the current workspace's Host (including parallel turns or
-// automations on that Host). Because the panel is repository-wide,
-// writes from another workspace of the same repository are not blocked
-// here: repo.Run's per-repository lock serializes desktop-originated
-// mutations, while agent/automation git calls (execd/sandbox) run
-// outside that lock and are not coordinated with this UI.
+// turn runs, and the backend refuses writes when any live run is
+// working in this repository — not only when one is on the window's own
+// workspace's Host. The panel is repository-wide, and a run in a
+// sibling workspace of the same repository edits the same files (an
+// irreversible op like discard or checkout would then throw the agent's
+// work away). repo.Run's per-repository lock serializes
+// desktop-originated mutations; agent/automation git calls
+// (execd/sandbox) run outside that lock, which is why this check is the
+// barrier that matters.
 func (b *Git) runWrite(op crepo.Op) (string, error) {
 	workDir := b.core.ActiveWorkDir()
 	if workDir == "" {
@@ -436,6 +451,12 @@ func (b *Git) runWrite(op crepo.Op) (string, error) {
 	root, err := b.repoRoot()
 	if err != nil {
 		return "", err
+	}
+	if busy := busyWorkspaceIn(root, b.core.BusyWorkspaces()); busy != "" {
+		return "", errors.New(
+			"git: the agent is still running in another workspace of " +
+				"this repository; wait for that turn to finish before " +
+				"changing the repository")
 	}
 	layout, err := b.core.ResolveLayout(workDir)
 	if err != nil {

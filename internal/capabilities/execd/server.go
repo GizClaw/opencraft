@@ -70,6 +70,12 @@ type Server struct {
 	in         io.Reader
 	out        io.Writer
 	newRunners RunnerFactory
+	// launchNonce is the per-launch value this child received on its
+	// command line; HelloOk echoes it so the parent can tell its own
+	// child from another process on the same channel (see Dial's
+	// VerifyNonce). Empty means the child was started outside LaunchExe
+	// and has nothing to prove.
+	launchNonce string
 
 	mu     sync.Mutex
 	writer *frameWriter
@@ -111,16 +117,30 @@ type serverStats struct {
 	reapedProcesses      atomic.Int64
 }
 
+// Option configures a Server at construction. Options run before the
+// first frame is read.
+type Option func(*Server)
+
+// WithLaunchNonce is the value HelloOk echoes back to the parent: the
+// per-launch nonce the parent passed on this child's command line.
+func WithLaunchNonce(nonce string) Option {
+	return func(s *Server) { s.launchNonce = nonce }
+}
+
 // New creates a Server over the given transport. factory is required
 // and is called once per Bind.
-func New(factory RunnerFactory, in io.Reader, out io.Writer) *Server {
-	return &Server{
+func New(factory RunnerFactory, in io.Reader, out io.Writer, opts ...Option) *Server {
+	s := &Server{
 		in:         in,
 		out:        out,
 		newRunners: factory,
 		inflight:   make(map[uint64]*inflightRequest),
 		startedAt:  time.Now(),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Stats returns the current counter snapshot.
@@ -498,6 +518,7 @@ func (s *Server) handleHello(hello *Hello) *Response {
 		Build:           Build,
 		Capabilities:    []string{"exec", "session", "signal", "bind"},
 		SessionId:       xid.New().String(),
+		Nonce:           s.launchNonce,
 	}}}
 }
 

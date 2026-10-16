@@ -31,6 +31,11 @@ const (
 	stderrTailBytes = 8 << 10
 	// childStderrLineLimit bounds one forwarded child log line.
 	childStderrLineLimit = 16 * 1024
+	// maxPeerRefusals bounds how many foreign connections attachChild
+	// turns away before it gives up on the launch. The handshake
+	// deadline is the real bound; this keeps a peer that reconnects in
+	// a tight loop from replacing the budget with a spin.
+	maxPeerRefusals = 8
 )
 
 // Launch forks the current executable in execd mode and returns a
@@ -109,11 +114,7 @@ func LaunchExe(ctx context.Context, executable string) (*Client, func(), error) 
 	// pre-warm. The child's lifetime is still detached from ctx - stop()
 	// owns it once the handshake succeeds.
 	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, handshakeTimeout)
-	conn, err := plan.attach(handshakeCtx)
-	var client *Client
-	if err == nil {
-		client, err = Dial(handshakeCtx, conn)
-	}
+	client, err := attachChild(handshakeCtx, plan, nonce)
 	cancelHandshake()
 	if err != nil {
 		telemetry.WarnErr(ctx, "execd: child handshake failed", err)
@@ -153,6 +154,38 @@ func LaunchExe(ctx context.Context, executable string) (*Client, func(), error) 
 		})
 	}
 	return client, stop, nil
+}
+
+// attachChild attaches the parent end of the channel and runs the Hello
+// handshake, refusing any peer that cannot echo the launch nonce. A
+// refusal costs the connection, not the launch: the loop keeps
+// accepting until the handshake budget runs out, so a foreign process
+// that wins the race for the channel (a named pipe on Windows is
+// dialable by anything its ACL admits) delays the launch instead of
+// taking it over. On Unix the socketpair has exactly one peer, so the
+// loop runs once.
+func attachChild(
+	ctx context.Context, plan *channelPlan, nonce string,
+) (*Client, error) {
+	refusals := 0
+	for {
+		conn, err := plan.attach(ctx)
+		if err != nil {
+			return nil, err
+		}
+		client, err := Dial(ctx, conn, VerifyNonce(nonce))
+		if err == nil {
+			return client, nil
+		}
+		if !errors.Is(err, ErrPeerUnverified) || ctx.Err() != nil ||
+			refusals >= maxPeerRefusals {
+			return nil, err
+		}
+		refusals++
+		telemetry.WarnErr(ctx,
+			"execd: refused a channel peer that did not echo the launch nonce, still waiting for the child",
+			err)
+	}
 }
 
 // waitForExit waits up to grace for the child to exit and reports

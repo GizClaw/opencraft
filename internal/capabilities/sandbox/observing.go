@@ -13,8 +13,12 @@ import (
 )
 
 // WriteObserver receives one successful workspace write (or rename
-// publish). data carries the written bytes; Rename passes nil.
-type WriteObserver func(ctx context.Context, path string, data []byte)
+// publish). bytes is the size of the file after the write, not the size
+// of the call that made it: an Append reports the whole file and a
+// Rename reports the file it published, so a reader that sizes what is
+// on disk (the artifact strip, the turn archive) sees one number that
+// means the same thing for every kind of write.
+type WriteObserver func(ctx context.Context, path string, bytes int64)
 
 // ArtifactObserver is the shared sink for observingWorkspace instances.
 // The desktop installs a sink that re-emits artifact UI events; without
@@ -31,12 +35,12 @@ func (o *ArtifactObserver) SetSink(fn WriteObserver) {
 	o.sink = fn
 }
 
-func (o *ArtifactObserver) notify(ctx context.Context, path string, data []byte) {
+func (o *ArtifactObserver) notify(ctx context.Context, path string, bytes int64) {
 	o.mu.RLock()
 	fn := o.sink
 	o.mu.RUnlock()
 	if fn != nil {
-		fn(ctx, path, data)
+		fn(ctx, path, bytes)
 	}
 }
 
@@ -76,7 +80,7 @@ var _ workspace.Workspace = (*observingWorkspace)(nil)
 var _ workspace.LimitedReader = (*observingWorkspace)(nil)
 var _ io.Closer = (*observingWorkspace)(nil)
 
-func (w *observingWorkspace) notify(ctx context.Context, path string, data []byte) {
+func (w *observingWorkspace) notify(ctx context.Context, path string, bytes int64) {
 	if w.obs == nil {
 		return
 	}
@@ -84,7 +88,7 @@ func (w *observingWorkspace) notify(ctx context.Context, path string, data []byt
 	if !ok || info.ConversationID == "" {
 		return
 	}
-	w.obs.notify(ctx, path, data)
+	w.obs.notify(ctx, path, bytes)
 }
 
 // Root forwards the inner workspace's root so the hostws factory can
@@ -123,7 +127,7 @@ func (w *observingWorkspace) Write(
 	if err := w.inner.Write(ctx, path, data); err != nil {
 		return err
 	}
-	w.notify(ctx, path, data)
+	w.notifySized(ctx, path, int64(len(data)))
 	return nil
 }
 
@@ -133,7 +137,7 @@ func (w *observingWorkspace) Append(
 	if err := w.inner.Append(ctx, path, data); err != nil {
 		return err
 	}
-	w.notify(ctx, path, data)
+	w.notifySized(ctx, path, int64(len(data)))
 	return nil
 }
 
@@ -143,8 +147,26 @@ func (w *observingWorkspace) Rename(
 	if err := w.inner.Rename(ctx, src, dst); err != nil {
 		return err
 	}
-	w.notify(ctx, dst, nil)
+	w.notifySized(ctx, dst, 0)
 	return nil
+}
+
+// notifySized reports the file's size after the write, falling back to
+// fallback when the workspace cannot stat it (a write the inner
+// workspace accepted but cannot describe, or a file that a concurrent
+// writer removed again). The fallback is exact for a Write that
+// replaced the file and a lower bound everywhere else, which is what a
+// size used for display can afford; losing the notification entirely
+// would be worse.
+func (w *observingWorkspace) notifySized(
+	ctx context.Context, path string, fallback int64,
+) {
+	if info, err := w.inner.Stat(ctx, path); err == nil && info != nil &&
+		info.Size() >= 0 {
+		w.notify(ctx, path, info.Size())
+		return
+	}
+	w.notify(ctx, path, fallback)
 }
 
 func (w *observingWorkspace) Delete(

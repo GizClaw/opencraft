@@ -12,7 +12,7 @@ import (
 )
 
 // maxStageBytes bounds one staged skill copy so a giant skill cannot
-// fill the sandbox cache.
+// fill the staging area.
 const maxStageBytes = 10 << 20 // 10 MiB
 
 // Stage copies a skill directory (SKILL.md, scripts/, references/,
@@ -61,7 +61,7 @@ func (s *Service) Stage(sk SkillMetadata, dstDir string) (string, error) {
 			return err
 		}
 		// Preserve the source permissions (including the executable
-		// bit) so staged skill scripts can run from the sandbox cache.
+		// bit) so staged skill scripts run from the staging area.
 		out, err := os.OpenFile(target,
 			os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 		if err != nil {

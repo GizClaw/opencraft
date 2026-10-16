@@ -590,3 +590,78 @@ func TestSQLiteTurnStoreIsolation(t *testing.T) {
 		}
 	}
 }
+
+// TestCondenseSummaryNodeSwapsOnlyTheExactBuffer pins the atomic
+// freshness gate on the sqlite store: the swap lands only while the
+// stored row still holds exactly the buffer the condensation was built
+// from. A newer fold makes the swap a no-op, so a stale condensation
+// cannot roll the window and its coverage back.
+func TestCondenseSummaryNodeSwapsOnlyTheExactBuffer(t *testing.T) {
+	adapter, store := newSQLiteTurnStore(t)
+	ctx := context.Background()
+	const conv = "s-1"
+	if err := store.EnsureConversation(ctx,
+		state.Conversation{ID: conv, Title: "condense"}); err != nil {
+		t.Fatalf("seed conversation: %v", err)
+	}
+	now := time.Now().UTC()
+	buffer := summary.SummaryNode{
+		ID:        "node-1",
+		ThreadID:  conv,
+		Level:     0,
+		SourceIDs: []string{summary.SourceID(0), summary.SourceID(1)},
+		Content:   message.Content{Parts: []message.Part{message.TextPart{Text: "buffer"}}},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := adapter.UpsertSummaryNode(ctx, buffer); err != nil {
+		t.Fatal(err)
+	}
+	condensed := func(text string) summary.SummaryNode {
+		n := buffer
+		n.Content = message.Content{Parts: []message.Part{message.TextPart{Text: text}}}
+		n.Metadata = map[string]any{"algorithm": "summary_llm_condense"}
+		return n
+	}
+
+	// A newer fold moved the same rolling node on: the older job's want
+	// no longer matches and the swap must not land.
+	newer := buffer
+	newer.UpdatedAt = now.Add(time.Minute)
+	newer.Content = message.Content{Parts: []message.Part{message.TextPart{Text: "newer"}}}
+	newer.SourceIDs = []string{
+		summary.SourceID(0), summary.SourceID(1), summary.SourceID(2)}
+	if err := adapter.UpsertSummaryNode(ctx, newer); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := adapter.CondenseSummaryNode(ctx, buffer, condensed("STALE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("a stale condensation landed; the gate must refuse it")
+	}
+	nodes, err := adapter.ListSummaryNodes(ctx, conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].Content.Text() != "newer" {
+		t.Fatalf("after stale swap = %+v, want the newer buffer", nodes)
+	}
+
+	// The exact buffer still in place takes the swap.
+	ok, err = adapter.CondenseSummaryNode(ctx, newer, condensed("CONDENSED"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("the matching condensation was refused")
+	}
+	nodes, err = adapter.ListSummaryNodes(ctx, conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0].Content.Text() != "CONDENSED" {
+		t.Fatalf("after swap = %+v, want the condensed text", nodes)
+	}
+}
