@@ -106,7 +106,7 @@ func (s *Store) GetTask(ctx context.Context, id string) (Task, error) {
 func (s *Store) SaveTask(ctx context.Context, task Task) (Task, error) {
 	task.Name = strings.TrimSpace(task.Name)
 	task.Prompt = strings.TrimSpace(task.Prompt)
-	task.Workspace = strings.TrimSpace(task.Workspace)
+	task.Workspace = CanonicalWorkspace(task.Workspace)
 	if task.Mode == "" {
 		task.Mode = ModeWorkspace
 	}

@@ -53,6 +53,46 @@ func TestStoreSaveTask(t *testing.T) {
 	}
 }
 
+// TestStoreSaveTaskFoldsWorkspaceSpelling pins the one spelling a task's
+// workspace is recorded in: the same one the window announces and the
+// pool keys on (config.CanonicalWorkDir), not the one the caller
+// happened to send.
+func TestStoreSaveTaskFoldsWorkspaceSpelling(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	task := testTask()
+	task.Workspace = testWorkspacePath() + "/../opencraft/"
+
+	saved, err := store.SaveTask(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Workspace != testWorkspacePath() {
+		t.Fatalf("saved workspace = %q, want %q",
+			saved.Workspace, testWorkspacePath())
+	}
+	got, err := store.GetTask(ctx, saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Workspace != testWorkspacePath() {
+		t.Fatalf("stored workspace = %q, want %q",
+			got.Workspace, testWorkspacePath())
+	}
+}
+
+// TestStoreSaveTaskKeepsRelativeWorkspaceAnError is the other half of
+// the fold: a relative workspace stays a validation error instead of
+// being resolved against whatever directory the process runs in.
+func TestStoreSaveTaskKeepsRelativeWorkspaceAnError(t *testing.T) {
+	store := newTestStore(t)
+	task := testTask()
+	task.Workspace = "projects/opencraft"
+	if _, err := store.SaveTask(context.Background(), task); err == nil {
+		t.Fatal("SaveTask accepted a relative workspace")
+	}
+}
+
 func TestStoreSaveTaskSetsAndPreservesWeeklyOrigin(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()

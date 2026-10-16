@@ -63,7 +63,10 @@ func (h *automationHost) AutomationsPreview(
 	case "create", "update":
 		task.Name = strings.TrimSpace(task.Name)
 		task.Prompt = strings.TrimSpace(task.Prompt)
-		task.Workspace = strings.TrimSpace(task.Workspace)
+		// The preview's output is what the tool hands back to Apply, so
+		// the workspace is folded here too: the path the confirmation
+		// shows is the path the store will hold.
+		task.Workspace = automations.CanonicalWorkspace(task.Workspace)
 		if task.Mode == "" {
 			task.Mode = automations.ModeWorkspace
 		}

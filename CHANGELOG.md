@@ -127,6 +127,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   earlier" comes back when the window had thought the oldest turn was
   the first one it still holds: the dropped turns are one page away
   instead of gone.
+- A scheduled task's workspace is recorded in the canonical spelling
+  (`config.CanonicalWorkDir`), the one the workspace id, the layout, the
+  sidebar rows and the pool's keys speak. Automations were the last
+  writer that kept whatever spelling it was handed, so a task created
+  over the API with a trailing separator or a `..` was the one workspace
+  path recorded a second way — the task editor listed it beside the
+  canonical row as a workspace apart. The tool's preview folds it too,
+  so the path the confirmation shows is the path that gets stored.
 
 ## [0.6.1] - 2026-10-07
 

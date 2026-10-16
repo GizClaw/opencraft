@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
@@ -270,6 +271,25 @@ func (t Task) Validate() error {
 		}
 	}
 	return t.Schedule.Validate()
+}
+
+// CanonicalWorkspace folds a task's workspace to the one spelling the
+// rest of the app records and compares (config.CanonicalWorkDir):
+// workspace ids, the layout, the window's sidebar rows and ready event,
+// and the pool's keys all speak it, so a row that spelled the same
+// directory a second way — a trailing separator, a ".." — was the one
+// recorded workspace path other writers would not recognize. Writes
+// fold through here (SaveTask, and the tool preview whose output is what
+// SaveTask receives); only an absolute path is folded, because a
+// relative one is a save-time validation error (Validate) and resolving
+// it against this process's working directory would name a directory
+// the caller never meant.
+func CanonicalWorkspace(workDir string) string {
+	workDir = strings.TrimSpace(workDir)
+	if !filepath.IsAbs(workDir) {
+		return workDir
+	}
+	return config.CanonicalWorkDir(workDir)
 }
 
 // DefaultTaskTimeout bounds one unattended run when the task leaves
