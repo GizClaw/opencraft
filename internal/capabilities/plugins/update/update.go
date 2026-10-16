@@ -244,7 +244,21 @@ func parseChecksum(s string) (string, error) {
 
 func client(pol Policy) *http.Client {
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		// The guard's proxy rule, the same one netguard.Client applies:
+		// through a proxy the target would be resolved on the far side,
+		// so the check in checkHost would be looking at the proxy
+		// instead of the destination. EnvProxy replaces
+		// http.ProxyFromEnvironment for the reason netguard uses it —
+		// it does not cache the first lookup — and the refusal runs per
+		// request, redirect hops included.
+		Proxy: func(req *http.Request) (*url.URL, error) {
+			if err := netguard.RefuseProxy(
+				"plugin update", req.URL.String(), pol.AllowPrivate,
+			); err != nil {
+				return nil, err
+			}
+			return netguard.EnvProxy(req.URL.String())
+		},
 		DialContext: func(
 			ctx context.Context,
 			network, addr string,
