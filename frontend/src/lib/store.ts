@@ -749,7 +749,8 @@ function settleConversation(
     !recorded || recorded.messages === capped.messages
       ? (recorded ?? measureTranscript(capped.messages))
       : remeasure(recorded, capped.messages);
-  const measured = totals === recorded ? capped : { ...capped, footprint: totals };
+  const measured =
+    totals === recorded ? capped : { ...capped, footprint: totals };
   let media = totals.media;
   let text = totals.text;
   const overMedia = media > MAX_CONV_MEDIA_BYTES;
@@ -1974,6 +1975,10 @@ export const useStore = create<StoreState>((set, get) => {
   // last_opened) and one from the caller once the binding returned.
   // Only the newest request may apply its snapshot.
   let workspacesLoadSeq = 0;
+  // The automation list and one task's run list are refreshed by the
+  // same three callers; only the newest answer of each may apply.
+  let automationsLoadSeq = 0;
+  const automationRunsLoadSeq = new Map<string, number>();
   let workspaceRestoreInFlight = false;
   let workspaceRestorePromise: Promise<void> | null = null;
   // suppressRestoreFor skips the automatic session restore after one
@@ -2949,7 +2954,12 @@ export const useStore = create<StoreState>((set, get) => {
       }
     }
     if (dropped.length === 0) return;
-    set(() => ({ conversations }));
+    // The viewers of the dropped conversations go with them: the entry
+    // is a handful of tab/diff ids per conversation ever opened, and
+    // resuming a session rebuilds it from the store's own defaults.
+    const viewers = { ...get().viewers };
+    for (const id of dropped) delete viewers[id];
+    set(() => ({ conversations, viewers }));
     for (const id of dropped) stateRoot.registry.release(id);
   };
 
@@ -3500,8 +3510,15 @@ export const useStore = create<StoreState>((set, get) => {
             (m) => m.id !== row.id,
           );
         }
+        // Whether the text landed somewhere: turn_end settles a steer by
+        // stamping the row and dropping its registration, so a
+        // registration still standing means nothing took this text — a
+        // row a rebuild replaced is not evidence of an archived copy.
+        const settled = !(convNow?.steerSent ?? []).some(
+          (s) => s.messageID === row.id,
+        );
         updateConv(convID, patch);
-        if (!waiting) {
+        if (settled) {
           // The run's turn_end settled while this submission was in
           // flight; the conversation owns the text now (either the
           // archive has it or the row is marked undelivered).
@@ -3874,7 +3891,11 @@ export const useStore = create<StoreState>((set, get) => {
                   ...current,
                   messages: [...page.messages, ...current.messages],
                   turnArtifacts: [...page.turnArtifacts, ...shiftedTurns],
-                  historySeq: page.historySeq,
+                  // An empty page carries seq 0: keeping it would say
+                  // "nothing below here is loaded" about a transcript
+                  // that is, and the next incremental read would start
+                  // from the beginning of the archive.
+                  historySeq: added > 0 ? page.historySeq : current.historySeq,
                   historyHasMore: page.historyHasMore,
                   historyLoading: false,
                 },
@@ -4131,9 +4152,20 @@ export const useStore = create<StoreState>((set, get) => {
           delete conversations[id];
           const viewers = { ...state.viewers };
           delete viewers[id];
-          return { conversations, viewers };
+          // runConvs is otherwise only cleared by the run's turn_end,
+          // and a deleted conversation never ends its turn: its entries
+          // would keep naming a conversation that is gone (a late
+          // turn_end would then reconcile it back).
+          const runConvs = { ...state.runConvs };
+          for (const [runID, convID] of Object.entries(runConvs)) {
+            if (convID === id) delete runConvs[runID];
+          }
+          return { conversations, viewers, runConvs };
         });
         clearPendingIndex(id);
+        // A tail sync waiting on this conversation holds its id until
+        // that conversation's next turn_end; there will not be one.
+        deferredTailSyncs.delete(id);
         // The backend only mints when the deleted chat was still the
         // workspace's current conversation once the delete settled.
         // Open that replacement only when this chat is still focused;
@@ -4239,16 +4271,26 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     loadAutomations: async () => {
+      // Starting a task, its settlement and an explicit refresh can
+      // overlap; the answer that arrives last is the one the list shows,
+      // like loadWorkspaces (a stale run's list would reinstate the
+      // Cancel button of a task that just started).
+      const seq = (automationsLoadSeq += 1);
       try {
-        set({ automations: (await api.automations()) ?? [] });
+        const next = (await api.automations()) ?? [];
+        if (seq !== automationsLoadSeq) return;
+        set({ automations: next });
       } catch {
         // best-effort
       }
     },
 
     loadAutomationRuns: async (taskId: string) => {
+      const seq = (automationRunsLoadSeq.get(taskId) ?? 0) + 1;
+      automationRunsLoadSeq.set(taskId, seq);
       try {
         const list = (await api.automationRuns(taskId)) ?? [];
+        if (automationRunsLoadSeq.get(taskId) !== seq) return;
         set((state) => ({
           automationRuns: {
             ...state.automationRuns,

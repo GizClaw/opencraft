@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { COMPACT_SUMMARY_PREFIX } from './compact';
 import { flushCommitStats, setPerfMetricsEnabled } from './perfMetrics';
-import type { MessageView } from './store';
-import type { WorkspaceMeta } from './types';
+import type { FileViewerState, MessageView } from './store';
+import type { AutomationRun, AutomationTask, WorkspaceMeta } from './types';
 import i18n from '../i18n';
 import { stateRoot } from '../state/app';
 import {
@@ -36,6 +36,8 @@ const apiMock = vi.hoisted(() => ({
   turnByRunID: vi.fn(),
   loadWorkspaces: vi.fn(),
   loadAutomations: vi.fn(),
+  automations: vi.fn(),
+  automationRuns: vi.fn(),
   openWorkspace: vi.fn(),
   workspaces: vi.fn(),
   setSessionMode: vi.fn(),
@@ -710,6 +712,30 @@ describe('store: send and stream', () => {
     expect(useStore.getState().toasts.at(-1)?.text).toBe(
       i18n.t('chat.sessionDeleted'),
     );
+  });
+
+  it('takes the deleted conversation\u2019s run mapping and viewer with it', async () => {
+    apiMock.deleteSession.mockResolvedValue({
+      conversation_id: 's-next',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    useStore.setState({
+      runConvs: { 'r-1': 's-1', 'r-2': 's-2' },
+      viewers: {
+        's-1': { filesOpen: true } as FileViewerState,
+        's-2': { filesOpen: true } as FileViewerState,
+      },
+    });
+
+    await useStore.getState().deleteSession('s-1');
+
+    // runConvs is otherwise only cleared by the run's turn_end, and a
+    // deleted conversation never ends its turn.
+    expect(useStore.getState().runConvs).toEqual({ 'r-2': 's-2' });
+    expect(useStore.getState().viewers['s-1']).toBeUndefined();
+    expect(useStore.getState().viewers['s-2']).toBeDefined();
   });
 
   it('a listing that raced the delete cannot put the row back on the sidebar', async () => {
@@ -3152,6 +3178,30 @@ describe('store: memory budgets', () => {
     if (newest.kind !== 'tool_call') throw new Error('expected a tool call');
     expect(newest.tool.images).toHaveLength(1);
   });
+
+  it('keeps the history cursor when the archive sends an empty page', async () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [],
+          historyHasMore: true,
+          historySeq: 90,
+        },
+      },
+    });
+    apiMock.sessionTurns.mockResolvedValue([]);
+
+    expect(await useStore.getState().loadEarlierHistory('s-1')).toBe(0);
+
+    const conv = useStore.getState().conversations['s-1'];
+    // The page says the archive holds nothing below, not that the loaded
+    // transcript starts at 0: a cursor of 0 would send the next read back
+    // to the beginning of the session.
+    expect(conv.historySeq).toBe(90);
+    expect(conv.historyHasMore).toBe(false);
+    expect(conv.historyLoading).toBe(false);
+  });
 });
 
 describe('store: cross-workspace session clicks', () => {
@@ -4410,6 +4460,36 @@ describe('store: mid-turn steer', () => {
     ]);
   });
 
+  it('keeps the draft when a rebuild replaced the row and the RPC rejects', async () => {
+    runningConversation();
+    apiMock.steerTurn.mockImplementation(async () => {
+      // A transcript rebuild (retryTranscript, a hydrate) replaces the
+      // rows while the submission is in flight: the pending row is gone
+      // from the transcript, and nothing ever took its text.
+      const conv = useStore.getState().conversations['s-1'];
+      useStore.setState({
+        conversations: {
+          's-1': {
+            ...conv,
+            messages: conv.messages.filter((m) => !m.steer),
+          },
+        },
+      });
+      throw new Error('turn not found');
+    });
+
+    const ok = await useStore.getState().steer('rebuilt away');
+
+    // The text reached neither the transcript nor the archive, so the
+    // draft is the only place it survives; a missing row is not evidence
+    // that something archived it.
+    expect(ok).toBe(false);
+    expect(steerRows()).toEqual([]);
+    expect(useStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'warning',
+    });
+  });
+
   it('marks an undelivered steer in place at turn_end', async () => {
     runningConversation();
     await useStore.getState().steer('lost note');
@@ -5223,5 +5303,79 @@ describe('store: transcript tail sync', () => {
       { id: 'h-2', start: 2, seq: 2 },
       { id: 'h-3', start: 3, seq: 3 },
     ]);
+  });
+});
+
+// The automation views refresh their lists from three directions at once
+// (a start, a settlement, the panel's own poll), and the answer that
+// arrives last is the one the list shows — unless the store refuses a
+// stale one the way it already does for the workspace list.
+describe('store: automation lists', () => {
+  const task = (id: string): AutomationTask => ({
+    id,
+    name: id,
+    prompt: '',
+    schedule: { type: 'daily', time: '09:00' },
+    workspace: '/tmp/w',
+    mode: 'workspace',
+    model: '',
+    think: 'medium',
+    notify: '',
+    timeout: '15m',
+    enabled: true,
+    created_at: '',
+    updated_at: '',
+    last_run_at: '',
+    last_status: '',
+    next_run_at: '',
+  });
+  const run = (id: string): AutomationRun => ({
+    id,
+    task_id: 't-1',
+    at: '',
+    status: 'succeeded',
+    error: '',
+    conversation_id: '',
+    run_id: '',
+    duration_ms: 0,
+    summary: '',
+  });
+
+  it('keeps only the newest task list', async () => {
+    let releaseFirst: ((list: AutomationTask[]) => void) | undefined;
+    const first = new Promise<AutomationTask[]>((resolve) => {
+      releaseFirst = resolve;
+    });
+    apiMock.automations.mockReturnValueOnce(first);
+    apiMock.automations.mockResolvedValueOnce([task('t-2')]);
+
+    const older = useStore.getState().loadAutomations();
+    const newer = useStore.getState().loadAutomations();
+    await newer;
+    releaseFirst?.([task('t-1')]);
+    await older;
+
+    // The stale answer describes the list as it was before the newer
+    // refresh: a task that has just started would flip back to idle.
+    expect(useStore.getState().automations.map((t) => t.id)).toEqual(['t-2']);
+  });
+
+  it('keeps only the newest run list of one task', async () => {
+    let releaseFirst: ((list: AutomationRun[]) => void) | undefined;
+    const first = new Promise<AutomationRun[]>((resolve) => {
+      releaseFirst = resolve;
+    });
+    apiMock.automationRuns.mockReturnValueOnce(first);
+    apiMock.automationRuns.mockResolvedValueOnce([run('run-2')]);
+
+    const older = useStore.getState().loadAutomationRuns('t-1');
+    const newer = useStore.getState().loadAutomationRuns('t-1');
+    await newer;
+    releaseFirst?.([run('run-1')]);
+    await older;
+
+    expect(
+      (useStore.getState().automationRuns['t-1'] ?? []).map((r) => r.id),
+    ).toEqual(['run-2']);
   });
 });
