@@ -12,7 +12,7 @@ import { useStore } from '../lib/store';
 import { stateRoot } from '../state/app';
 import type { MessageView, TurnArtifacts } from '../lib/store';
 import type { SandboxProcess, SessionMeta } from '../lib/types';
-import { ChatView } from './ChatView';
+import { ChatView, attachmentPreviews } from './ChatView';
 
 const apiMock = vi.hoisted(() => ({
   workspace: vi.fn(),
@@ -991,6 +991,79 @@ describe('ChatView transcript windowing', () => {
     expect(screen.getAllByRole('menuitem')).toHaveLength(5);
     await user.click(document.body);
     expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
+  });
+
+  // A resumed session carries only the stored path, so the preview crosses
+  // the bridge on mount — and a virtualized transcript mounts the row again
+  // every time it scrolls back into view.
+  function historyImageAttachments(): MessageView['attachments'] {
+    return [
+      {
+        id: 'att-1',
+        kind: 'image',
+        path: '/tmp/history.png',
+        name: 'history.png',
+        media_type: 'image/png',
+      },
+    ];
+  }
+
+  it('fetches a history image once, even after a remount', async () => {
+    attachmentPreviews.clear();
+    apiMock.readAttachment.mockResolvedValue({
+      path: '/tmp/history.png',
+      name: 'history.png',
+      media_type: 'image/png',
+      data_url: 'data:image/png;base64,BBBB',
+    });
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'look at this',
+          items: [],
+          attachments: historyImageAttachments(),
+        },
+      ],
+      [],
+    );
+
+    const first = render(<ChatView />);
+    await screen.findByRole('img', { name: 'history.png' });
+    expect(apiMock.readAttachment).toHaveBeenCalledTimes(1);
+
+    // The row scrolls out of the virtualized window and back: the preview is
+    // cached by path, so it is not fetched (or decoded) again.
+    first.unmount();
+    render(<ChatView />);
+    await screen.findByRole('img', { name: 'history.png' });
+    expect(apiMock.readAttachment).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the file name when a history image is gone', async () => {
+    attachmentPreviews.clear();
+    apiMock.readAttachment.mockRejectedValue(new Error('missing file'));
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'look at this',
+          items: [],
+          attachments: historyImageAttachments(),
+        },
+      ],
+      [],
+    );
+    render(<ChatView />);
+
+    // The failure used to be swallowed, which left the card spinning
+    // forever: the 'missing' fallback was unreachable.
+    await waitFor(() =>
+      expect(screen.getByText('history.png')).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole('img', { name: 'history.png' })).toBeNull();
   });
 
   it('shows worked duration at the top of an artifact turn', () => {

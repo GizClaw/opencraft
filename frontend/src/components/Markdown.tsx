@@ -3,9 +3,10 @@ import {
   memo,
   useContext,
   useLayoutEffect,
+  useMemo,
   useState,
 } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Check, Copy } from 'lucide-react';
@@ -24,6 +25,22 @@ export type MarkdownLinkHandler = (href: string, basePath?: string) => void;
 // difference.
 const InCodeBlock = createContext(false);
 
+// MarkdownSurface carries the two props that differ per surface — the link
+// handler and the base path — to the component map below. The map itself is
+// a module constant, so react-markdown sees the same identity on every
+// render and a host re-render does not re-parse and re-highlight the whole
+// answer through freshly built elements.
+const MarkdownSurface = createContext<{
+  onOpen?: MarkdownLinkHandler;
+  basePath?: string;
+}>({});
+
+// The plugin lists are constants for the same reason. rehype-raw is
+// deliberately absent from them: model output is rendered as markdown, not
+// as raw HTML.
+const REMARK_PLUGINS = [remarkGfm];
+const REHYPE_PLUGINS = [rehypeHighlight];
+
 // withoutNode strips the hast `node` react-markdown hands every component
 // alongside the DOM props. Spreading it onto a real element writes the node
 // itself into the markup (React 19 renders `node="[object Object]"`).
@@ -32,6 +49,51 @@ function withoutNode<T extends { node?: unknown }>(props: T): Omit<T, 'node'> {
   void node;
   return rest;
 }
+
+// MarkdownAnchor routes every click through the surface's link resolver
+// instead of letting the webview navigate.
+function MarkdownAnchor({
+  href,
+  children,
+}: {
+  node?: unknown;
+  href?: string;
+  children?: React.ReactNode;
+}) {
+  const { onOpen, basePath } = useContext(MarkdownSurface);
+  return (
+    <a
+      href={href}
+      onClick={(event) => {
+        event.preventDefault();
+        if (onOpen && href) {
+          onOpen(href, basePath);
+        }
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+// MarkdownTable wraps tables so they scroll instead of overflowing the
+// chat column.
+function MarkdownTable(
+  props: React.HTMLAttributes<HTMLTableElement> & { node?: unknown },
+) {
+  return (
+    <div className="overflow-x-auto">
+      <table {...withoutNode(props)} />
+    </div>
+  );
+}
+
+const MARKDOWN_COMPONENTS: Components = {
+  a: MarkdownAnchor,
+  code: InlineCode,
+  pre: CodeBlock,
+  table: MarkdownTable,
+};
 
 // Markdown renders assistant content with GFM. Code blocks get a copy
 // button, syntax highlighting via rehype-highlight, and tables are
@@ -58,37 +120,19 @@ export const Markdown = memo(function Markdown({
   useLayoutEffect(() => {
     endMarkdownRender(renderStartedAt);
   });
+  // The context value is rebuilt only when the two props it carries change,
+  // so the constant component map does not re-render its consumers either.
+  const surface = useMemo(() => ({ onOpen, basePath }), [onOpen, basePath]);
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeHighlight]}
-      components={{
-        a: ({ href, children }) => (
-          <a
-            href={href}
-            onClick={(event) => {
-              event.preventDefault();
-              if (onOpen && href) {
-                onOpen(href, basePath);
-              }
-            }}
-          >
-            {children}
-          </a>
-        ),
-        code: (props) => (
-          <InlineCode {...props} onOpen={onOpen} basePath={basePath} />
-        ),
-        pre: CodeBlock,
-        table: (props) => (
-          <div className="overflow-x-auto">
-            <table {...withoutNode(props)} />
-          </div>
-        ),
-      }}
-    >
-      {text}
-    </ReactMarkdown>
+    <MarkdownSurface.Provider value={surface}>
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
+        components={MARKDOWN_COMPONENTS}
+      >
+        {text}
+      </ReactMarkdown>
+    </MarkdownSurface.Provider>
   );
 });
 
@@ -103,15 +147,12 @@ export const Markdown = memo(function Markdown({
 function InlineCode({
   className,
   children,
-  onOpen,
-  basePath,
 }: {
   node?: unknown;
   className?: string;
   children?: React.ReactNode;
-  onOpen?: MarkdownLinkHandler;
-  basePath?: string;
 }) {
+  const { onOpen, basePath } = useContext(MarkdownSurface);
   const inBlock = useContext(InCodeBlock);
   const target =
     inBlock || !onOpen ? null : codeLinkTarget(extractText(children));

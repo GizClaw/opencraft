@@ -634,6 +634,13 @@ function SteerNote({
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const openFileTarget = useStore((s) => s.openFileTarget);
+  // The note's own markdown is memoized on its props: handing it a fresh
+  // arrow every render would make the block re-parse on every parent
+  // render instead of bailing out.
+  const openLink = useCallback(
+    (href: string, base?: string) => void openFileTarget(href, base ?? ''),
+    [openFileTarget],
+  );
   // An undelivered row is the only copy of its text, so taking it out of
   // the app is a visible action rather than a hover affordance.
   const copyText = async () => {
@@ -689,10 +696,7 @@ function SteerNote({
           accent-tinted code chip reads on the card rung) plus the hard
           breaks the composer records. */}
       <div className="prose-chat whitespace-pre-wrap">
-        <Markdown
-          text={text}
-          onOpen={(href, base) => void openFileTarget(href, base ?? '')}
-        />
+        <Markdown text={text} onOpen={openLink} />
       </div>
       {state === 'undelivered' && (
         <>
@@ -823,6 +827,12 @@ const MessageRow = memo(function MessageRow({
   const openFileTarget = useStore((s) => s.openFileTarget);
   const resendSteer = useStore((s) => s.resendSteer);
   const dismissSteer = useStore((s) => s.dismissSteer);
+  // One link handler for the row keeps Markdown's memo intact across the
+  // stream flushes that re-render this component.
+  const openLink = useCallback(
+    (href: string, base?: string) => void openFileTarget(href, base ?? ''),
+    [openFileTarget],
+  );
   if (msg.role === 'user') {
     // A row the app itself wrote (a delegation note) is the app
     // answering a call the model made, so it renders as a card rather
@@ -906,10 +916,7 @@ const MessageRow = memo(function MessageRow({
           {msg.text && (
             <div className="user-bubble max-w-full rounded-card rounded-br-tight border px-4 py-2.5 text-sm">
               <div className="prose-chat user-bubble-md text-sm">
-                <Markdown
-                  text={msg.text}
-                  onOpen={(href, base) => void openFileTarget(href, base ?? '')}
-                />
+                <Markdown text={msg.text} onOpen={openLink} />
               </div>
             </div>
           )}
@@ -1143,6 +1150,12 @@ function DelegationNoteCard({
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const openFileTarget = useStore((s) => s.openFileTarget);
+  // Stable identity for the note's markdown handler, so a re-render of the
+  // transcript does not re-parse the body.
+  const openLink = useCallback(
+    (href: string, base?: string) => void openFileTarget(href, base ?? ''),
+    [openFileTarget],
+  );
   // The dot is the subagent dock's vocabulary, one word wide: a
   // finished-and-good run is the quiet color, a failure is the loud
   // one, and a canceled run keeps the neutral one.
@@ -1201,10 +1214,7 @@ function DelegationNoteCard({
         <div className="border-t border-edge">
           {body && (
             <div className="prose-chat max-h-80 overflow-y-auto px-3 py-2 text-sm">
-              <Markdown
-                text={body}
-                onOpen={(href, base) => void openFileTarget(href, base ?? '')}
-              />
+              <Markdown text={body} onOpen={openLink} />
             </div>
           )}
           {reference.length > 0 && (
@@ -1616,18 +1626,65 @@ function TurnSummaryHeader({
 // data URL already; resumed history has only the stored path, so the
 // component fetches the preview from the backend on mount (WKWebView
 // cannot load file:// directly).
+//
+// attachmentPreviews caches one preview per path for the life of the
+// window: a virtualized transcript mounts a row again every time it
+// scrolls back into view, and without the cache the same bytes crossed the
+// bridge and were decoded again on every pass. A fetch that is still in
+// flight is cached as well, so two rows naming one file (a re-sent
+// attachment, a remount racing the first response) share one request. Only
+// a real preview is remembered: one that failed is dropped, so a file that
+// comes back is picked up on the next mount instead of staying missing for
+// the session. Exported so tests can start from a cold cache.
+export const attachmentPreviews = new Map<string, string | Promise<string>>();
+
+// cachedPreview is the part of the cache that is already usable: a preview
+// that has landed. An in-flight request is not a URL.
+function cachedPreview(path: string): string | undefined {
+  const cached = attachmentPreviews.get(path);
+  return typeof cached === 'string' ? cached : undefined;
+}
+
 function AttachmentImage({ att }: { att: AttachmentView }) {
-  const [url, setUrl] = useState(att.data_url ?? '');
+  const [url, setUrl] = useState(
+    () => att.data_url ?? cachedPreview(att.path) ?? '',
+  );
   const openFileTarget = useStore((s) => s.openFileTarget);
   useEffect(() => {
     if (url) return;
+    const cached = attachmentPreviews.get(att.path);
     let live = true;
-    void api
-      .readAttachment(att.path)
-      .then((dto) => {
-        if (live) setUrl(dto.data_url ?? 'missing');
-      })
-      .catch(() => {});
+    if (typeof cached === 'string') {
+      setUrl(cached);
+      return;
+    }
+    const request =
+      cached ??
+      api
+        .readAttachment(att.path)
+        .then((dto) => {
+          const dataUrl = dto.data_url ?? '';
+          // An empty payload reads like a file that is gone.
+          if (!dataUrl) {
+            attachmentPreviews.delete(att.path);
+            return 'missing';
+          }
+          attachmentPreviews.set(att.path, dataUrl);
+          return dataUrl;
+        })
+        .catch(() => {
+          // The file is gone (deleted, moved, rotated out of the archive).
+          // Show the file name instead of a spinner that never stops — the
+          // rejected fetch used to be swallowed, which left the card
+          // loading forever because this state was unreachable. The failed
+          // request is dropped so the next mount can try again.
+          attachmentPreviews.delete(att.path);
+          return 'missing';
+        });
+    attachmentPreviews.set(att.path, request);
+    void request.then((preview) => {
+      if (live) setUrl(preview);
+    });
     return () => {
       live = false;
     };
@@ -2580,7 +2637,13 @@ export function ChatView() {
     }
     const view = scroller.getBoundingClientRect();
     const rows = scroller.querySelectorAll<HTMLElement>('[data-turn-index]');
-    if (rows.length === 0) return;
+    if (rows.length === 0) {
+      // Nothing in the transcript carries a turn (only interaction cards,
+      // placeholders, a switch skeleton): there is no turn on screen, so
+      // the ruler must not keep highlighting the one that scrolled away.
+      setPeekRange(null);
+      return;
+    }
     const turnOf = (row: HTMLElement) => {
       const value = Number(row.dataset.turnIndex);
       return Number.isInteger(value) ? value : -1;
@@ -2631,13 +2694,15 @@ export function ChatView() {
         }
       }
     }
-    if (range) {
-      setPeekRange((prev) =>
-        prev && prev.start === range.start && prev.end === range.end
-          ? prev
-          : range,
-      );
-    }
+    // Either way the answer is written: the range the viewport covers, or
+    // null when no row on screen names a turn. Only writing a non-null
+    // range kept the previous turn highlighted after it had scrolled away.
+    // The setter still keeps an unchanged range from rendering.
+    setPeekRange((prev) =>
+      prev && range && prev.start === range.start && prev.end === range.end
+        ? prev
+        : range,
+    );
   }, []);
   // schedulePeekRefresh coalesces scroll-driven current-turn lookups
   // into one pass per animation frame instead of scanning the mounted

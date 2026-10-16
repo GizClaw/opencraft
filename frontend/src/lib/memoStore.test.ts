@@ -16,6 +16,11 @@ describe('createObjectMemo', () => {
     expect(compute).toHaveBeenCalledTimes(1);
     expect(memo({ n: 2 })).toBe(4);
     expect(compute).toHaveBeenCalledTimes(2);
+
+    // A structurally equal object is still a new key: identity is what the
+    // store preserves, so an in-place mutation cannot hide behind a hit.
+    expect(memo({ n: 21 })).toBe(42);
+    expect(compute).toHaveBeenCalledTimes(3);
   });
 
   it('caches an undefined result instead of recomputing it', () => {

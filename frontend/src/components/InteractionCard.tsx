@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, HelpCircle, ShieldAlert, X } from 'lucide-react';
 import { Markdown } from './Markdown';
@@ -55,6 +55,13 @@ export function InteractionCard({
   const [other, setOther] = useState('');
   const cardRef = useRef<HTMLDivElement | null>(null);
   const { t } = useTranslation();
+  // Stable identity keeps the prompt's markdown memoized: the card
+  // re-renders on every keystroke in its own answer field, and a fresh
+  // arrow would re-parse the body each time.
+  const openLink = useCallback(
+    (href: string, base?: string) => void openFileTarget(href, base ?? ''),
+    [openFileTarget],
+  );
 
   // An unknown severity renders as notice: a prompt that arrived
   // without a tag is a decision, not small talk.
@@ -165,10 +172,7 @@ export function InteractionCard({
       </div>
       {bodyText && (
         <div className="prose-chat mt-2 text-sm">
-          <Markdown
-            text={bodyText}
-            onOpen={(href, base) => void openFileTarget(href, base ?? '')}
-          />
+          <Markdown text={bodyText} onOpen={openLink} />
         </div>
       )}
 

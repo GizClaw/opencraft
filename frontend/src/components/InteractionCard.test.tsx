@@ -6,6 +6,20 @@ import { useOverlayLayer } from '../lib/overlay';
 import type { InteractDTO } from '../lib/types';
 import { InteractionCard } from './InteractionCard';
 
+// The highlighter factory is called once per markdown parse, so counting it
+// counts the parses react-markdown runs. The wrapper keeps the real plugin.
+const highlightMock = vi.hoisted(() => ({ parses: 0 }));
+
+vi.mock('rehype-highlight', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('rehype-highlight')>();
+  return {
+    default: (...args: Parameters<typeof actual.default>) => {
+      highlightMock.parses += 1;
+      return actual.default(...args);
+    },
+  };
+});
+
 function spec(overrides: Partial<InteractDTO> = {}): InteractDTO {
   return {
     id: 'p-1',
@@ -62,6 +76,23 @@ describe('InteractionCard severity', () => {
 
 const ALLOW = { label: 'Allow once', value: 'allow_once' };
 const DENY = { label: 'Deny', value: 'deny' };
+
+describe('InteractionCard markdown', () => {
+  it('does not re-parse the prompt body on every re-render', () => {
+    highlightMock.parses = 0;
+    render(<InteractionCard spec={spec({ kind: 'text', options: [] })} />);
+    // One parse for the prompt's own body.
+    expect(highlightMock.parses).toBe(1);
+
+    // Every keystroke in the answer field re-renders the card. The body text
+    // is unchanged, so the block must not be parsed (and highlighted) again:
+    // that is what the stable link handler is for.
+    const field = screen.getByPlaceholderText('Type your answer…');
+    fireEvent.change(field, { target: { value: 'use the staging bucket' } });
+    fireEvent.change(field, { target: { value: 'use the prod bucket' } });
+    expect(highlightMock.parses).toBe(1);
+  });
+});
 
 describe('InteractionCard keyboard', () => {
   const replyInteract = vi.fn(async () => undefined);

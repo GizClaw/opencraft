@@ -27,10 +27,10 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import {
   toUnifiedDiff,
-  looksLikeUnifiedDiff,
   parseUnifiedDiff,
   recoverJsonContent,
 } from '../lib/diff';
+import { createLastValueMemo, createObjectMemo } from '../lib/memoStore';
 import { useStore, type ToolView } from '../lib/store';
 import { useToolElapsedLabel } from '../lib/toolTiming';
 import type { FilePreview, PatchFileDTO } from '../lib/types';
@@ -47,14 +47,23 @@ const INLINE_DIFF_LINE_LIMIT = 40;
 // card is open; the diff footer offers the rest.
 const DIFF_RENDER_LINE_LIMIT = 400;
 
-function parseArgs(tool: ToolView): Record<string, unknown> | null {
-  try {
-    const v = JSON.parse(tool.args);
-    return v && typeof v === 'object' ? v : null;
-  } catch {
-    return null;
-  }
-}
+// parseArgs reads a call's arguments. The card asks for them from several
+// places on every render (the summary line, the activity line, the body),
+// and a streamed call is a fresh payload on every delta — so the parse is
+// cached by the tool object: once per payload, whatever the render does
+// and however often a virtualized row is mounted again. The store replaces
+// tool objects instead of mutating them, which is what makes identity a
+// valid key here.
+const parseArgs = createObjectMemo(
+  (tool: ToolView): Record<string, unknown> | null => {
+    try {
+      const v = JSON.parse(tool.args) as unknown;
+      return v && typeof v === 'object' ? (v as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  },
+);
 
 interface Summary {
   verb: string;
@@ -205,7 +214,7 @@ interface ExecResult {
   stderr?: string;
 }
 
-function execResult(content: string): ExecResult | null {
+function parseExecResult(content: string): ExecResult | null {
   try {
     const v = JSON.parse(content);
     // Only exec_command results carry exit_code; other tools return
@@ -220,6 +229,14 @@ function execResult(content: string): ExecResult | null {
   }
   return null;
 }
+
+// execResult unwraps one call's exec envelope. Keyed on the tool object:
+// the header, the summary line and the expanded body all ask for it, and
+// a virtualized row asks again every time it is mounted — while a 5k-line
+// stdout is exactly what the parse costs.
+const execResult = createObjectMemo((tool: ToolView): ExecResult | null =>
+  tool.result === undefined ? null : parseExecResult(tool.result),
+);
 
 interface DirEntry {
   path: string;
@@ -254,6 +271,13 @@ function parseDirResult(content: string): DirResult | null {
   }
   return null;
 }
+
+// dirResultOf caches one call's directory tree envelope. A listing of a
+// large tree is the other half of the result-parsing cost, and the card
+// asks for it on every render and every remount.
+const dirResultOf = createObjectMemo((tool: ToolView): DirResult | null =>
+  tool.result === undefined ? null : parseDirResult(tool.result),
+);
 
 function buildDirTree(entries: DirEntry[]): DirNode[] {
   const root: DirNode[] = [];
@@ -322,6 +346,11 @@ function countLines(text: string): number {
   return body.split('\n').length;
 }
 
+// countLinesMemo caches that count by the text itself: a pane re-renders
+// with the same text every time a sibling block streams or the pane is
+// opened, and the count is a full split of what can be thousands of lines.
+const countLinesMemo = createLastValueMemo(countLines);
+
 // ToolElapsed shows how long one call has been taking, ticking while it
 // runs and freezing at the measured span once its result lands. Calls
 // the client never saw start (replayed sessions) render nothing.
@@ -360,7 +389,7 @@ function OutputPane({
 }) {
   const { t } = useTranslation();
   const [full, setFull] = useState(false);
-  const lines = countLines(text);
+  const lines = countLinesMemo(text);
   const long = lines > 24 || text.length > 4000;
   return (
     <div className="min-w-0">
@@ -398,7 +427,7 @@ function ExecView({ tool }: { tool: ToolView }) {
   const [copied, setCopied] = useState(false);
   const args = parseArgs(tool);
   const command = execCommandLine(args);
-  const exec = tool.result !== undefined ? execResult(tool.result) : null;
+  const exec = execResult(tool);
   const running = tool.status === 'running';
   const failed =
     tool.status === 'error' || (exec !== null && exec.exit_code !== 0);
@@ -895,35 +924,43 @@ function SessionView({ tool }: { tool: ToolView }) {
 // ReadView renders read_file as a standalone collapsible block: the
 // header shows the path and line/size summary; expanding reveals the
 // file content in a scrollable code area.
-function ReadView({ tool }: { tool: ToolView }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+//
+// Everything it shows derives from the call's own result text, so the
+// whole shape is computed once per payload: the parse of a 5k-line file
+// used to run on every render of the card (and again on every remount of
+// a virtualized row), and the diff detection scanned the same text
+// whether or not the content could be a diff at all.
+interface ReadShape {
+  parsed: {
+    file_path?: string;
+    content: string;
+    offset?: number;
+    limit?: number;
+    total_lines?: number;
+    is_truncated?: boolean;
+    bytes?: number;
+  } | null;
+  path: string;
+  content: string;
+  lines: number;
+  diff: PatchFileDTO[] | null;
+}
+
+const readShape = createObjectMemo((tool: ToolView): ReadShape => {
   const args = parseArgs(tool);
   const argPath =
     args && typeof args.file_path === 'string' ? args.file_path : '';
-  const parsed =
-    tool.result !== undefined
-      ? (() => {
-          try {
-            const v = JSON.parse(tool.result);
-            if (v && typeof v === 'object' && typeof v.content === 'string') {
-              return v as {
-                file_path?: string;
-                content: string;
-                offset?: number;
-                limit?: number;
-                total_lines?: number;
-                is_truncated?: boolean;
-                bytes?: number;
-              };
-            }
-          } catch {
-            // not JSON
-          }
-          return null;
-        })()
-      : null;
+  let parsed: ReadShape['parsed'] = null;
+  if (tool.result !== undefined) {
+    try {
+      const v = JSON.parse(tool.result);
+      if (v && typeof v === 'object' && typeof v.content === 'string') {
+        parsed = v as ReadShape['parsed'];
+      }
+    } catch {
+      // not JSON
+    }
+  }
   const path = parsed?.file_path || argPath || tool.name;
   // Corrupt old archives sometimes break the result JSON (a raw
   // newline inside the envelope); recover the content leniently so the
@@ -932,7 +969,28 @@ function ReadView({ tool }: { tool: ToolView }) {
     parsed?.content ??
     (tool.result !== undefined ? recoverJsonContent(tool.result) : '') ??
     '';
-  const diffFiles = content ? parseUnifiedDiff(content) : null;
+  return {
+    parsed,
+    path,
+    content,
+    lines: countLines(content),
+    // parseUnifiedDiff already reports null for text that is not a diff,
+    // so plain reads pay one bounded scan instead of a full split.
+    diff: content ? parseUnifiedDiff(content) : null,
+  };
+});
+
+function ReadView({ tool }: { tool: ToolView }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const {
+    parsed,
+    path,
+    content,
+    lines: shown,
+    diff: diffFiles,
+  } = readShape(tool);
   const running = tool.status === 'running';
   const failed = tool.status === 'error';
   // A read is a window on a file, not the whole file: the header names
@@ -940,7 +998,6 @@ function ReadView({ tool }: { tool: ToolView }) {
   // "2000 lines" never reads as "the file is 2000 lines long".
   const meta = (() => {
     if (parsed === null) return null;
-    const shown = countLines(content);
     const from = typeof parsed.offset === 'number' ? parsed.offset : 1;
     const total = parsed.total_lines;
     if (typeof total !== 'number' || total <= 0) {
@@ -1240,15 +1297,50 @@ function ViewImageView({ tool }: { tool: ToolView }) {
 // WriteView renders write_file in full: the new content is always
 // visible as a git-style diff scrolled to a ~10-line viewport, with a
 // lightweight status line only while running or on failure.
-export const WriteView = memo(function WriteView({ tool }: { tool: ToolView }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+//
+// The body is streamed in as a JSON string argument, so every delta makes
+// a new payload: the line count that decides whether the card folds, and
+// the row list the open card renders, are both derived once per payload
+// instead of once per render.
+interface WriteShape {
+  path: string;
+  content: string;
+  lines: number;
+}
+
+const writeShape = createObjectMemo((tool: ToolView): WriteShape => {
   const args = parseArgs(tool);
   const path = args && typeof args.file_path === 'string' ? args.file_path : '';
   const content = args && typeof args.content === 'string' ? args.content : '';
+  return { path, content, lines: content.split('\n').length };
+});
+
+// writeRows rebuilds the diff rows of the written file. It is called only
+// when the body is actually rendered (a small file, or a large one the
+// reader opened), and then once per payload: `content.split` on a 4000-line
+// file allocates the whole row list.
+const writeRows = createObjectMemo((tool: ToolView): PatchFileDTO => {
+  const { path, content, lines } = writeShape(tool);
+  return {
+    path,
+    action: 'add',
+    added: lines,
+    removed: 0,
+    lines: content.split('\n').map((text, i) => ({
+      kind: 'add' as const,
+      old_num: 0,
+      new_num: i + 1,
+      text,
+    })),
+  };
+});
+
+export const WriteView = memo(function WriteView({ tool }: { tool: ToolView }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const { path, content, lines } = writeShape(tool);
   const running = tool.status === 'running';
   const failed = tool.status === 'error';
-  const lines = content.split('\n').length;
   const large = lines > INLINE_DIFF_LINE_LIMIT;
   const showBody = !large || open;
 
@@ -1284,20 +1376,7 @@ export const WriteView = memo(function WriteView({ tool }: { tool: ToolView }) {
           wrap
           expandable
           maxLines={DIFF_RENDER_LINE_LIMIT}
-          files={[
-            {
-              path,
-              action: 'add',
-              added: lines,
-              removed: 0,
-              lines: content.split('\n').map((text, i) => ({
-                kind: 'add' as const,
-                old_num: 0,
-                new_num: i + 1,
-                text,
-              })),
-            },
-          ]}
+          files={[writeRows(tool)]}
           collapsible={false}
           maxHeight="max-h-[12.5rem]"
         />
@@ -2058,7 +2137,7 @@ function McpToolView({ tool }: { tool: ToolView }) {
         )}
         {!running && tool.result !== undefined && (
           <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
-            {tool.result.split('\n').length} {t('tool.lines')}
+            {resultSplitLines(tool)} {t('tool.lines')}
           </span>
         )}
         {open ? (
@@ -3376,7 +3455,7 @@ function resultSummary(
     const last = lines[lines.length - 1]?.trim() ?? '';
     return last.length > 120 ? `${last.slice(0, 120)}…` : last;
   };
-  const exec = execResult(tool.result);
+  const exec = execResult(tool);
   if (exec && typeof exec.exit_code === 'number') {
     if (exec.exit_code === 0) {
       const tail = execTail(exec.stdout ?? '');
@@ -3517,6 +3596,13 @@ function patchResultFiles(
   return null;
 }
 
+// The card asks for the envelope of its own result on every render, so the
+// parse is cached per payload like the other result readers.
+const patchResultFilesOf = createObjectMemo(
+  (tool: ToolView): { path?: string; action?: string }[] | null =>
+    patchResultFiles(tool.result),
+);
+
 // ApplyPatchView renders one apply_patch call as a card: a summary
 // header (files changed, total add/delete counts, run status) over the
 // diff itself. The diff is always visible, wraps long lines instead of
@@ -3535,7 +3621,7 @@ export const ApplyPatchView = memo(function ApplyPatchView({
   const running = tool.status === 'running';
   const errored = tool.status === 'error';
   const { files, failed: renderFailed, patch } = usePatchFiles(tool);
-  const resultFiles = running ? null : patchResultFiles(tool.result);
+  const resultFiles = running ? null : patchResultFilesOf(tool);
   // Totals come from the rendered diff when it is available; a call
   // that never rendered (unparseable args) still has the result
   // envelope, which is enough for the file list but not for counts.
@@ -3730,11 +3816,47 @@ function ArgsBlock({ tool }: { tool: ToolView }) {
   );
 }
 
+// resultCandidateOf unwraps the JSON envelope a result may carry
+// ({file_path, content, ...}) and falls back to a lenient recovery of a
+// corrupt archive envelope. It reads the whole result, so it is cached per
+// payload.
+const resultCandidateOf = createObjectMemo((tool: ToolView): string => {
+  const result = tool.result ?? '';
+  try {
+    const v = JSON.parse(result);
+    if (v && typeof v === 'object' && typeof v.content === 'string') {
+      return v.content;
+    }
+  } catch {
+    // not JSON
+  }
+  // Corrupt result JSON (historical archives): recover the content
+  // value so diff detection still runs.
+  return recoverJsonContent(result) ?? result;
+});
+
+// resultDiffOf turns a result that is really a git diff into the rendered
+// file list. parseUnifiedDiff reports null for anything else, so a plain
+// result pays one bounded scan instead of a full split.
+const resultDiffOf = createObjectMemo(
+  (tool: ToolView): PatchFileDTO[] | null => {
+    const candidate = resultCandidateOf(tool);
+    return candidate ? parseUnifiedDiff(candidate) : null;
+  },
+);
+
+// resultSplitLines is the line count the generic card prints next to a
+// result: the raw split length, so a trailing newline opens an empty line
+// here, exactly as this counter always reported it.
+const resultSplitLines = createObjectMemo(
+  (tool: ToolView): number => tool.result?.split('\n').length ?? 0,
+);
+
 function ResultBlock({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();
   if (tool.result === undefined) return null;
   if (tool.name === 'list_dir') {
-    const dir = parseDirResult(tool.result);
+    const dir = dirResultOf(tool);
     if (dir && Array.isArray(dir.entries)) {
       const nodes = buildDirTree(dir.entries);
       return (
@@ -3756,24 +3878,11 @@ function ResultBlock({ tool }: { tool: ToolView }) {
     }
   }
   // Results that turn out to be git diffs (e.g. read_file on a .diff
-  // artifact) render as diff cards instead of raw text. The result may
-  // be a JSON envelope {file_path, content, ...}; unwrap it first.
-  const candidate = (() => {
-    try {
-      const v = JSON.parse(tool.result);
-      if (v && typeof v === 'object' && typeof v.content === 'string') {
-        return v.content;
-      }
-    } catch {
-      // not JSON
-    }
-    // Corrupt result JSON (historical archives): recover the content
-    // value so diff detection still runs.
-    return recoverJsonContent(tool.result) ?? tool.result;
-  })();
-  const diffFiles = looksLikeUnifiedDiff(candidate)
-    ? parseUnifiedDiff(candidate)
-    : null;
+  // artifact) render as diff cards instead of raw text. Both the unwrap
+  // and the diff parse read the whole result, so they are cached per
+  // payload: a 5k-line result used to be parsed and scanned again on every
+  // render, and again on every remount of a virtualized row.
+  const diffFiles = resultDiffOf(tool);
   if (diffFiles) {
     return <GitDiffView files={diffFiles} wrap maxHeight="max-h-64" />;
   }
@@ -3969,7 +4078,7 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
                   <div className="text-xs text-dim">{t('tool.result')}:</div>
                   <div className="flex items-center gap-2 text-micro text-dim">
                     <span className="tabular-nums">
-                      {tool.result.split('\n').length} {t('tool.lines')}
+                      {resultSplitLines(tool)} {t('tool.lines')}
                     </span>
                     <button
                       onClick={() => void copyResult()}
