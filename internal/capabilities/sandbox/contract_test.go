@@ -96,6 +96,42 @@ func TestSandboxRunnerContract(t *testing.T) {
 			t.Fatalf("parent secret leaked into the sandbox: %q", res.Stdout)
 		}
 	})
+
+	// The staged copy of an activated skill is read and run by confined
+	// commands but must not be rewritable by them: it lives outside
+	// every write grant (the default config points staging at
+	// APP_HOME/staged, deliberately not at the sandbox-writable cache),
+	// because the model reads it as skill reference material.
+	t.Run("staged scripts run but cannot be rewritten", func(t *testing.T) {
+		staged := stagedProbeDir(t, workDir)
+		if goruntime.GOOS != "windows" {
+			script := filepath.Join(staged, "run.sh")
+			if err := os.WriteFile(script,
+				[]byte("#!/bin/sh\necho staged-ok\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			res, err := coresandbox.Exec(ctx, confined, shell,
+				shellArgs(script), coresandbox.ExecOptions{WorkDir: workDir})
+			if err != nil {
+				t.Fatalf("exec staged script: %v", err)
+			}
+			if res.ExitCode != 0 || !strings.Contains(res.Stdout, "staged-ok") {
+				t.Fatalf("staged script exit=%d stdout=%q stderr=%q",
+					res.ExitCode, res.Stdout, res.Stderr)
+			}
+		}
+		probe := filepath.Join(staged, "rewritten.txt")
+		res, err := coresandbox.Exec(ctx, confined, shell,
+			shellArgs("echo pwn > "+probe), coresandbox.ExecOptions{
+				WorkDir: workDir,
+			})
+		if _, statErr := os.Stat(probe); statErr == nil {
+			t.Fatalf("staged copy was rewritten from inside the sandbox (exec err=%v)", err)
+		}
+		if err == nil && res.ExitCode == 0 {
+			t.Fatal("write into the staged area reported success")
+		}
+	})
 }
 
 // outsideWritePath returns a path the confined backend must refuse.
@@ -114,4 +150,25 @@ func outsideWritePath(workDir string) string {
 		return filepath.Join("/var/tmp", name)
 	}
 	return filepath.Join(filepath.Dir(workDir), name)
+}
+
+// stagedProbeDir stands in for the staged-skill area: a host directory
+// outside the workspace and outside every write grant, the way the
+// default config places APP_HOME/staged. Linux binds only the workspace
+// into its private /tmp tmpfs, so the probe has to live on the
+// read-only root bind to be visible inside at all; macOS and Windows
+// keep host paths visible, where a sibling of the workspace is already
+// outside the grants.
+func stagedProbeDir(t *testing.T, workDir string) string {
+	t.Helper()
+	parent := filepath.Dir(workDir)
+	if goruntime.GOOS == "linux" {
+		parent = "/var/tmp"
+	}
+	dir, err := os.MkdirTemp(parent, "opencraft-staged-")
+	if err != nil {
+		t.Fatalf("staged probe dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
