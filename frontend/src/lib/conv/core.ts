@@ -34,6 +34,16 @@ import { stateRoot } from '../../state/app';
 // later in the factory body than this module), and handleEvent buffers a
 // delta through `enqueueStreamEvent` instead of touching the queue.
 
+// activeConversationID is the session the focus state machine currently
+// shows. It lives at module scope because renderer diagnostics (the perf
+// probe's labels) report the same value the store's actions act on.
+export function activeConversationID(): string {
+  const snapshot = stateRoot.focusSnapshot;
+  return snapshot.value === 'active'
+    ? (snapshot.context as { sessionID: string }).sessionID
+    : '';
+}
+
 export function createConvCore(api: StoreApi<StoreState>) {
   const set = api.setState;
   const get = api.getState;

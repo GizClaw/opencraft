@@ -1,6 +1,6 @@
 import type { StoreApi } from 'zustand';
 import type { StoreState } from '../store';
-import { createConvCore } from './core';
+import { activeConversationID, createConvCore } from './core';
 import { stateRoot } from '../../state/app';
 import { api } from '../api';
 import {
@@ -19,9 +19,6 @@ import { carryUndeliveredSteers, settleConversation } from './model';
 export function createConvPaging(
   store: StoreApi<StoreState>,
   core: ReturnType<typeof createConvCore>,
-  // activeConversationID lives at module scope in store.ts (the perf
-  // probe reports the same value); the retention sweep needs it.
-  focusedConversationID: () => string,
 ) {
   const set = store.setState;
   const get = store.getState;
@@ -97,7 +94,7 @@ export function createConvPaging(
           },
         };
       });
-      retainLiveConversations(focusedConversationID());
+      retainLiveConversations(activeConversationID());
     } catch {
       // Archive reconciliation is best-effort: a failed turn_end must
       // not leave the UI in a worse state or block the next turn.
