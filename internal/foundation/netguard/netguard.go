@@ -184,6 +184,9 @@ func BlockedIP(ip net.IP) bool {
 	if blockedKind(ip) {
 		return true
 	}
+	if blockedV6(ip) {
+		return true
+	}
 	if v4 := ip.To4(); v4 != nil {
 		return blockedV4(v4)
 	}
@@ -198,6 +201,26 @@ func blockedKind(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsPrivate() ||
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsMulticast() || ip.IsUnspecified()
+}
+
+// blockedV6 covers the IPv6-only special-purpose prefixes the standard
+// library does not classify: the documentation blocks (2001:db8::/32 and
+// 3fff::/20) and the Teredo prefix (2001::/32) — a tunnel carry the
+// guard has no reason to follow, and the range that would otherwise hide
+// a private client address inside a public-looking spelling.
+func blockedV6(ip net.IP) bool {
+	if len(ip) != net.IPv6len {
+		return false
+	}
+	switch {
+	case ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0x0d && ip[3] == 0xb8:
+		return true
+	case ip[0] == 0x3f && ip[1] == 0xff && ip[2]&0xf0 == 0:
+		return true
+	case ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0 && ip[3] == 0:
+		return true
+	}
+	return false
 }
 
 // blockedV4 covers the IPv4-only ranges IsPrivate does not: 0.0.0.0/8
