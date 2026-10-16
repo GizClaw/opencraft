@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -6,7 +7,11 @@ import {
   within,
 } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useStore } from '../lib/store';
+import {
+  useStore,
+  type ConversationState,
+  type MessageView,
+} from '../lib/store';
 import type { SessionMeta, WorkspaceMeta } from '../lib/types';
 import { stateRoot } from '../state/app';
 import { Sidebar } from './Sidebar';
@@ -16,6 +21,23 @@ const apiMock = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
+
+// useVirtualizer is called once per Sidebar render, so counting its calls
+// counts the sidebar's renders. React's own <Profiler onRender> only
+// reports in the react-dom/profiling build, which unit tests do not load.
+const sidebarRenders = vi.hoisted(() => ({ count: 0 }));
+
+vi.mock('@tanstack/react-virtual', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@tanstack/react-virtual')>();
+  return {
+    ...actual,
+    useVirtualizer: (options: Parameters<typeof actual.useVirtualizer>[0]) => {
+      sidebarRenders.count += 1;
+      return actual.useVirtualizer(options);
+    },
+  };
+});
 
 const expandedKey = 'oc.sidebarExpandedWorkspaces';
 const workspaceA: WorkspaceMeta = {
@@ -73,6 +95,34 @@ function startRuns(workspacePath: string, ids: string[]) {
   }
 }
 
+/** liveConversation is the store's view of one running conversation. A
+ * stream flush writes exactly this shape: one patch settles the
+ * conversation and replaces the whole conversations map with it
+ * (store.ts, updateConv), which is the identity change this suite
+ * follows. */
+function liveConversation(messages: MessageView[]): ConversationState {
+  return {
+    messages,
+    turnArtifacts: [],
+    mode: '',
+    think: '',
+    model: '',
+    pendingInteracts: [],
+  };
+}
+
+function userMessage(id: string, text: string): MessageView {
+  return { id, role: 'user', text, items: [], attachments: [] };
+}
+
+/** onlyActiveExpanded keeps the neighbouring workspace collapsed, so the
+ * sidebar has no session-list fetch of its own in flight while a test
+ * counts its renders. */
+function onlyActiveExpanded() {
+  window.localStorage.setItem(expandedKey, JSON.stringify([workspaceB.path]));
+  switchWorkspace(workspaceB.path, []);
+}
+
 /**
  * hiddenSlots returns the slot badges the reader cannot see. The reveal is
  * a class (lib/modifierHeld.ts) and jsdom is not asked to resolve the
@@ -89,6 +139,7 @@ describe('Sidebar workspace history', () => {
   beforeEach(() => {
     stateRoot.resetWorkspace();
     vi.clearAllMocks();
+    sidebarRenders.count = 0;
     installLocalStorage();
     window.localStorage.setItem(
       expandedKey,
@@ -461,5 +512,73 @@ describe('Sidebar workspace history', () => {
       workspaceC.path,
       workspaceA.path,
     ]);
+  });
+
+  it('holds its rows still when a stream delta moves nothing it shows', async () => {
+    // store.updateConv replaces the conversations map for one patch, so a
+    // subscription to the map itself re-rendered every row on every
+    // streamed token. The sidebar now reads one derived title per running
+    // row: a delta that leaves those titles alone must commit nothing.
+    onlyActiveExpanded();
+    startRuns(workspaceB.path, ['s-live']);
+    const first = userMessage('m-1', 'first words');
+    const assistant = (text: string): MessageView => ({
+      id: `m-${text.length}`,
+      role: 'assistant',
+      text,
+      items: [],
+      attachments: [],
+    });
+    const stream = (text: string) =>
+      useStore.setState({
+        conversations: { 's-live': liveConversation([first, assistant(text)]) },
+      });
+    useStore.setState({
+      conversations: { 's-live': liveConversation([first]) },
+    });
+
+    render(<Sidebar isMac={false} />);
+    await screen.findByText('first words');
+    // The first delta is the warm-up: whatever the first paint left in the
+    // scheduler's queue lands with it, so the count below starts on a tree
+    // that has nothing else to do.
+    await act(async () => {
+      stream('first answer');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const settled = sidebarRenders.count;
+
+    await act(async () => {
+      stream('first answer grows');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(sidebarRenders.count).toBe(settled);
+  });
+
+  it('still retitles a running row from its live conversation', async () => {
+    // The other half of the same subscription: the row has no archive
+    // title yet, so its first user message is what it shows — and it has
+    // to arrive when the message does. It also holds the render counter
+    // above down: a counter that never moves proves nothing.
+    onlyActiveExpanded();
+    startRuns(workspaceB.path, ['s-live']);
+    useStore.setState({
+      conversations: { 's-live': liveConversation([]) },
+    });
+    render(<Sidebar isMac={false} />);
+    expect(await screen.findByText('New session')).toBeInTheDocument();
+    const before = sidebarRenders.count;
+
+    act(() => {
+      useStore.setState({
+        conversations: {
+          's-live': liveConversation([userMessage('m-1', 'first words')]),
+        },
+      });
+    });
+
+    expect(screen.getByText('first words')).toBeInTheDocument();
+    expect(sidebarRenders.count).toBeGreaterThan(before);
   });
 });

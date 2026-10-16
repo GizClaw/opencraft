@@ -26,6 +26,7 @@ import { formatCompact } from '../lib/compactNumber';
 import { formatCombo } from '../lib/keys';
 import { useModifierHeld } from '../lib/modifierHeld';
 import { runningIDsByWorkspace, sessionSlotIDs } from '../lib/sessionSlots';
+import { useShallow } from 'zustand/react/shallow';
 import { firstMessageTitle, useStore } from '../lib/store';
 import { useFocusState, useRunningConversations } from '../state/react';
 import type { ComponentType } from 'react';
@@ -174,7 +175,6 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const openConfig = useStore((s) => s.openConfig);
   const openWorkspace = useStore((s) => s.openWorkspace);
   const sessions = useStore((s) => s.sessions);
-  const conversations = useStore((s) => s.conversations);
   const focus = useFocusState();
   const currentSession = focus.name === 'active' ? focus.sessionID : '';
   const resume = useStore((s) => s.resume);
@@ -406,6 +406,27 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     [runningActors, pendingPromptConvs],
   );
 
+  // A running row is retitled by the first user message of its live
+  // conversation until the archive names the session. That title is the
+  // only thing the sidebar reads out of the conversations map, so the
+  // subscription is the derived per-row titles rather than the map: a
+  // stream delta replaces the map's identity on every flush
+  // (store.updateConv) and used to re-render the whole sidebar for a
+  // title that had not moved. useShallow keeps the value identical while
+  // no title changes. The store reads its pending index the same way
+  // (store.ts, syncPendingIndex).
+  const liveTitles = useStore(
+    useShallow((s) => {
+      const titles: Record<string, string> = {};
+      for (const ids of Object.values(runningIdsByWorkspace)) {
+        for (const id of ids) {
+          titles[id] = firstMessageTitle(s.conversations[id]?.messages ?? []);
+        }
+      }
+      return titles;
+    }),
+  );
+
   // Mod+1 … Mod+4 number the active workspace's session list, in the
   // order it is drawn below: the running rows first, then the stored
   // ones. The digits run no deeper than the list does — a slot past its
@@ -517,7 +538,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         w.path === workspace
           ? sessions.find((s) => s.id === id)
           : (wsLists[w.path] ?? []).find((s) => s.id === id);
-      const liveTitle = firstMessageTitle(conversations[id]?.messages ?? []);
+      const liveTitle = liveTitles[id] ?? '';
       return {
         id,
         title:
@@ -918,7 +939,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     workspace,
     wsLists,
     wsLoading,
-    conversations,
+    liveTitles,
   ]);
   const virtualizer = useVirtualizer({
     count: historyItems.length,

@@ -40,7 +40,10 @@ function useToastQueue(items: ToastItem[]) {
     if (!queue.some((entry) => entry.closing)) return;
     const timer = window.setTimeout(
       () => setQueue((prev) => prev.filter((entry) => !entry.closing)),
-      MOTION.fast,
+      // The sweep has to outlast `animate-toast-out` (MOTION.toast); it
+      // used to use the panel's shorter timer, which dropped the last
+      // frames of the fade.
+      MOTION.toast,
     );
     return () => window.clearTimeout(timer);
   }, [queue]);

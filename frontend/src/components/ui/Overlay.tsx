@@ -38,6 +38,18 @@ const PANEL_ANIM: Record<OverlayVariant, [string, string]> = {
   bare: ['animate-panel-in', 'animate-panel-out'],
 };
 
+// The unmount timer has to outlast the exit animation the variant plays
+// (MOTION in lib/overlay.ts mirrors the tokens). A drawer-right panel
+// leaves on --animate-drawer-out, everything else on --animate-panel-out;
+// the drawer used to inherit the panel's shorter timer and was torn down
+// while its own exit was still running.
+const PANEL_EXIT_MS: Record<OverlayVariant, number> = {
+  center: MOTION.fast,
+  top: MOTION.fast,
+  'drawer-right': MOTION.drawerOut,
+  bare: MOTION.fast,
+};
+
 export function Overlay({
   open,
   onClose,
@@ -50,7 +62,11 @@ export function Overlay({
   trap = true,
   lock = true,
   restoreFocus = true,
-  exitMs = MOTION.fast,
+  /**
+   * Unmount delay, overriding the variant's own exit animation
+   * (PANEL_EXIT_MS). Only for a caller that plays a different animation.
+   */
+  exitMs,
   /**
    * Render into document.body instead of where the caller sits. A
    * dialog opened from inside another surface (a tool dialog inside the
@@ -91,7 +107,10 @@ export function Overlay({
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const pressRef = useRef(false);
-  const { mounted, closing } = usePresence(open, motion ? exitMs : 0);
+  const { mounted, closing } = usePresence(
+    open,
+    motion ? (exitMs ?? PANEL_EXIT_MS[variant]) : 0,
+  );
   useOverlayLayer({
     active: open,
     containerRef: panelRef,
