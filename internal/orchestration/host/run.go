@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -114,7 +115,15 @@ type Run struct {
 	host          *Host
 	lease         *coresession.Lease
 	turn          *coresession.Turn
-	done          bool
+	// done is claimed by the caller that runs the release path: Wait
+	// and Close both CAS it, and exactly one of them settles the run
+	// (the loser is told the run already finished, or waits on
+	// settled). It is atomic because two callers may race.
+	done atomic.Bool
+	// settled is closed once the release path finished. Close waits on
+	// it when another caller owns the release, so returning Close
+	// really means "released".
+	settled       chan struct{}
 	detail        *runDetail
 	skipAutoTitle bool
 	startedAt     time.Time
@@ -365,6 +374,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		host:          h,
 		lease:         lease,
 		turn:          turn,
+		settled:       make(chan struct{}),
 		skipAutoTitle: opts.SkipAutoTitle,
 		startedAt:     startedAt,
 	}
@@ -529,15 +539,56 @@ func (r *Run) WaitBounded(ctx context.Context) (*agent.Result, error) {
 // Wait blocks until the turn finishes, unbinds the prompt broker and
 // releases the session lease. When ctx fires before the turn settles
 // the result is nil and the error is the context's; the settle
-// bookkeeping below still runs, so callers that pass a cancellable
-// context must tolerate a result-less wait (see WaitBounded for the
-// caller that does not want one).
+// path still runs, so callers that pass a cancellable context must
+// tolerate a result-less wait (see WaitBounded for the caller that
+// does not want one). A second Wait is told the run already finished;
+// Close is the variant for a caller that will not read the result.
 func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
-	if r == nil || r.done {
+	if r == nil {
 		return nil, errors.New("host: run already finished")
 	}
+	if !r.done.CompareAndSwap(false, true) {
+		return nil, errors.New("host: run already finished")
+	}
+	return r.settle(ctx)
+}
+
+// Close releases a run whose result nobody will read: it cancels the
+// live turn and blocks until the settle path finished, so the session
+// lease is back and the Host's run slot is free. StartRun documents it
+// as the alternative to Wait ("call Wait or Close"); without it a
+// caller that walks away after StartRun would keep the conversation
+// busy and block the Host from ever closing.
+func (r *Run) Close() {
+	if r == nil {
+		return
+	}
+	if r.done.CompareAndSwap(false, true) {
+		if r.host != nil {
+			if err := r.host.CancelRun(r.RunID()); err != nil {
+				telemetry.WarnErr(context.WithoutCancel(context.Background()),
+					"host: cancel run on close failed", err,
+					attribute.String("run.id", r.RunID()))
+			}
+		}
+		_, _ = r.settle(context.WithoutCancel(context.Background()))
+		return
+	}
+	// A concurrent Wait (or Close) owns the release: wait for it, so
+	// Close returning means released and not "someone else is on it".
+	if r.settled != nil {
+		<-r.settled
+	}
+}
+
+// settle is the one-shot release path behind Wait and Close. The done
+// CAS picks the single caller that runs it, and it closes settled when
+// the release finished, whatever the outcome.
+func (r *Run) settle(ctx context.Context) (*agent.Result, error) {
+	if r.settled != nil {
+		defer close(r.settled)
+	}
 	res, err := r.turn.Wait(ctx)
-	r.done = true
 	finishedAt := time.Now().UTC()
 	if !r.startedAt.IsZero() {
 		if duration := finishedAt.Sub(r.startedAt); duration > 0 {
