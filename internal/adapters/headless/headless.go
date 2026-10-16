@@ -12,10 +12,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -141,6 +143,14 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	contextID := run.ContextID()
 	runID := run.RunID()
 	rec.identify(runID, contextID)
+	// A consumer that closed its end of the stream must not leave the
+	// turn running into a void: the first broken pipe cancels the run,
+	// and the normal settle path still archives the partial turn.
+	rec.armOutputGone(func() {
+		telemetry.WarnErr(context.Background(),
+			"headless: cancel run after output consumer went away failed",
+			h.CancelRun(runID))
+	})
 	rec.emit(rollout.Event{
 		Type:           rollout.TypeTurnStarted,
 		ConversationID: contextID,
@@ -193,6 +203,13 @@ type streamRecorder struct {
 	conversID string
 	reasoning strings.Builder
 	text      strings.Builder
+	// broken is set once the output stream reported its reader gone;
+	// every later write is dropped instead of warning again.
+	broken bool
+	// onOutputGone is fired once on the first broken pipe (see
+	// armOutputGone). Guarded by mu: the stream sink can deliver
+	// deltas before Run arms it.
+	onOutputGone func()
 }
 
 func (r *streamRecorder) record(
@@ -245,13 +262,44 @@ func (r *streamRecorder) emit(ev rollout.Event) {
 	r.encode(ev)
 }
 
+// armOutputGone installs the callback fired once when the output
+// stream turns out to be gone (its reader closed the pipe).
+func (r *streamRecorder) armOutputGone(fn func()) {
+	r.mu.Lock()
+	r.onOutputGone = fn
+	r.mu.Unlock()
+}
+
 func (r *streamRecorder) encode(ev rollout.Event) {
-	if r.enc == nil {
+	if r.enc == nil || r.broken {
 		return
 	}
 	if ev.Time == "" {
 		ev.Time = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	telemetry.WarnErr(context.Background(),
-		"headless: encode rollout event failed", r.enc.Encode(ev))
+	if err := r.enc.Encode(ev); err != nil {
+		if isBrokenPipe(err) {
+			// The consumer is gone: report it once, go quiet, and let
+			// the run be cancelled. A warning per event would drown
+			// the log, and finishing a turn whose only output goes
+			// nowhere burns a model call for no reader.
+			r.broken = true
+			telemetry.Warn(context.Background(),
+				"headless: output consumer went away; cancelling the run")
+			if fn := r.onOutputGone; fn != nil {
+				fn()
+			}
+			return
+		}
+		telemetry.WarnErr(context.Background(),
+			"headless: encode rollout event failed", err)
+	}
+}
+
+// isBrokenPipe reports whether a write failed because the reader is
+// gone (closed pipe or closed file) rather than for another reason.
+func isBrokenPipe(err error) bool {
+	return errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, fs.ErrClosed)
 }
