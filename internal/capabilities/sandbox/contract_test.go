@@ -101,17 +101,42 @@ func TestSandboxRunnerContract(t *testing.T) {
 	// commands but must not be rewritable by them: it lives outside
 	// every write grant (the default config points staging at
 	// APP_HOME/staged, deliberately not at the sandbox-writable cache),
-	// because the model reads it as skill reference material.
+	// because the model reads it as skill reference material. The probe
+	// dir stands in for that location: the same "outside the workspace,
+	// outside every grant" shape, not the real APP_HOME path (whose
+	// mount semantics differ per host).
 	t.Run("staged scripts run but cannot be rewritten", func(t *testing.T) {
 		staged := stagedProbeDir(t, workDir)
-		if goruntime.GOOS != "windows" {
+		if goruntime.GOOS == "windows" {
+			// No shebang to run: the positive control reads the file,
+			// which is what a staged reference file has to allow. Every
+			// lane needs one, or the write probe below would also pass
+			// on a sandbox whose shell never started.
+			readme := filepath.Join(staged, "probe.txt")
+			if err := os.WriteFile(readme, []byte("staged-ok"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			res, err := coresandbox.Exec(ctx, confined, shell,
+				[]string{"/c", `type "` + readme + `"`},
+				coresandbox.ExecOptions{WorkDir: workDir})
+			if err != nil {
+				t.Fatalf("read staged file: %v", err)
+			}
+			if !strings.Contains(res.Stdout, "staged-ok") {
+				t.Fatalf("staged read exit=%d stdout=%q stderr=%q",
+					res.ExitCode, res.Stdout, res.Stderr)
+			}
+		} else {
 			script := filepath.Join(staged, "run.sh")
 			if err := os.WriteFile(script,
 				[]byte("#!/bin/sh\necho staged-ok\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			res, err := coresandbox.Exec(ctx, confined, shell,
-				shellArgs(script), coresandbox.ExecOptions{WorkDir: workDir})
+			// Running the file itself is the claim: it needs the read
+			// bit, the executable bit staging preserves, and a mount
+			// that permits execution.
+			res, err := coresandbox.Exec(ctx, confined, script, nil,
+				coresandbox.ExecOptions{WorkDir: workDir})
 			if err != nil {
 				t.Fatalf("exec staged script: %v", err)
 			}
