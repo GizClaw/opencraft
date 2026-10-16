@@ -83,9 +83,9 @@ describe('TelemetryExportCard', () => {
       configured: true,
       endpoint: 'collector.example:4318',
       insecure: false,
-      // The binding types this as `string[] | null`; only the null case
-      // is what the host actually sends for a sink without headers.
-      headerNames: null as unknown as string[],
+      // The field is `string[] | null` (Go marshals the empty slice as
+      // null); the null case is what a sink without headers sends.
+      headerNames: null,
       owner: '',
     });
     render(<TelemetryExportCard />);
