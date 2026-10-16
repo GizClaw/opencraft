@@ -175,9 +175,11 @@ var LookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
 }
 
 // BlockedIP reports whether ip is in the space the guard refuses:
-// loopback, private, link-local, unspecified, the IPv4 0.0.0.0/8
-// "this host on this network" range, CGNAT shared space, or an IPv6
-// encoding (NAT64, 6to4) that carries a blocked IPv4 address.
+// loopback, private, link-local, multicast, unspecified, the IPv4
+// special-purpose ranges the standard library does not classify
+// (0.0.0.0/8, CGNAT, IETF protocol assignments, benchmarking,
+// reserved), or an IPv6 encoding (NAT64, 6to4) that carries a blocked
+// IPv4 address.
 func BlockedIP(ip net.IP) bool {
 	if blockedKind(ip) {
 		return true
@@ -195,22 +197,33 @@ func BlockedIP(ip net.IP) bool {
 func blockedKind(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsPrivate() ||
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified()
+		ip.IsMulticast() || ip.IsUnspecified()
 }
 
 // blockedV4 covers the IPv4-only ranges IsPrivate does not:
 // 0.0.0.0/8 (RFC 1122 "this host on this network"; Linux routes it to
-// loopback, so reaching 0.x is reaching this host) and 100.64.0.0/10
+// loopback, so reaching 0.x is reaching this host), 100.64.0.0/10
 // (carrier-grade NAT shared space, where a service behind the carrier's
-// NAT can sit).
+// NAT can sit), 192.0.0.0/24 (IETF protocol assignments), 198.18.0.0/15
+// (benchmarking) and 240.0.0.0/4 (reserved, including the broadcast
+// address).
 func blockedV4(v4 net.IP) bool {
 	if len(v4) != 4 {
 		return false
 	}
-	if v4[0] == 0 {
+	switch {
+	case v4[0] == 0:
+		return true
+	case v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127:
+		return true
+	case v4[0] == 192 && v4[1] == 0 && v4[2] == 0:
+		return true
+	case v4[0] == 198 && (v4[1] == 18 || v4[1] == 19):
+		return true
+	case v4[0] >= 240:
 		return true
 	}
-	return v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
+	return false
 }
 
 // embeddedV4 decodes the IPv4 address carried inside the two IPv6
