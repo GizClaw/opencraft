@@ -64,14 +64,19 @@ func (a *sqliteTurnStore) LoadBack(
 		if err != nil {
 			return nil, err
 		}
-		if len(page) == 0 {
+		if page.OldestRawSeq < 0 {
+			// The read saw no rows at all: the transcript start was
+			// reached.
 			break
 		}
-		pages = append(pages, page)
-		total += len(page)
-		cursor = page[0].Seq
-		if len(page) < limit {
-			// The page came up short: the transcript start was reached.
+		pages = append(pages, page.Messages)
+		total += len(page.Messages)
+		// The cursor steps over what the page *read*, not over what it
+		// returned: the projection can leave every row of a page out,
+		// and a page that returned nothing still has to move the walk
+		// on rather than re-read itself.
+		cursor = page.OldestRawSeq
+		if !page.More {
 			break
 		}
 	}
@@ -90,14 +95,34 @@ func (a *sqliteTurnStore) LoadBack(
 func (a *sqliteTurnStore) LoadAll(
 	ctx context.Context, conversationID string,
 ) ([]summary.StoredMessage, error) {
-	return a.loadProjectedBefore(ctx, conversationID, 0, 0)
+	page, err := a.loadProjectedBefore(ctx, conversationID, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	return page.Messages, nil
+}
+
+// transcriptPage is one backward read of the transcript: the rows the
+// projection kept, plus what the read itself saw.
+type transcriptPage struct {
+	// Messages are the rows the projection kept, oldest first.
+	Messages []summary.StoredMessage
+	// OldestRawSeq is the smallest transcript seq the read saw, or -1
+	// when it saw no rows at all.
+	OldestRawSeq int64
+	// More reports whether the read stopped at its own limit, i.e.
+	// whether rows older than OldestRawSeq exist. The returned messages
+	// cannot answer that: the projection may leave rows out, so a page
+	// can come back short (or empty) with the transcript continuing
+	// behind it.
+	More bool
 }
 
 // loadProjectedBefore reads the transcript backward from beforeSeq and
-// returns the replayable rows among them in chronological order. limit
+// gathers the replayable rows among them in chronological order. limit
 // bounds the rows read (0 means no bound); rows the projection leaves out
-// do not count against it, so a caller asking for n rows may receive
-// fewer if the transcript start was reached first.
+// do not count against it, which is why the page reports what it read
+// alongside what it kept.
 //
 // What the projection did to those rows is reported once per query: a row
 // that entered as a placeholder (an image-only turn) is a fact about the
@@ -105,7 +130,7 @@ func (a *sqliteTurnStore) LoadAll(
 // not enter at all is a fact nobody should have to guess at.
 func (a *sqliteTurnStore) loadProjectedBefore(
 	ctx context.Context, conversationID string, beforeSeq int64, limit int,
-) ([]summary.StoredMessage, error) {
+) (transcriptPage, error) {
 	// Every row of the conversation is a candidate, whatever wrote it:
 	// a delegation note is the app speaking to the model and belongs in
 	// the window like any other row. The one structural exclusion is an
@@ -125,19 +150,24 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 	}
 	rows, err := a.db.SQLDB().QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("memory: load transcript rows: %w", err)
+		return transcriptPage{}, fmt.Errorf("memory: load transcript rows: %w", err)
 	}
 	defer func() {
 		telemetry.WarnErr(ctx, "memory: close transcript rows failed", rows.Close())
 	}()
 	var placeholders, undecodable, empty int
+	read := 0
+	oldest := int64(-1)
 	var desc []summary.StoredMessage
 	for rows.Next() {
 		var seq int64
 		var role, payload string
 		if err := rows.Scan(&seq, &role, &payload); err != nil {
-			return nil, fmt.Errorf("memory: scan transcript row: %w", err)
+			return transcriptPage{},
+				fmt.Errorf("memory: scan transcript row: %w", err)
 		}
+		read++
+		oldest = seq
 		var content message.Content
 		if err := json.Unmarshal([]byte(payload), &content); err != nil {
 			// Canonical content carries at least one valid part, so a
@@ -169,7 +199,7 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return transcriptPage{}, err
 	}
 	if placeholders > 0 {
 		telemetry.Info(ctx,
@@ -186,7 +216,11 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 	for i, j := 0, len(desc)-1; i < j; i, j = i+1, j-1 {
 		desc[i], desc[j] = desc[j], desc[i]
 	}
-	return desc, nil
+	return transcriptPage{
+		Messages:     desc,
+		OldestRawSeq: oldest,
+		More:         limit > 0 && read == limit,
+	}, nil
 }
 
 // UpsertSummaryNode writes one fold node, unless its conversation is

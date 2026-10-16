@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,13 +91,13 @@ type Recorder struct {
 }
 
 // Open opens (creating if needed) the rollout file at path. Seq
-// continues from the existing line count so records stay unique across
+// continues from the last recorded line so records stay unique across
 // restarts.
 func Open(path string) (*Recorder, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	seq, err := tailSeq(path)
+	seq, err := nextSeq(path)
 	if err != nil {
 		return nil, err
 	}
@@ -209,4 +210,40 @@ func tailSeq(path string) (int64, error) {
 		return countLines(path)
 	}
 	return last.Seq + 1, nil
+}
+
+// nextSeq recovers the next sequence number for path. Rotation moves
+// the file aside rather than truncating it, so an empty (or missing)
+// live file means the newest rotated backup holds the numbers this
+// stream already used; restarting at zero there would re-issue seqs
+// that older generations still carry.
+func nextSeq(path string) (int64, error) {
+	seq, err := tailSeq(path)
+	if err != nil || seq > 0 {
+		return seq, err
+	}
+	backup := newestBackup(path)
+	if backup == "" {
+		return seq, nil
+	}
+	return tailSeq(backup)
+}
+
+// newestBackup returns the most recently rotated segment of path, or ""
+// when none exist. lumberjack stamps the rotation moment into each
+// backup's name, so the names sort in rotation order.
+func newestBackup(path string) string {
+	ext := filepath.Ext(path)
+	matches, err := filepath.Glob(
+		strings.TrimSuffix(path, ext) + "-*" + ext)
+	if err != nil {
+		return ""
+	}
+	newest := ""
+	for _, match := range matches {
+		if match > newest {
+			newest = match
+		}
+	}
+	return newest
 }

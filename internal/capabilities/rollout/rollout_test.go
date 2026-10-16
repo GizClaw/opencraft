@@ -128,6 +128,27 @@ func TestRecorderRotatesAtCap(t *testing.T) {
 	if err != nil || len(backups) == 0 {
 		t.Fatalf("no rotated backup found: %v", err)
 	}
+
+	// Reopening after the rotation must continue the numbering. The
+	// live file starts empty, but the generation it replaced still
+	// holds the seqs this stream handed out, and re-issuing them would
+	// make two different events claim the same number.
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reopened.Close() }()
+	if err := reopened.Record(Event{Type: TypeTurnStarted}); err != nil {
+		t.Fatal(err)
+	}
+	after := readLines(t, path)
+	var fresh Event
+	if err := json.Unmarshal([]byte(after[len(after)-1]), &fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Seq <= last {
+		t.Fatalf("seq restarted after rotation: %d after %d", fresh.Seq, last)
+	}
 }
 
 func readLines(t *testing.T, path string) []string {
@@ -137,4 +158,49 @@ func readLines(t *testing.T, path string) []string {
 		t.Fatal(err)
 	}
 	return strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+}
+
+// A stream whose live file holds nothing but whose rotated generation
+// still exists continues that generation's numbering. Rotation normally
+// leaves the record that triggered it in the new file, so this state
+// comes from the edges — a write that failed after the file was moved
+// aside, or a cleanup that emptied the live file — and re-issuing the
+// seqs the backup already carries would make two events claim one
+// number.
+func TestOpenContinuesFromTheRotatedGeneration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "rollout.jsonl")
+	backup := filepath.Join(dir, "rollout-2026-10-16T03-04-05.000.jsonl")
+	var rotated strings.Builder
+	for i := 0; i < 3; i++ {
+		line, err := json.Marshal(Event{Type: TypeTurnStarted, Seq: int64(i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rotated.Write(line)
+		rotated.WriteByte('\n')
+	}
+	if err := os.WriteFile(backup, []byte(rotated.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rec.Close() }()
+	if err := rec.Record(Event{Type: TypeTurnCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	lines := readLines(t, path)
+	var ev Event
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &ev); err != nil {
+		t.Fatal(err)
+	}
+	if ev.Seq != 3 {
+		t.Fatalf("seq = %d, want 3: the numbering continued from the backup", ev.Seq)
+	}
 }

@@ -285,6 +285,14 @@ func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 	// The level-0 buffer fold is a single rolling summary per thread:
 	// retire any other level-0 nodes (e.g. rows written before the
 	// stable-id fix) so summary_nodes never accumulates.
+	//
+	// The retirement and the write are two statements, hence two
+	// transactions. That is accepted here because the rolling node is
+	// derived state the next fold rebuilds from the transcript: an
+	// interrupted pair costs a rebuild, not data. The order is the one
+	// that fails visibly — a missing node reads as a smaller window
+	// until the next turn, while an orphaned one would hold a window
+	// the transcript has already moved past.
 	if err := a.store.DeleteSummaryNodes(ctx, conversationID, 0, node.ID); err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
