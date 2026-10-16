@@ -44,9 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The SSRF guard refuses more address classes: 0.0.0.0/8 and
   100.64.0.0/10, multicast, TEST-NET-1/2/3, 192.0.0.0/24, 192.88.99.0/24,
   198.18.0.0/15, 240.0.0.0/4, and the IPv6 documentation and Teredo
-  prefixes. A self-hosted service on one of those addresses is not
-  reachable through `web_fetch`, `generate_video`, or the plugin update
-  download — which is the point of the list.
+  prefixes, plus RFC 8215's local-use translation prefix
+  (`64:ff9b:1::/48`). A self-hosted service on one of those addresses is
+  not reachable through `web_fetch`, `generate_video`, or the plugin
+  update download — which is the point of the list.
 
 ### Added
 
