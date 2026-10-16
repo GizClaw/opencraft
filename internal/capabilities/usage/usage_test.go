@@ -448,3 +448,48 @@ func TestSeriesDayBucketsUseTheViewerZone(t *testing.T) {
 		}
 	}
 }
+
+// A stored hour that is not RFC3339 cannot be placed on a calendar. The
+// day series skips that row (with a warning) instead of failing the call,
+// so one unreadable row cannot blank the dashboard's trend; the hourly
+// view never parsed the string and keeps every row.
+func TestSeriesDaySkipsUnreadableHour(t *testing.T) {
+	store, _ := newUsageStore(t)
+	ctx := context.Background()
+	for _, row := range []struct {
+		hour  string
+		input int64
+	}{
+		{"2026-01-01T15:00:00Z", 100},
+		{"2026-01-01 16:00:00", 50},
+		{"2026-01-02T09:00:00Z", 30},
+	} {
+		if _, err := store.db.ExecContext(ctx, `
+			INSERT INTO model_usage_hourly (
+				model, hour, input_tokens, output_tokens,
+				cache_read_tokens, cache_write_tokens,
+				reasoning_tokens, latency_ms, calls
+			) VALUES (?, ?, ?, 0, 0, 0, 0, 0, 1)
+		`, "deepseek-chat", row.hour, row.input); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	days, err := store.Series(ctx, "deepseek-chat", GranularityDay, "", 0, "", "")
+	if err != nil {
+		t.Fatalf("day series with an unreadable hour: %v", err)
+	}
+	if len(days) != 2 || days[0].Time != "2026-01-01" ||
+		days[0].InputTokens != 100 ||
+		days[1].Time != "2026-01-02" || days[1].InputTokens != 30 {
+		t.Fatalf("days = %+v, want the two readable days", days)
+	}
+
+	hours, err := store.Series(ctx, "deepseek-chat", GranularityHour, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hours) != 3 {
+		t.Fatalf("hourly points = %d, want all three rows", len(hours))
+	}
+}
