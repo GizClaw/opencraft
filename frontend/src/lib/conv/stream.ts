@@ -1,18 +1,17 @@
 import { sanitizeToolResult } from '../ansi';
 import { toolResultImages, toolResultText } from '../toolresult';
 import type { StreamDelta } from '../types';
+import type { MessageView, TextItem } from './model';
 import {
   MAX_ITEMS_PER_MESSAGE,
   MAX_ITEM_TEXT_CHARS,
   MAX_REASONING_CHARS,
   MAX_TOOL_RESULT_CHARS,
-  MessageView,
-  TextItem,
   itemChars,
   itemText,
   newID,
   normalizeArgs,
-} from './model';
+} from './text';
 
 export function mergeAppend(
   msg: MessageView,
