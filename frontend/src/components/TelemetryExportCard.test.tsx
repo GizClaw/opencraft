@@ -73,4 +73,24 @@ describe('TelemetryExportCard', () => {
     expect(await screen.findByText(/pipeline down/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
   });
+
+  // A configured sink with no headers reaches the renderer as `null` (Go
+  // marshals the empty slice that way), and reading `.length` off it took
+  // the whole window down through the root error boundary.
+  it('renders a configured sink whose header list is null', async () => {
+    apiMock.telemetryExport.mockResolvedValue({
+      enabled: true,
+      configured: true,
+      endpoint: 'collector.example:4318',
+      insecure: false,
+      // The binding types this as `string[] | null`; only the null case
+      // is what the host actually sends for a sink without headers.
+      headerNames: null as unknown as string[],
+      owner: '',
+    });
+    render(<TelemetryExportCard />);
+
+    const status = await screen.findByText(/configured by app configuration/);
+    expect(status.textContent).toContain('collector.example:4318');
+  });
 });

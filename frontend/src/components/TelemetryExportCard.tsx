@@ -65,6 +65,13 @@ export function TelemetryExportCard({
     ) : null;
   }
 
+  // The host sends the header names as a Go slice, and a sink with no
+  // headers marshals to null — reading `.length` off it crashed the whole
+  // window through the root error boundary. A diagnostics card must not
+  // fall over on the state it is reporting (PathEnvironmentCard guards
+  // its lists the same way).
+  const headerNames = status.headerNames ?? [];
+
   return (
     <div className="rounded-card border border-edge bg-panel2 p-3">
       <div className="flex items-start justify-between gap-4">
@@ -85,9 +92,9 @@ export function TelemetryExportCard({
                 owner: status.owner || t('config.diagTelemetryApp'),
               })}
               {status.insecure && ` · ${t('config.diagTelemetryInsecure')}`}
-              {status.headerNames.length > 0 &&
+              {headerNames.length > 0 &&
                 ` · ${t('config.diagTelemetryHeaders', {
-                  names: status.headerNames.join(', '),
+                  names: headerNames.join(', '),
                 })}`}
             </p>
           )}
