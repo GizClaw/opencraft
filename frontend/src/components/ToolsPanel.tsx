@@ -1109,8 +1109,10 @@ interface SkillRow {
   removable?: boolean;
 }
 
-// SkillsSection lists skills discovered by the runtime; builtin and
-// plugin-provided skills are read-only, user skills can be deleted.
+// SkillsSection lists skills discovered by the runtime. Builtin and
+// plugin-provided skills have no row menu; a user skill keeps its
+// lifecycle menu (pin/archive) and grows a delete entry only when the
+// backend says it may delete that skill.
 export function SkillsSection() {
   const { t } = useTranslation();
   const flash = useStore((s) => s.flash);
@@ -1413,10 +1415,13 @@ export function SkillsSection() {
       ) : (
         <ul className="flex flex-col gap-2">
           {filteredSkills.map((s) => {
-            // The backend decides: it owns the writable-root list. The
+            // The row menu exists for skills the runtime manages
+            // (user scope, not plugin-owned); the delete entry inside it
+            // is gated separately, because the backend owns the
+            // writable-root list and refuses extra-root skills. The
             // fallback keeps older bindings honest (no removable field).
-            const removable =
-              s.removable ?? (s.scope !== 'builtin' && !s.plugin_id);
+            const manageable = s.scope !== 'builtin' && !s.plugin_id;
+            const removable = s.removable ?? manageable;
             const usage = usageOf(s.name);
             const scopeLabel =
               s.scope === 'builtin'
@@ -1506,7 +1511,7 @@ export function SkillsSection() {
                       )}
                     </span>
                   </button>
-                  {removable && (
+                  {manageable && (
                     <div className="relative shrink-0">
                       <button
                         aria-haspopup="menu"
@@ -1568,19 +1573,21 @@ export function SkillsSection() {
                             </button>
                           </>
                         )}
-                        <button
-                          role="menuitem"
-                          onClick={() => {
-                            setMenuFor(null);
-                            setSkillToDelete({ name: s.name, path: s.path });
-                          }}
-                          className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
-                        >
-                          <Trash2 size={ICON.xs} className="shrink-0" />
-                          <span className="flex-1 text-left">
-                            {t('config.skillsDelete')}
-                          </span>
-                        </button>
+                        {removable && (
+                          <button
+                            role="menuitem"
+                            onClick={() => {
+                              setMenuFor(null);
+                              setSkillToDelete({ name: s.name, path: s.path });
+                            }}
+                            className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
+                          >
+                            <Trash2 size={ICON.xs} className="shrink-0" />
+                            <span className="flex-1 text-left">
+                              {t('config.skillsDelete')}
+                            </span>
+                          </button>
+                        )}
                       </Popover>
                     </div>
                   )}
