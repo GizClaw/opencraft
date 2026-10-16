@@ -82,3 +82,29 @@ func TestAutomationHostRequiresOpenUserDB(t *testing.T) {
 		t.Fatalf("preview should validate before store access: %v", err)
 	}
 }
+
+// TestAutomationHostPreviewFoldsWorkspaceSpelling pins that the preview
+// names the workspace the way the store will: its output is what the
+// tool's confirmation shows and what Apply hands to SaveTask, so the
+// path the user confirms is the path that gets stored.
+func TestAutomationHostPreviewFoldsWorkspaceSpelling(t *testing.T) {
+	r := NewRuntime(t.TempDir(), t.TempDir(), "")
+	host := NewAutomationHost(r)
+	preview, err := host.AutomationsPreview(
+		context.Background(), "create", automations.Task{
+			Name:     "test-brief",
+			Prompt:   "run the test",
+			Schedule: automations.Schedule{Type: automations.ScheduleDaily, Time: "09:00"},
+			// Non-clean but absolute: the trailing separator and the ".."
+			// name the same directory the window would announce.
+			Workspace: "/tmp/workspace/../workspace/",
+		},
+	)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if preview.Workspace != "/tmp/workspace" {
+		t.Fatalf("preview workspace = %q, want /tmp/workspace",
+			preview.Workspace)
+	}
+}

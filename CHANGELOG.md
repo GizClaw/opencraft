@@ -112,6 +112,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the body as a fixed layer, so its percentage min-width measured the
   viewport and `min-w-full` stretched every menu across the whole
   window. A rem floor with a viewport cap replaces it.
+- The in-memory transcript cap cuts only at a turn boundary, and what it
+  cuts stays reachable. When no boundary sat below the exact cut it fell
+  back to cutting inside a turn, and the oldest rows stayed behind
+  without the strip that owns them — a half turn whose files and fold
+  header were gone, or, for a live turn, a run whose strip was cut away
+  while its rows remained, so the files it produced and the archived
+  copy that replaces its rows had nothing left to attach to. The trim
+  now moves down to the next boundary instead (backing up to the largest
+  boundary below the cut when there is one), never lands on a strip that
+  owns no rows — the seam a run met on the wire opens before its first
+  row lands — and keeps a transcript that is a single turn whole. The
+  paging cursor moves with the cut, past the turns it dropped, and "load
+  earlier" comes back when the window had thought the oldest turn was
+  the first one it still holds: the dropped turns are one page away
+  instead of gone.
+- A scheduled task's workspace is recorded in the canonical spelling
+  (`config.CanonicalWorkDir`), the one the workspace id, the layout, the
+  sidebar rows and the pool's keys speak. Automations were the last
+  writer that kept whatever spelling it was handed, so a task created
+  over the API with a trailing separator or a `..` was the one workspace
+  path recorded a second way — the task editor listed it beside the
+  canonical row as a workspace apart. The tool's preview folds it too,
+  so the path the confirmation shows is the path that gets stored.
 
 ## [0.6.1] - 2026-10-07
 

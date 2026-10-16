@@ -298,7 +298,10 @@ export interface ConversationState {
   // historyHasMore says whether older turns still exist in the archive.
   // Startup hydration only pulls the newest page, so scrolling to the top
   // asks the backend for the turns just below historySeq instead of the
-  // whole session. historyLoading guards concurrent page requests.
+  // whole session. The transcript cap moves both with its cut: the cursor
+  // then names what is still loaded, or one past the turn the cut took
+  // last (see capConversation). historyLoading guards concurrent page
+  // requests.
   historySeq?: number;
   historyHasMore?: boolean;
   historyLoading?: boolean;
@@ -460,29 +463,77 @@ export function streamFlushStats(): {
 
 // capConversation trims the oldest messages past the in-memory cap and
 // re-bases per-turn artifact strip indexes onto the trimmed array. The
-// cut lands on a turn boundary so a trim never leaves half a turn in
-// the store, and the history cursor moves with it: the next "load
-// earlier" page continues below the oldest turn still loaded.
+// cut lands on a turn boundary, so no row ever stays behind without the
+// strip that owns it: a half turn would lose its files and its fold
+// header, and the live turn — the row a running run, its deltas and its
+// archived copy are looked up by — would lose that strip while keeping
+// its rows. The history cursor moves with the cut, so the turns a trim
+// drops are one "load earlier" page away rather than gone.
 function capConversation(conv: ConversationState): ConversationState {
   if (conv.messages.length <= MAX_CONV_MESSAGES) return conv;
-  const above = conv.messages.length - MAX_CONV_MESSAGES;
-  // Drop whole turns: the largest turn boundary at or below the exact
-  // cut. Falling back to the exact cut when the oldest known turn starts
-  // past it keeps the cap a real bound; the overshoot in the normal case
-  // is one turn, and a mid-turn cut can leave a partial turn whose
-  // history cursor would be wrong.
-  let drop = 0;
+  const length = conv.messages.length;
+  const above = length - MAX_CONV_MESSAGES;
+  // back is the largest turn boundary at or below the exact cut, and
+  // next is the first boundary past it; boundaries are the strips'
+  // starts, in ascending order. A strip that starts at the end of the
+  // transcript owns no rows — the seam a run met on the wire opens
+  // before its first row lands — so it is not a boundary a cut may land
+  // on: that cut would drop every row in the store.
+  let back = 0;
+  let next = 0;
   for (const turn of conv.turnArtifacts) {
-    if (turn.start > above) break;
-    if (turn.start > drop) drop = turn.start;
+    if (turn.start >= length) break;
+    if (turn.start > above) {
+      next = turn.start;
+      break;
+    }
+    if (turn.start > back) back = turn.start;
   }
-  if (drop === 0) drop = above;
+  // Cut at `back`: the trim backs up to that boundary, overshooting the
+  // cap by at most one turn. When backing up would keep the whole
+  // transcript (the oldest turn reaches past the cut), the cut moves
+  // down to `next` instead — under the cap by up to one turn, and every
+  // kept row still begins at the boundary of its own turn.
+  let drop = back;
+  if (drop === 0) {
+    if (next > 0) {
+      drop = next;
+    } else if (conv.turnArtifacts.length === 0) {
+      // No turn structure to respect: the exact cut is the only bound.
+      drop = above;
+    } else {
+      // One turn that owns rows — the live one, normally. Its rows are
+      // what the reader is watching, and cutting inside it would take
+      // the strip while keeping the rows; the cap yields to it.
+      return conv;
+    }
+  }
   const messages = conv.messages.slice(drop);
-  const turnArtifacts = conv.turnArtifacts
-    .map((t) => ({ ...t, start: t.start - drop }))
-    .filter((t) => t.start >= 0);
-  const historySeq = turnArtifacts[0]?.seq ?? conv.historySeq;
-  return { ...conv, messages, turnArtifacts, historySeq };
+  // The cursor moves with the cut: it names the oldest archived turn
+  // still loaded, or — when the cut took every one — one past the newest
+  // it took, so "load earlier" starts on the dropped turns themselves
+  // instead of below them. Turns the cut dropped are turns the reader
+  // can page back in, whether the window that loaded the transcript
+  // thought older history existed or not.
+  let keptSeq = 0;
+  let droppedSeq = 0;
+  const turnArtifacts: TurnArtifacts[] = [];
+  for (const turn of conv.turnArtifacts) {
+    const start = turn.start - drop;
+    if (start < 0) {
+      if (turn.seq !== undefined && turn.seq > droppedSeq)
+        droppedSeq = turn.seq;
+      continue;
+    }
+    if (turn.seq !== undefined && (keptSeq === 0 || turn.seq < keptSeq)) {
+      keptSeq = turn.seq;
+    }
+    turnArtifacts.push({ ...turn, start });
+  }
+  const historySeq =
+    keptSeq || (droppedSeq > 0 ? droppedSeq + 1 : conv.historySeq);
+  const historyHasMore = conv.historyHasMore || droppedSeq > 0;
+  return { ...conv, messages, turnArtifacts, historySeq, historyHasMore };
 }
 
 // The three helpers below read a message defensively (`?? []`): they run
