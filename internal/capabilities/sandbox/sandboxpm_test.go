@@ -112,6 +112,33 @@ func TestSandboxPolicyRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSandboxPolicyRoundTripKeepsEmptyAllow pins the wire form of the
+// three-state allow list: an explicit empty list must survive
+// marshal/unmarshal as "inherit nothing" and resolve to a non-nil empty
+// slice, not collapse back into the curated default (which is what an
+// omitted field used to do).
+func TestSandboxPolicyRoundTripKeepsEmptyAllow(t *testing.T) {
+	pol := SandboxPolicy{EnvPolicy: &EnvPolicyConfig{Allow: []string{}}}
+	data, err := json.Marshal(pol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got SandboxPolicy
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.EnvPolicy == nil {
+		t.Fatal("env policy did not survive the round trip")
+	}
+	if got.EnvPolicy.Allow == nil || len(got.EnvPolicy.Allow) != 0 {
+		t.Fatalf("empty allow round trip = %#v, want a non-nil empty list",
+			got.EnvPolicy.Allow)
+	}
+	if allow := got.EnvPolicy.resolve().Allow; allow == nil || len(allow) != 0 {
+		t.Fatalf("resolved empty allow = %#v, want a non-nil empty list", allow)
+	}
+}
+
 func TestEnvPolicyInjectOnlyKeepsDefaultAllowlist(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ctx := context.Background()

@@ -24,7 +24,11 @@ import (
 // core's nil form ("inherit the whole host environment"); an explicit
 // empty list means "inherit nothing".
 type EnvPolicyConfig struct {
-	Allow  []string          `json:"allow,omitempty"`
+	// Allow deliberately marshals without omitempty: nil becomes null
+	// and a non-nil empty list becomes [], so a round trip through
+	// JSON keeps the load-bearing nil-vs-empty distinction instead of
+	// collapsing "inherit nothing" back into the default allowlist.
+	Allow  []string          `json:"allow"`
 	Inject map[string]string `json:"inject,omitempty"`
 }
 
@@ -48,7 +52,11 @@ func (c *EnvPolicyConfig) resolve() coresandbox.EnvPolicy {
 
 // SandboxPolicy is the sandbox policy handed from the parent process
 // to the execd child: project-configured writable paths plus the
-// environment policy. It is serialized over the -sandbox-policy flag.
+// environment policy. The execd wire is its own proto message
+// (capabilities/execd); this shape is what the runner constructors take
+// in-process, and it marshals losslessly (nil allow stays null, an
+// explicit empty list stays []), so a caller that does serialize it
+// cannot silently widen an inject-only policy.
 type SandboxPolicy struct {
 	WritablePaths []string         `json:"writable_paths,omitempty"`
 	EnvPolicy     *EnvPolicyConfig `json:"env_policy,omitempty"`
