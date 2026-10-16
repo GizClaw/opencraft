@@ -654,4 +654,20 @@ describe('runs that started outside this client', () => {
       failureStatus: undefined,
     });
   });
+
+  it('ignores a replayed start once a failed turn is dismissed', () => {
+    const actor = start();
+    actor.send({ type: 'SUBMIT', kind: 'send' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    endTurn(actor, 'r-1', 'canceled');
+    expect(regions(actor).turn).toBe('failed');
+    actor.send({ type: 'DISMISS_FAILURE' });
+    expect(regions(actor).turn).toBe('idle');
+
+    // The router's gate drops a start like this one today; the idle
+    // column is the last of the five that says so on its own.
+    actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    expect(regions(actor).turn).toBe('idle');
+    expect(actor.getSnapshot().context.currentRunID).toBeUndefined();
+  });
 });
