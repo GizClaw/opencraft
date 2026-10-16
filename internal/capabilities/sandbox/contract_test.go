@@ -116,15 +116,26 @@ func TestSandboxRunnerContract(t *testing.T) {
 			if err := os.WriteFile(readme, []byte("staged-ok"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			res, err := coresandbox.Exec(ctx, confined, shell,
-				[]string{"/c", `type "` + readme + `"`},
-				coresandbox.ExecOptions{WorkDir: workDir})
-			if err != nil {
-				t.Fatalf("read staged file: %v", err)
-			}
-			if !strings.Contains(res.Stdout, "staged-ok") {
-				t.Fatalf("staged read exit=%d stdout=%q stderr=%q",
-					res.ExitCode, res.Stdout, res.Stderr)
+			// The argv this harness hands to cmd.exe is escaped for the
+			// C runtime, not for cmd, so a quoted path arrives mangled
+			// ("the filename ... syntax is incorrect"); the read has to
+			// spell the path bare, which cmd accepts only without
+			// spaces. CI's temp path has none; a machine whose temp
+			// path does keeps the write probe below and loses only the
+			// read half.
+			if strings.ContainsAny(readme, " \t") {
+				t.Logf("staged read skipped: cmd cannot take a quoted path %q", readme)
+			} else {
+				res, err := coresandbox.Exec(ctx, confined, shell,
+					[]string{"/c", "type " + readme},
+					coresandbox.ExecOptions{WorkDir: workDir})
+				if err != nil {
+					t.Fatalf("read staged file: %v", err)
+				}
+				if !strings.Contains(res.Stdout, "staged-ok") {
+					t.Fatalf("staged read exit=%d stdout=%q stderr=%q",
+						res.ExitCode, res.Stdout, res.Stderr)
+				}
 			}
 		} else {
 			script := filepath.Join(staged, "run.sh")
