@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -433,13 +434,41 @@ func (s *Store) Asset(id, rel string) ([]byte, error) {
 	if !pathsafe.RelRef(rel) {
 		return nil, fmt.Errorf("plugins: asset escapes plugin dir: %q", rel)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, rel))
-	if err != nil {
-		return nil, fmt.Errorf("plugins: read asset %q: %w", rel, err)
-	}
-	if len(data) > maxPluginAssetBytes {
+	return readBoundedAsset(filepath.Join(dir, rel), rel,
+		maxPluginAssetBytes, "asset")
+}
+
+// readBoundedAsset reads one file that a plugin gets to choose the size
+// of, and refuses it beyond limit. The size is checked before the read
+// and the read itself is bounded, because checking afterwards still
+// allocates the whole file first: a plugin that ships a very large pack
+// would make the host carry it (and, for the pet asset path, a base64
+// copy of it) just to reject it. The bounded read covers the file that
+// grows between the stat and the read.
+func readBoundedAsset(
+	path, rel string, limit int64, kind string,
+) ([]byte, error) {
+	if info, err := os.Stat(path); err == nil && info.Size() > limit {
 		return nil, fmt.Errorf(
-			"plugins: asset %q exceeds %d bytes", rel, maxPluginAssetBytes)
+			"plugins: %s %q exceeds %d bytes", kind, rel, limit)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("plugins: read %s %q: %w", kind, rel, err)
+	}
+	defer func() {
+		if cerr := file.Close(); cerr != nil {
+			telemetry.WarnErr(context.Background(),
+				"plugins: close "+kind+" after read failed", cerr)
+		}
+	}()
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("plugins: read %s %q: %w", kind, rel, err)
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf(
+			"plugins: %s %q exceeds %d bytes", kind, rel, limit)
 	}
 	return data, nil
 }
