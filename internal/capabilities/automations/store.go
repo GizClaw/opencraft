@@ -101,8 +101,12 @@ func (s *Store) GetTask(ctx context.Context, id string) (Task, error) {
 }
 
 // SaveTask inserts or updates one task. New tasks get an id, fresh
-// timestamps, and a future nextRunAt; updates keep the schedule's
-// next trigger unless it is zero or already past.
+// timestamps, and a future nextRunAt. An update keeps the stored next
+// trigger while the schedule is unchanged — moving it is the runner's
+// business, and re-deriving it on every edit would re-anchor the weekly
+// phase — but a schedule that changed computes its own: keeping the old
+// instant would fire the new cadence at the old rhythm. A trigger that
+// is zero or already past is recomputed either way.
 func (s *Store) SaveTask(ctx context.Context, task Task) (Task, error) {
 	task.Name = strings.TrimSpace(task.Name)
 	task.Prompt = strings.TrimSpace(task.Prompt)
@@ -117,12 +121,15 @@ func (s *Store) SaveTask(ctx context.Context, task Task) (Task, error) {
 		return Task{}, err
 	}
 	now := time.Now()
-	// Updates that omit the weekly phase anchor keep the stored one
-	// instead of re-anchoring the phase.
+	var stored *Task
 	if task.ID != "" {
-		if existing, err := s.GetTask(ctx, task.ID); err == nil &&
-			task.Schedule.Origin == "" {
-			task.Schedule.Origin = existing.Schedule.Origin
+		if existing, err := s.GetTask(ctx, task.ID); err == nil {
+			stored = &existing
+			// Updates that omit the weekly phase anchor keep the
+			// stored one instead of re-anchoring the phase.
+			if task.Schedule.Origin == "" {
+				task.Schedule.Origin = existing.Schedule.Origin
+			}
 		}
 	}
 	task.Schedule.ensureOrigin(now)
@@ -133,7 +140,10 @@ func (s *Store) SaveTask(ctx context.Context, task Task) (Task, error) {
 		task.CreatedAt = now
 	}
 	task.UpdatedAt = now
-	if task.NextRunAt.IsZero() || !task.NextRunAt.After(now) {
+	keepNext := stored != nil &&
+		sameSchedule(stored.Schedule, task.Schedule) &&
+		task.NextRunAt.After(now)
+	if !keepNext {
 		next, err := task.Schedule.Next(now)
 		if err != nil {
 			return Task{}, fmt.Errorf("automations: next run: %w", err)
@@ -414,7 +424,11 @@ func fmtTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.Format(timeLayout)
+	// UTC, always: the columns are TEXT and reads order by them
+	// (ListRuns by `at`), so a stored local offset would sort by the
+	// wall-clock reading rather than by the instant — and shift under
+	// a DST change.
+	return t.UTC().Format(timeLayout)
 }
 
 func parseTime(s string) time.Time {
