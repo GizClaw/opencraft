@@ -1010,8 +1010,12 @@ func TestAssemblyFoldKeepsToolPairRaw(t *testing.T) {
 }
 
 // TestAssemblyCloseStopsScheduling pins the close barrier: once Close
-// ran, a late fold is refused and no condensation may start — the store
-// is being torn down and a generation would outlive its reader.
+// ran, a late commit still lands its transcript (that write happened
+// before the fold) but no fold reaches the store and no condensation
+// starts — the store is being torn down and a generation would outlive
+// its reader. Skipping is not a failed turn: the summary is derived
+// state, and reporting an error here would surface a teardown race as
+// one.
 func TestAssemblyCloseStopsScheduling(t *testing.T) {
 	store := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
 	var calls atomic.Int32
@@ -1036,6 +1040,10 @@ func TestAssemblyCloseStopsScheduling(t *testing.T) {
 	}
 
 	before := calls.Load()
+	beforeNodes, err := store.ListSummaryNodes(context.Background(), "c1")
+	if err != nil {
+		t.Fatalf("list nodes: %v", err)
+	}
 	for i := 7; i < 14; i++ {
 		msg := message.NewTextMessage(message.RoleUser, fmt.Sprintf("m%d", i))
 		store.appendRows("c1", msg)
@@ -1045,13 +1053,21 @@ func TestAssemblyCloseStopsScheduling(t *testing.T) {
 			IdempotencyKey: fmt.Sprintf("t%d", i),
 			Messages:       []message.Message{msg},
 		})
-		if err == nil {
-			t.Fatalf("commit %d after Close succeeded; the fold must be refused", i)
+		if err != nil {
+			t.Fatalf("commit %d after Close: %v; the transcript write must still land", i, err)
 		}
 	}
 	if after := calls.Load(); after != before {
 		t.Fatalf("condensation calls %d -> %d after Close; new work must not start",
 			before, after)
+	}
+	afterNodes, err := store.ListSummaryNodes(context.Background(), "c1")
+	if err != nil {
+		t.Fatalf("list nodes: %v", err)
+	}
+	if len(afterNodes) != len(beforeNodes) {
+		t.Fatalf("summary nodes %d -> %d after Close; the fold must not touch the store",
+			len(beforeNodes), len(afterNodes))
 	}
 }
 

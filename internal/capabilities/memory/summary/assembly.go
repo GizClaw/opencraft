@@ -208,13 +208,18 @@ func (a *Assembly) FoldOnly(ctx context.Context, conversationID string) error {
 //
 // It refuses to start once Close ran: the store is no longer a safe
 // target after the close, and teardown is already waiting on the folds
-// that registered before it.
+// that registered before it. A fold that arrives that late is skipped,
+// not failed: the turn's own transcript is already written by then, and
+// the rolling summary is derived state the next fold rebuilds — the
+// same disposition the condensation registration below takes.
 func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 	a.closeMu.Lock()
 	if a.closed {
 		a.closeMu.Unlock()
-		return memory.NewError(memory.KindInternal, "turn",
-			errors.New("memory: assembly is closed"))
+		telemetry.Info(ctx,
+			"memory: fold skipped; the assembly is closing",
+			attribute.String("conversation.id", conversationID))
+		return nil
 	}
 	a.workWG.Add(1)
 	a.closeMu.Unlock()
