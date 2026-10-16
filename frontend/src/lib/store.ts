@@ -14,7 +14,11 @@ import { COMPACT_SUMMARY_PREFIX } from './compact';
 import { reportFrontendError } from './frontendErrors';
 import { followLinkTarget } from './linkTarget';
 import { measureInteraction, scheduleFlushCommit } from './perfMetrics';
-import { coalesceStreamEvents, streamFlushInterval } from './stream';
+import {
+  coalesceStreamEvents,
+  isReasoningDelta,
+  streamFlushInterval,
+} from './stream';
 import { toolResultImages, toolResultText, type ToolImage } from './toolresult';
 import { sameWorkspacePath } from './workspacePath';
 import type {
@@ -106,10 +110,23 @@ let gitPickNonce = 0;
 // and the per-item cap can drop the oldest chunks without touching the
 // rest. When the block ends (a tool call, the turn end) the chunks are
 // folded back into text.
+//
+// `text` is what the block shows before its chunks: on a block the cap
+// has already trimmed it holds the trim marker, so the marker can never
+// be mistaken for content (it is not in the chunk array, and the cap
+// cannot drop it as if it were text).
+//
+// `chars` and `dropped` are the running totals the streaming paths keep
+// so that neither the append nor the cap has to join the chunks: `chars`
+// is the block's display length (text + chunks), `dropped` is how much
+// the cap has already cut. Both are optional — a block that came from
+// history, or one that has been folded, holds neither.
 export interface TextItemFields {
   id: string;
   text: string;
   chunks?: string[];
+  chars?: number;
+  dropped?: number;
 }
 
 // AssistantItem preserves stream order; the two text kinds stay separate
@@ -128,8 +145,23 @@ type TextItem = ({ kind: 'reasoning' } | { kind: 'text' }) & TextItemFields;
 // instead of reading item.text directly.
 export function itemText(item: { text: string; chunks?: string[] }): string {
   if (!item.chunks || item.chunks.length === 0) return item.text;
-  if (item.chunks.length === 1) return item.chunks[0];
-  return item.chunks.join('');
+  if (item.chunks.length === 1) return item.text + item.chunks[0];
+  return item.text + item.chunks.join('');
+}
+
+// itemChars is itemText's length without building the string: the
+// streaming paths run it on every delta, where a join would cost the
+// whole block. It falls back to measuring the parts for blocks that
+// arrived from history and carry no running total.
+function itemChars(item: {
+  text: string;
+  chunks?: string[];
+  chars?: number;
+}): number {
+  if (item.chars !== undefined) return item.chars;
+  let total = item.text.length;
+  for (const chunk of item.chunks ?? []) total += chunk.length;
+  return total;
 }
 
 export interface MessageView {
@@ -313,6 +345,11 @@ export interface ConversationState {
   // a reload. Rows the archive cannot see (undelivered ones) are carried
   // across transcript rebuilds — see carryUndeliveredSteers.
   steerSent?: QueuedSteer[];
+  // footprint is the last measurement settleConversation took (see
+  // there). It caches the two byte totals, not the transcript: a
+  // conversation that loses it only pays one full walk on its next
+  // write, and one whose rows are replaced immutably keeps it exact.
+  footprint?: TranscriptFootprint;
 }
 
 export type ToastKind = 'info' | 'warning';
@@ -568,10 +605,7 @@ function textCharsOf(msg: MessageView): number {
       total += (item.tool.args?.length ?? 0) + (item.tool.result?.length ?? 0);
       continue;
     }
-    total += item.text?.length ?? 0;
-    if (item.chunks) {
-      for (const chunk of item.chunks ?? []) total += chunk.length;
-    }
+    total += itemChars(item);
   }
   return total;
 }
@@ -622,11 +656,74 @@ function foldMessageText(msg: MessageView): MessageView {
   return changed ? { ...msg, items } : msg;
 }
 
+// TranscriptFootprint is what one conversation's transcript costs: the
+// two totals the byte budgets are expressed in, plus the array they were
+// measured over.
+export interface TranscriptFootprint {
+  messages: MessageView[];
+  media: number;
+  text: number;
+}
+
+function measureTranscript(messages: MessageView[]): TranscriptFootprint {
+  let media = 0;
+  let text = 0;
+  for (const msg of messages) {
+    media += mediaCharsOf(msg);
+    text += textCharsOf(msg);
+  }
+  return { messages, media, text };
+}
+
+// remeasure carries a footprint over to a new transcript: the head and
+// the tail the write left alone are found by identity and the rows
+// between them are what gets measured. A write that replaced every row,
+// or reordered them, just measures all of it again.
+function remeasure(
+  footprint: TranscriptFootprint,
+  messages: MessageView[],
+): TranscriptFootprint {
+  const old = footprint.messages;
+  const shared = Math.min(old.length, messages.length);
+  let head = 0;
+  while (head < shared && old[head] === messages[head]) head += 1;
+  let oldEnd = old.length;
+  let newEnd = messages.length;
+  while (
+    oldEnd > head &&
+    newEnd > head &&
+    old[oldEnd - 1] === messages[newEnd - 1]
+  ) {
+    oldEnd -= 1;
+    newEnd -= 1;
+  }
+  let media = footprint.media;
+  let text = footprint.text;
+  for (let i = head; i < oldEnd; i += 1) {
+    media -= mediaCharsOf(old[i]);
+    text -= textCharsOf(old[i]);
+  }
+  for (let i = head; i < newEnd; i += 1) {
+    media += mediaCharsOf(messages[i]);
+    text += textCharsOf(messages[i]);
+  }
+  return { messages, media, text };
+}
+
 // settleConversation is the one place a conversation's in-memory size is
 // enforced: the message cap first, then the two byte budgets. It is
 // called from every write path that can grow a transcript (a stream
 // flush, a send, a history page, an archive reconcile), so no path can
 // quietly bypass a budget.
+//
+// It is called on every write, including the ones that only touch a
+// title or a mode, so it does not walk the transcript: the last
+// measurement is kept on the conversation (`footprint`) and the next one
+// runs over the rows that changed, which a write finds by identity —
+// writes replace the messages array and the rows they do not touch keep
+// their objects (lastAssistant copies the row it grows). A measurement
+// that cannot be expressed as such a difference is the whole transcript
+// again, which is what happens on the first settle after a load.
 //
 // opts.cap=false is for the paging write (see loadEarlierHistory): the
 // page a reader just scrolled to must not be yanked away by the message
@@ -644,22 +741,27 @@ function settleConversation(
   opts?: { cap?: boolean },
 ): ConversationState {
   const capped = opts?.cap === false ? conv : capConversation(conv);
-  let media = 0;
-  let text = 0;
-  for (const msg of capped.messages) {
-    media += mediaCharsOf(msg);
-    text += textCharsOf(msg);
-  }
+  // The footprint the last settle recorded, brought up to date. A
+  // recorded array that is still the current one means no row moved at
+  // all; otherwise the difference between the two is measured.
+  const recorded = capped.footprint;
+  const totals =
+    !recorded || recorded.messages === capped.messages
+      ? (recorded ?? measureTranscript(capped.messages))
+      : remeasure(recorded, capped.messages);
+  const measured = totals === recorded ? capped : { ...capped, footprint: totals };
+  let media = totals.media;
+  let text = totals.text;
   const overMedia = media > MAX_CONV_MEDIA_BYTES;
   const overText = text > MAX_CONV_TEXT_BYTES;
-  if (!overMedia && !overText) return capped;
+  if (!overMedia && !overText) return measured;
   // The oldest messages give up their bytes first: dropping a data URL
   // costs a re-fetch when the row is looked at again, folding text costs
   // reading a marker. Media goes first because it is what a screenshot-
   // heavy transcript spends its memory on.
-  const keepFrom = Math.max(0, capped.messages.length - BUDGET_KEEP_MESSAGES);
+  const keepFrom = Math.max(0, measured.messages.length - BUDGET_KEEP_MESSAGES);
   let changed = false;
-  const messages = capped.messages.map((msg, index) => {
+  const messages = measured.messages.map((msg, index) => {
     if (index >= keepFrom) return msg;
     let next = msg;
     if (overMedia && media > MAX_CONV_MEDIA_BYTES) {
@@ -680,7 +782,8 @@ function settleConversation(
     if (next !== msg) changed = true;
     return next;
   });
-  return changed ? { ...capped, messages } : capped;
+  if (!changed) return measured;
+  return { ...measured, messages, footprint: measureTranscript(messages) };
 }
 
 // storeBytes reports what the loaded transcripts hold, the two byte
@@ -698,10 +801,12 @@ export function storeBytes(): {
   let conversations = 0;
   for (const conv of Object.values(state.conversations)) {
     conversations += 1;
-    for (const msg of conv.messages) {
-      media += mediaCharsOf(msg);
-      text += textCharsOf(msg);
-    }
+    const footprint =
+      conv.footprint && conv.footprint.messages === conv.messages
+        ? conv.footprint
+        : measureTranscript(conv.messages);
+    media += footprint.media;
+    text += footprint.text;
   }
   return { media, text, conversations };
 }
@@ -1219,58 +1324,89 @@ function mergeAppend(
   if (lastItem && lastItem.kind === kind) {
     // Append to the block's chunks instead of concatenating the whole
     // answer: the join happens once per render, where the string is
-    // needed anyway, and the cap below can drop the oldest chunks.
+    // needed anyway, and the cap below can drop the oldest chunks. The
+    // running length is bumped by the delta, so the cap never measures
+    // the block either.
     const chunks = lastItem.chunks ?? [lastItem.text];
     chunks.push(text);
     msg.items = [
       ...items.slice(0, -1),
-      capTextItem({ ...lastItem, chunks, text: '' }),
+      capTextItem({
+        ...lastItem,
+        chunks,
+        // A block that had no chunks held its content in `text`; now
+        // that content is chunks[0]. A block that had chunks keeps its
+        // `text`, which is where the trim marker lives.
+        text: lastItem.chunks ? lastItem.text : '',
+        chars: itemChars(lastItem) + text.length,
+      }),
     ];
   } else {
-    msg.items = [...items, capTextItem({ kind, id: newID('part'), text })];
+    msg.items = [
+      ...items,
+      capTextItem({ kind, id: newID('part'), text, chars: text.length }),
+    ];
   }
 }
 
 // capTextItem enforces the per-block text bound. Reasoning keeps its
 // tail (it is never rendered); visible text keeps head and tail with a
 // marker in between. The chunk array is trimmed in place, so a block that
-// already dropped its oldest chunks is not re-joined on every delta.
+// already dropped its oldest chunks is not re-joined on every delta, and
+// the marker counts only content: it is carried in `text` rather than in
+// the chunk array, so a later fold can neither drop it as text nor add
+// its length to what the marker reports.
 // `foldTo` overrides the bound: the conversation text budget folds an old
 // message's blocks down to a tail instead of dropping them outright.
 function capTextItem<T extends TextItem>(item: T, foldTo?: number): T {
-  // Fold the chunks first: the bound is expressed over the whole text.
-  const total = itemText(item);
   const limit =
     foldTo ??
     (item.kind === 'reasoning' ? MAX_REASONING_CHARS : MAX_ITEM_TEXT_CHARS);
-  if (total.length <= limit) {
+  if (itemChars(item) <= limit) {
     return item;
   }
-  if (item.chunks && item.chunks.length > 1) {
-    const chunks = item.chunks.slice();
-    let size = total.length;
-    while (chunks.length > 1 && size > limit) {
-      size -= chunks[0].length;
-      chunks.shift();
+  if (item.chunks && item.chunks.length > 0) {
+    // The chunks are the block's content; `text` (when it is set) is the
+    // marker of an earlier trim, and `head` is what it adds.
+    const chunks = item.chunks;
+    let size = 0;
+    for (const chunk of chunks) size += chunk.length;
+    let dropped = item.dropped ?? 0;
+    const head = item.text.length;
+    while (chunks.length > 1 && head + size > limit) {
+      const cut = chunks.shift();
+      if (cut === undefined) break;
+      dropped += cut.length;
+      size -= cut.length;
     }
-    const marker = `…[trimmed ${total.length - size} chars]`;
-    if (chunks.length === 1) {
-      const tail = chunks[0].slice(-limit);
-      return { ...item, chunks: undefined, text: marker + tail };
+    // One chunk left and still over: what it cannot keep goes too, and
+    // counts the same way.
+    const overflow = head + size - limit;
+    if (overflow > 0) {
+      dropped += overflow;
+      chunks[0] = chunks[0].slice(overflow);
+      size -= overflow;
     }
-    return { ...item, chunks: [marker, ...chunks], text: '' };
+    const text = `…[trimmed ${dropped} chars]`;
+    return { ...item, chunks, text, dropped, chars: text.length + size };
   }
+  const total = item.text;
   if (item.kind === 'reasoning') {
+    const tail = total.slice(-limit);
+    const text = `…[trimmed ${total.length - tail.length} chars]` + tail;
     return {
       ...item,
-      text: `…[trimmed ${total.length - limit} chars]` + total.slice(-limit),
+      text,
+      chars: text.length,
     };
   }
   const head = Math.floor(limit / 2);
   const tail = limit - head;
+  const text = `${total.slice(0, head)}\n…[trimmed ${total.length - limit} chars]…\n${total.slice(-tail)}`;
   return {
     ...item,
-    text: `${total.slice(0, head)}\n…[trimmed ${total.length - limit} chars]…\n${total.slice(-tail)}`,
+    text,
+    chars: text.length,
   };
 }
 
@@ -1296,7 +1432,8 @@ function capToolResult(text: string): string {
 // a settled message holds plain text and no chunk array.
 function foldTextItem<T extends TextItem>(item: T): T {
   if (!item.chunks) return item;
-  const folded = { ...item, text: itemText(item) };
+  const text = itemText(item);
+  const folded = { ...item, text, chars: text.length, dropped: undefined };
   delete (folded as TextItem).chunks;
   return folded;
 }
@@ -1813,6 +1950,10 @@ export function activeConversationID(): string {
 export const useStore = create<StoreState>((set, get) => {
   let toastSeq = 0;
   let pendingStreamEvents: UIEvent[] = [];
+  // Whether the queue holds nothing but reasoning deltas. Kept on
+  // enqueue so the cadence question is answered once per delta instead
+  // of by rescunning the whole queue (see stream.ts).
+  let pendingStreamVisible = false;
   let streamFlushRAF: number | null = null;
   let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
   // lastStreamFlushAt paces stream commits (see stream.ts for the two
@@ -2736,6 +2877,7 @@ export const useStore = create<StoreState>((set, get) => {
     if (pendingStreamEvents.length === 0) return;
     const events = pendingStreamEvents;
     pendingStreamEvents = [];
+    pendingStreamVisible = false;
     const started = performance.now();
     for (const ev of coalesceStreamEvents(events)) {
       routeBackendEvent(ev, { root: stateRoot, data: eventDataSink });
@@ -2750,7 +2892,10 @@ export const useStore = create<StoreState>((set, get) => {
   const scheduleStreamFlush = () => {
     const flush = () => flushPendingStreams();
     const now = performance.now();
-    const interval = streamFlushInterval(pendingStreamEvents);
+    const interval = streamFlushInterval(
+      pendingStreamEvents,
+      !pendingStreamVisible,
+    );
     const dueAt = lastStreamFlushAt + interval;
     if (streamFlushRAF !== null || streamFlushTimer !== null) {
       // A handle is already armed. Only a queue that wants an earlier
@@ -3206,6 +3351,9 @@ export const useStore = create<StoreState>((set, get) => {
     handleEvent: (ev) => {
       if (ev.type === UIEventType.stream) {
         pendingStreamEvents.push(ev);
+        if (!pendingStreamVisible && !isReasoningDelta(ev)) {
+          pendingStreamVisible = true;
+        }
         scheduleStreamFlush();
         return;
       }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   coalesceStreamEvents,
   groupToolCalls,
+  isReasoningDelta,
   isPlanCall,
   streamFlushInterval,
   STREAM_REASONING_FLUSH_INTERVAL_MS,
@@ -145,6 +146,30 @@ describe('streamFlushInterval', () => {
 
   it('falls back to the text cadence for an empty queue', () => {
     expect(streamFlushInterval([])).toBe(STREAM_TEXT_FLUSH_INTERVAL_MS);
+  });
+
+  // The store keeps the answer as a flag while it enqueues instead of
+  // rescanning the queue per delta; the two must agree, or a burst would
+  // be paced by a stale answer.
+  it('takes the caller\u2019s answer when it has one', () => {
+    const queue = [reasoningEvent('a'), reasoningEvent('b')];
+    expect(streamFlushInterval(queue, true)).toBe(
+      STREAM_REASONING_FLUSH_INTERVAL_MS,
+    );
+    expect(streamFlushInterval(queue, false)).toBe(
+      STREAM_TEXT_FLUSH_INTERVAL_MS,
+    );
+    // An empty queue has no deltas to pace, whatever the flag says.
+    expect(streamFlushInterval([], true)).toBe(STREAM_TEXT_FLUSH_INTERVAL_MS);
+  });
+
+  it('derives that answer from the same test the flag is built with', () => {
+    expect([reasoningEvent('a')].every(isReasoningDelta)).toBe(true);
+    expect(
+      [reasoningEvent('a'), textEvent('b')].every(isReasoningDelta),
+    ).toBe(false);
+    expect(isReasoningDelta(delta({ type: 'tool_call' }))).toBe(false);
+    expect(isReasoningDelta(textEvent('b'))).toBe(false);
   });
 });
 

@@ -1710,6 +1710,124 @@ describe('store: send and stream', () => {
     expect(text && itemText(text)).toContain('[trimmed');
   });
 
+  // The append path carries the block's length instead of joining it
+  // (see TextItemFields.chars): the cap then measures a number, and the
+  // join happens once, in the renderer. Drift between the two shows up
+  // as a block that folds late or early, so the two are asserted equal.
+  it('keeps a streaming block\u2019s length without joining it', () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    const handle = useStore.getState().handleEvent;
+    const chunk = 't'.repeat(1024);
+    for (let i = 0; i < 40; i += 1) {
+      handle({
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: { type: 'part', part: { type: 'text', text: chunk } },
+        },
+      });
+      // One delta per commit: the block is appended to, not rebuilt from
+      // a coalesced string.
+      useStore.getState().flushStreams();
+    }
+
+    const message = useStore.getState().conversations['s-1']?.messages.at(-1);
+    const item = message?.items.find((it) => it.kind === 'text');
+    const display = item ? itemText(item) : '';
+    expect(display).toHaveLength(40 * chunk.length);
+    expect(item && 'chars' in item ? item.chars : undefined).toBe(
+      display.length,
+    );
+  });
+
+  // settleConversation runs on every write, so it carries the last
+  // measurement of a transcript forward instead of walking it (see
+  // TranscriptFootprint): a row the write left alone is found by identity
+  // and not measured. The probe row counts the reads of its text, which
+  // is the only way to see a measurement that did not happen.
+  it('measures only the rows a write replaced', () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    const handle = useStore.getState().handleEvent;
+    const stream = (text: string) =>
+      handle({
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: { type: 'part', part: { type: 'text', text } },
+        },
+      });
+
+    let reads = 0;
+    const probe = {
+      id: 'm-probe',
+      role: 'user',
+      items: [],
+      attachments: [],
+    } as unknown as MessageView;
+    Object.defineProperty(probe, 'text', {
+      get: () => {
+        reads += 1;
+        return 'an older row';
+      },
+    });
+
+    stream('the answer');
+    const opened = useStore.getState().conversations['s-1'];
+    expect(opened).toBeDefined();
+    useStore.setState({
+      conversations: {
+        ...useStore.getState().conversations,
+        's-1': { ...opened!, messages: [probe, ...opened!.messages] },
+      },
+    });
+    // The commit that follows the new row measures the transcript once;
+    // from then on a delta only ever replaces the row it grows.
+    stream(' grows');
+    useStore.getState().flushStreams();
+    reads = 0;
+    stream(' some more');
+    useStore.getState().flushStreams();
+    expect(reads).toBe(0);
+  });
+
+  // The marker says how much of the block is gone. It is carried outside
+  // the chunk array for exactly this reason: a later fold must not count
+  // the previous marker as dropped content, nor drop it as if it were.
+  it('reports a block\u2019s dropped characters exactly, fold after fold', () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    const handle = useStore.getState().handleEvent;
+    // 400 pushes of 1 KiB against the 256 KiB per-block cap: 144 whole
+    // chunks go, and the marker has to say so.
+    const chunk = 't'.repeat(1024);
+    const pushes = 400;
+    for (let i = 0; i < pushes; i += 1) {
+      handle({
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: { type: 'part', part: { type: 'text', text: chunk } },
+        },
+      });
+      // Committing each delta is what makes the block fold repeatedly;
+      // one coalesced push would fold once and measure nothing.
+      useStore.getState().flushStreams();
+    }
+
+    const message = useStore.getState().conversations['s-1']?.messages.at(-1);
+    const item = message?.items.find((it) => it.kind === 'text');
+    const display = item ? itemText(item) : '';
+    const marker = /…\[trimmed (\d+) chars\]/.exec(display);
+    expect(marker).not.toBeNull();
+    const kept = display.length - (marker?.[0].length ?? 0);
+    expect(Number(marker?.[1])).toBe(pushes * chunk.length - kept);
+  });
+
   it('flushes interleaved streams in arrival order', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     const handle = useStore.getState().handleEvent;

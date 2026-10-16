@@ -26,13 +26,23 @@ export const STREAM_REASONING_FLUSH_INTERVAL_MS = 250;
 // committed. Mixed queues (a thought and then prose, or a tool call
 // arriving mid-reasoning) take the text cadence: the answer's own words
 // must never be the slow part.
-export function streamFlushInterval(events: UIEvent[]): number {
+// isReasoningDelta is the per-event half of that test. A caller holding
+// a queue keeps it as a flag while it enqueues (the queue can be
+// thousands of deltas long, and rescanning it on every delta to answer
+// the same question is quadratic); a caller holding the array can ask
+// about the whole array through streamFlushInterval.
+export function isReasoningDelta(ev: UIEvent): boolean {
+  const delta = (ev.data as { delta?: StreamDelta }).delta;
+  return delta?.type === 'part' && delta.part?.type === 'reasoning';
+}
+
+export function streamFlushInterval(
+  events: UIEvent[],
+  reasoningOnly?: boolean,
+): number {
   if (events.length === 0) return STREAM_TEXT_FLUSH_INTERVAL_MS;
-  const reasoningOnly = events.every((ev) => {
-    const delta = (ev.data as { delta?: StreamDelta }).delta;
-    return delta?.type === 'part' && delta.part?.type === 'reasoning';
-  });
-  return reasoningOnly
+  const only = reasoningOnly ?? events.every(isReasoningDelta);
+  return only
     ? STREAM_REASONING_FLUSH_INTERVAL_MS
     : STREAM_TEXT_FLUSH_INTERVAL_MS;
 }
