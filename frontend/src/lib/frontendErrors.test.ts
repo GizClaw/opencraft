@@ -41,12 +41,55 @@ describe('redactDiagnostic', () => {
   });
 
   it('drops credentials by name and by shape', () => {
+    const token = 'sk-' + 'abcdefghijklmnopqrstuvwx';
     const out = redactDiagnostic(
-      'Authorization: Bearer sk-abcdefghijklmnopqrstuvwx\napi_key=abcd1234',
+      `Authorization: Bearer ${token}\napi_key=abcd1234`,
       512,
     );
-    expect(out).not.toContain('sk-abcdefghijklmnopqrstuvwx');
+    expect(out).not.toContain(token);
     expect(out).not.toContain('abcd1234');
+    expect(out).toContain('Authorization: <redacted>');
+    expect(out).toContain('api_key=<redacted>');
+  });
+
+  // A header value carries a scheme and often more than one token; the
+  // name rule alone left everything after the first token in the log.
+  it('drops a Basic or Digest header value whole', () => {
+    const basic = btoa('user:password');
+    const outBasic = redactDiagnostic(`Authorization: Basic ${basic}`, 512);
+    expect(outBasic).not.toContain(basic);
+    expect(outBasic).toContain('Authorization: <redacted>');
+
+    const digest = '9c1a'.repeat(4);
+    const outDigest = redactDiagnostic(
+      `Authorization: Digest username="ada", response="${digest}"`,
+      512,
+    );
+    expect(outDigest).not.toContain(digest);
+    expect(outDigest).not.toContain('username="ada"');
+
+    // The scheme alone is a credential too, with no header name in
+    // front of it.
+    const bare = redactDiagnostic(`proxy said: Basic ${basic}`, 512);
+    expect(bare).not.toContain(basic);
+  });
+
+  it('drops a PEM private key block', () => {
+    const body = btoa('openssh-private-key-body');
+    const out = redactDiagnostic(
+      `-----BEGIN OPENSSH PRIVATE KEY-----\n${body}\n-----END OPENSSH PRIVATE KEY-----`,
+      1024,
+    );
+    expect(out).not.toContain(body);
+    expect(out).not.toContain('PRIVATE KEY');
+  });
+
+  it('leaves prose about the schemes alone', () => {
+    const out = redactDiagnostic(
+      'request failed: Basic authentication required',
+      512,
+    );
+    expect(out).toContain('Basic authentication required');
   });
 
   it('truncates a long payload', () => {

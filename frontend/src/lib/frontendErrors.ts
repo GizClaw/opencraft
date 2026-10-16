@@ -20,10 +20,27 @@ const STACK_LIMIT = 2048;
 // escapes newlines and truncates but does not sanitise, so shape-based
 // redaction here is the only gate before the local log and OTLP export.
 const REDACTIONS: [RegExp, string][] = [
-  // `Authorization: Bearer …`, `api_key=…`, `"password": "…"`: the value
-  // behind the name never leaves.
+  // PEM private key blocks run over many lines; the line-oriented rules
+  // below would only see the label. The `$` arm covers a log truncated
+  // in the middle of the block.
   [
-    /(\b(?:authorization|proxy-authorization|bearer|token|api[_-]?key|apikey|secret|password|passwd|passphrase|credential|signature|sig|access[_-]?token|refresh[_-]?token)\b\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi,
+    /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+    '<redacted-private-key>',
+  ],
+  // An auth header carries a scheme and usually more than one token
+  // (`Basic dXNlcjpwYXNz`, `Digest username="u", response="…"`), so the
+  // whole value goes, to the end of the line. The name stays: it is the
+  // part an operator reads.
+  [
+    /(\b(?:authorization|proxy-authorization)\b\s*[:=]\s*)[^\n]*/gi,
+    '$1<redacted>',
+  ],
+  // `api_key=…`, `"password": "…"`, `token: abc`: the value behind the
+  // name never leaves. A quoted value goes whole; otherwise a scheme
+  // plus its argument (`Bearer eyJ…`) or the run of non-space text that
+  // follows.
+  [
+    /(\b(?:bearer|token|api[_-]?key|apikey|secret|password|passwd|passphrase|credential|signature|sig|access[_-]?token|refresh[_-]?token)\b\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[A-Za-z][\w-]*\s+[A-Za-z0-9._~+/=-]+|[^\s,;\n]+)/gi,
     '$1<redacted>',
   ],
   // Secrets in a query string keep their name (the useful part) without
@@ -34,7 +51,17 @@ const REDACTIONS: [RegExp, string][] = [
   ],
   // Credentials embedded in a URL: https://user:pass@host.
   [/\/\/[^\s/@:]+:[^\s/@]+@/g, '//<redacted>@'],
-  [/\bBearer\s+[A-Za-z0-9._~+/-]+=*/g, 'Bearer <redacted>'],
+  // A scheme that names its credential by itself, in text that never
+  // spells the header out. The token has to carry an upper-case letter
+  // so the prose word "authentication" does not read as one.
+  [
+    /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]*[A-Z][A-Za-z0-9._~+/=-]*/g,
+    '$1 <redacted>',
+  ],
+  // Digest carries its credential in named parameters instead
+  // (`username="u", response="…"`); the scheme takes the rest of the
+  // line.
+  [/(\b(?:Digest|Negotiate|NTLM)\s+)[^\n]*/gi, '$1<redacted>'],
   // Token prefixes that identify the issuer (OpenAI, GitHub, GitLab,
   // Slack, AWS) and JWTs: recognisable by shape alone.
   [
