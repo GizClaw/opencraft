@@ -210,6 +210,15 @@ resources:
       middlewares:
         recover:
           enabled: true
+        # Generic per-call deadline, for tools that do not bound
+        # themselves. Tools that declare ToolMeta.SelfTimeout are
+        # exempt: the exec tools (they run until the command exits
+        # or their own timeout_seconds fires), the image/video and
+        # web-search tools (provider timeouts), and every tool that
+        # can wait on the user (ask_user, the create/update/remove
+        # confirmations, permission requests). So is delegate, whose
+        # sync mode blocks until the delegated worker finishes. A
+        # run's stop remains the bound for all of them.
         timeout:
           default: 5m
         # Backstop hard ceiling. The text policy below runs first on

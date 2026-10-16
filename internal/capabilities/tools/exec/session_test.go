@@ -13,6 +13,9 @@ import (
 type sessSession struct {
 	output sandbox.SessionOutput
 	exit   sandbox.SessionExit
+	// waitBlock makes Wait block until the context is done, so tests
+	// can exercise a bounded wait against a live process.
+	waitBlock bool
 }
 
 func (s *sessSession) ID() string { return "p" }
@@ -34,7 +37,11 @@ func (s *sessSession) Signal(context.Context, sandbox.SessionSignal) error {
 	return nil
 }
 func (s *sessSession) Terminate(context.Context) error { return nil }
-func (s *sessSession) Wait(context.Context) (sandbox.SessionExit, error) {
+func (s *sessSession) Wait(ctx context.Context) (sandbox.SessionExit, error) {
+	if s.waitBlock {
+		<-ctx.Done()
+		return sandbox.SessionExit{}, ctx.Err()
+	}
 	return s.exit, nil
 }
 func (s *sessSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
@@ -172,6 +179,39 @@ func TestWaitRemovesSession(t *testing.T) {
 	// The id is reusable after wait.
 	if _, err := tool.Execute(ctx, `{"action":"start","process_id":"s1","argv":["true"]}`); err != nil {
 		t.Fatalf("reuse after wait failed: %v", err)
+	}
+}
+
+// TestWaitTimeoutLeavesSessionLive verifies a bounded wait: when the
+// wait budget expires the session survives (readable, waitable again),
+// and a later plain wait still reports the exit.
+func TestWaitTimeoutLeavesSessionLive(t *testing.T) {
+	tool, runner := newSessionTool()
+	runner.proc.waitBlock = true
+	ctx := context.Background()
+
+	if _, err := tool.Execute(ctx,
+		`{"action":"start","process_id":"s1","argv":["sleep","60"]}`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := tool.Execute(ctx,
+		`{"action":"wait","process_id":"s1","timeout_seconds":0.05}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Text(), `"timed_out":true`) {
+		t.Fatalf("wait = %s, want a timed_out marker", out)
+	}
+
+	// The session survived the expired wait: drop the block and the
+	// same id still waits to an exit.
+	runner.proc.waitBlock = false
+	out, err = tool.Execute(ctx, `{"action":"wait","process_id":"s1"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Text(), `"exit_code":0`) {
+		t.Fatalf("wait after timeout = %s, want the exit", out)
 	}
 }
 

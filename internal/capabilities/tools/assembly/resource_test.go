@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
@@ -55,6 +56,39 @@ func probeTool(content string) tool.Tool {
 		},
 	)
 }
+
+// sleepingTool blocks for d before succeeding; its declared ToolMeta
+// decides whether the assembly's generic timeout applies to the call.
+type sleepingTool struct {
+	name string
+	d    time.Duration
+	meta tool.ToolMeta
+}
+
+func (t sleepingTool) Definition() message.ToolDefinition {
+	return message.ToolDefinition{Name: t.name}
+}
+
+func (t sleepingTool) Execute(
+	ctx context.Context, _ string,
+) (message.Content, error) {
+	select {
+	case <-time.After(t.d):
+		return message.NewTextContent("done"), nil
+	case <-ctx.Done():
+		return message.Content{}, ctx.Err()
+	}
+}
+
+func (t sleepingTool) Metadata() tool.ToolMeta { return t.meta }
+
+// multiSource adapts several tools to one tool.Source.
+type multiSource struct {
+	tools []tool.Tool
+}
+
+func (s multiSource) Tools() []tool.Tool         { return s.tools }
+func (s multiSource) LazyTools() []tool.LazyTool { return nil }
 
 // imageProbeTool returns one image part of the requested size, so tests
 // can exercise the non-text part budget without a real image decoder.
@@ -134,6 +168,47 @@ func readAudit(t *testing.T, dir string) auditEntry {
 		t.Fatalf("decode audit record %q: %v", raw, err)
 	}
 	return entry
+}
+
+// TestAssemblyHonorsSelfTimeoutClaims pins the timeout section's two
+// exemption paths: a tool that declares ToolMeta.SelfTimeout is not
+// wrapped in the generic default, the delegate tool is exempt by name
+// (flowcraft owns its definition, so it cannot declare the claim), and
+// every other tool keeps the default.
+func TestAssemblyHonorsSelfTimeoutClaims(t *testing.T) {
+	settings := `{"middlewares":{"timeout":{"default":"30ms"}}}`
+	const (
+		selfBounded = "selfbounded"
+		delegated   = "delegate"
+		plain       = "plain"
+	)
+	asm := newAssembly(t, settings, multiSource{tools: []tool.Tool{
+		sleepingTool{name: selfBounded, d: 150 * time.Millisecond,
+			meta: tool.ToolMeta{SelfTimeout: true}},
+		sleepingTool{name: delegated, d: 150 * time.Millisecond},
+		sleepingTool{name: plain, d: 150 * time.Millisecond},
+	}})
+
+	exec := func(name string) message.ToolResult {
+		t.Helper()
+		return asm.Execute(context.Background(), message.ToolCall{
+			ID: "call-" + name, Name: name,
+		})
+	}
+
+	if res := exec(selfBounded); res.IsError {
+		t.Fatalf("SelfTimeout tool was timed out: %s", res.Content.Text())
+	}
+	if res := exec(delegated); res.IsError {
+		t.Fatalf("delegate was timed out: %s", res.Content.Text())
+	}
+	res := exec(plain)
+	if !res.IsError {
+		t.Fatalf("plain tool must time out, got %q", res.Content.Text())
+	}
+	if got := res.Content.Text(); !strings.Contains(got, "timed out after 30ms") {
+		t.Fatalf("plain tool error = %q, want a timeout naming 30ms", got)
+	}
 }
 
 func TestAssemblyWiresResultLimitRedactAudit(t *testing.T) {
