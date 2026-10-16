@@ -1767,7 +1767,6 @@ interface StoreState {
   automations: AutomationTask[];
   automationRuns: Record<string, AutomationRun[]>;
   conversations: Record<string, ConversationState>;
-  runConvs: Record<string, string>;
   // pendingPromptConvs maps a pending interact/prompt id to the
   // conversation that owns it, so routing and the sidebar never scan
   // every conversation on each store update.
@@ -2111,19 +2110,14 @@ export const useStore = create<StoreState>((set, get) => {
     return next;
   };
   // updateConv applies one patch to a conversation and settles it (see
-  // settleConversation). `extra` writes state beside the conversation in
-  // the same update — one event is one store write, which is what the
+  // settleConversation). Everything one event writes belongs in that
+  // single update: one event is one store write, which is what the
   // stream flush's flush-to-frame probe measures.
-  const updateConv = (
-    id: string,
-    patch: Partial<ConversationState>,
-    extra?: (state: StoreState) => Partial<StoreState> | undefined,
-  ) =>
+  const updateConv = (id: string, patch: Partial<ConversationState>) =>
     set((state) => {
       const conv = state.conversations[id];
       if (!conv) return state;
       return {
-        ...extra?.(state),
         conversations: {
           ...state.conversations,
           [id]: settleConversation({ ...conv, ...patch }),
@@ -2240,14 +2234,16 @@ export const useStore = create<StoreState>((set, get) => {
 
   // supersededEndState reports whether a superseded run already hit
   // its terminal event while the replacement was still starting. The
-  // runConvs entry disappears exactly when turn_end is processed, so
-  // its absence (with the status recorded on the artifact) means the
-  // old run is no longer alive and must not be "restored".
+  // registry drops the run exactly when turn_end is processed, so its
+  // absence (with the status recorded on the artifact) means the old
+  // run is no longer alive and must not be "restored".
   const supersededEndState = (
     convID: string,
     runID: string,
   ): { status: TurnStatus; error?: string; errorKind?: string } | undefined => {
-    if (get().runConvs[runID] === convID) return undefined;
+    if (stateRoot.registry.conversationForRun(runID) === convID) {
+      return undefined;
+    }
     const artifact = get().conversations[convID]?.turnArtifacts.find(
       (t) => t.runID === runID,
     );
@@ -2348,8 +2344,11 @@ export const useStore = create<StoreState>((set, get) => {
               ...list.slice(liveIdx + 1),
             ]
           : list;
+      // The run is bound where its id becomes known: the index is what
+      // routes its deltas — and the terminal event that stamps the
+      // strip — back to this conversation.
+      stateRoot.registry.bindRun(start.run_id, convID);
       set((state) => ({
-        runConvs: { ...state.runConvs, [start.run_id]: convID },
         conversations: {
           ...state.conversations,
           [convID]: {
@@ -2472,22 +2471,17 @@ export const useStore = create<StoreState>((set, get) => {
           // after that seam, and into no row above it: those belong to
           // another turn.
           const live = liveRunTurn(conv, runID);
-          updateConv(
-            conversationID,
-            {
-              turnArtifacts: live.turnArtifacts,
-              messages: applyStream(conv.messages, data.delta, live.turn.start),
-            },
-            // An adopted run enters the conversation's run map with its
-            // strip: a barge-in over it has to see it as live
-            // (supersededEndState reads the map), and the turn_end that
-            // removes the entry is the one that stamps the strip.
-            live.adopted
-              ? (state) => ({
-                  runConvs: { ...state.runConvs, [runID]: conversationID },
-                })
-              : undefined,
-          );
+          // An adopted run is bound with the strip it opens: a barge-in
+          // over it has to see it as live (supersededEndState reads the
+          // index), and the turn_end that releases the run is the one
+          // that stamps that strip.
+          if (live.adopted) {
+            stateRoot.registry.bindRun(runID, conversationID);
+          }
+          updateConv(conversationID, {
+            turnArtifacts: live.turnArtifacts,
+            messages: applyStream(conv.messages, data.delta, live.turn.start),
+          });
           break;
         }
         case UIEventType.interact: {
@@ -2594,9 +2588,10 @@ export const useStore = create<StoreState>((set, get) => {
             stateRoot.registry.get(conversationID)?.getSnapshot().context as
               { currentRunID?: string } | undefined
           )?.currentRunID;
+          // The run is released with its terminal event: from here the
+          // transcript holds everything the run will ever report.
+          if (endingRun) stateRoot.registry.releaseRun(endingRun);
           set((state) => {
-            const runConvs = { ...state.runConvs };
-            delete runConvs[data.run_id ?? ''];
             const conv = state.conversations[conversationID];
             if (!conv) return state;
             const turnArtifacts = conv.turnArtifacts.map((t) =>
@@ -2658,7 +2653,6 @@ export const useStore = create<StoreState>((set, get) => {
                   )
                 : conv.messages;
             return {
-              runConvs,
               conversations: {
                 ...state.conversations,
                 [conversationID]: settleConversation({
@@ -2705,21 +2699,23 @@ export const useStore = create<StoreState>((set, get) => {
           };
           const runID = data.run_id;
           const at = new Date().toISOString();
+          if (runID) {
+            // A run the UI never sent is still a run this conversation
+            // owns: binding it is what routes its deltas and the
+            // turn_end that stamps its strip.
+            stateRoot.registry.bindRun(runID, conversationID);
+          }
           set((state) => {
             const existing = state.conversations[conversationID];
             const conv = existing ?? emptyConv();
-            const runConvs = runID
-              ? { ...state.runConvs, [runID]: conversationID }
-              : state.runConvs;
             // An event for a run the transcript already holds adds the
             // mapping and nothing else.
             const known =
               runID !== undefined &&
               conv.turnArtifacts.some((t) => t.runID === runID);
             if (!runID || known) {
-              if (existing) return { runConvs };
+              if (existing) return {};
               return {
-                runConvs,
                 conversations: {
                   ...state.conversations,
                   [conversationID]: conv,
@@ -2748,7 +2744,6 @@ export const useStore = create<StoreState>((set, get) => {
               },
             ];
             return {
-              runConvs,
               conversations: {
                 ...state.conversations,
                 [conversationID]: {
@@ -2831,7 +2826,8 @@ export const useStore = create<StoreState>((set, get) => {
       const data = ev.data as AutomationRun;
       if (data?.task_id) void get().loadAutomationRuns(data.task_id);
     },
-    conversationForRunID: (runID) => get().runConvs[runID],
+    conversationForRunID: (runID) =>
+      stateRoot.registry.conversationForRun(runID),
     pendingInteractConversation: (promptID) =>
       get().pendingPromptConvs[promptID],
     activeWorkspace: () => get().workspace,
@@ -2945,7 +2941,7 @@ export const useStore = create<StoreState>((set, get) => {
         { turn: string } | undefined;
       const running =
         turnValue?.turn === 'starting' || turnValue?.turn === 'running';
-      const mappedRun = Object.values(state.runConvs).includes(id);
+      const mappedRun = stateRoot.registry.hasRun(id);
       const hasPendingPrompt = conv.pendingInteracts.length > 0;
       if (running || mappedRun || hasPendingPrompt) {
         conversations[id] = conv;
@@ -3211,7 +3207,6 @@ export const useStore = create<StoreState>((set, get) => {
     automations: [],
     automationRuns: {},
     conversations: {},
-    runConvs: {},
     pendingPromptConvs: {},
     composerDraft: '',
     statusText: '',
@@ -3382,7 +3377,9 @@ export const useStore = create<StoreState>((set, get) => {
           : undefined;
       const turnEndConversationID =
         turnEndData?.conversation_id ??
-        (turnEndData?.run_id ? get().runConvs[turnEndData.run_id] : undefined);
+        (turnEndData?.run_id
+          ? stateRoot.registry.conversationForRun(turnEndData.run_id)
+          : undefined);
       routeBackendEvent(ev, { root: stateRoot, data: eventDataSink });
       if (turnEndConversationID) {
         // The tail sync runs after the reconciliation, not beside it:
@@ -4152,21 +4149,17 @@ export const useStore = create<StoreState>((set, get) => {
           type: 'SESSION_DELETED',
           deletedAt: new Date().toISOString(),
         });
+        // The tombstone takes the conversation's run mappings with it:
+        // a deleted chat never ends its turn, so the entries would keep
+        // naming a conversation that is gone (and a late turn_end would
+        // then reconcile it back onto the screen).
         stateRoot.registry.markDeleted(id);
         set((state) => {
           const conversations = { ...state.conversations };
           delete conversations[id];
           const viewers = { ...state.viewers };
           delete viewers[id];
-          // runConvs is otherwise only cleared by the run's turn_end,
-          // and a deleted conversation never ends its turn: its entries
-          // would keep naming a conversation that is gone (a late
-          // turn_end would then reconcile it back).
-          const runConvs = { ...state.runConvs };
-          for (const [runID, convID] of Object.entries(runConvs)) {
-            if (convID === id) delete runConvs[runID];
-          }
-          return { conversations, viewers, runConvs };
+          return { conversations, viewers };
         });
         clearPendingIndex(id);
         // A tail sync waiting on this conversation holds its id until
