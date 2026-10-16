@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +74,11 @@ type Assembly struct {
 	now               func() time.Time
 	replayFullHistory bool
 	condenseWG        sync.WaitGroup
+	// condensePerm serializes the LLM condensation stage: at most one
+	// generation runs at a time, so two folds racing the same rolling
+	// node cannot both pay a model call for a window the other is
+	// already replacing (the freshness gate then drops the stale one).
+	condensePerm chan struct{}
 }
 
 // generateFunc is the unary generation entry used for LLM condensation.
@@ -138,9 +144,10 @@ func withGenerate(fn generateFunc) AssemblyOption {
 // NewAssembly builds a summary memory assembly. store is required.
 func NewAssembly(store TurnStore, opts ...AssemblyOption) *Assembly {
 	a := &Assembly{
-		store:  store,
-		policy: Policy{},
-		now:    time.Now,
+		store:        store,
+		policy:       Policy{},
+		now:          time.Now,
+		condensePerm: make(chan struct{}, 1),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -288,13 +295,28 @@ func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 		// The LLM condensation is derived state: run it off the commit
 		// path so a slow generation never delays turn completion. The
 		// buffer node above is already persisted; the goroutine swaps
-		// in the condensed content when the generation lands.
+		// in the condensed content when the generation lands. One
+		// generation runs at a time (condensePerm), and Close waits for
+		// every in-flight or queued job, so a generation teardown never
+		// closes the store out from under a late write.
 		a.condenseWG.Add(1)
 		go func() {
 			defer a.condenseWG.Done()
+			a.condensePerm <- struct{}{}
+			defer func() { <-a.condensePerm }()
 			a.runCondense(ctx, condense)
 		}()
 	}
+	return nil
+}
+
+// Close waits for the in-flight condensations to finish. The assembly's
+// condensation goroutines are the only writers left after a turn ends,
+// so teardown must drain them before the shared session store goes
+// away; the assembly layer closes io.Closer resources in reverse
+// construction order, which is what calls this.
+func (a *Assembly) Close() error {
+	a.condenseWG.Wait()
 	return nil
 }
 
@@ -319,6 +341,21 @@ func (a *Assembly) runCondense(ctx context.Context, job *condenseJob) {
 	if err != nil {
 		return
 	}
+	// The generation may take minutes, and the node id is stable: a
+	// newer fold can have advanced the same rolling node while this one
+	// ran. Swapping the older condensation in then would roll the
+	// stored window and its coverage back, so the job only applies
+	// while the stored row is still the exact buffer it condensed.
+	current, err := a.stillBuffered(runCtx, job)
+	if err != nil {
+		telemetry.WarnErr(runCtx,
+			"memory: condensation freshness check failed", err,
+			attribute.String("conversation.id", job.node.ThreadID))
+		return
+	}
+	if !current {
+		return
+	}
 	// Cap the generated output to the summary budget so a verbose
 	// generation cannot blow past MaxSummaryBytes and crowd the next
 	// condensation input.
@@ -338,6 +375,32 @@ func (a *Assembly) runCondense(ctx context.Context, job *condenseJob) {
 	if err := a.store.UpsertSummaryNode(runCtx, replacement); err != nil {
 		return
 	}
+}
+
+// stillBuffered reports whether the stored row is still the exact buffer
+// this job condensed: same raw text, same covered messages, same write.
+// A newer fold (or a condensation that already landed) fails the check,
+// and the job is dropped — its replacement is stale. The check runs
+// right before the write, which leaves only the fold/write race window;
+// losing that race costs one fold cycle, because the next fold rewrites
+// the buffer from the transcript.
+func (a *Assembly) stillBuffered(
+	ctx context.Context, job *condenseJob,
+) (bool, error) {
+	nodes, err := a.store.ListSummaryNodes(ctx, job.node.ThreadID)
+	if err != nil {
+		return false, err
+	}
+	for i := range nodes {
+		node := nodes[i]
+		if node.ID != job.node.ID {
+			continue
+		}
+		return node.Content.Text() == job.rawText &&
+			node.UpdatedAt.Equal(job.node.UpdatedAt) &&
+			slices.Equal(node.SourceIDs, job.node.SourceIDs), nil
+	}
+	return false, nil
 }
 
 // foldTailChunk bounds each range query while walking the foldable region
