@@ -178,3 +178,46 @@ export function coalesceStreamEvents(events: UIEvent[]): UIEvent[] {
   flushActive();
   return out;
 }
+
+// flushDurations keeps the last few stream-flush timings so the optional
+// perf probe can report the transcript's per-frame cost without a
+// profiler attached. It is a fixed-size ring: no growth, no allocation
+// per flush beyond one number.
+export const FLUSH_SAMPLE_SIZE = 256;
+
+// flushTotal counts every flush of the page's lifetime. The ring above can
+// only ever say how many timings it kept — its capacity, not activity — so
+// the probe diffs this total between reports to get the flushes that
+// happened inside each reporting window.
+export let flushTotal = 0;
+
+export const flushDurations: number[] = [];
+
+export function recordFlushDuration(ms: number) {
+  flushTotal += 1;
+  flushDurations.push(ms);
+  if (flushDurations.length > FLUSH_SAMPLE_SIZE) flushDurations.shift();
+}
+
+// streamFlushStats summarizes the recorded flush timings: total is the
+// page-lifetime count, the percentiles describe the last FLUSH_SAMPLE_SIZE
+// flushes (nearest-rank, which is what the probe reports as P50/P95).
+export function streamFlushStats(): {
+  total: number;
+  p50: number;
+  p95: number;
+  max: number;
+} {
+  if (flushDurations.length === 0) {
+    return { total: flushTotal, p50: 0, p95: 0, max: 0 };
+  }
+  const sorted = [...flushDurations].sort((a, b) => a - b);
+  const pick = (q: number) =>
+    sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
+  return {
+    total: flushTotal,
+    p50: pick(0.5),
+    p95: pick(0.95),
+    max: sorted[sorted.length - 1],
+  };
+}

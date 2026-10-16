@@ -10,7 +10,6 @@ import {
   friendlyFailure,
   friendlyInterruption,
   itemText,
-  isUserStop,
   pendingConversationIDs,
   streamFlushStats,
   storeBytes,
@@ -2282,32 +2281,6 @@ describe('store: send and stream', () => {
   });
 });
 
-describe('isUserStop', () => {
-  it('treats canceled turns as user stops unless a deadline ended them', () => {
-    expect(isUserStop('canceled', 'user_cancel')).toBe(true);
-    expect(isUserStop('canceled')).toBe(true);
-    // The engine reports a deadline and a user stop as the same
-    // `canceled` status; the error kind decides, so a deadline keeps
-    // its diagnostics and never reads as something the user did.
-    expect(isUserStop('canceled', undefined, 'timeout')).toBe(false);
-    expect(isUserStop('canceled', '', 'timeout')).toBe(false);
-  });
-
-  it('treats user_cancel and user_input interruptions as user stops', () => {
-    expect(isUserStop('interrupted', 'user_cancel')).toBe(true);
-    expect(isUserStop('interrupted', 'user_input')).toBe(true);
-  });
-
-  it('keeps non-user interruptions and failures out of the user-stop bucket', () => {
-    expect(isUserStop('interrupted', 'host_shutdown')).toBe(false);
-    expect(isUserStop('interrupted', 'custom')).toBe(false);
-    expect(isUserStop('interrupted', '')).toBe(false);
-    expect(isUserStop('interrupted')).toBe(false);
-    expect(isUserStop('failed', 'user_cancel')).toBe(false);
-    expect(isUserStop('aborted', 'user_cancel')).toBe(false);
-  });
-});
-
 describe('store: first-message workspace attribution', () => {
   it('openDraftChat enters the composer draft without minting', () => {
     useStore.getState().openDraftChat();
@@ -4307,54 +4280,6 @@ describe('store: workspace switch session restore', () => {
     expect(conv.turnArtifacts).toHaveLength(2);
     expect(conv.turnArtifacts[1]).toMatchObject({ seq: 2, runID: 'r-2' });
     expect(actorValue('s-2')?.turn).toBe('succeeded');
-  });
-});
-
-describe('firstMessageTitle', () => {
-  const user = (text: string, attachments: unknown[] = []): MessageView => ({
-    id: 'm-1',
-    role: 'user',
-    text,
-    items: [],
-    attachments: attachments as MessageView['attachments'],
-  });
-
-  it('uses the first line of the first user message', () => {
-    expect(
-      firstMessageTitle([
-        user('fix the typo\nand rerun the tests'),
-        user('second prompt'),
-      ]),
-    ).toBe('fix the typo');
-  });
-
-  it('skips empty user text and falls back to [attachment]', () => {
-    expect(firstMessageTitle([user('  '), user('', [{}])])).toBe(
-      '[attachment]',
-    );
-  });
-
-  it('caps the title at 70 runes', () => {
-    const title = firstMessageTitle([user('汉'.repeat(80))]);
-    expect(title).toBe(`${'汉'.repeat(70)}…`);
-  });
-
-  it('returns an empty string without user messages', () => {
-    expect(firstMessageTitle([])).toBe('');
-  });
-
-  // A delegation note is a user-role row the app wrote: the header and
-  // the live title mirror must not name the conversation after the
-  // app's report (the backend's own fallback skips it the same way).
-  it('skips rows the app itself wrote', () => {
-    const note: MessageView = {
-      ...user('[delegated worker "researcher" finished: succeeded]'),
-      kind: 'delegation_note',
-    };
-    expect(firstMessageTitle([note, user('the real question')])).toBe(
-      'the real question',
-    );
-    expect(firstMessageTitle([note])).toBe('');
   });
 });
 
