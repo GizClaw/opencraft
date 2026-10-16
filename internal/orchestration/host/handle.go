@@ -51,7 +51,15 @@ type Host struct {
 	// the conversations started on one generation.
 	startGates map[ConversationID]*sync.Mutex
 	rollouts   map[ConversationID]*rollout.Recorder
-	titling    map[ConversationID]bool
+	// rolloutOrder tracks the open recorders by recency, most recently
+	// used first: only maxOpenRollouts stay open and the rest reopen on
+	// demand (see rolloutFor).
+	rolloutOrder []ConversationID
+	// rolloutOpened records which conversations already emitted their
+	// thread.started event on this Host generation, so an evicted and
+	// reopened recorder does not announce the same thread twice.
+	rolloutOpened map[ConversationID]bool
+	titling       map[ConversationID]bool
 	titleWG    sync.WaitGroup
 	// rebindMu serializes onRuntimeReload. ReloadDocument rebinds
 	// synchronously before returning while the runtime event router

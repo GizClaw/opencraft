@@ -795,8 +795,7 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 			live = append(live, d.run)
 		}
 	}
-	rec := h.rollouts[conv]
-	delete(h.rollouts, conv)
+	rec := h.dropRolloutLocked(conv)
 	h.mu.Unlock()
 
 	// Close the recorder before rows/files go away: an open file can

@@ -215,6 +215,7 @@ func (m *Manager) buildHost(
 		runs:          make(map[RunID]*runDetail),
 		startGates:    make(map[ConversationID]*sync.Mutex),
 		rollouts:      make(map[ConversationID]*rollout.Recorder),
+		rolloutOpened: make(map[ConversationID]bool),
 		titling:       make(map[ConversationID]bool),
 		deleting:      make(map[ConversationID]bool),
 		deleted:       make(map[ConversationID]bool),
