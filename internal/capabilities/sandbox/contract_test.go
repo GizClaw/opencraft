@@ -119,12 +119,17 @@ func TestSandboxRunnerContract(t *testing.T) {
 			// The argv this harness hands to cmd.exe is escaped for the
 			// C runtime, not for cmd, so a quoted path arrives mangled
 			// ("the filename ... syntax is incorrect"); the read has to
-			// spell the path bare, which cmd accepts only without
-			// spaces. CI's temp path has none; a machine whose temp
-			// path does keeps the write probe below and loses only the
-			// read half.
-			if strings.ContainsAny(readme, " \t") {
-				t.Logf("staged read skipped: cmd cannot take a quoted path %q", readme)
+			// spell the path bare, which cmd accepts only when nothing
+			// in it is cmd syntax (see cmdSpellable). CI's temp path is
+			// spellable; a machine whose path is not keeps the write
+			// probe below, and the read half reports itself as a skip
+			// rather than passing for the wrong reason.
+			if !cmdSpellable(readme) {
+				t.Run("staged read", func(t *testing.T) {
+					t.Skipf(
+						"cmd cannot spell %q bare; the write probe below still runs",
+						readme)
+				})
 			} else {
 				res, err := coresandbox.Exec(ctx, confined, shell,
 					[]string{"/c", "type " + readme},
@@ -179,6 +184,16 @@ func TestSandboxRunnerContract(t *testing.T) {
 // the read-only root bind instead, which is the refusal this test is
 // about. macOS and Windows keep the workspace sibling, where seatbelt
 // and the low-integrity token reject the write directly.
+// cmdSpellable reports whether path survives being spelled bare on a
+// cmd.exe command line. The harness escapes argv for the C runtime, not
+// for cmd, so cmd parses the string again: whitespace, redirection,
+// grouping or expansion characters (& % ( ) ^ ! < > | " ; ,) would make
+// the command mean something else, and the failure would read as a path
+// syntax error rather than as a refusal.
+func cmdSpellable(path string) bool {
+	return !strings.ContainsAny(path, " \t&%()^!<>|\";,")
+}
+
 func outsideWritePath(workDir string) string {
 	name := "opencraft-contract-outside-" + goruntime.GOOS +
 		"-" + strconv.Itoa(os.Getpid()) + ".txt"
