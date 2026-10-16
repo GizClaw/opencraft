@@ -62,8 +62,7 @@ func TestGHAuthTokenRefusesNonCredentialOutput(t *testing.T) {
 // response tried to send it, and must receive nothing.
 func TestCommitsDoNotFollowForeignLink(t *testing.T) {
 	var foreignHits atomic.Int32
-	var foreign *httptest.Server
-	foreign = httptest.NewServer(http.HandlerFunc(
+	foreign := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			foreignHits.Add(1)
 			writeJSON(t, w, commitRows(3))

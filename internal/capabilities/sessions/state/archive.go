@@ -796,7 +796,7 @@ func scanArchiveMessage(row rowScanner) (ArchiveMessage, error) {
 }
 
 // FirstUnkindedUserText returns the text of the first user message in a
-// turn the app did not author (kind = ''), oldest first. A turn that
+// turn the app did not author (the kind is empty), oldest first. A turn that
 // carries a kind is app-authored — a delegation note, for example — so
 // it speaks to the model rather than as someone in the conversation, and
 // a reader asking what the user said (naming a conversation, above all)

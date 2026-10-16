@@ -775,7 +775,7 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 	if err := ValidateID(id); err != nil {
 		return PluginSummary{}, err
 	}
-	dir, builtin, err := s.pluginDir(id)
+	_, builtin, err := s.pluginDir(id)
 	if err != nil {
 		return PluginSummary{}, err
 	}
@@ -849,7 +849,7 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 	// The staging above happened outside the lock, so what is installed
 	// now may no longer be what was read then: re-read it, and refuse to
 	// swap over a version this source was never compared against.
-	dir, builtin, err = s.pluginDir(id)
+	dir, builtin, err := s.pluginDir(id)
 	if err != nil {
 		return PluginSummary{}, err
 	}
