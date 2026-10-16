@@ -90,3 +90,26 @@ func TestRunCloseAfterWaitIsDeferred(t *testing.T) {
 		t.Fatalf("Close after a settled Wait cancelled a finished run: %d records", len(got))
 	}
 }
+
+// TestRunSecondWaitReportsTheOwnersOutcome pins the duplicate-release
+// semantics: a caller that races a Wait or a Close reads the outcome
+// the release produced instead of an invented "already finished" error,
+// which a turn renderer would show as a failed turn.
+func TestRunSecondWaitReportsTheOwnersOutcome(t *testing.T) {
+	provider := inferencetest.NewScriptedOpenAI(t,
+		inferencetest.ScriptedReply{Text: "only reply"},
+	)
+	h, ctx := steerHost(t, provider)
+	run, err := h.StartRun(ctx, host.RunOptions{
+		Message: message.NewTextMessage(message.RoleUser, "wait twice"),
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	first, firstErr := run.Wait(ctx)
+	second, secondErr := run.Wait(ctx)
+	if second != first || secondErr != firstErr {
+		t.Fatalf("second wait = (%v, %v), want the owner's (%v, %v)",
+			second, secondErr, first, firstErr)
+	}
+}

@@ -31,6 +31,12 @@ import (
 // rows, so the caller can retry once the turn stops.
 const conversationDeleteTimeout = 30 * time.Second
 
+// ErrRunAlreadySettled reports a release that cannot be owned because
+// the handle was never armed: it is nil, or built by hand without a
+// settle channel. A second Wait or Close on a started run does not see
+// it — those wait for the owner's release instead.
+var ErrRunAlreadySettled = errors.New("host: run already settled")
+
 // RunOrigin names who asked for a run. The engine preempts whatever
 // runs on a session when a new turn starts, so a start that collides
 // with a live run on the same conversation has to be resolved before
@@ -116,14 +122,22 @@ type Run struct {
 	lease *coresession.Lease
 	turn  *coresession.Turn
 	// done is claimed by the caller that runs the release path: Wait
-	// and Close both CAS it, and exactly one of them settles the run
-	// (the loser is told the run already finished, or waits on
-	// settled). It is atomic because two callers may race.
+	// and Close both CAS it, and exactly one of them settles the run.
+	// A losing Wait waits on settled and reports the owner's outcome; a
+	// losing Close only waits. It is atomic because two callers may
+	// race.
 	done atomic.Bool
 	// settled is closed once the release path finished. Close waits on
 	// it when another caller owns the release, so returning Close
-	// really means "released".
-	settled       chan struct{}
+	// really means "released", and a second Wait reads the outcome
+	// through it.
+	settled chan struct{}
+	// result/resultErr are the settled outcome, published by the owner
+	// before it closes settled. The channel close is the
+	// happens-before edge, so readers after <-settled need no lock of
+	// their own; a reader that bails on ctx must not touch them.
+	resultErr     error
+	result        *agent.Result
 	detail        *runDetail
 	skipAutoTitle bool
 	startedAt     time.Time
@@ -159,7 +173,10 @@ func (r *Run) FinishedTiming() (time.Time, int64) {
 }
 
 // StartRun opens a session and starts one assistant turn. The caller
-// must call Wait (or Close) to release the lease.
+// must release the returned Run exactly once: Wait — or WaitBounded —
+// reads the result, Close releases without reading it. A caller that
+// walks away from both keeps the conversation busy and blocks the Host
+// from ever closing; Close exists for exactly that path.
 func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	if err := validateUserMessage(opts.Message); err != nil {
 		return nil, err
@@ -541,16 +558,33 @@ func (r *Run) WaitBounded(ctx context.Context) (*agent.Result, error) {
 // the result is nil and the error is the context's; the settle
 // path still runs, so callers that pass a cancellable context must
 // tolerate a result-less wait (see WaitBounded for the caller that
-// does not want one). A second Wait is told the run already finished;
-// Close is the variant for a caller that will not read the result.
+// does not want one). A second Wait — a caller that raced a Wait or a
+// Close — does not release again: it waits for the owner's release and
+// reports the very outcome that release produced, so a duplicate wait
+// can never be mistaken for a failed turn.
 func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 	if r == nil {
-		return nil, errors.New("host: run already finished")
+		return nil, ErrRunAlreadySettled
 	}
-	if !r.done.CompareAndSwap(false, true) {
-		return nil, errors.New("host: run already finished")
+	if r.done.CompareAndSwap(false, true) {
+		return r.settle(ctx)
 	}
-	return r.settle(ctx)
+	return r.awaitSettled(ctx)
+}
+
+// awaitSettled reports the outcome published by the caller that owned
+// the release. ctx bounds only the wait: once the release finished the
+// outcome is already determined.
+func (r *Run) awaitSettled(ctx context.Context) (*agent.Result, error) {
+	if r.settled == nil {
+		return nil, ErrRunAlreadySettled
+	}
+	select {
+	case <-r.settled:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return r.result, r.resultErr
 }
 
 // Close releases a run whose result nobody will read: it cancels the
@@ -708,6 +742,10 @@ func (r *Run) settle(ctx context.Context) (*agent.Result, error) {
 	if host != nil {
 		host.awaitCloseIfClosing()
 	}
+	// Publish the outcome before the deferred close of settled, so a
+	// second Wait reads exactly what this release produced.
+	r.result = res
+	r.resultErr = err
 	return res, err
 }
 
