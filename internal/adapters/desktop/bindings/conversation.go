@@ -173,6 +173,18 @@ func (b *Conversation) StartTurn(
 			if err != nil {
 				return err
 			}
+			// A run must be released exactly once. The sink goroutine
+			// below owns the release; this guard covers every other
+			// exit from this closure after StartRun succeeded — a
+			// panic in the bookkeeping, or an error a future edit
+			// returns — so a turn can never be left holding the
+			// conversation and the Host's run slot.
+			handedOff := false
+			defer func() {
+				if !handedOff {
+					run.Close()
+				}
+			}()
 			startedAt := time.Now().UTC()
 			b.core.Conversation.TrackRun(workDir, contextID, run.RunID())
 			b.core.Shell.Emit(core.EventStatus, core.StatusEvent{Busy: true})
@@ -186,6 +198,7 @@ func (b *Conversation) StartTurn(
 				defer releaseSink()
 				b.waitTurn(ctx, run, contextID)
 			}()
+			handedOff = true
 			return nil
 		},
 	)
