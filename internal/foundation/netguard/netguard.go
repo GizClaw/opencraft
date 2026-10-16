@@ -200,13 +200,17 @@ func blockedKind(ip net.IP) bool {
 		ip.IsMulticast() || ip.IsUnspecified()
 }
 
-// blockedV4 covers the IPv4-only ranges IsPrivate does not:
-// 0.0.0.0/8 (RFC 1122 "this host on this network"; Linux routes it to
-// loopback, so reaching 0.x is reaching this host), 100.64.0.0/10
-// (carrier-grade NAT shared space, where a service behind the carrier's
-// NAT can sit), 192.0.0.0/24 (IETF protocol assignments), 198.18.0.0/15
-// (benchmarking) and 240.0.0.0/4 (reserved, including the broadcast
-// address).
+// blockedV4 covers the IPv4-only ranges IsPrivate does not: 0.0.0.0/8
+// (RFC 1122 "this host on this network"; Linux routes it to loopback, so
+// reaching 0.x is reaching this host), 100.64.0.0/10 (carrier-grade NAT
+// shared space, where a service behind the carrier's NAT can sit),
+// multicast, 240.0.0.0/4 (reserved, including the broadcast address),
+// and the special-purpose blocks that do not route to a service:
+// 192.0.0.0/24 (protocol assignments — a few anycast addresses inside
+// it are globally reachable; refusing the whole block is the deliberate
+// side of that trade), 192.0.2.0/24, 198.51.100.0/24 and 203.0.113.0/24
+// (TEST-NET-1/2/3), 192.88.99.0/24 (6to4 relay anycast, deprecated) and
+// 198.18.0.0/15 (benchmarking).
 func blockedV4(v4 net.IP) bool {
 	if len(v4) != 4 {
 		return false
@@ -216,11 +220,23 @@ func blockedV4(v4 net.IP) bool {
 		return true
 	case v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127:
 		return true
+	case v4[0]&0xf0 == 0xe0:
+		// 224.0.0.0/4 spelled as dotted four bytes; mapped spellings
+		// arrive here through To4 and are covered by the same test.
+		return true
+	case v4[0] >= 240:
+		return true
 	case v4[0] == 192 && v4[1] == 0 && v4[2] == 0:
+		return true
+	case v4[0] == 192 && v4[1] == 0 && v4[2] == 2:
+		return true
+	case v4[0] == 192 && v4[1] == 88 && v4[2] == 99:
 		return true
 	case v4[0] == 198 && (v4[1] == 18 || v4[1] == 19):
 		return true
-	case v4[0] >= 240:
+	case v4[0] == 198 && v4[1] == 51 && v4[2] == 100:
+		return true
+	case v4[0] == 203 && v4[1] == 0 && v4[2] == 113:
 		return true
 	}
 	return false
