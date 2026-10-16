@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
 import { AutomationsView } from './AutomationsView';
@@ -161,5 +168,49 @@ describe('AutomationsView', () => {
       screen.getByText('Skipped: the conversation already had a running turn'),
     ).toBeInTheDocument();
     expect(screen.queryByText('conversation_busy')).toBeNull();
+  });
+
+  it('counts the next run down while the list is on screen', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-21T09:00:00Z'));
+    try {
+      const task = useStore.getState().automations[0];
+      useStore.setState({
+        automations: [
+          { ...task, next_run_at: '2026-09-21T09:02:00Z', enabled: true },
+        ],
+      });
+      render(<AutomationsView />);
+
+      expect(screen.getByText('in 2 min')).toBeInTheDocument();
+      act(() => {
+        vi.advanceTimersByTime(60_000);
+      });
+      // The label is the point of the tick: it said "in 2 min" for as long
+      // as the page stayed open before.
+      expect(screen.getByText('in 1 min')).toBeInTheDocument();
+      expect(screen.queryByText('in 2 min')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a save failure inside the editor it came from', async () => {
+    apiMock.saveAutomation.mockRejectedValue(new Error('backend is down'));
+    render(<AutomationsView />);
+    fireEvent.click(screen.getByText('Daily brief'));
+    fireEvent.click(screen.getByText('Save'));
+
+    const drawer = await screen.findByRole('dialog');
+    expect(
+      within(drawer).getByText('Error: backend is down'),
+    ).toBeInTheDocument();
+
+    // Closing the editor takes the failure with it: a banner left on the
+    // page describes a save whose form is gone.
+    fireEvent.click(screen.getByText('Cancel'));
+    await waitFor(() =>
+      expect(screen.queryByText('Error: backend is down')).toBeNull(),
+    );
   });
 });

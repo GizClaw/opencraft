@@ -24,10 +24,11 @@ import { api } from '../lib/api';
 import {
   DEFAULT_AUTOMATION_TIMEOUT_MINUTES,
   MAX_AUTOMATION_TIMEOUT_MINUTES,
-  timeoutDurationFromMinutes,
+  timeoutFromForm,
   timeoutMinutesFromDuration,
 } from '../lib/automationTimeout';
 import { useStore } from '../lib/store';
+import { useNowTick } from '../lib/useNowTick';
 import type {
   AutomationRun,
   AutomationSchedule,
@@ -56,9 +57,13 @@ interface FormState {
   model: string;
   think: string;
   notify: string;
-  // timeoutMinutes is the run bound in minutes; empty = the 15-minute
-  // default (the stored form is a Go duration).
+  // The run bound, in the three pieces timeoutFromForm needs: the stored
+  // duration verbatim (what an untouched form writes back), the whole
+  // minutes the field edits ('' = the field's empty state) and whether
+  // the user has touched that field.
+  timeoutDuration: string;
   timeoutMinutes: string;
+  timeoutEdited: boolean;
   sessionMode: 'new' | 'existing';
   sessionID: string;
   enabled: boolean;
@@ -80,7 +85,9 @@ const emptyForm = (workspace: string, yoloOnly: boolean): FormState => ({
   model: '',
   think: '',
   notify: 'always',
+  timeoutDuration: '',
   timeoutMinutes: '',
+  timeoutEdited: false,
   sessionMode: 'new',
   sessionID: '',
   enabled: true,
@@ -100,13 +107,37 @@ const taskToForm = (task: AutomationTask, yoloOnly: boolean): FormState => ({
   model: task.model ?? '',
   think: task.think ?? '',
   notify: task.notify || 'always',
+  timeoutDuration: task.timeout ?? '',
   timeoutMinutes: timeoutMinutesFromDuration(task.timeout),
+  timeoutEdited: false,
   sessionMode: task.conversation_id ? 'existing' : 'new',
   sessionID: task.conversation_id ?? '',
   enabled: task.enabled,
 });
 
-const formToTask = (f: FormState): AutomationTask => {
+// timeoutPlaceholder is the bound the minutes field cannot state: a task
+// whose stored run limit is "1.5h" or "40ms" would otherwise show an empty
+// field with the 15-minute default in it, and reading the field as "this
+// task is bounded at 15 minutes" is exactly what saving used to make true.
+// NextRunCountdown is the relative half of a task's "next" line. It ticks
+// once a second (see useNowTick) and holds the tick itself, so the list
+// below — a running table and a recent one — does not re-render because a
+// countdown moved. The label reads the parent's formatter, which is where
+// the locale lives.
+function NextRunCountdown({ label }: { label: () => string }) {
+  useNowTick(true);
+  return <span className="text-accent">{label()}</span>;
+}
+
+const timeoutPlaceholder = (f: FormState): string => {
+  const stored = f.timeoutDuration.trim();
+  if (!f.timeoutEdited && f.timeoutMinutes === '' && stored !== '') {
+    return stored;
+  }
+  return String(DEFAULT_AUTOMATION_TIMEOUT_MINUTES);
+};
+
+const formToTask = (f: FormState, timeout: string): AutomationTask => {
   const schedule: AutomationSchedule = { type: f.scheduleType };
   if (f.scheduleType === 'hourly') {
     schedule.interval_hours = f.intervalHours;
@@ -128,7 +159,7 @@ const formToTask = (f: FormState): AutomationTask => {
     model: f.model.trim(),
     think: f.think,
     notify: f.notify,
-    timeout: timeoutDurationFromMinutes(f.timeoutMinutes) ?? '',
+    timeout,
     conversation_id: f.sessionMode === 'existing' ? f.sessionID : '',
     enabled: f.enabled,
     created_at: '',
@@ -404,7 +435,9 @@ export function AutomationsView() {
 
   const save = async () => {
     if (!form) return;
-    const timeout = timeoutDurationFromMinutes(form.timeoutMinutes);
+    // The bound is decided once, in one place: the stored duration while
+    // the field is untouched, the minutes the user typed after that.
+    const timeout = timeoutFromForm(form);
     if (timeout === undefined) {
       setError(t('automations.timeoutInvalid'));
       return;
@@ -412,8 +445,12 @@ export function AutomationsView() {
     setSaving(true);
     setError('');
     try {
-      const saved = await api.saveAutomation(formToTask(form));
-      toast(saved.id ? t('automations.saved') : t('automations.created'));
+      await api.saveAutomation(formToTask(form, timeout));
+      // The store fills in an id for a task saved without one (`t-…`), so
+      // the stored row always carries one and "created" was unreachable
+      // through it. The form's own id is what says whether this is a new
+      // task — read before the form is dismissed.
+      toast(form.id ? t('automations.saved') : t('automations.created'));
       setForm(null);
       void loadAutomations();
     } catch (err) {
@@ -603,12 +640,6 @@ export function AutomationsView() {
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-control border border-err/40 bg-err/10 px-3 py-2 text-sm text-err">
-          {error}
-        </div>
-      )}
-
       <div className="relative">
         <Search
           size={ICON.xs}
@@ -683,9 +714,9 @@ export function AutomationsView() {
                           {t('automations.next')}: {fmtTime(task.next_run_at)}
                         </span>
                         {task.enabled && (
-                          <span className="text-accent">
-                            {timeUntil(task.next_run_at)}
-                          </span>
+                          <NextRunCountdown
+                            label={() => timeUntil(task.next_run_at)}
+                          />
                         )}
                       </>
                     ) : (
@@ -945,9 +976,10 @@ export function AutomationsView() {
                     setForm({
                       ...form,
                       timeoutMinutes: next === '' ? '' : String(next),
+                      timeoutEdited: true,
                     })
                   }
-                  placeholder={`${DEFAULT_AUTOMATION_TIMEOUT_MINUTES}`}
+                  placeholder={timeoutPlaceholder(form)}
                   className="w-full"
                 />
                 <span className="block text-micro text-dim">
@@ -1150,6 +1182,16 @@ export function AutomationsView() {
                 </Field>
               )}
             </SectionCard>
+
+            {/* The save's own failure, next to the button that raised it.
+                At page level it outlived the form it belonged to: closing
+                the drawer left a banner about a save the reader could no
+                longer retry. */}
+            {error && (
+              <div className="rounded-control border border-err/40 bg-err/10 px-3 py-2 text-sm text-err">
+                {error}
+              </div>
+            )}
 
             <div className="flex items-center gap-2">
               <button

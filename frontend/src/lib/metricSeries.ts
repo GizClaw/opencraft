@@ -35,6 +35,12 @@ function fold(values: number[], mode: MetricAggregate): number {
 
 // downsample folds rows into at most maxPoints buckets, each carrying every
 // series aggregated with the same mode.
+//
+// A bucket's series are the union of the keys its rows carry, and a key a
+// row does not have takes no part in that bucket's fold: a missing sample is
+// not a zero sample. Split series arrive as one row per (ts, role), so a key
+// is routinely missing from most rows of a bucket, and the "last" fold would
+// otherwise report the zero that filled the gap as the value the series held.
 export function downsample(
   rows: MetricRow[],
   maxPoints: number,
@@ -46,12 +52,17 @@ export function downsample(
   for (let i = 0; i < rows.length; i += chunk) {
     const part = rows.slice(i, i + chunk);
     const merged: MetricRow = { ts: part[part.length - 1].ts };
-    for (const series of Object.keys(part[0])) {
-      if (series === 'ts') continue;
-      merged[series] = fold(
-        part.map((row) => row[series] ?? 0),
-        mode,
-      );
+    const samples = new Map<string, number[]>();
+    for (const row of part) {
+      for (const [series, value] of Object.entries(row)) {
+        if (series === 'ts') continue;
+        const values = samples.get(series);
+        if (values) values.push(value);
+        else samples.set(series, [value]);
+      }
+    }
+    for (const [series, values] of samples) {
+      merged[series] = fold(values, mode);
     }
     out.push(merged);
   }
