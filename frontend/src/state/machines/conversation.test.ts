@@ -645,7 +645,7 @@ describe('runs that started outside this client', () => {
     expect(regions(actor).turn).toBe('succeeded');
 
     // Both the duplicate terminal event and a late delta of r-2 stay
-    // inert: they are exactly what `lastEndedRunID` is for.
+    // inert: the ended-run memory is what says so.
     endTurn(actor, 'r-2', 'failed');
     actor.send({ type: 'STREAM', runID: 'r-2', stage: 'text' });
     expect(regions(actor).turn).toBe('succeeded');

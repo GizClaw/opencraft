@@ -106,7 +106,10 @@ function submitting(
 // without that run ever becoming the last one to end, and its late
 // deltas must not be able to slip in behind the replacement's own
 // ending. Bounded because the memory only has to outlive the staleness
-// window, not the conversation.
+// window, not the conversation: a re-created actor (a reload, an evicted
+// background conversation, a workspace reset) knows nothing about a run
+// it never saw, which is the same trade the gate already makes for runs
+// this client did not start.
 const ENDED_RUN_MEMORY = 32;
 
 /** Whether this run's terminal event has already been seen. */
@@ -304,7 +307,8 @@ export const conversationMachine = createMachine({
             // ActiveRun() recovery: a conversation actor created after
             // the run already started receives RUN_STARTED directly.
             RUN_STARTED: {
-              guard: ({ context }) => !context.deletedAt,
+              guard: ({ context, event }) =>
+                !context.deletedAt && !isEndedRun(context, event.runID),
               target: 'running',
               actions: assign({
                 currentRunID: ({ event }) => event.runID,
