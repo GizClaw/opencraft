@@ -100,6 +100,34 @@ function submitting(
   return !context.deletedAt && SUBMISSIONS[kind][phase] === effect;
 }
 
+// How many ended runs a conversation remembers. An event that names a
+// run whose terminal event this machine has already seen is stale by
+// definition, and one slot cannot say that: a barge-in replaces a run
+// without that run ever becoming the last one to end, and its late
+// deltas must not be able to slip in behind the replacement's own
+// ending. Bounded because the memory only has to outlive the staleness
+// window, not the conversation.
+const ENDED_RUN_MEMORY = 32;
+
+/** Whether this run's terminal event has already been seen. */
+export function isEndedRun(
+  context: { endedRunIDs?: string[] },
+  runID: string,
+): boolean {
+  return context.endedRunIDs?.includes(runID) ?? false;
+}
+
+function rememberEnded(
+  context: { endedRunIDs?: string[] },
+  runID: string,
+): string[] {
+  const ended = context.endedRunIDs ?? [];
+  // An empty id is no run at all; the memory only keeps runs that
+  // ended. (A failed send used to synthesize a terminal event with one.)
+  if (!runID || ended.includes(runID)) return ended;
+  return [...ended, runID].slice(-ENDED_RUN_MEMORY);
+}
+
 interface ConversationContext {
   id: string;
   workspaceGeneration: number;
@@ -121,7 +149,11 @@ interface ConversationContext {
     error?: string;
     errorKind?: string;
   };
-  lastEndedRunID?: string;
+  // The runs whose terminal event this machine has already seen, most
+  // recent last (bounded, see ENDED_RUN_MEMORY). Whatever a run says
+  // after its ending - a late delta, a replayed terminal - is stale,
+  // and this is what says so.
+  endedRunIDs?: string[];
   turnStage?: string;
   failureStatus?: 'failed' | 'aborted' | 'canceled' | 'interrupted';
   // failureErrorKind is the structured class of the failure (the
@@ -283,11 +315,11 @@ export const conversationMachine = createMachine({
             // Frontend reload recovery: the first stream of a live run
             // can restore a conversation whose run started before the
             // UI mounted. A late stream for an already-finished run is
-            // ignored via lastEndedRunID.
+            // ignored: the ended-run memory says that run is over.
             STREAM: {
               guard: ({ context, event }) =>
                 !context.deletedAt &&
-                event.runID !== context.lastEndedRunID &&
+                !isEndedRun(context, event.runID) &&
                 (event.runID !== context.currentRunID ||
                   event.stage !== context.turnStage),
               target: 'running',
@@ -308,13 +340,14 @@ export const conversationMachine = createMachine({
               {
                 guard: ({ context, event }) =>
                   !context.deletedAt &&
-                  event.runID !== context.lastEndedRunID &&
+                  !isEndedRun(context, event.runID) &&
                   event.status !== 'completed',
                 target: 'failed',
                 actions: assign({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
-                  lastEndedRunID: ({ event }) => event.runID,
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                   failureStatus: ({ event }) =>
                     event.status === 'failed' ||
                     event.status === 'aborted' ||
@@ -328,12 +361,13 @@ export const conversationMachine = createMachine({
               },
               {
                 guard: ({ context, event }) =>
-                  !context.deletedAt && event.runID !== context.lastEndedRunID,
+                  !context.deletedAt && !isEndedRun(context, event.runID),
                 target: 'succeeded',
                 actions: assign({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
-                  lastEndedRunID: ({ event }) => event.runID,
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                   failureStatus: () => undefined,
                   failureErrorKind: () => undefined,
                   turnError: () => undefined,
@@ -384,7 +418,8 @@ export const conversationMachine = createMachine({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
                   supersededEnd: () => undefined,
-                  lastEndedRunID: ({ context }) => context.supersededRunID,
+                  endedRunIDs: ({ context }) =>
+                    rememberEnded(context, context.supersededRunID ?? ''),
                   failureStatus: () => undefined,
                   failureErrorKind: () => undefined,
                   turnError: () => undefined,
@@ -398,7 +433,8 @@ export const conversationMachine = createMachine({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
                   supersededEnd: () => undefined,
-                  lastEndedRunID: ({ context }) => context.supersededRunID,
+                  endedRunIDs: ({ context }) =>
+                    rememberEnded(context, context.supersededRunID ?? ''),
                   failureStatus: ({ context }) =>
                     context.supersededEnd?.status === 'failed' ||
                     context.supersededEnd?.status === 'aborted' ||
@@ -412,11 +448,26 @@ export const conversationMachine = createMachine({
                     context.supersededEnd?.error ?? event.error,
                 }),
               },
+              {
+                // A plain send failed before any run existed: there is
+                // no run to resume or to absorb, so the failure is the
+                // whole fact and nothing about an ended run changes.
+                guard: ({ context }) =>
+                  !context.deletedAt && context.supersededRunID === undefined,
+                target: 'failed',
+                actions: assign({
+                  currentRunID: () => undefined,
+                  supersededEnd: () => undefined,
+                  failureStatus: () => 'failed',
+                  failureErrorKind: () => undefined,
+                  turnError: ({ event }) => event.error,
+                }),
+              },
             ],
             RUN_STARTED: {
               guard: ({ context, event }) =>
                 !context.deletedAt &&
-                event.runID !== context.lastEndedRunID &&
+                !isEndedRun(context, event.runID) &&
                 event.runID !== context.supersededRunID,
               target: 'running',
               actions: assign({
@@ -429,7 +480,7 @@ export const conversationMachine = createMachine({
             STREAM: {
               guard: ({ context, event }) =>
                 !context.deletedAt &&
-                event.runID !== context.lastEndedRunID &&
+                !isEndedRun(context, event.runID) &&
                 event.runID !== context.supersededRunID &&
                 (event.runID !== context.currentRunID ||
                   event.stage !== context.turnStage),
@@ -447,9 +498,10 @@ export const conversationMachine = createMachine({
                 // replacement is still starting. The run was this
                 // conversation's current one when the send began, so
                 // the machine is what saw the ending: record it and
-                // stay in `starting` — a failed start absorbs it (see
-                // START_FAILED), a replacement that does start clears
-                // it with the run swap.
+                // stay in `starting`: a failed start absorbs it (see
+                // START_FAILED), a replacement that does start drops
+                // `supersededEnd` with the run swap, and the ended-run
+                // memory keeps the run's late events inert either way.
                 guard: ({ context, event }) =>
                   !context.deletedAt &&
                   context.supersededRunID !== undefined &&
@@ -460,19 +512,23 @@ export const conversationMachine = createMachine({
                     error: event.error,
                     errorKind: event.errorKind,
                   }),
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                 }),
               },
               {
                 guard: ({ context, event }) =>
                   !context.deletedAt &&
                   event.runID !== context.supersededRunID &&
-                  event.status !== 'completed',
+                  event.status !== 'completed' &&
+                  !isEndedRun(context, event.runID),
                 target: 'failed',
                 actions: assign({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
                   supersededEnd: () => undefined,
-                  lastEndedRunID: ({ event }) => event.runID,
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                   failureStatus: ({ event }) =>
                     event.status === 'failed' ||
                     event.status === 'aborted' ||
@@ -486,13 +542,16 @@ export const conversationMachine = createMachine({
               },
               {
                 guard: ({ context, event }) =>
-                  !context.deletedAt && event.runID !== context.supersededRunID,
+                  !context.deletedAt &&
+                  event.runID !== context.supersededRunID &&
+                  !isEndedRun(context, event.runID),
                 target: 'succeeded',
                 actions: assign({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
                   supersededEnd: () => undefined,
-                  lastEndedRunID: ({ event }) => event.runID,
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                   failureStatus: () => undefined,
                   failureErrorKind: () => undefined,
                   turnError: () => undefined,
@@ -527,7 +586,7 @@ export const conversationMachine = createMachine({
             RUN_STARTED: {
               guard: ({ context, event }) =>
                 !context.deletedAt &&
-                event.runID !== context.lastEndedRunID &&
+                !isEndedRun(context, event.runID) &&
                 event.runID !== context.currentRunID,
               actions: assign({
                 currentRunID: ({ event }) => event.runID,
@@ -556,7 +615,8 @@ export const conversationMachine = createMachine({
                 actions: assign({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
-                  lastEndedRunID: ({ event }) => event.runID,
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                   failureStatus: ({ event }) =>
                     event.status === 'failed' ||
                     event.status === 'aborted' ||
@@ -575,10 +635,28 @@ export const conversationMachine = createMachine({
                 actions: assign({
                   currentRunID: () => undefined,
                   supersededRunID: () => undefined,
-                  lastEndedRunID: ({ event }) => event.runID,
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                   failureStatus: () => undefined,
                   failureErrorKind: () => undefined,
                   turnError: () => undefined,
+                }),
+              },
+              {
+                // A terminal event for a run this conversation is not
+                // watching right now: the run a barge-in replaced, or
+                // one whose ending raced the replacement's start. The
+                // run is over - remember it so its late deltas and any
+                // replay of this event can never touch the transcript
+                // again, and stay on the run that is live.
+                guard: ({ context, event }) =>
+                  !context.deletedAt &&
+                  event.runID !== context.currentRunID &&
+                  event.runID !== context.supersededRunID &&
+                  !isEndedRun(context, event.runID),
+                actions: assign({
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                 }),
               },
             ],
@@ -601,13 +679,13 @@ export const conversationMachine = createMachine({
             // automation that pinned this conversation starts its turn
             // whenever its schedule fires, and a reload can adopt a run
             // that was already in flight. Whether an event belongs to
-            // the run on screen is `lastEndedRunID`'s question; the
-            // phase this client left behind answers nothing about a run
-            // it never started, and treating it as a gate dropped the
-            // whole turn.
+            // a run that is still live is the ended-run memory's
+            // question; the phase this client left behind answers
+            // nothing about a run it never started, and treating it as
+            // a gate dropped the whole turn.
             RUN_STARTED: {
               guard: ({ context, event }) =>
-                !context.deletedAt && event.runID !== context.lastEndedRunID,
+                !context.deletedAt && !isEndedRun(context, event.runID),
               target: 'running',
               actions: assign({
                 currentRunID: ({ event }) => event.runID,
@@ -618,7 +696,7 @@ export const conversationMachine = createMachine({
             STREAM: {
               guard: ({ context, event }) =>
                 !context.deletedAt &&
-                event.runID !== context.lastEndedRunID &&
+                !isEndedRun(context, event.runID) &&
                 (event.runID !== context.currentRunID ||
                   event.stage !== context.turnStage),
               target: 'running',
@@ -632,11 +710,12 @@ export const conversationMachine = createMachine({
               {
                 guard: ({ context, event }) =>
                   !context.deletedAt &&
-                  event.runID !== context.lastEndedRunID &&
+                  !isEndedRun(context, event.runID) &&
                   event.status !== 'completed',
                 target: 'failed',
                 actions: assign({
-                  lastEndedRunID: ({ event }) => event.runID,
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                   failureStatus: ({ event }) =>
                     event.status === 'failed' ||
                     event.status === 'aborted' ||
@@ -650,9 +729,10 @@ export const conversationMachine = createMachine({
               },
               {
                 guard: ({ context, event }) =>
-                  !context.deletedAt && event.runID !== context.lastEndedRunID,
+                  !context.deletedAt && !isEndedRun(context, event.runID),
                 actions: assign({
-                  lastEndedRunID: ({ event }) => event.runID,
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                   failureStatus: () => undefined,
                   failureErrorKind: () => undefined,
                   turnError: () => undefined,
@@ -679,7 +759,7 @@ export const conversationMachine = createMachine({
             // to drop the next run's start, deltas or terminal event.
             RUN_STARTED: {
               guard: ({ context, event }) =>
-                !context.deletedAt && event.runID !== context.lastEndedRunID,
+                !context.deletedAt && !isEndedRun(context, event.runID),
               target: 'running',
               actions: assign({
                 currentRunID: ({ event }) => event.runID,
@@ -693,7 +773,7 @@ export const conversationMachine = createMachine({
             STREAM: {
               guard: ({ context, event }) =>
                 !context.deletedAt &&
-                event.runID !== context.lastEndedRunID &&
+                !isEndedRun(context, event.runID) &&
                 (event.runID !== context.currentRunID ||
                   event.stage !== context.turnStage),
               target: 'running',
@@ -710,10 +790,11 @@ export const conversationMachine = createMachine({
               {
                 guard: ({ context, event }) =>
                   !context.deletedAt &&
-                  event.runID !== context.lastEndedRunID &&
+                  !isEndedRun(context, event.runID) &&
                   event.status !== 'completed',
                 actions: assign({
-                  lastEndedRunID: ({ event }) => event.runID,
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                   failureStatus: ({ event }) =>
                     event.status === 'failed' ||
                     event.status === 'aborted' ||
@@ -727,10 +808,11 @@ export const conversationMachine = createMachine({
               },
               {
                 guard: ({ context, event }) =>
-                  !context.deletedAt && event.runID !== context.lastEndedRunID,
+                  !context.deletedAt && !isEndedRun(context, event.runID),
                 target: 'idle',
                 actions: assign({
-                  lastEndedRunID: ({ event }) => event.runID,
+                  endedRunIDs: ({ context, event }) =>
+                    rememberEnded(context, event.runID),
                   failureStatus: () => undefined,
                   failureErrorKind: () => undefined,
                   turnError: () => undefined,

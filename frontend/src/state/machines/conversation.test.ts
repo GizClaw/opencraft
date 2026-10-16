@@ -201,6 +201,79 @@ describe('conversation machine', () => {
     });
   });
 
+  // The replaced run is over, and the memory has to say so even though
+  // the run never becomes the last one to end: the replacement's ending
+  // is. One slot could not hold both, and a late delta of the replaced
+  // run then read as a brand-new live run - the conversation was pinned
+  // to a run whose terminal event it had already consumed.
+  it('remembers the replaced run once the replacement starts', () => {
+    const actor = start();
+    actor.send({ type: 'SUBMIT', kind: 'send' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    actor.send({ type: 'SUBMIT', kind: 'interrupt' });
+    // The engine finalizes the old run before the replacement starts,
+    // so this is the shape the barge wait actually sees.
+    endTurn(actor, 'r-old', 'interrupted');
+
+    actor.send({ type: 'RUN_STARTED', runID: 'r-new' });
+    endTurn(actor, 'r-new', 'completed');
+    expect(regions(actor).turn).toBe('succeeded');
+    expect(actor.getSnapshot().context.endedRunIDs).toEqual(['r-old', 'r-new']);
+
+    // The stale delta of the replaced run stays inert: whichever phase
+    // the turn is in, that run is over.
+    actor.send({ type: 'STREAM', runID: 'r-old', stage: 'text' });
+    expect(regions(actor).turn).toBe('succeeded');
+  });
+
+  it('remembers a replaced run whose ending arrives after the replacement started', () => {
+    const actor = start();
+    actor.send({ type: 'SUBMIT', kind: 'send' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    actor.send({ type: 'SUBMIT', kind: 'interrupt' });
+    // The replacement wins the race; the replaced run's terminal event
+    // then lands with nothing watching it.
+    actor.send({ type: 'RUN_STARTED', runID: 'r-new' });
+
+    endTurn(actor, 'r-old', 'interrupted');
+    expect(regions(actor).turn).toBe('running');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-new',
+      endedRunIDs: ['r-old'],
+    });
+
+    endTurn(actor, 'r-new', 'completed');
+    expect(regions(actor).turn).toBe('succeeded');
+    actor.send({ type: 'STREAM', runID: 'r-old', stage: 'text' });
+    expect(regions(actor).turn).toBe('succeeded');
+  });
+
+  it('a failed plain send keeps the ended-run memory', () => {
+    const actor = start();
+    actor.send({ type: 'SUBMIT', kind: 'send' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    endTurn(actor, 'r-1', 'completed');
+    expect(regions(actor).turn).toBe('succeeded');
+
+    // The next send fails before it produced a run: there is no run to
+    // report, and what did end has to stay remembered. A synthetic
+    // terminal event with an empty run id used to wipe the slot here.
+    actor.send({ type: 'SUBMIT', kind: 'send' });
+    actor.send({ type: 'START_FAILED', error: 'start boom' });
+    expect(regions(actor).turn).toBe('failed');
+    expect(actor.getSnapshot().context).toMatchObject({
+      endedRunIDs: ['r-1'],
+      failureStatus: 'failed',
+      turnError: 'start boom',
+    });
+
+    // Both stale shapes of r-1 stay inert in the failed turn.
+    actor.send({ type: 'STREAM', runID: 'r-1', stage: 'text' });
+    endTurn(actor, 'r-1', 'failed');
+    expect(regions(actor).turn).toBe('failed');
+    expect(actor.getSnapshot().context.failureStatus).toBe('failed');
+  });
+
   it('a force-canceled superseded run still waits for the replacement', () => {
     const actor = start();
     actor.send({ type: 'SUBMIT', kind: 'send' });
@@ -285,7 +358,7 @@ describe('conversation machine', () => {
       currentRunID: undefined,
       supersededRunID: undefined,
       supersededEnd: undefined,
-      lastEndedRunID: 'r-old',
+      endedRunIDs: ['r-old'],
       failureStatus: 'interrupted',
       turnError: 'engine boom',
     });
@@ -305,7 +378,7 @@ describe('conversation machine', () => {
       currentRunID: undefined,
       supersededRunID: undefined,
       supersededEnd: undefined,
-      lastEndedRunID: 'r-old',
+      endedRunIDs: ['r-old'],
     });
   });
 
@@ -352,7 +425,7 @@ describe('conversation machine', () => {
 // A run this client did not start — a scheduled automation pinned to the
 // conversation, or a live run a reload adopted — begins and ends with no
 // send of ours behind it. A resting turn is not a gate for those events;
-// the run's identity is, and `lastEndedRunID` is what says an event is
+// the run's identity is, and the ended-run memory is what says an event is
 // too late. Treating the phase as the gate dropped such a run whole.
 
 describe('the submission table', () => {
@@ -511,7 +584,7 @@ describe('runs that started outside this client', () => {
     expect(regions(actor).turn).toBe('running');
     expect(actor.getSnapshot().context).toMatchObject({
       currentRunID: 'r-2',
-      lastEndedRunID: 'r-1',
+      endedRunIDs: ['r-1'],
     });
 
     actor.send({ type: 'STREAM', runID: 'r-2', stage: 'text' });
@@ -520,7 +593,7 @@ describe('runs that started outside this client', () => {
     endTurn(actor, 'r-2', 'failed');
     expect(regions(actor).turn).toBe('failed');
     expect(actor.getSnapshot().context).toMatchObject({
-      lastEndedRunID: 'r-2',
+      endedRunIDs: ['r-1', 'r-2'],
       failureStatus: 'failed',
     });
   });
@@ -557,7 +630,7 @@ describe('runs that started outside this client', () => {
 
     expect(regions(actor).turn).toBe('failed');
     expect(actor.getSnapshot().context).toMatchObject({
-      lastEndedRunID: 'r-9',
+      endedRunIDs: ['r-9'],
       failureStatus: 'canceled',
       failureErrorKind: 'timeout',
       turnError: 'context deadline exceeded',
@@ -577,7 +650,7 @@ describe('runs that started outside this client', () => {
     actor.send({ type: 'STREAM', runID: 'r-2', stage: 'text' });
     expect(regions(actor).turn).toBe('succeeded');
     expect(actor.getSnapshot().context).toMatchObject({
-      lastEndedRunID: 'r-2',
+      endedRunIDs: ['r-1', 'r-2'],
       failureStatus: undefined,
     });
   });

@@ -244,13 +244,21 @@ export function createConvTurn(
       const context = (snapshot?.context ?? {}) as {
         supersededRunID?: string;
       };
-      if (turnValue === 'starting' && context.supersededRunID) {
-        // The barge-in start failed. Whether the superseded run is
-        // still live is the actor's own knowledge — it recorded the
-        // run's terminal event if one arrived while this send was
-        // starting (see the machine's `starting` state) — so both outs
-        // (resume watching it, absorb its ending) are START_FAILED's.
+      const bargeInFailed =
+        turnValue === 'starting' && context.supersededRunID !== undefined;
+      if (turnValue === 'starting') {
+        // The send failed. A barge-in's failure is the actor's to sort
+        // out — it recorded the superseded run's terminal event if one
+        // arrived while this send was starting, and the run may still
+        // be live otherwise, so both outs (resume watching it, absorb
+        // its ending) are START_FAILED's (see the machine's `starting`
+        // state). A plain send has no run behind it; its failure is
+        // reported by START_FAILED's fallback branch without touching
+        // the ended-run memory — the synthetic `TURN_ENDED` with an
+        // empty run id this replaces is what used to wipe it.
         startingActor?.send({ type: 'START_FAILED', error });
+      }
+      if (bargeInFailed) {
         markFailedSend(convID, error);
         // Tab drafts stay staged for the resumed run; interrupt
         // intents aimed at the start that just failed are dropped.
@@ -260,12 +268,6 @@ export function createConvTurn(
         }
         return;
       }
-      startingActor?.send({
-        type: 'TURN_ENDED',
-        runID: '',
-        status: 'failed',
-        error,
-      });
       // A staged draft no longer has a run to wait for. Interrupt
       // intents were aimed at the failed start, so drop them; Tab
       // queues still fire after the failed send settles.

@@ -1,6 +1,6 @@
 import { UIEventType } from '../lib/events';
 import type { StateRoot } from './root';
-import type { ConversationEvent } from './machines/conversation';
+import { isEndedRun, type ConversationEvent } from './machines/conversation';
 import type { UIEvent } from '../lib/types';
 
 type FailedStatus = 'failed' | 'aborted' | 'canceled' | 'interrupted';
@@ -128,7 +128,7 @@ export function toConversationEvent(
 export function canApplyEvent(
   projection: {
     lifecycle: { name: 'alive' | 'deleted' };
-    lastEndedRunID?: string;
+    endedRunIDs?: string[];
   },
   ev: UIEvent,
 ): boolean {
@@ -142,15 +142,19 @@ export function canApplyEvent(
   // on the phase dropped those runs whole — the live text, the produced
   // files and the running row — and only a later `session_updated`
   // brought any of it back. The one genuinely stale event is one from a
-  // run that has already ended; everything else is the actor's call.
+  // run whose ending the actor has already seen; everything else is the
+  // actor's call. That memory is a set, not one slot: a barge-in can
+  // leave an older ending behind without it ever becoming the last one.
   switch (ev.type) {
     case UIEventType.stream:
     case UIEventType.automationRunStarted:
     case UIEventType.turnEnd: {
-      const data = ev.data as { run_id?: string };
-      return (
-        data.run_id === undefined || data.run_id !== projection.lastEndedRunID
-      );
+      const runID = (ev.data as { run_id?: string }).run_id;
+      if (runID === undefined) return true;
+      // The run's own terminal event passes here because the run is
+      // not remembered yet - it is what puts it in the memory. A
+      // replay of it, and every event after it, is dropped.
+      return !isEndedRun(projection, runID);
     }
     default:
       // artifact/interact/resolved are data-only or are reconciled by
@@ -177,8 +181,8 @@ function routeToConversation(
   const value = snapshot.value as unknown as { lifecycle: string };
   const projection = {
     lifecycle: { name: value.lifecycle as 'alive' | 'deleted' },
-    lastEndedRunID: (snapshot.context as unknown as { lastEndedRunID?: string })
-      .lastEndedRunID,
+    endedRunIDs: (snapshot.context as unknown as { endedRunIDs?: string[] })
+      .endedRunIDs,
   };
   if (!canApplyEvent(projection, ev)) return;
 

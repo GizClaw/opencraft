@@ -548,7 +548,7 @@ describe('store: send and stream', () => {
     expect(actor?.getSnapshot().context).toMatchObject({
       currentRunID: undefined,
       supersededRunID: undefined,
-      lastEndedRunID: 'r-old',
+      endedRunIDs: ['r-old'],
       failureStatus: 'interrupted',
       turnError: 'engine boom',
     });
@@ -558,6 +558,42 @@ describe('store: send and stream', () => {
       status: 'failed',
       error: 'Error: start boom',
     });
+  });
+
+  // A plain send that fails produces no run, and the ended-run memory
+  // must survive it: the synthetic terminal event with an empty run id
+  // the catch path used to send wiped the only slot, so the next event
+  // - a late delta of a run that had already ended - read as a new live
+  // run and put the conversation into a turn it could never finish.
+  it('a failed plain send cannot reopen a run that already ended', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    bindRun('r-1');
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    actor?.send({ type: 'TURN_ENDED', runID: 'r-1', status: 'completed' });
+    expect(actorValue('s-1')?.turn).toBe('succeeded');
+
+    apiMock.startTurn.mockRejectedValueOnce(new Error('start boom'));
+    await useStore.getState().send('next');
+    expect(actorValue('s-1')?.turn).toBe('failed');
+
+    useStore.getState().handleEvent({
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: { type: 'part', part: { type: 'text', text: 'late tail' } },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    expect(actorValue('s-1')?.turn).toBe('failed');
+    const conv = useStore.getState().conversations['s-1'];
+    // The delta opened no strip for the finished run and appended no
+    // text: the strip list is still the failed send's own entry.
+    expect(conv.turnArtifacts).toHaveLength(1);
+    expect(conv.turnArtifacts[0].runID).toBeUndefined();
+    expect(assistantTexts(conv.messages)).toEqual([]);
   });
 
   it('cancelRun during a barge-in start cancels the superseded run', async () => {

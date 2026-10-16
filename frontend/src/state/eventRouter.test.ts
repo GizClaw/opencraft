@@ -299,7 +299,89 @@ describe('event router', () => {
 
     // The first one is the turn's own ending; the second is a replay of a
     // run the actor has finished with, and the data layer's reconciliation
-    // must not run for it twice.
+    // must not run for it twice. A late delta of the same run is the other
+    // stale shape, and it is dropped the same way.
     expect(calls.filter((c) => c === 'conversation-data')).toHaveLength(1);
+
+    routeBackendEvent(
+      {
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: { part: { type: 'text', text: 'late' } },
+        },
+      },
+      { root, data: sink },
+    );
+    expect(calls.filter((c) => c === 'conversation-data')).toHaveLength(1);
+  });
+
+  // A barge-in replaces a run without that run ever becoming the last
+  // one to end - the replacement's own ending is. Judging staleness by
+  // one slot let the replaced run's late delta back in, where it opened
+  // a live strip for a run whose terminal event had already been
+  // consumed and left the turn running forever.
+  it('drops a delta from a run a barge-in replaced', () => {
+    const root = new StateRoot();
+    const { sink, calls } = fakeSink();
+    routeBackendEvent(
+      {
+        type: 'automation_run_started',
+        data: { run_id: 'r-old', conversation_id: 's-1' },
+      },
+      { root, data: sink },
+    );
+    routeBackendEvent(
+      {
+        type: 'automation_run_started',
+        data: { run_id: 'r-new', conversation_id: 's-1' },
+      },
+      { root, data: sink },
+    );
+    routeBackendEvent(
+      {
+        type: 'turn_end',
+        data: {
+          run_id: 'r-old',
+          conversation_id: 's-1',
+          status: 'interrupted',
+        },
+      },
+      { root, data: sink },
+    );
+    routeBackendEvent(
+      {
+        type: 'turn_end',
+        data: {
+          run_id: 'r-new',
+          conversation_id: 's-1',
+          status: 'completed',
+        },
+      },
+      { root, data: sink },
+    );
+    expect(root.registry.get('s-1')?.getSnapshot().value).toMatchObject({
+      turn: 'succeeded',
+    });
+
+    const before = calls.filter((c) => c === 'conversation-data').length;
+    routeBackendEvent(
+      {
+        type: 'stream',
+        data: {
+          run_id: 'r-old',
+          conversation_id: 's-1',
+          delta: { part: { type: 'text', text: 'late' } },
+        },
+      },
+      { root, data: sink },
+    );
+
+    // Neither the data layer nor the actor sees it.
+    expect(calls.filter((c) => c === 'conversation-data')).toHaveLength(before);
+    expect(root.registry.get('s-1')?.getSnapshot().value).toMatchObject({
+      turn: 'succeeded',
+    });
   });
 });

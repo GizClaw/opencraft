@@ -7,6 +7,7 @@ import { createWorkspaceGlue } from './workspace';
 import i18n from '../../i18n';
 import { stateRoot } from '../../state/app';
 import { EventDataSink } from '../../state/eventRouter';
+import { isEndedRun } from '../../state/machines/conversation';
 import { api } from '../api';
 import { UIEventType } from '../events';
 import type {
@@ -69,7 +70,7 @@ export function createEventSink(
             const value = snapshot.value as unknown as { turn: string };
             const context = snapshot.context as {
               currentRunID?: string;
-              lastEndedRunID?: string;
+              endedRunIDs?: string[];
               supersededRunID?: string;
             };
             if (context.supersededRunID && runID === context.supersededRunID) {
@@ -83,12 +84,13 @@ export function createEventSink(
               if (context.currentRunID && runID !== context.currentRunID) {
                 break;
               }
-            } else if (
-              (value.turn === 'starting' || value.turn === 'idle') &&
-              runID === context.lastEndedRunID
-            ) {
-              // The machine already ignores a stream for the last ended
-              // run; mirror it here so data never reaches the renderer.
+            } else if (isEndedRun(context, runID)) {
+              // The machine has already seen this run's terminal event
+              // (a barge-in's recorded ending counts), so the run is
+              // over whatever phase the turn is in - the two settled
+              // phases this used to list were only half of them.
+              // Mirror the machine's judgement here so data never
+              // reaches the renderer.
               break;
             }
           }
