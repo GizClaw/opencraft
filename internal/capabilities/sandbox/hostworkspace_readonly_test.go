@@ -108,7 +108,9 @@ func TestReadonlyRootSymlinkDoesNotEscape(t *testing.T) {
 	if info, err := cw.Stat(ctx, join("leak")); err == nil {
 		t.Fatalf("readonly stat followed a symlink out of the root: %v", info.Name())
 	}
-	if ok, err := cw.Exists(ctx, join("leak")); ok && err == nil {
-		t.Fatal("readonly exists followed a symlink out of the root")
+	// Exists must report a definite "no": a true (with or without an
+	// error) would mean the symlink was followed out of the root.
+	if ok, err := cw.Exists(ctx, join("leak")); ok || err == nil {
+		t.Fatalf("readonly exists followed a symlink out of the root: ok=%v err=%v", ok, err)
 	}
 }
