@@ -197,6 +197,49 @@ export const conversationMachine = createMachine({
                 turnStage: ({ event }) => event.stage ?? '',
               }),
             },
+            // The other end of the same recovery: a run that this client
+            // never watched (a reload adopted it, or a scheduled
+            // automation started it) can also finish without a single
+            // delta, and its terminal event is the only thing that
+            // carries the outcome — status, and the error kind that is
+            // the one way to tell a deadline from a user stop. Dropping
+            // it here lost the live end of the turn.
+            TURN_ENDED: [
+              {
+                guard: ({ context, event }) =>
+                  !context.deletedAt &&
+                  event.runID !== context.lastEndedRunID &&
+                  event.status !== 'completed',
+                target: 'failed',
+                actions: assign({
+                  currentRunID: () => undefined,
+                  supersededRunID: () => undefined,
+                  lastEndedRunID: ({ event }) => event.runID,
+                  failureStatus: ({ event }) =>
+                    event.status === 'failed' ||
+                    event.status === 'aborted' ||
+                    event.status === 'canceled' ||
+                    event.status === 'interrupted'
+                      ? event.status
+                      : undefined,
+                  failureErrorKind: ({ event }) => event.errorKind,
+                  turnError: ({ event }) => event.error,
+                }),
+              },
+              {
+                guard: ({ context, event }) =>
+                  !context.deletedAt && event.runID !== context.lastEndedRunID,
+                target: 'succeeded',
+                actions: assign({
+                  currentRunID: () => undefined,
+                  supersededRunID: () => undefined,
+                  lastEndedRunID: ({ event }) => event.runID,
+                  failureStatus: () => undefined,
+                  failureErrorKind: () => undefined,
+                  turnError: () => undefined,
+                }),
+              },
+            ],
           },
         },
         starting: {
@@ -410,6 +453,69 @@ export const conversationMachine = createMachine({
                 supersededRunID: () => undefined,
               }),
             },
+            // A run can also begin while the turn rests on a terminal
+            // state, and for the same reasons as the two above: the
+            // automation that pinned this conversation starts its turn
+            // whenever its schedule fires, and a reload can adopt a run
+            // that was already in flight. Whether an event belongs to
+            // the run on screen is `lastEndedRunID`'s question; the
+            // phase this client left behind answers nothing about a run
+            // it never started, and treating it as a gate dropped the
+            // whole turn.
+            RUN_STARTED: {
+              guard: ({ context, event }) =>
+                !context.deletedAt && event.runID !== context.lastEndedRunID,
+              target: 'running',
+              actions: assign({
+                currentRunID: ({ event }) => event.runID,
+                supersededRunID: () => undefined,
+                turnStage: () => '',
+              }),
+            },
+            STREAM: {
+              guard: ({ context, event }) =>
+                !context.deletedAt &&
+                event.runID !== context.lastEndedRunID &&
+                (event.runID !== context.currentRunID ||
+                  event.stage !== context.turnStage),
+              target: 'running',
+              actions: assign({
+                currentRunID: ({ event }) => event.runID,
+                supersededRunID: () => undefined,
+                turnStage: ({ event }) => event.stage ?? '',
+              }),
+            },
+            TURN_ENDED: [
+              {
+                guard: ({ context, event }) =>
+                  !context.deletedAt &&
+                  event.runID !== context.lastEndedRunID &&
+                  event.status !== 'completed',
+                target: 'failed',
+                actions: assign({
+                  lastEndedRunID: ({ event }) => event.runID,
+                  failureStatus: ({ event }) =>
+                    event.status === 'failed' ||
+                    event.status === 'aborted' ||
+                    event.status === 'canceled' ||
+                    event.status === 'interrupted'
+                      ? event.status
+                      : undefined,
+                  failureErrorKind: ({ event }) => event.errorKind,
+                  turnError: ({ event }) => event.error,
+                }),
+              },
+              {
+                guard: ({ context, event }) =>
+                  !context.deletedAt && event.runID !== context.lastEndedRunID,
+                actions: assign({
+                  lastEndedRunID: ({ event }) => event.runID,
+                  failureStatus: () => undefined,
+                  failureErrorKind: () => undefined,
+                  turnError: () => undefined,
+                }),
+              },
+            ],
           },
         },
         failed: {
@@ -425,6 +531,68 @@ export const conversationMachine = createMachine({
               guard: ({ context }) => !context.deletedAt,
               target: 'idle',
             },
+            // Same outs as `succeeded`: a failure banner is not a reason
+            // to drop the next run's start, deltas or terminal event.
+            RUN_STARTED: {
+              guard: ({ context, event }) =>
+                !context.deletedAt && event.runID !== context.lastEndedRunID,
+              target: 'running',
+              actions: assign({
+                currentRunID: ({ event }) => event.runID,
+                supersededRunID: () => undefined,
+                turnStage: () => '',
+                failureStatus: () => undefined,
+                failureErrorKind: () => undefined,
+                turnError: () => undefined,
+              }),
+            },
+            STREAM: {
+              guard: ({ context, event }) =>
+                !context.deletedAt &&
+                event.runID !== context.lastEndedRunID &&
+                (event.runID !== context.currentRunID ||
+                  event.stage !== context.turnStage),
+              target: 'running',
+              actions: assign({
+                currentRunID: ({ event }) => event.runID,
+                supersededRunID: () => undefined,
+                turnStage: ({ event }) => event.stage ?? '',
+                failureStatus: () => undefined,
+                failureErrorKind: () => undefined,
+                turnError: () => undefined,
+              }),
+            },
+            TURN_ENDED: [
+              {
+                guard: ({ context, event }) =>
+                  !context.deletedAt &&
+                  event.runID !== context.lastEndedRunID &&
+                  event.status !== 'completed',
+                actions: assign({
+                  lastEndedRunID: ({ event }) => event.runID,
+                  failureStatus: ({ event }) =>
+                    event.status === 'failed' ||
+                    event.status === 'aborted' ||
+                    event.status === 'canceled' ||
+                    event.status === 'interrupted'
+                      ? event.status
+                      : undefined,
+                  failureErrorKind: ({ event }) => event.errorKind,
+                  turnError: ({ event }) => event.error,
+                }),
+              },
+              {
+                guard: ({ context, event }) =>
+                  !context.deletedAt && event.runID !== context.lastEndedRunID,
+                target: 'idle',
+                actions: assign({
+                  lastEndedRunID: ({ event }) => event.runID,
+                  failureStatus: () => undefined,
+                  failureErrorKind: () => undefined,
+                  turnError: () => undefined,
+                }),
+              },
+            ],
           },
         },
       },

@@ -111,31 +111,30 @@ export function toConversationEvent(
 export function canApplyEvent(
   projection: {
     lifecycle: { name: 'alive' | 'deleted' };
-    turn: {
-      name: 'idle' | 'starting' | 'running' | 'succeeded' | 'failed';
-    };
+    lastEndedRunID?: string;
   },
   ev: UIEvent,
 ): boolean {
   if (projection.lifecycle.name === 'deleted') return false;
+  // Whether an event still belongs to the conversation is a question
+  // about the event's run, not about the phase this client last left the
+  // turn in. The phase says where the UI thinks it is, and it knows
+  // nothing about a run the UI never started: a scheduled automation
+  // pinned to the conversation starts its turn whenever its schedule
+  // fires, and a reload adopts a run that was already in flight. Gating
+  // on the phase dropped those runs whole — the live text, the produced
+  // files and the running row — and only a later `session_updated`
+  // brought any of it back. The one genuinely stale event is one from a
+  // run that has already ended; everything else is the actor's call.
   switch (ev.type) {
     case UIEventType.stream:
-      return (
-        projection.turn.name === 'idle' ||
-        projection.turn.name === 'starting' ||
-        projection.turn.name === 'running'
-      );
     case UIEventType.automationRunStarted:
+    case UIEventType.turnEnd: {
+      const data = ev.data as { run_id?: string };
       return (
-        projection.turn.name === 'idle' ||
-        projection.turn.name === 'starting' ||
-        projection.turn.name === 'running'
+        data.run_id === undefined || data.run_id !== projection.lastEndedRunID
       );
-    case UIEventType.turnEnd:
-      return (
-        projection.turn.name === 'starting' ||
-        projection.turn.name === 'running'
-      );
+    }
     default:
       // artifact/interact/resolved are data-only or are reconciled by
       // the data layer; actor validity is checked there.
@@ -159,17 +158,12 @@ function routeToConversation(
   // Data and state changes stay in one synchronous unit. State is
   // checked first so a late event never reaches the data layer.
   const snapshot = actor.getSnapshot();
-  const value = snapshot.value as unknown as {
-    lifecycle: string;
-    transcript: string;
-    turn: string;
-  };
+  const value = snapshot.value as unknown as { lifecycle: string };
   const projection = {
     lifecycle: { name: value.lifecycle as 'alive' | 'deleted' },
-    turn: {
-      name: value.turn as
-        'idle' | 'starting' | 'running' | 'succeeded' | 'failed',
-    },
+    lastEndedRunID: (
+      snapshot.context as unknown as { lastEndedRunID?: string }
+    ).lastEndedRunID,
   };
   if (!canApplyEvent(projection, ev)) return;
 

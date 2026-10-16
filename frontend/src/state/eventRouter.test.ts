@@ -161,4 +161,79 @@ describe('event router', () => {
 
     expect(sink.sessionUpdated).not.toHaveBeenCalled();
   });
+
+  // The gate between the backend and both state and data is "does this
+  // event still belong to the conversation", and the answer cannot be
+  // read off the turn phase: a phase only ever describes the runs this
+  // client knows about. A scheduled automation pinned to the
+  // conversation starts its own run whenever its schedule fires, so the
+  // first thing the UI hears about it can arrive while the last turn
+  // rests on `succeeded` — and gating on the phase dropped the run's
+  // whole live turn, leaving the transcript to a later session_updated.
+  it('lets a new run through a conversation whose last turn succeeded', () => {
+    const root = new StateRoot();
+    const { sink, calls } = fakeSink();
+    routeBackendEvent(
+      {
+        type: 'automation_run_started',
+        data: { run_id: 'r-1', conversation_id: 's-1', message: 'go' },
+      },
+      { root, data: sink },
+    );
+    routeBackendEvent(
+      {
+        type: 'turn_end',
+        data: { run_id: 'r-1', conversation_id: 's-1', status: 'completed' },
+      },
+      { root, data: sink },
+    );
+    expect(root.registry.get('s-1')?.getSnapshot().value).toMatchObject({
+      turn: 'succeeded',
+    });
+
+    routeBackendEvent(
+      {
+        type: 'automation_run_started',
+        data: { run_id: 'r-2', conversation_id: 's-1', message: 'again' },
+      },
+      { root, data: sink },
+    );
+    routeBackendEvent(
+      {
+        type: 'stream',
+        data: {
+          run_id: 'r-2',
+          conversation_id: 's-1',
+          delta: { part: { type: 'text' } },
+        },
+      },
+      { root, data: sink },
+    );
+
+    expect(root.registry.get('s-1')?.getSnapshot().value).toMatchObject({
+      turn: 'running',
+    });
+    // Every event reached the data layer as well: the live transcript of
+    // the automation's turn is the part that used to go missing.
+    expect(calls.filter((c) => c === 'conversation-data')).toHaveLength(4);
+  });
+
+  it('drops events whose run has already ended', () => {
+    const root = new StateRoot();
+    const { sink, calls } = fakeSink();
+    for (const runID of ['r-1', 'r-1']) {
+      routeBackendEvent(
+        {
+          type: 'turn_end',
+          data: { run_id: runID, conversation_id: 's-1', status: 'completed' },
+        },
+        { root, data: sink },
+      );
+    }
+
+    // The first one is the turn's own ending; the second is a replay of a
+    // run the actor has finished with, and the data layer's reconciliation
+    // must not run for it twice.
+    expect(calls.filter((c) => c === 'conversation-data')).toHaveLength(1);
+  });
 });

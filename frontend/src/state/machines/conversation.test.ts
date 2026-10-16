@@ -311,3 +311,97 @@ describe('conversation machine', () => {
     });
   });
 });
+
+// A run this client did not start — a scheduled automation pinned to the
+// conversation, or a live run a reload adopted — begins and ends with no
+// send of ours behind it. A resting turn is not a gate for those events;
+// the run's identity is, and `lastEndedRunID` is what says an event is
+// too late. Treating the phase as the gate dropped such a run whole.
+describe('runs that started outside this client', () => {
+  const finishedTurn = () => {
+    const actor = start();
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    endTurn(actor, 'r-1', 'completed');
+    expect(regions(actor).turn).toBe('succeeded');
+    return actor;
+  };
+
+  it('takes the run start of an automation scheduled on a finished turn', () => {
+    const actor = finishedTurn();
+
+    actor.send({ type: 'RUN_STARTED', runID: 'r-2' });
+    expect(regions(actor).turn).toBe('running');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-2',
+      lastEndedRunID: 'r-1',
+    });
+
+    actor.send({ type: 'STREAM', runID: 'r-2', stage: 'text' });
+    expect(actor.getSnapshot().context).toMatchObject({ turnStage: 'text' });
+
+    endTurn(actor, 'r-2', 'failed');
+    expect(regions(actor).turn).toBe('failed');
+    expect(actor.getSnapshot().context).toMatchObject({
+      lastEndedRunID: 'r-2',
+      failureStatus: 'failed',
+    });
+  });
+
+  it('takes the first delta of a foreign run after a failure', () => {
+    const actor = start();
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    endTurn(actor, 'r-1', 'canceled');
+    expect(regions(actor).turn).toBe('failed');
+
+    // No run-start ever reaches this client when the stream is the only
+    // event the run produced — the delta itself is the proof it is live.
+    actor.send({ type: 'STREAM', runID: 'r-2', stage: 'reasoning' });
+    expect(regions(actor).turn).toBe('running');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-2',
+      turnStage: 'reasoning',
+      failureStatus: undefined,
+    });
+  });
+
+  it('records a terminal event for a run it never watched', () => {
+    // The reload case: the run was already in flight when the window came
+    // back, and it ends without producing a delta the new actor saw.
+    const actor = start();
+    actor.send({
+      type: 'TURN_ENDED',
+      runID: 'r-9',
+      status: 'canceled',
+      error: 'context deadline exceeded',
+      errorKind: 'timeout',
+    });
+
+    expect(regions(actor).turn).toBe('failed');
+    expect(actor.getSnapshot().context).toMatchObject({
+      lastEndedRunID: 'r-9',
+      failureStatus: 'canceled',
+      failureErrorKind: 'timeout',
+      turnError: 'context deadline exceeded',
+    });
+  });
+
+  it('still ignores anything from a run that has already ended', () => {
+    const actor = finishedTurn();
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-2' });
+    endTurn(actor, 'r-2', 'completed');
+    expect(regions(actor).turn).toBe('succeeded');
+
+    // Both the duplicate terminal event and a late delta of r-2 stay
+    // inert: they are exactly what `lastEndedRunID` is for.
+    endTurn(actor, 'r-2', 'failed');
+    actor.send({ type: 'STREAM', runID: 'r-2', stage: 'text' });
+    expect(regions(actor).turn).toBe('succeeded');
+    expect(actor.getSnapshot().context).toMatchObject({
+      lastEndedRunID: 'r-2',
+      failureStatus: undefined,
+    });
+  });
+});

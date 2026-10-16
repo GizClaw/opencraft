@@ -2510,6 +2510,63 @@ describe('store: interactions and artifacts', () => {
       expect(texts).not.toContain('writing the brief');
     });
   });
+
+  // The case above starts from a fresh actor (idle). In the app the actor
+  // is anything but fresh: the conversation the schedule is pinned to has
+  // already run a turn, so it rests on `succeeded`, and that is where the
+  // routing gate used to drop the automation's whole turn — the text, the
+  // file strip and the running row — until a session_updated happened to
+  // bring the archive back.
+  it('reaches a conversation whose last turn already succeeded', () => {
+    const handle = useStore.getState().handleEvent;
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: { type: 'part', part: { type: 'text', text: 'first answer' } },
+      },
+    });
+    handle({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        status: 'completed',
+      },
+    });
+    useStore.getState().flushStreams();
+    expect(actorValue('s-1')?.turn).toBe('succeeded');
+
+    handle({
+      type: 'automation_run_started',
+      data: {
+        run_id: 'r-auto',
+        conversation_id: 's-1',
+        message: 'write the brief',
+      },
+    });
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-auto',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: { type: 'text', text: 'writing the brief' },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    expect(actorValue('s-1')?.turn).toBe('running');
+    const live = useStore.getState().conversations['s-1'].messages;
+    expect(live.some((m) => m.text === 'write the brief')).toBe(true);
+    const texts = live.flatMap((m) =>
+      m.items.flatMap((it) => (it.kind === 'text' ? [it.text] : [])),
+    );
+    expect(texts).toContain('writing the brief');
+  });
 });
 
 describe('store: transcript cap', () => {
