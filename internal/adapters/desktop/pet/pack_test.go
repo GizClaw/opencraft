@@ -58,6 +58,50 @@ func TestPackStoreListAndRemove(t *testing.T) {
 	}
 }
 
+// TestPackStoreBuiltinIsNeverRemoved pins the backstop for the shape the
+// plugin host hit: a registration the registry refused still runs the
+// frontend's teardown, which unregisters the id it failed to take over.
+// With no successful override there is no backup to restore, so a
+// delete-the-id unregister removed the builtin character itself and the
+// pet window reloaded with nothing to draw. Unregistering a builtin id
+// now leaves the registry as it was instead.
+func TestPackStoreBuiltinIsNeverRemoved(t *testing.T) {
+	store := NewPackStore(BuiltinAssistantPack())
+
+	store.Unregister(BuiltinAssistantPackID)
+	got, ok := store.Get(BuiltinAssistantPackID)
+	if !ok {
+		t.Fatal("unregistering a builtin id removed the builtin")
+	}
+	if got.DisplayName != BuiltinAssistantPack().DisplayName {
+		t.Fatalf("builtin replaced by %+v", got)
+	}
+	if list := store.List(); len(list) != 1 || list[0].ID != BuiltinAssistantPackID {
+		t.Fatalf("list after unregistering the builtin = %+v", list)
+	}
+
+	// A repeat unregister (the frontend runs its disposal once per load
+	// cycle, and a failed override's teardown can arrive twice) must not
+	// fall through to the delete path either.
+	store.Unregister(BuiltinAssistantPackID)
+	if _, ok := store.Get(BuiltinAssistantPackID); !ok {
+		t.Fatal("the builtin disappeared on a repeated unregister")
+	}
+
+	// Plugin packs keep their removable semantics, and an override of a
+	// builtin still restores it.
+	store.Register(samplePack("custom"))
+	store.Unregister("custom")
+	if _, ok := store.Get("custom"); ok {
+		t.Fatal("a plugin pack is no longer removable")
+	}
+	store.Register(samplePack(BuiltinAssistantPackID))
+	store.Unregister(BuiltinAssistantPackID)
+	if list := store.List(); len(list) != 1 || list[0].ID != BuiltinAssistantPackID {
+		t.Fatalf("list after restoring the builtin = %+v", list)
+	}
+}
+
 func TestPackValidate(t *testing.T) {
 	mutate := func(edit func(p *Pack)) Pack {
 		p := samplePack("sample")

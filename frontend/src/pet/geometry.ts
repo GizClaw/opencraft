@@ -1,4 +1,4 @@
-import { alphaBounds, readAlphaGrid } from './hit';
+import { alphaBounds, createPetGridScratch, readAlphaGrid } from './hit';
 
 /** A rectangle in window-relative DIP. */
 export interface PetRectBox {
@@ -23,6 +23,11 @@ export interface PetWindowGeometry {
   measured: boolean;
 }
 
+// The measurement runs twice a second while the character moves, so the
+// alpha copy it needs is reused. Only this function reads the canvas
+// through the scratch, and it consumes the grid before returning.
+const measureScratch = createPetGridScratch();
+
 /**
  * Measures the drawn character inside the window. Returns null while
  * nothing is painted (before the pack mounts, or after a failed mount):
@@ -34,7 +39,7 @@ export function measurePetGeometry(
   surface: HTMLElement | null,
 ): PetWindowGeometry | null {
   if (!canvas || !surface) return null;
-  const grid = readAlphaGrid(canvas);
+  const grid = readAlphaGrid(canvas, measureScratch);
   if (!grid) return null;
   const bounds = alphaBounds(grid);
   if (!bounds) return null;
