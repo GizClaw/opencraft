@@ -9,8 +9,8 @@
 # "did rendering get cheaper, and where did the stalls land" means
 # pivoting the same window into columns and grouping by the labels — a
 # query nobody should rewrite by hand every time. The series semantics it
-# relies on (window_ms, dropped_gaps, long_frames_*) are documented in
-# docs/turn-latency-hardening-plan.md §项 3.
+# relies on (window_ms, dropped_gaps, long_frames_*) are documented where
+# the probe defines them: frontend/src/lib/perfProbe.ts.
 #
 # Usage: scripts/perf-review.sh [hours]     (default 24, 0 = everything)
 #   OPENCRAFT_USER_DB=/path/to/user.db overrides the store location.
