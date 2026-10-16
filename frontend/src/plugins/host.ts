@@ -98,7 +98,10 @@ function callerOf(this: unknown) {
 // context is reachable from any scope (`ctx.root.secrets`), and what it
 // holds is the real service - so a gated service checks the calling
 // scope's own grant itself. A caller without one (the root context, a
-// scope that did not come from a plugin manifest) is refused.
+// scope that did not come from a plugin manifest) is refused; the scope
+// the call goes through is what counts, so even a granted plugin cannot
+// reach the app's root service, which is the handle an unpermitted
+// plugin would reach for. A plugin uses its own scope.
 function requirePermission(
   ctx: Context,
   service: keyof typeof PERMISSION_GATED,
@@ -122,13 +125,16 @@ function makeKVService(): KVService {
       const entry = await api.pluginKVGet(id, key);
       return entry.value || null;
     },
-    set: function (this: unknown, key: string, value: string) {
+    // async like `get`: a refusal has to be the rejected promise the
+    // interface promises, or a synchronous throw in a plugin's apply()
+    // body is recorded as the whole plugin failing to activate.
+    set: async function (this: unknown, key: string, value: string) {
       const ctx = callerOf.call(this);
       requirePermission(ctx, 'storage');
       const id = ctx.config.id;
       return api.pluginKVSet(id, key, value);
     },
-    delete: function (this: unknown, key: string) {
+    delete: async function (this: unknown, key: string) {
       const ctx = callerOf.call(this);
       requirePermission(ctx, 'storage');
       const id = ctx.config.id;

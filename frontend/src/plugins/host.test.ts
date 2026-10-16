@@ -184,6 +184,68 @@ describe('plugin service isolation', () => {
     activation.dispose();
   });
 
+  // The check reads the scope the call goes through, not a grant some
+  // scope above it carries: a plugin holding `storage:kv` still cannot
+  // reach the app's root service through `ctx.root`. That is the handle
+  // an unpermitted plugin would reach for, and nothing resolves it
+  // without a grant of its own - a plugin uses its own scope, which the
+  // granted cases above pin.
+  it('refuses a granted plugin the root handle', async () => {
+    const failures: string[] = [];
+    const calls: Promise<unknown>[] = [];
+    const activation = await mount('granted-root', ['storage:kv'], (ctx) => {
+      const root = ctx.root as Context;
+      calls.push(
+        (root.storage as KVService)
+          .get('k')
+          .catch((e) => void failures.push(String(e))),
+      );
+    });
+    await Promise.all(calls);
+
+    expect(failures.join('\n')).toContain(
+      'service "storage" needs permission "storage:kv", not granted by manifest',
+    );
+    expect(apiMock.pluginKVGet).not.toHaveBeenCalled();
+    activation.dispose();
+  });
+
+  // A refusal is a rejected call, not a synchronous throw: the KV
+  // methods that promise a `Promise<void>` used to throw before their
+  // promise existed, and Cordis records a throw out of a plugin's apply
+  // body as the whole plugin failing to activate.
+  it('rejects the refused call instead of throwing it', async () => {
+    const shapes: string[] = [];
+    const pending: Promise<void>[] = [];
+    const record = async (run: () => Promise<unknown>) => {
+      let promise: Promise<unknown>;
+      try {
+        promise = run();
+      } catch {
+        shapes.push('sync-throw');
+        return;
+      }
+      try {
+        await promise;
+        shapes.push('resolved');
+      } catch {
+        shapes.push('rejected');
+      }
+    };
+    const activation = await mount('no-perms-shape', [], (ctx) => {
+      const root = ctx.root as Context;
+      pending.push(record(() => (root.storage as KVService).set('k', 'v')));
+      pending.push(record(() => (root.storage as KVService).delete('k')));
+      pending.push(
+        record(() => (root.secrets as SecretsService).has('OPENAI_API_KEY')),
+      );
+    });
+    await Promise.all(pending);
+
+    expect(shapes).toEqual(['rejected', 'rejected', 'rejected']);
+    activation.dispose();
+  });
+
   it('refuses a bundle that injects a service the manifest did not grant', async () => {
     setPluginModuleLoader(async () => ({
       name: 'greedy',
