@@ -101,7 +101,8 @@ function callerOf(this: unknown) {
 // scope that did not come from a plugin manifest) is refused; the scope
 // the call goes through is what counts, so even a granted plugin cannot
 // reach the app's root service, which is the handle an unpermitted
-// plugin would reach for. A plugin uses its own scope.
+// plugin would reach for; a plugin reaches the service through the
+// scope its manifest made, and nothing else does.
 function requirePermission(
   ctx: Context,
   service: keyof typeof PERMISSION_GATED,
