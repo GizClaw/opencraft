@@ -18,9 +18,32 @@ import (
 // EnvPolicyConfig is the configurable environment policy: allow lists
 // which host variables the sandboxed child can observe (a full
 // replacement list), inject sets or overrides values.
+//
+// A section that leaves allow out — including a section that only
+// injects — resolves to the curated default allowlist, never to the
+// core's nil form ("inherit the whole host environment"); an explicit
+// empty list means "inherit nothing".
 type EnvPolicyConfig struct {
 	Allow  []string          `json:"allow,omitempty"`
 	Inject map[string]string `json:"inject,omitempty"`
+}
+
+// resolve turns the configured section into the policy the runners
+// enforce. The nil / empty distinction is load-bearing: to the core a
+// nil Allow means "inherit the whole host environment", so a nil left
+// in place here would silently widen an inject-only policy into full
+// inheritance of the parent's provider keys. nil resolves to the
+// curated default allowlist; a non-nil empty slice stays empty.
+func (c *EnvPolicyConfig) resolve() coresandbox.EnvPolicy {
+	policy := DefaultEnvPolicy()
+	if c == nil {
+		return policy
+	}
+	if c.Allow != nil {
+		policy.Allow = c.Allow
+	}
+	policy.Inject = c.Inject
+	return policy
 }
 
 // SandboxPolicy is the sandbox policy handed from the parent process
@@ -61,16 +84,18 @@ func DefaultEnvPolicy() coresandbox.EnvPolicy {
 }
 
 // SandboxPolicy converts HostSandboxSettings into the policy handed to
-// the execd child.
+// the execd child. The environment policy travels resolved: the child
+// never sees the nil-allow form that the core would read as "inherit
+// everything".
 func (s HostSandboxSettings) SandboxPolicy() SandboxPolicy {
-	pol := SandboxPolicy{WritablePaths: s.WritablePaths}
-	if s.EnvPolicy != nil {
-		pol.EnvPolicy = &EnvPolicyConfig{
-			Allow:  s.EnvPolicy.Allow,
-			Inject: s.EnvPolicy.Inject,
-		}
+	env := s.Env()
+	return SandboxPolicy{
+		WritablePaths: s.WritablePaths,
+		EnvPolicy: &EnvPolicyConfig{
+			Allow:  env.Allow,
+			Inject: env.Inject,
+		},
 	}
-	return pol
 }
 
 // SandboxRunner builds the platform sandbox runner for the execd child
@@ -126,15 +151,7 @@ func SandboxRunnerWithCache(
 			return nil, coresandbox.EnvPolicy{}, err
 		}
 	}
-	var policy coresandbox.EnvPolicy
-	if pol.EnvPolicy != nil {
-		policy = coresandbox.EnvPolicy{
-			Allow:  pol.EnvPolicy.Allow,
-			Inject: pol.EnvPolicy.Inject,
-		}
-	} else {
-		policy = DefaultEnvPolicy()
-	}
+	policy := pol.EnvPolicy.resolve()
 	writable := append([]string{cacheDir}, pol.WritablePaths...)
 	writable = dedupeStrings(writable)
 	// Same construction site as the parent-side factory (backend.go):
