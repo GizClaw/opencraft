@@ -70,6 +70,29 @@ func (t *Tool) rebuildClient() {
 	}
 }
 
+// SetSSRFGuard installs the hardened client without a domain gate: the
+// fallback when a deployment carries no net policy resource. No host
+// list applies (there is none to enforce), but the transport still
+// refuses private/loopback/link-local destinations, pins DNS to the
+// validated addresses and revalidates every redirect hop, so a missing
+// policy resource cannot widen the SSRF surface.
+func (t *Tool) SetSSRFGuard(allowPrivate func(context.Context) bool) {
+	t.gate = func(context.Context, string) error { return nil }
+	t.allowPrivate = allowPrivate
+	t.rebuildClient()
+}
+
+// clampMaxLength caps one caller-supplied max_length: 0 and negative
+// values pass through (the extractor's default applies), anything
+// above the ceiling is clamped so a single fetch cannot flood the
+// model context with an arbitrarily large result.
+func clampMaxLength(n int) int {
+	if n > maxLengthCeiling {
+		return maxLengthCeiling
+	}
+	return n
+}
+
 // Definition implements tool.Tool.
 func (t *Tool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
@@ -83,7 +106,7 @@ func (t *Tool) Definition() message.ToolDefinition {
 		message.ToolProperty("url", "string",
 			"The absolute http:// or https:// URL to fetch (required)."),
 		message.ToolPropertyWithDefault("max_length", "integer",
-			"Maximum characters of text to return (default 8000).",
+			"Maximum characters of text to return (default 8000, capped at 100000).",
 			8000),
 		message.ToolPropertyWithDefault("format", "string",
 			"Output format: \"text\" (default) or \"markdown\".",
@@ -151,7 +174,7 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 
 	var opts []extract.Option
 	if args.MaxLength > 0 {
-		opts = append(opts, extract.WithMaxCharacters(args.MaxLength))
+		opts = append(opts, extract.WithMaxCharacters(clampMaxLength(args.MaxLength)))
 	}
 	if strings.EqualFold(args.Format, "markdown") {
 		opts = append(opts, extract.WithFormat(extract.FormatMarkdown))
@@ -181,6 +204,12 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 
 // maxRedirects bounds redirect chains followed by the hardened client.
 const maxRedirects = 10
+
+// maxLengthCeiling bounds the max_length argument. It is the
+// extractor's own default cap, so a caller asking for more than the
+// default path would return cannot make the result bigger than any
+// default fetch.
+const maxLengthCeiling = 100_000
 
 // hardenedClient builds an http.Client whose transport validates the
 // destination host on every connection and whose redirect policy

@@ -118,6 +118,54 @@ func TestToolDefinition(t *testing.T) {
 	}
 }
 
+func TestToolClampsMaxLength(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html><body>" +
+			strings.Repeat("<p>"+strings.Repeat("x", 50)+"</p>", 6000) +
+			"</body></html>"))
+	}))
+	defer srv.Close()
+
+	out, err := New().Execute(context.Background(),
+		`{"url":"`+srv.URL+`","max_length":100000000}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res struct {
+		Content   string `json:"content"`
+		Truncated bool   `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(out.Text()), &res); err != nil {
+		t.Fatal(err)
+	}
+	if got := len([]rune(res.Content)); got > maxLengthCeiling {
+		t.Fatalf("max_length was not capped: %d characters returned", got)
+	}
+	if !res.Truncated {
+		t.Error("expected the capped content to be truncated")
+	}
+}
+
+// TestSetSSRFGuardKeepsPrivateDestinationsBlocked pins the no-policy
+// fallback: the hardened client is installed even when there is no
+// domain gate to wrap, so a loopback destination stays refused.
+func TestSetSSRFGuardKeepsPrivateDestinationsBlocked(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html><body><p>secret</p></body></html>"))
+	}))
+	defer srv.Close()
+
+	tool := New()
+	tool.SetSSRFGuard(nil)
+	_, err := tool.Execute(context.Background(), `{"url":"`+srv.URL+`"}`)
+	if err == nil {
+		t.Fatal("the default SSRF guard fetched a loopback destination")
+	}
+	if !strings.Contains(err.Error(), "SSRF guard") {
+		t.Fatalf("error = %v, want an SSRF guard refusal", err)
+	}
+}
+
 func TestToolGateBlocksPrivateHost(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("server must not be reached: private host blocked by the gate")
