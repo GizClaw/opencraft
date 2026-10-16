@@ -38,11 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `skills.settings.extra_roots` have to be deleted where they live. The
   settings page hides the delete entry for those rows — the rest of the
   row menu (pin, archive) stays.
-- The SSRF guard refuses more special-purpose ranges (multicast, the
-  TEST-NET documentation blocks, 192.0.0.0/24, 192.88.99.0/24,
-  198.18.0.0/15, 240.0.0.0/4): a self-hosted service on one of those
-  addresses is not reachable through `web_fetch` or `generate_video`,
-  which is the point of the list.
+- The SSRF guard refuses more address classes: 0.0.0.0/8 and
+  100.64.0.0/10, multicast, TEST-NET-1/2/3, 192.0.0.0/24, 192.88.99.0/24,
+  198.18.0.0/15, 240.0.0.0/4, and the IPv6 documentation and Teredo
+  prefixes. A self-hosted service on one of those addresses is not
+  reachable through `web_fetch`, `generate_video`, or the plugin update
+  download — which is the point of the list.
 
 ### Added
 
