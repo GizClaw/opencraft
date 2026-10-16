@@ -69,6 +69,46 @@ describe('event router', () => {
     expect(calls.filter((c) => c === 'conversation-data')).toHaveLength(2);
   });
 
+  // "unknown" is the engine status of a run whose wait produced no result
+  // — the host records that run as failed (Go's ClassifySettledRun). A
+  // router that read anything-but-failed as success would draw a turn
+  // that never finished as an answer, and drop the error_kind the
+  // failure text is chosen from.
+  it('reads a status outside the terminal set as a failure', () => {
+    const root = new StateRoot();
+    root.registry.ensure('s-1', {
+      workspaceGeneration: root.generation(),
+    });
+    const { sink } = fakeSink();
+    routeBackendEvent(
+      {
+        type: 'automation_run_started',
+        data: { run_id: 'r-1', conversation_id: 's-1' },
+      },
+      { root, data: sink },
+    );
+    routeBackendEvent(
+      {
+        type: 'turn_end',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          status: 'unknown',
+          error: 'the run produced no result',
+          error_kind: 'timeout',
+        },
+      },
+      { root, data: sink },
+    );
+
+    const snapshot = root.registry.get('s-1')?.getSnapshot();
+    expect(snapshot?.value).toMatchObject({ turn: 'failed' });
+    expect(snapshot?.context).toMatchObject({
+      turnError: 'the run produced no result',
+      failureErrorKind: 'timeout',
+    });
+  });
+
   it('uses conversation_id from resolved before the pending index', () => {
     const root = new StateRoot();
     const { sink, calls } = fakeSink();
@@ -92,6 +132,32 @@ describe('event router', () => {
     );
 
     expect(calls.filter((c) => c === 'conversation-data')).toHaveLength(2);
+  });
+
+  // The shell routes a fixed set of events; the rest belong to
+  // components that subscribe to the channel themselves. An unlisted one
+  // used to disappear without a trace, so a renamed wire event looked
+  // like a feature that quietly stopped working.
+  it('says so when an event has no route, and not for a component event', () => {
+    const root = new StateRoot();
+    const { sink } = fakeSink();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      routeBackendEvent(
+        { type: 'git_changed', data: {} },
+        { root, data: sink },
+      );
+      expect(warn).not.toHaveBeenCalled();
+
+      routeBackendEvent(
+        { type: 'no_such_event', data: {} },
+        { root, data: sink },
+      );
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain('no_such_event');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('tombstoned conversations never reach data or actors', () => {

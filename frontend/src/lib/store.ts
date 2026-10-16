@@ -3252,24 +3252,30 @@ export const useStore = create<StoreState>((set, get) => {
           api.sessionDefaults(),
           api.profile(),
         ]);
-        set({
+        set((state) => ({
           status,
           workspace,
           configured: !status.needed,
           configOpen: false,
           toolsView: null,
-          conversations: {
-            ...(currentSession !== ''
-              ? {
+          conversations:
+            currentSession === ''
+              ? state.conversations
+              : {
+                  ...state.conversations,
+                  // Seed the current conversation without dropping what
+                  // it already holds: init's round trips take a while,
+                  // and events for this session (a live stream, an
+                  // artifact) can land in the store before they resolve.
+                  // A fresh table would throw them away — and would take
+                  // every other open conversation with it.
                   [currentSession]: {
-                    ...emptyConv(),
+                    ...(state.conversations[currentSession] ?? emptyConv()),
                     mode,
                     think,
                     model,
                   },
-                }
-              : {}),
-          },
+                },
           modelOptions,
           // A binding double may resolve without the new fields; fall
           // back to the canonical defaults. A genuinely missing
@@ -3278,7 +3284,7 @@ export const useStore = create<StoreState>((set, get) => {
           sessionDefaults: defaults ?? { mode: 'workspace', think: 'medium' },
           yoloOnly: profile?.yolo_only ?? false,
           theme,
-        });
+        }));
         // The persisted appearance preferences win over the localStorage
         // mirror that painted the first frame. They are cosmetic, so a
         // missing or failing binding keeps the cached copy instead of

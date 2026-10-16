@@ -3407,6 +3407,22 @@ describe('store: init session bootstrap', () => {
   // The theme mirror is a localStorage preference, so it is what the first
   // frame paints from — before the desktop document reconciles the rest of
   // the appearance.
+  // init seeds the current conversation, and its round trips take a
+  // while: by the time it resolves the store can hold conversations of
+  // its own (a retry after a failed init runs against a shell that has
+  // been in use). A fresh table would drop them.
+  it('seeds the current conversation without dropping the others', async () => {
+    stateRoot.resetWorkspace();
+    stubInitApi({ currentSession: 's-1', workspace: '/tmp/w' });
+    const seeded = useStore.getState().conversations['s-1'];
+    useStore.setState({ conversations: { 's-9': { ...seeded } } });
+
+    await useStore.getState().init();
+
+    expect(useStore.getState().conversations['s-9']).toBeDefined();
+    expect(useStore.getState().conversations['s-1']?.think).toBe('medium');
+  });
+
   it('paints the theme the mirror carries', async () => {
     stateRoot.resetWorkspace();
     stubInitApi({ currentSession: 's-1', workspace: '/tmp/w' });
