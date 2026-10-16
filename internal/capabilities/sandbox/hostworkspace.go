@@ -154,10 +154,11 @@ type confinedWithReadonly struct {
 // readonly roots and opens a pinned handle on the matching root.
 //
 // The lexical match only selects the root; containment is enforced by
-// the handle on every operation, so a symlink planted inside a
-// readonly root (the cache dir is writable from the exec sandbox)
-// cannot reach outside it, and there is no check-then-use window
-// between classifying the path and reading it.
+// the handle on every operation, so a symlink planted inside a readonly
+// root cannot reach outside it even when a confined process may write
+// that root (a deployment that grants its cache dir can still list it
+// here), and there is no check-then-use window between classifying the
+// path and reading it.
 func (w *confinedWithReadonly) readonlyView(full string) (*os.Root, string, bool) {
 	for _, root := range w.readonly {
 		if !pathsafe.Within(root, full) {

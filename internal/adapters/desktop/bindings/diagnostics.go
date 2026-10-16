@@ -853,13 +853,22 @@ func (b *Diagnostics) RepairConfigCompat() (ConfigCompatRepair, error) {
 
 // ClearCaches removes cache directories and reports freed bytes.
 func (b *Diagnostics) ClearCaches() (CacheClearResult, error) {
+	// join answers "" for an unset root: an empty DataDir/AppHome must
+	// not degrade into a relative path that RemoveAll would apply to
+	// the process working directory.
+	join := func(root string, parts ...string) string {
+		if root == "" {
+			return ""
+		}
+		return filepath.Join(append([]string{root}, parts...)...)
+	}
 	dirs := []string{
-		filepath.Join(b.core.DataDir, "cache", "tools"),
+		join(b.core.DataDir, "cache", "tools"),
 		// Staged skill copies moved out of the sandbox-writable cache;
 		// both locations are cleared so upgrades leave no old copies
 		// behind.
-		filepath.Join(b.core.AppHome, "cache", "staged"),
-		filepath.Join(b.core.AppHome, "staged"),
+		join(b.core.AppHome, "cache", "staged"),
+		join(b.core.AppHome, "staged"),
 	}
 	if wd := b.core.ActiveWorkDir(); wd != "" {
 		if layout, err := b.core.ResolveLayout(wd); err == nil {
@@ -867,13 +876,18 @@ func (b *Diagnostics) ClearCaches() (CacheClearResult, error) {
 		}
 	}
 	var bytes int64
+	cleared := make([]string, 0, len(dirs))
 	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		cleared = append(cleared, dir)
 		bytes += dirSize(dir)
 		flowtelemetry.WarnErr(context.Background(),
 			"desktop diagnostics: clear cache directory failed",
 			os.RemoveAll(dir))
 	}
-	return CacheClearResult{Dirs: dirs, Bytes: bytes}, nil
+	return CacheClearResult{Dirs: cleared, Bytes: bytes}, nil
 }
 
 // SandboxProbeResult reports one sandbox self-test.
