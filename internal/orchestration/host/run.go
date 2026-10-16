@@ -112,9 +112,9 @@ type RunOptions struct {
 
 // Run is one live assistant turn owned by a Host.
 type Run struct {
-	host          *Host
-	lease         *coresession.Lease
-	turn          *coresession.Turn
+	host  *Host
+	lease *coresession.Lease
+	turn  *coresession.Turn
 	// done is claimed by the caller that runs the release path: Wait
 	// and Close both CAS it, and exactly one of them settles the run
 	// (the loser is told the run already finished, or waits on

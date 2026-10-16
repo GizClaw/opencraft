@@ -61,7 +61,7 @@ type Host struct {
 	// reopened recorder does not announce the same thread twice.
 	rolloutOpened map[ConversationID]bool
 	titling       map[ConversationID]bool
-	titleWG    sync.WaitGroup
+	titleWG       sync.WaitGroup
 	// rebindMu serializes onRuntimeReload. ReloadDocument rebinds
 	// synchronously before returning while the runtime event router
 	// may dispatch the same rebuild event concurrently, and both must
