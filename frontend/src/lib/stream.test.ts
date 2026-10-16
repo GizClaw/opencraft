@@ -165,9 +165,9 @@ describe('streamFlushInterval', () => {
 
   it('derives that answer from the same test the flag is built with', () => {
     expect([reasoningEvent('a')].every(isReasoningDelta)).toBe(true);
-    expect(
-      [reasoningEvent('a'), textEvent('b')].every(isReasoningDelta),
-    ).toBe(false);
+    expect([reasoningEvent('a'), textEvent('b')].every(isReasoningDelta)).toBe(
+      false,
+    );
     expect(isReasoningDelta(delta({ type: 'tool_call' }))).toBe(false);
     expect(isReasoningDelta(textEvent('b'))).toBe(false);
   });
