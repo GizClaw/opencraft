@@ -32,7 +32,24 @@ type SessionTool struct {
 	runner sandbox.Runner
 
 	mu       sync.Mutex
-	sessions map[string]sandbox.Session
+	sessions map[string]sessionEntry
+	// epochs hands out the identity of each slot. An id can be started
+	// again while an earlier session's wait is still blocked, so "is
+	// this slot still mine" is answered by the epoch the slot was
+	// claimed with: the session value is not a stable identity to
+	// compare (interfaces holding uncomparable values panic on ==), and
+	// the id alone is not unique over time.
+	epochs uint64
+}
+
+// sessionEntry is one named session slot. It exists in two states: a
+// claim (session nil, the launch in flight) and a live session. The
+// claim is what makes "one session per id" and the session cap atomic:
+// both are decided under the lock, so two concurrent starts for one id,
+// or one id too many, cannot both get past them while the launch runs.
+type sessionEntry struct {
+	session sandbox.Session
+	epoch   uint64
 }
 
 // NewSession creates the exec_session tool.
@@ -43,7 +60,7 @@ func NewSession(runner sandbox.Runner) (*SessionTool, error) {
 	}
 	return &SessionTool{
 		runner:   runner,
-		sessions: make(map[string]sandbox.Session),
+		sessions: make(map[string]sessionEntry),
 	}, nil
 }
 
@@ -162,6 +179,13 @@ func (t *SessionTool) execute(ctx context.Context, arguments string) (string, er
 }
 
 func (t *SessionTool) start(ctx context.Context, a args) (any, error) {
+	// Claim the slot before launching. The launch is slow — it forks a
+	// process and may set up a pty — so checking first and registering
+	// afterwards let two concurrent starts for one id both pass the
+	// check, overwrite each other's handle, and leave one process
+	// running with nothing pointing at it. Claiming first, then filling
+	// the slot in, keeps the check and the claim in one critical
+	// section; the quota counts claims for the same reason.
 	t.mu.Lock()
 	if _, exists := t.sessions[a.ProcessID]; exists {
 		t.mu.Unlock()
@@ -174,7 +198,11 @@ func (t *SessionTool) start(ctx context.Context, a args) (any, error) {
 			"exec_session: too many live sessions (%d); close one before starting another",
 			maxSessions)
 	}
+	t.epochs++
+	epoch := t.epochs
+	t.sessions[a.ProcessID] = sessionEntry{epoch: epoch}
 	t.mu.Unlock()
+
 	proc, err := t.runner.Start(ctx, sandbox.SessionSpec{
 		ID:   a.ProcessID,
 		Argv: a.Argv,
@@ -184,12 +212,37 @@ func (t *SessionTool) start(ctx context.Context, a args) (any, error) {
 		Opts: sandbox.ExecOptions{WorkDir: a.Workdir},
 	})
 	if err != nil {
+		t.releaseClaim(a.ProcessID, epoch)
 		return nil, err
 	}
 	t.mu.Lock()
-	t.sessions[a.ProcessID] = proc
+	entry, ok := t.sessions[a.ProcessID]
+	if !ok || entry.epoch != epoch {
+		// The claim was closed while the launch was in flight: the
+		// process belongs to nobody now, so it is stopped here rather
+		// than registered under an id the caller already released.
+		t.mu.Unlock()
+		if closeErr := proc.Close(); closeErr != nil {
+			return nil, closeErr
+		}
+		return nil, errdefs.Conflictf(
+			"exec_session: process %q was closed while it was starting",
+			a.ProcessID)
+	}
+	entry.session = proc
+	t.sessions[a.ProcessID] = entry
 	t.mu.Unlock()
 	return map[string]any{"process_id": a.ProcessID, "started": true}, nil
+}
+
+// releaseClaim drops a claim whose launch failed, unless the claim was
+// already replaced (a close followed by a fresh start of the same id).
+func (t *SessionTool) releaseClaim(id string, epoch uint64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if entry, ok := t.sessions[id]; ok && entry.epoch == epoch {
+		delete(t.sessions, id)
+	}
 }
 
 func (t *SessionTool) read(ctx context.Context, a args) (any, error) {
@@ -273,7 +326,7 @@ func (t *SessionTool) terminate(ctx context.Context, a args) (any, error) {
 }
 
 func (t *SessionTool) wait(ctx context.Context, a args) (any, error) {
-	proc, err := t.get(a.ProcessID)
+	proc, epoch, err := t.lookup(a.ProcessID)
 	if err != nil {
 		return nil, err
 	}
@@ -284,9 +337,14 @@ func (t *SessionTool) wait(ctx context.Context, a args) (any, error) {
 	// The session has ended: drop it so finished processes the model
 	// never closes do not accumulate in the map. (Read's EOF flag is
 	// not a reliable exit signal, so removal happens only here, on the
-	// explicit wait.)
+	// explicit wait.) The slot is dropped only while it is still the one
+	// this wait was called on: an id can be started again while the wait
+	// blocks, and taking the new session's slot away would leave a live
+	// process the caller can no longer reach.
 	t.mu.Lock()
-	delete(t.sessions, a.ProcessID)
+	if entry, ok := t.sessions[a.ProcessID]; ok && entry.epoch == epoch {
+		delete(t.sessions, a.ProcessID)
+	}
 	t.mu.Unlock()
 	return map[string]any{
 		"process_id": a.ProcessID,
@@ -297,7 +355,7 @@ func (t *SessionTool) wait(ctx context.Context, a args) (any, error) {
 
 func (t *SessionTool) close(ctx context.Context, a args) (any, error) {
 	t.mu.Lock()
-	proc, ok := t.sessions[a.ProcessID]
+	entry, ok := t.sessions[a.ProcessID]
 	if ok {
 		delete(t.sessions, a.ProcessID)
 	}
@@ -306,21 +364,38 @@ func (t *SessionTool) close(ctx context.Context, a args) (any, error) {
 		return nil, errdefs.NotFoundf(
 			"exec_session: unknown process %q", a.ProcessID)
 	}
-	if err := proc.Close(); err != nil {
+	if entry.session == nil {
+		// A launch still in flight: the claim is gone, so the start
+		// path stops the process it was given and reports the close.
+		return map[string]bool{"closed": true}, nil
+	}
+	if err := entry.session.Close(); err != nil {
 		return nil, err
 	}
 	return map[string]bool{"closed": true}, nil
 }
 
-func (t *SessionTool) get(id string) (sandbox.Session, error) {
+// lookup returns the live session behind id together with the epoch of
+// its slot, which is what the caller compares against before dropping
+// the slot later.
+func (t *SessionTool) lookup(id string) (sandbox.Session, uint64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	proc, ok := t.sessions[id]
+	entry, ok := t.sessions[id]
 	if !ok {
-		return nil, errdefs.NotFoundf(
+		return nil, 0, errdefs.NotFoundf(
 			"exec_session: unknown process %q", id)
 	}
-	return proc, nil
+	if entry.session == nil {
+		return nil, 0, errdefs.Conflictf(
+			"exec_session: process %q is still starting", id)
+	}
+	return entry.session, entry.epoch, nil
+}
+
+func (t *SessionTool) get(id string) (sandbox.Session, error) {
+	proc, _, err := t.lookup(id)
+	return proc, err
 }
 
 var _ tool.Tool = (*SessionTool)(nil)
