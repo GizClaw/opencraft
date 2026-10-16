@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -439,11 +440,25 @@ func (h *Host) beginClose() {
 	h.closeWhenDrained()
 }
 
+// hostDrainBudget bounds how long a teardown waits for flowcraft's
+// drain before closing anyway. Drain runs synchronously on the
+// turn-end path — the last settling run of a retiring Host calls this
+// — so an unbounded wait would let one session the engine cannot
+// settle hold a turn-end RPC (and the workspace's reload) hostage. The
+// store teardown that must not run under live writers is guarded
+// separately by the runs set below, so cutting the drain wait costs
+// only drain's own bookkeeping. It is a variable because the craft
+// side owns how long a healthy drain needs; tests shrink it.
+var hostDrainBudget = 30 * time.Second
+
 // closeWhenDrained waits for active runtime sessions through
 // flowcraft's Drain API, then releases broker, runtime, and store.
-// Drain never interrupts turns, so background streams finish first.
+// Drain never interrupts turns, so background streams finish first; a
+// drain that outlives its budget is cut and the close proceeds.
 func (h *Host) closeWhenDrained() {
-	ctx := context.WithoutCancel(context.Background())
+	ctx, cancel := context.WithTimeout(
+		context.WithoutCancel(context.Background()), hostDrainBudget)
+	defer cancel()
 	telemetry.WarnErr(ctx, "host: drain before close failed", h.drain(ctx))
 	h.doClose()
 }
