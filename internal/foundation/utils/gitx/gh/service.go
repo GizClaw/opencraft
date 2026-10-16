@@ -42,15 +42,25 @@ func ghAuthToken(
 	cmd := exec.CommandContext(runCtx, bin,
 		"auth", "token", "--hostname", "github.com")
 	cmd.Env = stripTokenEnv()
-	var out limitedBuffer
-	out.max = 16 << 10
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	// stdout and stderr are kept apart: gh prints warnings ("the token
+	// in your environment is no longer valid", progress notes) on
+	// stderr, and a shared buffer would splice them into the credential.
+	// The result is an Authorization header that authenticates as
+	// nothing, which is a hard failure to diagnose.
+	var stdout, stderr limitedBuffer
+	stdout.max = 4 << 10
+	stderr.max = 4 << 10
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return "", ErrNoProvider
 	}
-	token := strings.TrimSpace(out.String())
-	if token == "" || out.overflow || len(token) > 4096 {
+	token := strings.TrimSpace(stdout.String())
+	// A token is one whitespace-free token; anything else is output that
+	// was not a credential (and a newline would not survive as a header
+	// value anyway).
+	if token == "" || stdout.overflow || len(token) > 4096 ||
+		strings.ContainsAny(token, " \t\r\n") {
 		return "", ErrNoProvider
 	}
 	return token, nil
