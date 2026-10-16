@@ -90,6 +90,72 @@ describe('Markdown', () => {
     warn.mockRestore();
   });
 
+  it('makes an inline code path clickable through onOpen', () => {
+    const onOpen = vi.fn();
+    render(
+      <Markdown
+        text={'read `internal/foundation/config/registry.go` first'}
+        basePath="docs"
+        onOpen={onOpen}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'internal/foundation/config/registry.go',
+      }),
+    );
+
+    expect(onOpen).toHaveBeenCalledWith(
+      'internal/foundation/config/registry.go',
+      'docs',
+    );
+  });
+
+  it('peels a line tag off a clickable code path', () => {
+    const onOpen = vi.fn();
+    render(<Markdown text={'see `store.ts:412`'} onOpen={onOpen} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'store.ts:412' }));
+
+    expect(onOpen).toHaveBeenCalledWith('store.ts', undefined);
+  });
+
+  it('leaves commands and identifiers as plain code', () => {
+    const onOpen = vi.fn();
+    render(
+      <Markdown
+        text={'run `npm test` then check `Object.keys` here'}
+        onOpen={onOpen}
+      />,
+    );
+
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.getByText('npm test')).toBeInTheDocument();
+    expect(screen.getByText('Object.keys')).toBeInTheDocument();
+  });
+
+  it('keeps fenced code inert however it is spelled', () => {
+    // The block's `code` element goes through the same component map as
+    // an inline span: only its `pre` wrapper knows the difference, and a
+    // block has no single target to offer.
+    const onOpen = vi.fn();
+    const { container } = render(
+      <Markdown text={'```\nsrc/lib/store.ts\n```'} onOpen={onOpen} />,
+    );
+
+    expect(
+      screen.queryByRole('button', { name: 'src/lib/store.ts' }),
+    ).not.toBeInTheDocument();
+    // The block is still a block: its copy button is there.
+    expect(
+      screen.getByRole('button', { name: 'Copy code' }),
+    ).toBeInTheDocument();
+    expect(container.querySelector('pre')?.textContent).toContain(
+      'src/lib/store.ts',
+    );
+  });
+
   it('records one render-to-commit measurement for the probe', () => {
     // The markdown series is what a "render streaming markdown as plain
     // text" decision would be based on, so the pair has to bracket this

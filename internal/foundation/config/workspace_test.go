@@ -45,6 +45,62 @@ func TestWorkspaceIDUsesAbsolutePath(t *testing.T) {
 	}
 }
 
+// TestCanonicalWorkDirFoldsSpellings pins the one spelling a workspace
+// is written in. The window compares the path the backend announces
+// against the history row the user clicked, character for character, so
+// every spelling of one directory has to fold to one string — a trailing
+// separator, a "." or ".." segment, stray whitespace, or a relative
+// path, which a picker fallback hands in as readily as an absolute one.
+func TestCanonicalWorkDirFoldsSpellings(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(cwd, dir)
+	if err != nil {
+		t.Fatalf("relative spelling of %q from %q: %v", dir, cwd, err)
+	}
+	for _, spelling := range []string{
+		dir + "/",
+		dir + "//",
+		filepath.Join(dir, "."),
+		filepath.Join(dir, "sub", ".."),
+		"  " + dir + "  ",
+		rel,
+	} {
+		if got := CanonicalWorkDir(spelling); got != dir {
+			t.Fatalf("CanonicalWorkDir(%q) = %q, want %q", spelling, got, dir)
+		}
+	}
+	// A blank path stays blank: cleaning it must never name the
+	// process's own directory, which is what a window without a
+	// workspace has to read as.
+	if got := CanonicalWorkDir("   "); got != "" {
+		t.Fatalf("CanonicalWorkDir of a blank path = %q, want it empty", got)
+	}
+}
+
+// TestResolveWorkspaceRecordsTheCanonicalSpelling keeps the layout's
+// work dir — the value the Host is assembled with — in the same spelling
+// the ready event announces, so a relative path handed to one half
+// cannot name a second workspace in the other.
+func TestResolveWorkspaceRecordsTheCanonicalSpelling(t *testing.T) {
+	dataDir := t.TempDir()
+	dir := t.TempDir()
+	layout, err := ResolveWorkspace(dataDir, dir+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.WorkDir != dir {
+		t.Fatalf("layout work dir = %q, want %q", layout.WorkDir, dir)
+	}
+	if layout.WorkDir != CanonicalWorkDir(layout.WorkDir) {
+		t.Fatalf("layout work dir %q is not the canonical spelling",
+			layout.WorkDir)
+	}
+}
+
 func TestWorkspaceRootIsolatedByID(t *testing.T) {
 	dataDir := t.TempDir()
 	workA := filepath.Join(t.TempDir(), "a")

@@ -1541,6 +1541,33 @@ interface TurnRow {
   i: number;
 }
 
+// turnIsLive reports whether a turn is the one the conversation is
+// working on: the conversation is inside a turn, this is the newest
+// turn, and nothing has recorded its run as finished. The last clause
+// is what keeps a finished turn folded — the turns the backend writes
+// carry a finishedAt (an imported archive row without one is possible,
+// and still folds: the window's own strip is appended after it), while
+// the window's own strip carries one only from the moment that run's end
+// event lands.
+//
+// The conversation's busy flag alone is not enough, because the live run
+// does not always belong to the newest turn this page made: a session
+// resumed while its run is still going gets a strip of its own at the
+// seam the archive ends at (liveTurnEntry in store.ts), and the turn
+// above it is a finished one. Reading liveness off busy would keep that
+// turn's steps expanded under its own completed answer and take the
+// live run's rows for its steps. A turn with a finishedAt folds the way
+// every ended turn does; a terminal event that never arrives leaves the
+// window's strip looking live, and nothing in the transcript can tell
+// that apart from a run that is still going.
+function turnIsLive(
+  turn: TurnArtifacts,
+  lastTurn: TurnArtifacts | undefined,
+  busy: boolean,
+): boolean {
+  return busy && turn === lastTurn && !turn.finishedAt;
+}
+
 // TurnSummaryHeader doubles as the ended turn's fold control: when
 // intermediate rows exist the Worked for label becomes a button with
 // a chevron, and clicking it expands/collapses those rows.
@@ -2081,7 +2108,7 @@ export function ChatView() {
     return {
       user,
       answer,
-      running: busyRef.current && turn === lastTurnRef.current,
+      running: turnIsLive(turn, lastTurnRef.current, busyRef.current),
     };
   }, []);
 
@@ -2349,7 +2376,7 @@ export function ChatView() {
         else askRows.push({ msg, i });
       }
       const finalRow = assistantRows[assistantRows.length - 1];
-      const running = busy && turn === lastTurn;
+      const running = turnIsLive(turn, lastTurn, busy);
       // The steps this turn folds away: the rows that did work before its
       // reply. Everything is expanded while the turn runs, so those rows
       // render in transcript order and an interjection sits exactly where
@@ -2417,6 +2444,27 @@ export function ChatView() {
     while (cursor < messages.length) {
       pushRow(cursor, turnForIndex(turnArtifacts, cursor), -1);
       cursor += 1;
+    }
+    // A live turn whose run has produced no row yet has no interval for
+    // the loop above to walk into: it opens at the seam, which is the end
+    // of the transcript. The transcript still has to say the conversation
+    // is working, where its rows will appear.
+    const liveTail = turnArtifacts[turnArtifacts.length - 1];
+    if (
+      liveTail &&
+      liveTail.start >= messages.length &&
+      turnIsLive(liveTail, lastTurn, busy)
+    ) {
+      transcriptItems.push({
+        kind: 'work',
+        key: `${liveTail.id}:work`,
+        turn: liveTail,
+        turnIdx: turnArtifacts.length - 1,
+        processCount: 0,
+        pad: TRANSCRIPT_ROW_PAD,
+      });
+      pushTail(liveTail, turnArtifacts.length - 1, false);
+      endTurn();
     }
   }
   for (const spec of pendingInteracts) {
@@ -3356,7 +3404,7 @@ export function ChatView() {
     if (item.kind === 'work') {
       return (
         <TurnSummaryHeader
-          running={busy && item.turn === lastTurn}
+          running={turnIsLive(item.turn, lastTurn, busy)}
           durationMs={item.turn.durationMs}
           processCount={item.processCount}
           open={openTurns.has(item.turn.id)}

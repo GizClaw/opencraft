@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -360,5 +361,78 @@ func TestEnsureHostRebuildsRetiredWorkspace(t *testing.T) {
 	if res, err := second.Wait(ctx); err != nil || res == nil ||
 		res.Status != "completed" {
 		t.Fatalf("replacement run wait = %v, %v; want completed", res, err)
+	}
+}
+
+// TestSetWorkDirStaysSpelledLikeTheHistoryRows pins the spelling the
+// window switches on. A workspace reaches the window as the string
+// ActiveWorkDir carries in the ready event, and the window compares it
+// against the history row the user clicked, character for character. A
+// path the window hands in — the picker's fallback input, a paste —
+// travelled into that string verbatim while the row was written with
+// filepath.Clean: the sidebar then took every row of the active
+// workspace for another workspace's, and clicking one became a switch
+// the backend answered with "already announced" while the window waited
+// out its deadline and reported "workspace switch did not complete". A
+// launch flag cannot be the source, whatever spelling it carries:
+// config.ResolveLaunch absolutizes the flag on the way in.
+func TestSetWorkDirStaysSpelledLikeTheHistoryRows(t *testing.T) {
+	configDir := t.TempDir()
+	dataDir := t.TempDir()
+	workDir := t.TempDir()
+	c := NewCore(configDir, dataDir, "")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(cwd, workDir)
+	if err != nil {
+		t.Fatalf("relative spelling of %q from %q: %v", workDir, cwd, err)
+	}
+	for _, spelling := range []string{
+		workDir + "/",
+		workDir + "//",
+		filepath.Join(workDir, "."),
+		filepath.Join(workDir, "sub", ".."),
+		rel,
+	} {
+		c.SetWorkDir(spelling)
+		if got := c.ActiveWorkDir(); got != workDir {
+			t.Fatalf("ActiveWorkDir after SetWorkDir(%q) = %q, want %q",
+				spelling, got, workDir)
+		}
+	}
+
+	// No workspace keeps comparing as none: cleaning a blank path must
+	// not name the process's own directory.
+	c.SetWorkDir("   ")
+	if got := c.ActiveWorkDir(); got != "" {
+		t.Fatalf("ActiveWorkDir of a blank path = %q, want it empty", got)
+	}
+
+	// The history record for the same directory — what the rows and the
+	// ready event are both read from — is that same string, for every
+	// spelling the two halves are handed independently.
+	for _, spelling := range []string{workDir + "/", rel} {
+		c.SetWorkDir(spelling)
+		c.RecordWorkspace(spelling)
+		metas, err := c.Workspaces()
+		if err != nil {
+			t.Fatalf("workspaces: %v", err)
+		}
+		if len(metas) != 1 {
+			t.Fatalf("workspaces = %d entries for one directory, want 1",
+				len(metas))
+		}
+		if metas[0].Path != workDir {
+			t.Fatalf("history path after RecordWorkspace(%q) = %q, want %q",
+				spelling, metas[0].Path, workDir)
+		}
+		if metas[0].Path != c.ActiveWorkDir() {
+			t.Fatalf("history path %q != active workspace %q after %q: the "+
+				"window would take its own rows for another workspace's",
+				metas[0].Path, c.ActiveWorkDir(), spelling)
+		}
 	}
 }

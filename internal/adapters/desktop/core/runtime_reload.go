@@ -62,7 +62,16 @@ func (c *Core) RebuildRuntime(ctx context.Context) error {
 		// once per workspace, so a reload storm inside one drain asks
 		// for one replacement.
 		c.Runtime.ScheduleReplacement(ctx, workDir)
-		if !SameWorkspace(announced, workDir) {
+		// The question asked here has to be the window's own: it moves on
+		// a ready event whose work_dir is not the string it holds, so an
+		// announcement is only redundant when the two strings are equal.
+		// Comparing canonicalized paths instead (SameWorkspace) reads a
+		// workspace the window knows under another spelling as "already
+		// announced", and the window — holding that other spelling —
+		// then waits out its deadline and reports "workspace switch did
+		// not complete". SetWorkDir canonicalizes, so raw equality is
+		// both the window's test and reachable for every switch.
+		if announced != workDir {
 			// A switch away and back lands on a Host that was retired
 			// while the window was elsewhere: that Host has no
 			// replacement scheduled (leaving a workspace does not

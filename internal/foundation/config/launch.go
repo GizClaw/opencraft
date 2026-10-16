@@ -299,12 +299,15 @@ func homeDir(getenv func(string) string) (string, error) {
 
 // absolute cleans a path and makes it absolute without requiring it to
 // exist.
+// absolute resolves one launch path to the spelling the rest of the
+// process agrees on (CanonicalWorkDir). Launch resolution is the one
+// caller that refuses to continue on a path that will not resolve, so
+// it checks the error itself instead of taking the helper's fallback.
 func absolute(path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
+	if _, err := filepath.Abs(path); err != nil {
 		return "", err
 	}
-	return filepath.Clean(abs), nil
+	return CanonicalWorkDir(path), nil
 }
 
 // firstNonEmpty returns the first trimmed non-empty value.

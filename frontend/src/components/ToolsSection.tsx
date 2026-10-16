@@ -158,7 +158,14 @@ function ToolOptionMenu({
         align="end"
         keyboard
         maxHeight={288}
-        panelClassName="min-w-full rounded-control border border-edge bg-panel p-1 shadow-popover"
+        // The panel is portaled to the body as a fixed element, so a
+        // percentage min-width measures the *viewport*, not the trigger:
+        // `min-w-full` stretched every tool-knob menu across the whole
+        // window. A rem floor (a touch wider than the w-52 control
+        // column, as the other select-style menus use) with a viewport
+        // cap keeps long model names from wrapping the panel wider than
+        // the window.
+        panelClassName="min-w-[16rem] max-w-[calc(100vw-1rem)] rounded-control border border-edge bg-panel p-1 shadow-popover"
       >
         {options.map((option) => {
           const isSelected = option.value === value;

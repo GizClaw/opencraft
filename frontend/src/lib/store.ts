@@ -11,10 +11,12 @@ import {
 } from './appearance';
 import { sanitizeToolResult } from './ansi';
 import { COMPACT_SUMMARY_PREFIX } from './compact';
+import { reportFrontendError } from './frontendErrors';
 import { followLinkTarget } from './linkTarget';
 import { measureInteraction, scheduleFlushCommit } from './perfMetrics';
 import { coalesceStreamEvents, streamFlushInterval } from './stream';
 import { toolResultImages, toolResultText, type ToolImage } from './toolresult';
+import { sameWorkspacePath } from './workspacePath';
 import type {
   AgentSummary,
   AutomationRun,
@@ -1115,12 +1117,21 @@ function foldArchivedTurns(
 // lastAssistant returns a mutable copy of the last assistant message
 // (creating one when needed) plus a NEW messages array, so every
 // stream delta produces fresh references and React re-renders.
-function lastAssistant(messages: MessageView[]): {
+//
+// runStart is the index the run's own rows begin at (its strip's start):
+// a trailing assistant row above it belongs to another turn — a finished
+// one, or another run's — so the delta opens a row of its own instead of
+// growing that turn's answer.
+function lastAssistant(
+  messages: MessageView[],
+  runStart: number,
+): {
   msg: MessageView;
   messages: MessageView[];
 } {
-  const last = messages[messages.length - 1];
-  if (!last || last.role !== 'assistant') {
+  const lastIndex = messages.length - 1;
+  const last = messages[lastIndex];
+  if (lastIndex < runStart || !last || last.role !== 'assistant') {
     const msg: MessageView = {
       id: newID('msg'),
       role: 'assistant',
@@ -1355,8 +1366,8 @@ function mergeTurnDoc(docs: TurnDoc[], path: string, bytes: number): TurnDoc[] {
   return [...docs.slice(0, idx), entry, ...docs.slice(idx + 1)];
 }
 
-// artifactTurnIndex finds the turn a produced file belongs to. The
-// backend attributes the write to the run that made it, so the strip is
+// artifactTurnIndex finds the turn a run's events belong to. The backend
+// attributes everything a run produced to that run, so the strip is
 // found by run id: while another turn sits above the running one (a
 // delegation note the app appended mid-turn, a barge-in replacement),
 // the last strip is not the writer.
@@ -1364,8 +1375,14 @@ function mergeTurnDoc(docs: TurnDoc[], path: string, bytes: number): TurnDoc[] {
 // A run id the store has not recorded yet means the start-turn response
 // for that run is still in flight, so the file belongs to the trailing
 // live entry — the one with neither a run id nor an archived seq. With
-// no writer to point at, the event is dropped rather than merged into
-// whatever turn happens to be last.
+// no owner to point at, an artifact event is dropped rather than merged
+// into whatever turn happens to be last; a stream delta opens the
+// missing strip instead (see liveRunTurn).
+//
+// A strip that already finished is not a live entry, whatever it is
+// missing: a send that never started leaves its turn stamped but
+// unnamed (markFailedSend), and a run met on the wire must not fold into
+// that turn — nor a file land on it.
 function artifactTurnIndex(
   list: TurnArtifacts[],
   runID: string | undefined,
@@ -1376,15 +1393,81 @@ function artifactTurnIndex(
   }
   const live = list.length - 1;
   const last = list[live];
-  if (!last || last.runID || last.seq !== undefined) return -1;
+  if (!last || last.runID || last.seq !== undefined || last.finishedAt) {
+    return -1;
+  }
   return live;
 }
 
+// liveTurnEntry is the strip of the run the window is tracking, opened
+// where the archive ends. Its start is an index into the merged
+// transcript, and the merge appends the shell's rows whole
+// ([...archive, ...shell]): a strip the shell already had keeps its rows
+// by shifting with them (seam + start) rather than snapping to the seam.
+// The run that opened it is not always the oldest one the shell holds —
+// a barge-in replaces a run without erasing its rows — and a strip that
+// snapped back would swallow rows that are not its own. Such a strip is
+// grown instead of replaced too: its id, the files it already collected
+// and the stamp it was requested at survive the re-hydrate. The strip
+// names the run the actor is tracking; while a send's response is still
+// in flight the window has none to name, and that send's continuation
+// (beginTurn) names the newest strip when the answer lands, which is
+// this one.
+function liveTurnEntry(
+  seam: number,
+  previous: TurnArtifacts | undefined,
+  runID: string | undefined,
+): TurnArtifacts {
+  const carried =
+    previous && previous.seq === undefined && !previous.finishedAt
+      ? previous
+      : undefined;
+  return {
+    id: carried?.id ?? newTurnID(),
+    start: carried ? seam + carried.start : seam,
+    docs: carried ? [...carried.docs] : [],
+    requestedAt: carried?.requestedAt,
+    runID: runID ?? carried?.runID,
+  };
+}
+
+// liveRunTurn returns the strip that owns one run's rows, opening it at
+// the end of the transcript when the conversation holds none. A run can
+// outlive the window that watches it — the app was restarted, or the
+// session was opened while its run was already going — and the
+// conversation machine then adopts the run off the wire (the first
+// stream of an idle conversation starts it). No send of this window
+// opened that run a turn, so nothing owns its rows: its first text delta
+// would fold into the last archived answer (lastAssistant grows the
+// trailing row) and its files would be attributed to the turn above it.
+// The strip starts where the transcript ends, which is where the run's
+// first row lands, and it names the run, which is how the artifact,
+// turn_end and archive-reconcile paths find it (artifactTurnIndex).
+// Everything above that seam belongs to the archive or to another run's
+// turn. `adopted` reports that the strip was opened here, which is the
+// caller's cue to register the run: the lookups that ask "is this run
+// still alive" read the conversation's run map (supersededEndState), and
+// a run this window never sent has no other way into it.
+function liveRunTurn(
+  conv: ConversationState,
+  runID: string,
+): { turnArtifacts: TurnArtifacts[]; turn: TurnArtifacts; adopted: boolean } {
+  const list = conv.turnArtifacts;
+  const owner = artifactTurnIndex(list, runID);
+  if (owner >= 0) {
+    return { turnArtifacts: list, turn: list[owner], adopted: false };
+  }
+  const turn = liveTurnEntry(conv.messages.length, undefined, runID);
+  return { turnArtifacts: [...list, turn], turn, adopted: true };
+}
+
 // applyStream folds one stream delta into a message list and returns
-// the new list (immutable).
+// the new list (immutable). runStart bounds the fold: deltas only touch
+// rows the run owns (see lastAssistant).
 function applyStream(
   messages: MessageView[],
   delta: StreamDelta,
+  runStart: number,
 ): MessageView[] {
   if (delta.type !== 'part' || !delta.part) return messages;
   const part = delta.part;
@@ -1392,7 +1475,7 @@ function applyStream(
     case 'text': {
       const text = part.text ?? '';
       if (!text) return messages;
-      const { msg, messages: next } = lastAssistant(messages);
+      const { msg, messages: next } = lastAssistant(messages, runStart);
       mergeAppend(msg, 'text', text);
       trimItems(msg);
       return next;
@@ -1400,7 +1483,7 @@ function applyStream(
     case 'reasoning': {
       const text = part.text ?? '';
       if (!text) return messages;
-      const { msg, messages: next } = lastAssistant(messages);
+      const { msg, messages: next } = lastAssistant(messages, runStart);
       mergeAppend(msg, 'reasoning', text);
       trimItems(msg);
       return next;
@@ -1408,7 +1491,7 @@ function applyStream(
     case 'tool_call': {
       // A tool call ends the preceding text block: fold it so a settled
       // block holds plain text instead of a chunk array.
-      const { msg, messages: next } = lastAssistant(messages);
+      const { msg, messages: next } = lastAssistant(messages, runStart);
       foldLastTextItem(msg);
       msg.items = [
         ...msg.items,
@@ -1433,7 +1516,10 @@ function applyStream(
       // Walk backwards: a result virtually always belongs to the newest
       // assistant message, so the common case finds it in the first step
       // instead of scanning the whole transcript for every tool result.
-      for (let i = messages.length - 1; i >= 0; i--) {
+      // The walk stops at the run's own rows: a call below the seam was
+      // not this run's (the id would have to be reused across turns),
+      // and stamping it would be a delta landing outside its turn.
+      for (let i = messages.length - 1; i >= runStart; i--) {
         const m = messages[i];
         if (m.role !== 'assistant') continue;
         let changed = false;
@@ -1714,6 +1800,111 @@ export const useStore = create<StoreState>((set, get) => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   };
+  // applyWorkspaceSwitch lands the window on one workspace: the focus
+  // resets, the active workspace moves, and the workspace's saved
+  // session is restored. The ready event is the normal caller; a switch
+  // whose event never arrived enters through the same door (see
+  // switchWorkspace), so the two cannot drift apart.
+  const applyWorkspaceSwitch = (workDir: string) => {
+    // Keep conversation actors and transcripts alive across a
+    // workspace switch: a turn that is still running in the old
+    // workspace continues to stream into its conversation. Only the
+    // focus is reset; the session restore below decides which
+    // conversation the new workspace shows.
+    stateRoot.sendFocus({ type: 'WORKSPACE_RESET' });
+    set({
+      workspace: workDir,
+      toolsView: null,
+      configOpen: false,
+      paletteOpen: false,
+      shortcutsOpen: false,
+    });
+    void get().loadSessions();
+    const restoreFor = suppressRestoreFor;
+    suppressRestoreFor = null;
+    if (restoreFor !== workDir) {
+      const restore = get().restoreWorkspaceSession(workDir);
+      workspaceRestoreInFlight = true;
+      workspaceRestorePromise = restore;
+      void restore.finally(() => {
+        if (workspaceRestorePromise === restore) {
+          workspaceRestorePromise = null;
+          workspaceRestoreInFlight = false;
+        }
+      });
+    }
+  };
+  // switchWorkspace waits out one workspace switch and answers the path
+  // the window is on: the path asked for when the switch landed (the
+  // backend announces it through "ready", and Workspace.Open has
+  // already stamped the new workdir by the time the binding answers),
+  // the path it moved to instead when another switch has taken the
+  // window since, or '' when nothing settled.
+  //
+  // The announcement is not guaranteed to arrive. The backend skips it
+  // when the workspace asked for is the one it already announced, and
+  // it compares canonical paths there while the window compares the
+  // raw strings — a window holding the same directory under another
+  // spelling would wait out the deadline and lose the click. So the
+  // wait is two-phase: a short grace for the event, then the backend's
+  // own answer (the binding has applied the switch by now, so its
+  // Active workspace is authoritative) landed here. Landing it is
+  // idempotent with a late event: the ready handler compares the
+  // workspace and does nothing when it already matches.
+  const switchWorkspace = async (
+    workspacePath: string,
+    timeoutMs: number,
+  ): Promise<string> => {
+    const startedAt = Date.now();
+    const deadline = startedAt + timeoutMs;
+    const grace = Math.min(250, timeoutMs);
+    while (
+      get().workspace !== workspacePath &&
+      Date.now() - startedAt < grace
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (get().workspace === workspacePath) return workspacePath;
+    const active = await api.workspace().catch(() => '');
+    const held = get().workspace;
+    if (sameWorkspacePath(held, workspacePath)) {
+      // The switch landed while the backend was answering: the window
+      // already holds it, under whatever spelling, which is what this
+      // call answers.
+      return held;
+    }
+    if (active && !sameWorkspacePath(active, workspacePath)) {
+      // The backend is on a workspace this click never asked for: a
+      // newer switch owns the window now, whether or not the window has
+      // already followed it there. Waiting for an announcement that
+      // will never come would only delay a click that has lost.
+      return active;
+    }
+    if (active) {
+      // The backend is on the workspace this click asked for: land the
+      // window on it.
+      if (active !== held) applyWorkspaceSwitch(active);
+      return active;
+    }
+    // The backend would not say where it is, and the window has not moved
+    // either. The announcement is the only thing left that could settle
+    // this.
+    while (get().workspace !== workspacePath && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (get().workspace === workspacePath) return workspacePath;
+    // Nothing settled. Every caller turns this into an error the reader
+    // sees once and the click path catches, so the log would never hear
+    // about a missed switch; report it here, where both strings are
+    // known, so the next one can be diagnosed from the log the way this
+    // one could not.
+    reportFrontendError(
+      'workspace-switch',
+      new Error('workspace switch did not complete'),
+      `wanted ${workspacePath}, active ${get().workspace}`,
+    );
+    return '';
+  };
   const runContextSwitch = <T>(op: () => Promise<T>) => {
     const next = contextSwitchQueue.then(op);
     contextSwitchQueue = next.then(
@@ -1722,11 +1913,20 @@ export const useStore = create<StoreState>((set, get) => {
     );
     return next;
   };
-  const updateConv = (id: string, patch: Partial<ConversationState>) =>
+  // updateConv applies one patch to a conversation and settles it (see
+  // settleConversation). `extra` writes state beside the conversation in
+  // the same update — one event is one store write, which is what the
+  // stream flush's flush-to-frame probe measures.
+  const updateConv = (
+    id: string,
+    patch: Partial<ConversationState>,
+    extra?: (state: StoreState) => Partial<StoreState> | undefined,
+  ) =>
     set((state) => {
       const conv = state.conversations[id];
       if (!conv) return state;
       return {
+        ...extra?.(state),
         conversations: {
           ...state.conversations,
           [id]: settleConversation({ ...conv, ...patch }),
@@ -2036,7 +2236,8 @@ export const useStore = create<StoreState>((set, get) => {
             conversation_id?: string;
             delta: StreamDelta;
           };
-          if (!data.run_id) break;
+          const runID = data.run_id;
+          if (!runID) break;
           const actor = stateRoot.registry.get(conversationID);
           if (actor) {
             const snapshot = actor.getSnapshot();
@@ -2046,10 +2247,7 @@ export const useStore = create<StoreState>((set, get) => {
               lastEndedRunID?: string;
               supersededRunID?: string;
             };
-            if (
-              context.supersededRunID &&
-              data.run_id === context.supersededRunID
-            ) {
+            if (context.supersededRunID && runID === context.supersededRunID) {
               // A barge-in is replacing this run; its late deltas must
               // never land after the replacement's user message.
               break;
@@ -2057,15 +2255,12 @@ export const useStore = create<StoreState>((set, get) => {
             if (value.turn === 'running') {
               // A delayed delta from an earlier run must never be
               // folded into a newer run's live transcript.
-              if (
-                context.currentRunID &&
-                data.run_id !== context.currentRunID
-              ) {
+              if (context.currentRunID && runID !== context.currentRunID) {
                 break;
               }
             } else if (
               (value.turn === 'starting' || value.turn === 'idle') &&
-              data.run_id === context.lastEndedRunID
+              runID === context.lastEndedRunID
             ) {
               // The machine already ignores a stream for the last ended
               // run; mirror it here so data never reaches the renderer.
@@ -2074,9 +2269,28 @@ export const useStore = create<StoreState>((set, get) => {
           }
           const conv = ensureConversation(conversationID);
           if (!conv) break;
-          updateConv(conversationID, {
-            messages: applyStream(conv.messages, data.delta),
-          });
+          // The run's rows start at its own strip, opened here when the
+          // conversation holds none (a run this window only met on the
+          // wire — see liveRunTurn). The delta folds into the rows at or
+          // after that seam, and into no row above it: those belong to
+          // another turn.
+          const live = liveRunTurn(conv, runID);
+          updateConv(
+            conversationID,
+            {
+              turnArtifacts: live.turnArtifacts,
+              messages: applyStream(conv.messages, data.delta, live.turn.start),
+            },
+            // An adopted run enters the conversation's run map with its
+            // strip: a barge-in over it has to see it as live
+            // (supersededEndState reads the map), and the turn_end that
+            // removes the entry is the one that stamps the strip.
+            live.adopted
+              ? (state) => ({
+                  runConvs: { ...state.runConvs, [runID]: conversationID },
+                })
+              : undefined,
+          );
           break;
         }
         case UIEventType.interact: {
@@ -2369,33 +2583,7 @@ export const useStore = create<StoreState>((set, get) => {
           const data = ev.data as ConfigStatus;
           const workChanged = data.work_dir !== get().workspace;
           if (workChanged) {
-            // Keep conversation actors and transcripts alive across a
-            // workspace switch: a turn that is still running in the
-            // old workspace continues to stream into its conversation.
-            // Only the focus is reset; the session restore below
-            // decides which conversation the new workspace shows.
-            stateRoot.sendFocus({ type: 'WORKSPACE_RESET' });
-            set({
-              workspace: data.work_dir,
-              toolsView: null,
-              configOpen: false,
-              paletteOpen: false,
-              shortcutsOpen: false,
-            });
-            void get().loadSessions();
-            const restoreFor = suppressRestoreFor;
-            suppressRestoreFor = null;
-            if (restoreFor !== data.work_dir) {
-              const restore = get().restoreWorkspaceSession(data.work_dir);
-              workspaceRestoreInFlight = true;
-              workspaceRestorePromise = restore;
-              void restore.finally(() => {
-                if (workspaceRestorePromise === restore) {
-                  workspaceRestorePromise = null;
-                  workspaceRestoreInFlight = false;
-                }
-              });
-            }
+            applyWorkspaceSwitch(data.work_dir);
           }
           void get().loadSessions();
           void get().loadAutomations();
@@ -3651,8 +3839,7 @@ export const useStore = create<StoreState>((set, get) => {
             return;
           }
           const page = historyPage(turns, INITIAL_HISTORY_TURNS);
-          const messages = page.messages;
-          const turnArtifacts = page.turnArtifacts;
+          const archivedMessages = page.messages;
           // A live shell may already hold the current run's streamed
           // messages. Keep them after the archived history; completed
           // shells are replaced by the archive instead of duplicated.
@@ -3660,14 +3847,37 @@ export const useStore = create<StoreState>((set, get) => {
             Boolean(existing) &&
             (actorValue?.turn === 'running' || actorValue?.turn === 'starting');
           const mergedMessages = keepLive
-            ? [...messages, ...existing.messages]
+            ? [...archivedMessages, ...existing.messages]
             : [
                 // Undelivered steer rows are not in the archive, so they
                 // travel across the rebuild explicitly (see
                 // carryUndeliveredSteers).
-                ...messages,
-                ...carryUndeliveredSteers(existing?.messages, messages),
+                ...archivedMessages,
+                ...carryUndeliveredSteers(existing?.messages, archivedMessages),
               ];
+          // The live run owns every row past the seam the archive ends
+          // at, so it gets the strip that owns them. Without one those
+          // rows read as the last archived turn's: that turn's fold
+          // header names a run that already finished and its steps
+          // collapse under a complete answer (see turnIsLive in
+          // ChatView). The strip carries the run the actor is tracking,
+          // which is what the artifact and turn_end events look their
+          // turn up by, and a strip the shell already had keeps its own
+          // rows (see liveTurnEntry).
+          const liveRunID = (
+            actor?.getSnapshot().context as
+              { currentRunID?: string } | undefined
+          )?.currentRunID;
+          const turnArtifacts = keepLive
+            ? [
+                ...page.turnArtifacts,
+                liveTurnEntry(
+                  archivedMessages.length,
+                  existing.turnArtifacts[existing.turnArtifacts.length - 1],
+                  liveRunID,
+                ),
+              ]
+            : page.turnArtifacts;
           set((state) => ({
             toolsView: null,
             conversations: {
@@ -3917,22 +4127,31 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     openSessionInWorkspace: async (sessionID, workspacePath) => {
-      const state = get();
-      if (workspacePath && workspacePath !== state.workspace) {
+      if (workspacePath && workspacePath !== get().workspace) {
         await api.openWorkspace(workspacePath);
         // The backend emits "ready" asynchronously relative to the
         // binding response; wait until the store has applied it so a
         // pending newChat is queued before resume tries to open the
         // target session in the new workspace.
-        const deadline = Date.now() + 5000;
-        while (get().workspace !== workspacePath && Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        if (get().workspace !== workspacePath) {
+        const landed = await switchWorkspace(workspacePath, 5000);
+        if (!landed) {
           throw new Error('workspace switch did not complete');
+        }
+        if (!sameWorkspacePath(landed, workspacePath)) {
+          // Another workspace's switch took the window while this one
+          // was in flight: the click that is on screen now wins.
+          return;
         }
         void get().loadWorkspaces();
         await waitForWorkspaceRestore();
+        if (get().workspace !== landed) {
+          // The window left again while this switch (and its restore)
+          // was in flight: another workspace was picked in the
+          // meantime. Resuming now would run through bindings that read
+          // whatever workspace is active, so the click still on screen
+          // wins and this one is dropped.
+          return;
+        }
       }
       await get().resume(sessionID);
     },
@@ -3955,11 +4174,13 @@ export const useStore = create<StoreState>((set, get) => {
         suppressRestoreFor = target;
         try {
           await api.openWorkspace(target);
-          const deadline = Date.now() + 8000;
-          while (get().workspace !== target && Date.now() < deadline) {
-            await new Promise((resolve) => setTimeout(resolve, 20));
-          }
-          if (get().workspace !== target) {
+          const landed = await switchWorkspace(target, 8000);
+          // A draft is a send to a named workspace, so a switch that did
+          // not land — nothing settled, or a newer switch took the window
+          // first — is reported rather than dropped the way a session
+          // click is: the text goes back to the composer and the status
+          // line says why it did not go.
+          if (!landed || !sameWorkspacePath(landed, target)) {
             throw new Error('workspace switch did not complete');
           }
           void get().loadWorkspaces();

@@ -26,10 +26,13 @@ type WorkspaceMeta struct {
 	LastOpened string `json:"last_opened"` // RFC3339 UTC
 }
 
-// SaveWorkspace persists one workspace open (creating or refreshing
-// its meta record).
+// SaveWorkspace persists one workspace open (creating or refreshing its
+// meta record). The row records the path in its canonical spelling
+// (CanonicalWorkDir), whatever spelling the binding was handed: this is
+// the string the sidebar compares against the one the ready event
+// announces, so both sides have to write one directory the same way.
 func SaveWorkspace(dataDir, path string) error {
-	path = strings.TrimSpace(path)
+	path = CanonicalWorkDir(path)
 	if path == "" {
 		return fmt.Errorf("config: workspace path is required")
 	}
@@ -39,8 +42,8 @@ func SaveWorkspace(dataDir, path string) error {
 	}
 	meta := WorkspaceMeta{
 		ID:         WorkspaceID(path),
-		Path:       filepath.Clean(path),
-		Title:      filepath.Base(filepath.Clean(path)),
+		Path:       path,
+		Title:      filepath.Base(path),
 		LastOpened: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	data, err := json.MarshalIndent(meta, "", "  ")

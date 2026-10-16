@@ -35,6 +35,50 @@ func TestWorkspaceMetaRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSaveWorkspaceRecordsTheCanonicalSpelling pins the pair the window
+// compares: the history row a click carries and the path the backend
+// announces. The row is written from whatever spelling the binding was
+// handed — a relative path, a trailing separator — so it has to be
+// recorded the way CanonicalWorkDir (and with it ActiveWorkDir) spells
+// the directory, and one directory must stay one entry either way.
+func TestSaveWorkspaceRecordsTheCanonicalSpelling(t *testing.T) {
+	dataDir := t.TempDir()
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(cwd, dir)
+	if err != nil {
+		t.Fatalf("relative spelling of %q from %q: %v", dir, cwd, err)
+	}
+	for _, spelling := range []string{dir + "/", rel} {
+		if err := SaveWorkspace(dataDir, spelling); err != nil {
+			t.Fatal(err)
+		}
+		metas, err := ListWorkspaces(dataDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(metas) != 1 {
+			t.Fatalf("metas after SaveWorkspace(%q) = %d entries, want one "+
+				"per directory", spelling, len(metas))
+		}
+		if metas[0].Path != dir {
+			t.Fatalf("path after SaveWorkspace(%q) = %q, want %q",
+				spelling, metas[0].Path, dir)
+		}
+		if metas[0].ID != WorkspaceID(dir) {
+			t.Fatalf("id after SaveWorkspace(%q) = %q, want the id of %q",
+				spelling, metas[0].ID, dir)
+		}
+		if metas[0].Title != filepath.Base(dir) {
+			t.Fatalf("title after SaveWorkspace(%q) = %q, want %q",
+				spelling, metas[0].Title, filepath.Base(dir))
+		}
+	}
+}
+
 func TestRemoveWorkspaceOnlyRemovesState(t *testing.T) {
 	dataDir := t.TempDir()
 	workDir := filepath.Join(t.TempDir(), "repo")

@@ -89,5 +89,8 @@ func (b *Workspace) ChooseWorkspace(
 	if err := b.Open(path); err != nil {
 		return "", err
 	}
-	return path, nil
+	// Answer with the spelling the open landed on, not the dialog's:
+	// everything the window compares comes from the active workspace,
+	// and the dialog's string is whatever the OS handed back.
+	return b.core.ActiveWorkDir(), nil
 }

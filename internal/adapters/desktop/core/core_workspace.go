@@ -18,10 +18,18 @@ func (c *Core) Workspaces() ([]config.WorkspaceMeta, error) {
 	return config.ListWorkspaces(c.DataDir)
 }
 
-// SetWorkDir changes the active workspace directory.
+// SetWorkDir changes the active workspace directory. The path is stored
+// in the one spelling config defines for workspaces
+// (config.CanonicalWorkDir): the ready event announces this string and
+// the window compares it, character for character, against the history
+// row the user clicked — so whatever a launch flag or a picker handed in
+// has to be folded to that spelling here, or the window takes the row
+// for another workspace and a click on it becomes a switch the backend
+// answers with "already announced".
 func (c *Core) SetWorkDir(workDir string) {
+	canonical := config.CanonicalWorkDir(workDir)
 	c.mu.Lock()
-	c.WorkDir = workDir
+	c.WorkDir = canonical
 	c.mu.Unlock()
 }
 
@@ -128,10 +136,17 @@ func startupWorkDirFromHistory(dataDir string) string {
 }
 
 // InitialWorkDir resolves the startup workspace from explicit input or
-// history.
+// history, in the one spelling a workspace is written in: this value is
+// announced through the ready event and compared against the history
+// rows, so it is folded here rather than at whichever caller remembers.
+// A row recorded before the rule existed — a relative spelling — is
+// stat'd as it stands, which resolves it against the process's working
+// directory (the only thing a relative row can be resolved against), and
+// answered in the canonical spelling. A relative row that does not
+// resolve there is skipped like any other row that no longer exists.
 func (c *Core) InitialWorkDir(explicit string) string {
 	if explicit != "" {
-		return explicit
+		return config.CanonicalWorkDir(explicit)
 	}
-	return startupWorkDirFromHistory(c.DataDir)
+	return config.CanonicalWorkDir(startupWorkDirFromHistory(c.DataDir))
 }
