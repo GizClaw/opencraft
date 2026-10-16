@@ -48,6 +48,10 @@ import type {
 import type { ToolPage } from '../components/ToolsPanel';
 import { routeBackendEvent, type EventDataSink } from '../state/eventRouter';
 import { stateRoot } from '../state/app';
+import {
+  submissionEffect,
+  type SubmitKind,
+} from '../state/machines/conversation';
 
 export interface ToolView {
   id: string;
@@ -2187,15 +2191,16 @@ export const useStore = create<StoreState>((set, get) => {
     return conv;
   };
 
-  // startTurnFor is the shared low-level send: it validates the
-  // draft, appends the optimistic user message, and starts one turn
-  // in the given conversation. Busy-state policy lives in its callers
-  // (send refuses while busy; sendInterrupt barges in; the queue
-  // drain fires after a terminal event).
+  // startTurnFor is the shared low-level send: it validates the draft,
+  // appends the optimistic user message, and starts one turn in the
+  // given conversation. Which submission starts a turn - and what that
+  // does to a live or in-flight run - is the submission table's answer
+  // (SubmitKind), asked by the callers and again here.
   const startTurnFor = async (
     convID: string,
     text: string,
     attachments: AttachmentView[],
+    submit: SubmitKind,
   ): Promise<boolean> => {
     const trimmed = text.trim();
     if (
@@ -2207,6 +2212,9 @@ export const useStore = create<StoreState>((set, get) => {
     }
     const conv = get().conversations[convID];
     if (!conv) return false;
+    // A start the table does not allow here would leave the machine
+    // behind the turn the RPC is about to begin.
+    if (!submissionStarts(convID, submit)) return false;
     const messages = [
       ...conv.messages,
       {
@@ -2217,19 +2225,23 @@ export const useStore = create<StoreState>((set, get) => {
         attachments,
       },
     ];
-    await beginTurn(convID, trimmed, messages, attachments);
+    await beginTurn(convID, trimmed, messages, attachments, submit);
     return true;
   };
 
   // drainQueued sends the single staged draft for a conversation. It
   // is invoked when that conversation's turn reaches its terminal
   // event (Tab queue) or, for interrupt=true, as soon as the awaited
-  // run starts.
+  // run starts. The draft's own kind picks the table row - an Enter
+  // waits to barge in, a Tab draft takes over the turn its run left
+  // behind - and a draft the table cannot fire here stays staged.
   const drainQueued = (convID: string) => {
     const queued = get().conversations[convID]?.queued;
     if (!queued) return;
+    const kind: SubmitKind = queued.interrupt ? 'interrupt' : 'drain';
+    if (!submissionStarts(convID, kind)) return;
     updateConv(convID, { queued: undefined });
-    void startTurnFor(convID, queued.text, queued.attachments);
+    void startTurnFor(convID, queued.text, queued.attachments, kind);
   };
 
   // markFailedSend marks the live turn entry of a send that never
@@ -2267,7 +2279,8 @@ export const useStore = create<StoreState>((set, get) => {
     convID: string,
     text: string,
     messages: MessageView[],
-    attachments: AttachmentView[] = [],
+    attachments: AttachmentView[],
+    submit: SubmitKind,
   ) => {
     const conv = get().conversations[convID];
     // The turn belongs to the workspace that owns the conversation,
@@ -2298,7 +2311,7 @@ export const useStore = create<StoreState>((set, get) => {
       workspaceGeneration: stateRoot.generation(),
       workspace,
     });
-    startingActor?.send({ type: 'SEND_STARTED' });
+    startingActor?.send({ type: 'SUBMIT', kind: submit });
     try {
       const parts: StreamPart[] = [];
       if (text) parts.push({ type: 'text', text });
@@ -2339,11 +2352,9 @@ export const useStore = create<StoreState>((set, get) => {
       void get().loadSessions();
       // An Enter pressed while the previous send was still "starting"
       // staged interrupt=true. The run just started, so fire it now;
-      // the replacement barges in through the same send path.
-      const queued = get().conversations[convID]?.queued;
-      if (queued?.interrupt) {
-        updateConv(convID, { queued: undefined });
-        void startTurnFor(convID, queued.text, queued.attachments);
+      // the replacement barges in through the same drain path.
+      if (get().conversations[convID]?.queued?.interrupt) {
+        drainQueued(convID);
       }
     } catch (err) {
       const conv = get().conversations[convID];
@@ -2636,9 +2647,9 @@ export const useStore = create<StoreState>((set, get) => {
           void get().loadSessions();
           // A Tab-staged draft fires only when the run it was waiting
           // for completes. Drain before the actor applies TURN_ENDED:
-          // beginTurn marks the just-ended run as superseded so the
-          // pending terminal event stays inert and the next turn
-          // starts cleanly. Failed/cancelled/aborted endings keep the
+          // the drain column of the submission table marks the
+          // just-ended run as superseded, so the pending terminal event
+          // stays inert and the next turn starts cleanly. Failed/cancelled/aborted endings keep the
           // draft staged (the composer shows how to send it), and a
           // terminal event from a superseded run must never drain a
           // draft that is waiting for the replacement.
@@ -2798,6 +2809,24 @@ export const useStore = create<StoreState>((set, get) => {
     pendingInteractConversation: (promptID) =>
       get().pendingPromptConvs[promptID],
     activeWorkspace: () => get().workspace,
+  };
+
+  // turnSubmission answers the machine module's submission table: what
+  // this submission may do in the phase the conversation's turn is in
+  // (see SUBMISSIONS in the machine module - the guards of its SUBMIT
+  // transitions read the same cells). Every path that hands the turn
+  // something new asks it before spending an IPC or drawing a row.
+  const turnSubmission = (conversationID: string, kind: SubmitKind) =>
+    submissionEffect(
+      stateRoot.registry.get(conversationID)?.getSnapshot(),
+      kind,
+    );
+
+  // submissionStarts is the two cells that begin a turn: a quiet turn
+  // takes one, and a live run gives it up to a barge.
+  const submissionStarts = (conversationID: string, kind: SubmitKind) => {
+    const effect = turnSubmission(conversationID, kind);
+    return effect === 'start' || effect === 'barge';
   };
 
   const conversationTurnState = (conversationID: string) => {
@@ -3372,18 +3401,17 @@ export const useStore = create<StoreState>((set, get) => {
           (!trimmed && attachments.length === 0) ||
           !convID ||
           !conv ||
-          (() => {
-            const turn = conversationTurnState(convID);
-            return turn.name === 'starting' || turn.name === 'running';
-          })() ||
           !state.configured
         ) {
           return;
         }
+        // A reply is refused while the turn is live: the table's send
+        // column has 'start' only for a quiet turn.
+        if (!submissionStarts(convID, 'send')) return;
         // Any fresh manual send supersedes a draft that is still staged
         // (for example after the turn it was queued behind failed).
         updateConv(convID, { queued: undefined });
-        await startTurnFor(convID, text, attachments);
+        await startTurnFor(convID, text, attachments, 'send');
       }),
 
     sendInterrupt: (text, attachments = []) =>
@@ -3400,20 +3428,22 @@ export const useStore = create<StoreState>((set, get) => {
         ) {
           return false;
         }
-        const turn = conversationTurnState(convID);
-        if (turn.name === 'starting') {
-          // No run id exists yet to interrupt; stage the input and fire
-          // it as a barge-in the moment the awaited run starts.
+        const effect = turnSubmission(convID, 'interrupt');
+        if (effect === 'stage') {
+          // The awaited run has not started yet, so there is no run id
+          // to interrupt: park the input and fire it as a barge-in the
+          // moment it starts (the drain takes it from there).
           updateConv(convID, {
             queued: { text: trimmed, attachments, interrupt: true },
           });
           return true;
         }
+        if (effect === 'refuse') return false;
         // Enter is "answer me now": drop anything staged with Tab and
         // start immediately. While a turn is running the engine
         // interrupts it; otherwise this is a normal send.
         updateConv(convID, { queued: undefined });
-        await startTurnFor(convID, text, attachments);
+        await startTurnFor(convID, text, attachments, 'interrupt');
         return true;
       }),
 
@@ -3433,8 +3463,11 @@ export const useStore = create<StoreState>((set, get) => {
         // for its own turn.
         return false;
       }
+      // A steer goes into the live run itself: the table refuses it in
+      // every other phase, and the run id is what the RPC addresses.
+      if (turnSubmission(convID, 'steer') !== 'steer') return false;
       const turn = conversationTurnState(convID);
-      if (turn.name !== 'running' || !turn.runID) return false;
+      if (turn.name !== 'running') return false;
       const runID = turn.runID;
       const row: MessageView = {
         id: newID('msg'),
@@ -3494,15 +3527,10 @@ export const useStore = create<StoreState>((set, get) => {
           // archive has it or the row is marked undelivered).
           return true;
         }
-        const after = conversationTurnState(convID);
-        if (
-          after.name === 'idle' ||
-          after.name === 'succeeded' ||
-          after.name === 'failed'
-        ) {
+        if (turnSubmission(convID, 'send') === 'start') {
           // The run ended between submit and rejection: a normal send is
           // what the user meant, so start one instead of losing the text.
-          await startTurnFor(convID, trimmed, []);
+          await startTurnFor(convID, trimmed, [], 'send');
           return true;
         }
         // The turn (or its replacement) is still live: keep the draft
@@ -3520,15 +3548,18 @@ export const useStore = create<StoreState>((set, get) => {
         (m) => m.id === id && m.steer === 'undelivered',
       );
       if (!row) return;
-      const turn = conversationTurnState(convID);
-      const busy = turn.name === 'starting' || turn.name === 'running';
-      // A live turn takes the text the way a Tab draft would; only drop
-      // the row once it is actually staged.
-      if (busy && !get().queueInput(row.text, [])) return;
+      // The row takes whichever shape the turn can take (the table's
+      // resend column): a quiet turn takes it as a turn of its own
+      // ('start'), a live one stages it the way a Tab draft would
+      // ('stage'). A refused row stays where it is.
+      const effect = turnSubmission(convID, 'resend');
+      if (effect === 'refuse') return;
+      // Only drop the row once the draft is actually staged.
+      if (effect === 'stage' && !get().queueInput(row.text, [])) return;
       updateConv(convID, {
         messages: conv.messages.filter((m) => m.id !== id),
       });
-      if (!busy) await startTurnFor(convID, row.text, []);
+      if (effect === 'start') await startTurnFor(convID, row.text, [], 'send');
     },
 
     dismissSteer: (id) => {
@@ -3555,10 +3586,9 @@ export const useStore = create<StoreState>((set, get) => {
       ) {
         return false;
       }
-      const turn = conversationTurnState(convID);
-      if (turn.name !== 'starting' && turn.name !== 'running') {
-        return false;
-      }
+      // The table's queue column stages a draft exactly when there is
+      // a live turn to wait for.
+      if (turnSubmission(convID, 'queue') !== 'stage') return false;
       // A single queue slot: a later Tab replaces the staged draft.
       updateConv(convID, {
         queued: { text: trimmed, attachments, interrupt: false },

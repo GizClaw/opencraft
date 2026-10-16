@@ -7,6 +7,99 @@ export interface ConversationInput {
   workspace?: string;
 }
 
+// The submission table
+// ---------------------------------------------------------------------
+// Every way the turn is handed something new - a reply, an "answer me
+// now", a steer, a Tab draft - plus the drain that fires a staged draft,
+// is answered from this one table. The store asks `submissionEffect`
+// before it spends an IPC or draws a row; the machine's own guards ask
+// the same cells (`submitting`), so a submission the table refuses in
+// the current phase cannot move the machine either.
+//
+// The phases are the turn region collapsed to the three shapes a
+// submission can meet:
+//
+//   quiescent  idle / succeeded / failed: no run is being watched
+//   starting   a send is in flight (possibly over a run: see
+//              supersededRunID), so the turn is spoken for but has no
+//              run of its own yet
+//   running    a run is live and streaming
+//
+// and the effects are what the answer means for the asker:
+//
+//   start   begin a turn (the awaited run, if any, is superseded)
+//   barge   begin a turn *over* the live run, which is superseded
+//   stage   park the input until the awaited run starts or ends
+//   steer   hand the text to the live run itself
+//   refuse  this submission has nothing to act on here
+//
+// A deleted conversation refuses everything: the machine's guards all
+// carry that flag, so the table carries it too.
+export type TurnPhase = 'quiescent' | 'starting' | 'running';
+export type SubmitKind =
+  'send' | 'interrupt' | 'steer' | 'queue' | 'resend' | 'drain';
+export type SubmitEffect = 'start' | 'barge' | 'stage' | 'steer' | 'refuse';
+
+const SUBMISSIONS: Record<SubmitKind, Record<TurnPhase, SubmitEffect>> = {
+  // A reply: only a quiet turn takes one.
+  send: { quiescent: 'start', starting: 'refuse', running: 'refuse' },
+  // "Answer me now": over a live run it barges in; while the awaited
+  // run is still starting there is nothing to interrupt yet, so the
+  // input waits for it.
+  interrupt: { quiescent: 'start', starting: 'stage', running: 'barge' },
+  // A mid-turn message goes into the run itself, and nowhere else.
+  steer: { quiescent: 'refuse', starting: 'refuse', running: 'steer' },
+  // A Tab draft waits for the turn it was written under, always.
+  queue: { quiescent: 'refuse', starting: 'stage', running: 'stage' },
+  // Re-sending the text of an undelivered interjection: the run it was
+  // written under is over, so a quiet turn takes it as a turn of its
+  // own and a live one stages it the way a Tab draft would.
+  resend: { quiescent: 'start', starting: 'stage', running: 'stage' },
+  // The drain: a staged draft taking over the turn of the run it waited
+  // for. That run's terminal event is still in flight when the draft
+  // fires (the data layer runs before the actor sees the event), so the
+  // draft takes the barge shape - taking the run out of the current
+  // slot is what keeps its ending inert.
+  drain: { quiescent: 'start', starting: 'refuse', running: 'barge' },
+};
+
+// TurnView is what the table is read from: the turn region's value and
+// the one context flag it is gated on. Callers hold snapshots loosely
+// typed, so this names the fields it needs instead of the snapshot type.
+export interface TurnView {
+  value: unknown;
+  context: { deletedAt?: string };
+}
+
+function turnPhase(value: unknown): TurnPhase {
+  const turn = (value as { turn?: string } | undefined)?.turn;
+  return turn === 'starting' || turn === 'running' ? turn : 'quiescent';
+}
+
+export function submissionEffect(
+  view: TurnView | undefined,
+  kind: SubmitKind,
+): SubmitEffect {
+  // A conversation without an actor has no turn yet: read the table in
+  // the phase it would be in, which is the initial one.
+  if (!view) return SUBMISSIONS[kind].quiescent;
+  if (view.context.deletedAt) return 'refuse';
+  return SUBMISSIONS[kind][turnPhase(view.value)];
+}
+
+// submitting is the same table read from a guard, with the node's own
+// phase written out at the edit site: `submitting(context, kind,
+// 'running', 'barge')` is the transition that implements that cell, so
+// changing the cell changes the guard with it.
+function submitting(
+  context: { deletedAt?: string },
+  kind: SubmitKind,
+  phase: TurnPhase,
+  effect: SubmitEffect,
+): boolean {
+  return !context.deletedAt && SUBMISSIONS[kind][phase] === effect;
+}
+
 interface ConversationContext {
   id: string;
   workspaceGeneration: number;
@@ -47,7 +140,9 @@ export type ConversationEvent =
   | { type: 'HYDRATE_OK'; request: number; generation: number; empty: boolean }
   | { type: 'HYDRATE_FAIL'; request: number; generation: number; error: string }
   | { type: 'NEW_CHAT_READY' }
-  | { type: 'SEND_STARTED' }
+  // SUBMIT carries a submission into the turn region; the table above
+  // says what it does in the phase the turn is in.
+  | { type: 'SUBMIT'; kind: SubmitKind }
   | { type: 'START_FAILED'; error: string }
   | { type: 'RUN_STARTED'; runID: string }
   | { type: 'STREAM'; runID: string; stage?: string }
@@ -167,8 +262,11 @@ export const conversationMachine = createMachine({
       states: {
         idle: {
           on: {
-            SEND_STARTED: {
-              guard: ({ context }) => !context.deletedAt,
+            // The quiescent column: a reply or an "answer me now"
+            // begins the turn here.
+            SUBMIT: {
+              guard: ({ context, event }) =>
+                submitting(context, event.kind, 'quiescent', 'start'),
               target: 'starting',
             },
             // ActiveRun() recovery: a conversation actor created after
@@ -246,6 +344,11 @@ export const conversationMachine = createMachine({
         },
         starting: {
           on: {
+            // Nothing starts a turn in this column: the table refuses a
+            // reply and a steer here, stages an "answer me now" and a
+            // Tab draft (the store parks them), and never runs a drain
+            // while a send is in flight - so there is no SUBMIT
+            // transition to write.
             // The send that was supposed to replace a running turn
             // failed. If the superseded run is still alive, resume
             // watching it so its streams and terminal event keep
@@ -400,12 +503,16 @@ export const conversationMachine = createMachine({
         },
         running: {
           on: {
-            // A barge-in send starts while the previous turn is still
-            // running. The previous run becomes superseded; the engine
-            // interrupts it and only starts the replacement after it
-            // has been finalized.
-            SEND_STARTED: {
-              guard: ({ context }) => !context.deletedAt,
+            // The running column: only a submission whose cell is
+            // 'barge' may take the turn away from a live run - an
+            // "answer me now", or the drain of a run that just ended.
+            // The live run is superseded here: its deltas and terminal
+            // event stay inert while the replacement starts (see
+            // `starting`), and the engine interrupts it and only starts
+            // the replacement after it has been finalized.
+            SUBMIT: {
+              guard: ({ context, event }) =>
+                submitting(context, event.kind, 'running', 'barge'),
               target: 'starting',
               actions: assign({
                 currentRunID: () => undefined,
@@ -479,8 +586,11 @@ export const conversationMachine = createMachine({
         },
         succeeded: {
           on: {
-            SEND_STARTED: {
-              guard: ({ context }) => !context.deletedAt,
+            // The quiescent column again: the turn is over, so a reply
+            // or an "answer me now" begins the next one.
+            SUBMIT: {
+              guard: ({ context, event }) =>
+                submitting(context, event.kind, 'quiescent', 'start'),
               target: 'starting',
               actions: assign({
                 supersededRunID: () => undefined,
@@ -553,8 +663,9 @@ export const conversationMachine = createMachine({
         },
         failed: {
           on: {
-            SEND_STARTED: {
-              guard: ({ context }) => !context.deletedAt,
+            SUBMIT: {
+              guard: ({ context, event }) =>
+                submitting(context, event.kind, 'quiescent', 'start'),
               target: 'starting',
               actions: assign({
                 supersededRunID: () => undefined,

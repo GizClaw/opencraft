@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createActor } from 'xstate';
-import { conversationMachine } from './conversation';
+import { conversationMachine, submissionEffect } from './conversation';
 
 const start = (readyEmpty = false) => {
   const actor = createActor(conversationMachine, {
@@ -102,7 +102,7 @@ describe('conversation machine', () => {
 
   it('runs a complete turn through failed and dismissal', () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
     actor.send({ type: 'STREAM', runID: 'r-1', stage: 'text' });
     expect(regions(actor).turn).toBe('running');
@@ -119,7 +119,7 @@ describe('conversation machine', () => {
 
   it('ignores a late turn_end for an already-finished run', () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
     endTurn(actor, 'r-1', 'completed');
     expect(regions(actor).turn).toBe('succeeded');
@@ -130,7 +130,7 @@ describe('conversation machine', () => {
 
   it('keeps the error kind a deadline carries alongside the cancel', () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
     actor.send({
       type: 'TURN_ENDED',
@@ -150,14 +150,14 @@ describe('conversation machine', () => {
 
   it('a barge-in send supersedes the old run while it is starting', () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
     actor.send({ type: 'STREAM', runID: 'r-old', stage: 'text' });
     expect(regions(actor).turn).toBe('running');
 
     // The replacement send moves back to starting and marks the old
     // run as superseded.
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'interrupt' });
     expect(regions(actor).turn).toBe('starting');
     expect(actor.getSnapshot().context).toMatchObject({
       supersededRunID: 'r-old',
@@ -182,9 +182,9 @@ describe('conversation machine', () => {
 
   it('accepts the replacement run before the superseded turn ends', () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'interrupt' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-new' });
 
     expect(regions(actor).turn).toBe('running');
@@ -203,9 +203,9 @@ describe('conversation machine', () => {
 
   it('a force-canceled superseded run still waits for the replacement', () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'interrupt' });
     expect(regions(actor).turn).toBe('starting');
 
     // Stop during the barge wait hard-cancels the superseded run; its
@@ -231,9 +231,9 @@ describe('conversation machine', () => {
 
   it('a failed barge-in resumes the superseded run when it is alive', () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'interrupt' });
     expect(actor.getSnapshot().context).toMatchObject({
       supersededRunID: 'r-old',
     });
@@ -257,9 +257,9 @@ describe('conversation machine', () => {
   // and only the failed start acts on it.
   it('records the superseded run\u2019s ending while the replacement starts', () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'interrupt' });
 
     actor.send({
       type: 'TURN_ENDED',
@@ -293,9 +293,9 @@ describe('conversation machine', () => {
 
   it('a failed barge-in absorbs a completed superseded run', () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'interrupt' });
 
     endTurn(actor, 'r-old', 'completed');
     actor.send({ type: 'START_FAILED', error: 'start boom' });
@@ -311,9 +311,9 @@ describe('conversation machine', () => {
 
   it('clears the recorded ending when the replacement does start', () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'interrupt' });
     endTurn(actor, 'r-old', 'canceled');
 
     actor.send({ type: 'RUN_STARTED', runID: 'r-new' });
@@ -340,7 +340,7 @@ describe('conversation machine', () => {
     actor.send({ type: 'SESSION_DELETED', deletedAt: 'now' });
     actor.send({ type: 'STREAM', runID: 'r-late' });
     actor.send({ type: 'HYDRATE_REQUESTED', request: 1, generation: 1 });
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     expect(actor.getSnapshot().value).toEqual({
       lifecycle: 'deleted',
       transcript: 'unloaded',
@@ -354,10 +354,150 @@ describe('conversation machine', () => {
 // send of ours behind it. A resting turn is not a gate for those events;
 // the run's identity is, and `lastEndedRunID` is what says an event is
 // too late. Treating the phase as the gate dropped such a run whole.
+
+describe('the submission table', () => {
+  // The table is small enough to pin whole. The store asks it before it
+  // spends an IPC; the guards above read the same cells, so every phase
+  // and kind pair is worth one line here.
+  it('answers the phase the turn region is in', () => {
+    const view = (turn: string) => ({ value: { turn }, context: {} });
+
+    expect(submissionEffect(view('idle'), 'send')).toBe('start');
+    expect(submissionEffect(view('succeeded'), 'send')).toBe('start');
+    expect(submissionEffect(view('failed'), 'send')).toBe('start');
+    expect(submissionEffect(view('starting'), 'send')).toBe('refuse');
+    expect(submissionEffect(view('running'), 'send')).toBe('refuse');
+
+    expect(submissionEffect(view('starting'), 'interrupt')).toBe('stage');
+    expect(submissionEffect(view('running'), 'interrupt')).toBe('barge');
+    expect(submissionEffect(view('running'), 'drain')).toBe('barge');
+    expect(submissionEffect(view('starting'), 'drain')).toBe('refuse');
+
+    expect(submissionEffect(view('running'), 'steer')).toBe('steer');
+    expect(submissionEffect(view('idle'), 'steer')).toBe('refuse');
+    expect(submissionEffect(view('running'), 'queue')).toBe('stage');
+    expect(submissionEffect(view('idle'), 'queue')).toBe('refuse');
+    expect(submissionEffect(view('running'), 'resend')).toBe('stage');
+    expect(submissionEffect(view('failed'), 'resend')).toBe('start');
+
+    // A conversation without an actor has no turn yet: the initial one.
+    expect(submissionEffect(undefined, 'send')).toBe('start');
+    expect(submissionEffect(undefined, 'queue')).toBe('refuse');
+  });
+
+  it('refuses everything for a deleted conversation', () => {
+    const deleted = {
+      value: { turn: 'running' },
+      context: { deletedAt: 'now' },
+    };
+    const kinds = [
+      'send',
+      'interrupt',
+      'steer',
+      'queue',
+      'resend',
+      'drain',
+    ] as const;
+    for (const kind of kinds) {
+      expect(submissionEffect(deleted, kind)).toBe('refuse');
+    }
+  });
+
+  it('a reply cannot take a live run\u2019s turn', () => {
+    const actor = start();
+    actor.send({ type: 'SUBMIT', kind: 'send' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
+
+    actor.send({ type: 'SUBMIT', kind: 'send' });
+
+    expect(regions(actor).turn).toBe('running');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-1',
+      supersededRunID: undefined,
+    });
+  });
+
+  it('an interrupt waits while the awaited run is still starting', () => {
+    const actor = start();
+    actor.send({ type: 'SUBMIT', kind: 'send' });
+
+    // The 'stage' cell is the store's to act on (it parks the draft);
+    // the machine itself stays where it is.
+    actor.send({ type: 'SUBMIT', kind: 'interrupt' });
+
+    expect(regions(actor).turn).toBe('starting');
+    expect(actor.getSnapshot().context.supersededRunID).toBeUndefined();
+  });
+
+  it('a queue and a steer never move the turn', () => {
+    const phases: Array<[string, () => ReturnType<typeof start>]> = [
+      ['idle', () => start()],
+      [
+        'starting',
+        () => {
+          const actor = start();
+          actor.send({ type: 'SUBMIT', kind: 'send' });
+          return actor;
+        },
+      ],
+      [
+        'running',
+        () => {
+          const actor = start();
+          actor.send({ type: 'SUBMIT', kind: 'send' });
+          actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
+          return actor;
+        },
+      ],
+    ];
+
+    for (const [phase, make] of phases) {
+      const actor = make();
+      const before = actor.getSnapshot().value;
+      for (const kind of ['queue', 'steer'] as const) {
+        actor.send({ type: 'SUBMIT', kind });
+      }
+      expect(actor.getSnapshot().value).toEqual(before);
+      expect(regions(actor).turn).toBe(phase);
+    }
+  });
+
+  it('a resend starts a quiet turn and waits while one is live', () => {
+    const quiet = start();
+    quiet.send({ type: 'SUBMIT', kind: 'resend' });
+    expect(regions(quiet).turn).toBe('starting');
+
+    const live = start();
+    live.send({ type: 'SUBMIT', kind: 'send' });
+    live.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    live.send({ type: 'SUBMIT', kind: 'resend' });
+    expect(regions(live).turn).toBe('running');
+    expect(live.getSnapshot().context.currentRunID).toBe('r-1');
+  });
+
+  it('a deleted conversation refuses every submission', () => {
+    const actor = start();
+    actor.send({ type: 'SESSION_DELETED', deletedAt: 'now' });
+
+    for (const kind of [
+      'send',
+      'interrupt',
+      'steer',
+      'queue',
+      'resend',
+      'drain',
+    ] as const) {
+      actor.send({ type: 'SUBMIT', kind });
+    }
+
+    expect(regions(actor).turn).toBe('idle');
+  });
+});
+
 describe('runs that started outside this client', () => {
   const finishedTurn = () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
     endTurn(actor, 'r-1', 'completed');
     expect(regions(actor).turn).toBe('succeeded');
@@ -387,7 +527,7 @@ describe('runs that started outside this client', () => {
 
   it('takes the first delta of a foreign run after a failure', () => {
     const actor = start();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-1' });
     endTurn(actor, 'r-1', 'canceled');
     expect(regions(actor).turn).toBe('failed');
@@ -426,7 +566,7 @@ describe('runs that started outside this client', () => {
 
   it('still ignores anything from a run that has already ended', () => {
     const actor = finishedTurn();
-    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'SUBMIT', kind: 'send' });
     actor.send({ type: 'RUN_STARTED', runID: 'r-2' });
     endTurn(actor, 'r-2', 'completed');
     expect(regions(actor).turn).toBe('succeeded');

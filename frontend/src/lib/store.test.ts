@@ -230,7 +230,7 @@ describe('store: send and stream', () => {
   });
 
   it('ignores send while busy or unconfigured', async () => {
-    stateRoot.registry.get('s-1')?.send({ type: 'SEND_STARTED' });
+    stateRoot.registry.get('s-1')?.send({ type: 'SUBMIT', kind: 'send' });
     await useStore.getState().send('ignored');
     expect(apiMock.startTurn).not.toHaveBeenCalled();
 
@@ -239,9 +239,30 @@ describe('store: send and stream', () => {
     expect(apiMock.startTurn).not.toHaveBeenCalled();
   });
 
+  it('refuses every submission into a deleted conversation', async () => {
+    // The delete path drops the conversation from the store, so this is
+    // the belt behind it: the table's deleted gate, which the machine's
+    // own guards carry too, keeps the four submission paths from
+    // spending an IPC on a conversation that is gone.
+    stateRoot.registry
+      .get('s-1')
+      ?.send({ type: 'SESSION_DELETED', deletedAt: 'now' });
+
+    expect(useStore.getState().queueInput('queued')).toBe(false);
+    expect(await useStore.getState().sendInterrupt('interrupt')).toBe(false);
+    expect(await useStore.getState().steer('steer')).toBe(false);
+    await useStore.getState().send('send');
+
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+    expect(apiMock.steerTurn).not.toHaveBeenCalled();
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv?.queued).toBeUndefined();
+    expect(conv?.messages).toEqual([]);
+  });
+
   it('sendInterrupt barges in while a turn is running', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     apiMock.startTurn.mockResolvedValue({
       run_id: 'r-new',
@@ -276,7 +297,7 @@ describe('store: send and stream', () => {
 
   it('queueInput stages one draft and drains it after turn_end', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
 
     expect(useStore.getState().queueInput('staged')).toBe(true);
@@ -310,7 +331,7 @@ describe('store: send and stream', () => {
 
   it('drains a staged draft into the workspace that owns the conversation', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     expect(useStore.getState().queueInput('staged elsewhere')).toBe(true);
 
@@ -371,7 +392,7 @@ describe('store: send and stream', () => {
 
   it('keeps a Tab draft staged when the turn it waited for fails', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     bindRun('r-old');
 
@@ -411,7 +432,7 @@ describe('store: send and stream', () => {
 
   it('restores the superseded run when a barge-in start fails', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     bindRun('r-old');
     apiMock.startTurn.mockRejectedValueOnce(new Error('start boom'));
@@ -478,7 +499,7 @@ describe('store: send and stream', () => {
 
   it('absorbs the superseded terminal when a barge-in start fails after it ended', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     const base = useStore.getState().conversations['s-1'];
     bindRun('r-old');
@@ -542,11 +563,11 @@ describe('store: send and stream', () => {
 
   it('cancelRun during a barge-in start cancels the superseded run', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     // Enter again: the replacement is starting and waiting for r-old
     // to finalize, so Stop must target the superseded run.
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'interrupt' });
     expect(actor?.getSnapshot().context).toMatchObject({
       supersededRunID: 'r-old',
     });
@@ -559,9 +580,9 @@ describe('store: send and stream', () => {
 
   it('cancelRun ignores a not-found superseded run', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'interrupt' });
     apiMock.cancelTurn.mockRejectedValue(new Error('host: turn not found'));
 
     await useStore.getState().cancelRun();
@@ -571,7 +592,7 @@ describe('store: send and stream', () => {
 
   it('takeQueued returns and clears the staged draft', () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     expect(useStore.getState().queueInput('draft to restore')).toBe(true);
 
@@ -1953,7 +1974,7 @@ describe('store: send and stream', () => {
       runID: 'r-old',
       status: 'completed',
     });
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-new' });
 
     useStore.getState().handleEvent({
@@ -4066,7 +4087,7 @@ describe('store: workspace switch session restore', () => {
   // it: nothing is adopted (the response names this strip when it lands)
   // and the run is not mapped before then.
   it("folds a pending send's deltas into its unnamed strip", () => {
-    stateRoot.registry.get('s-1')?.send({ type: 'SEND_STARTED' });
+    stateRoot.registry.get('s-1')?.send({ type: 'SUBMIT', kind: 'send' });
     useStore.setState({
       conversations: {
         's-1': {
@@ -4394,7 +4415,7 @@ describe('store: model switch cost notice', () => {
 describe('store: mid-turn steer', () => {
   function runningConversation(runID = 'r-run') {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID });
     bindRun(runID);
     return actor;
@@ -4704,7 +4725,7 @@ describe('store: mid-turn steer', () => {
 
   it('leaves a row of a live run alone when another run ends', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-new' });
     // r-old is still registered as live: its terminal event has not
     // landed even though the conversation already moved on to r-new.
@@ -4821,7 +4842,7 @@ describe('store: mid-turn steer', () => {
 
   it('refuses steer with attachments or without a live run', async () => {
     const busyActor = stateRoot.registry.get('s-1');
-    busyActor?.send({ type: 'SEND_STARTED' });
+    busyActor?.send({ type: 'SUBMIT', kind: 'send' });
     expect(await useStore.getState().steer('no run yet')).toBe(false);
 
     runningConversation();
@@ -4841,7 +4862,7 @@ describe('store: mid-turn steer', () => {
 describe('store: steered rows across transcript rebuilds', () => {
   function runningConversation(runID = 'r-run') {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID });
     bindRun(runID);
     return actor;
