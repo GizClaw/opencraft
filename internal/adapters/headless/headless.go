@@ -140,6 +140,9 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("headless: start run: %w", err)
 	}
+	// Wait below releases the run; Close is the no-op safety net for an
+	// early return added between StartRun and Wait.
+	defer run.Close()
 	contextID := run.ContextID()
 	runID := run.RunID()
 	rec.identify(runID, contextID)

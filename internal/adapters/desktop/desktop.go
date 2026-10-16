@@ -495,6 +495,11 @@ func (d *Desktop) runAutomation(
 	if err != nil {
 		return automationStartFailure(err, task.ConversationID)
 	}
+	// WaitBounded below releases the run; this is the safety net for an
+	// early return added between here and there. Close on a settled run
+	// only waits for a release that already happened (see
+	// TestRunCloseAfterWaitIsDeferred), so it never changes the result.
+	defer run.Close()
 	runID := run.RunID()
 	contextID := run.ContextID()
 	if current {
