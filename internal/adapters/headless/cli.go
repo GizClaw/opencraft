@@ -43,8 +43,14 @@ func Main(args []string) int {
 	prompt := fs.String("prompt", "", "user prompt to run")
 	promptFile := fs.String("prompt-file", "", "read the prompt from a file")
 	jsonOut := fs.Bool("json", false, "emit JSONL rollout events on stdout")
+	repair := fs.Bool("repair-config", false,
+		"remove retired ${env:OPEN_CRAFT_*} references from the user config layer and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+
+	if *repair {
+		return repairConfig(*configDir)
 	}
 
 	text := strings.TrimSpace(*prompt)
@@ -89,4 +95,29 @@ func Main(args []string) int {
 		}
 	}
 	return result.ExitCode
+}
+
+// repairConfig implements --repair-config: the headless counterpart of
+// the desktop Diagnostics repair. A user layer that still carries
+// retired ${env:OPEN_CRAFT_*} references fails every load (see
+// config.Manager.Load), and a headless-only deployment has no settings
+// page to offer the button on, so the fix has to be reachable from the
+// CLI. The pre-repair document is kept as a .bak next to the layer.
+func repairConfig(configDir string) int {
+	res, err := config.RepairRetiredRefs(configDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft run: repair config: %v\n", err)
+		return 1
+	}
+	if len(res.Removed) == 0 {
+		fmt.Printf("config: %s has no retired references\n", res.File)
+		return 0
+	}
+	fmt.Printf(
+		"config: removed %d retired reference(s) from %s (pre-repair copy: %s)\n",
+		len(res.Removed), res.File, res.Backup)
+	for _, path := range res.Removed {
+		fmt.Printf("  removed %s\n", path)
+	}
+	return 0
 }
