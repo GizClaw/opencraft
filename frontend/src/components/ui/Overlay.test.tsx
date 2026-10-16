@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useState, type ReactNode } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Overlay } from './Overlay';
 
 // jsdom answers every layout question with nothing, and the focus trap
@@ -146,5 +146,51 @@ describe('Overlay focus', () => {
     fireEvent.compositionEnd(search);
     fireEvent.keyDown(search, { key: 'Escape' });
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+});
+
+describe('Overlay dismissal', () => {
+  // The scrim is the surface's own element; a click that lands on it is
+  // the one the browser reports for "pressed inside, released outside".
+  const scrimOf = (panel: HTMLElement) => panel.parentElement as HTMLElement;
+
+  /** renderOpen mounts one open dialog and returns its scrim and close spy. */
+  function renderOpen() {
+    const onClose = vi.fn();
+    render(
+      <Overlay open onClose={onClose}>
+        <p>Selectable text</p>
+      </Overlay>,
+    );
+    return { onClose, scrim: scrimOf(screen.getByRole('dialog')) };
+  }
+
+  it('stays open when a press inside the panel ends on the scrim', () => {
+    // Selecting text inside a dialog and releasing past its edge is not a
+    // request to close it (and to throw away whatever was typed into it).
+    // The guard used to be a render-time copy of the press flag, which
+    // never changed without a re-render, so the dialog closed on every
+    // drag out of a selection.
+    const { onClose, scrim } = renderOpen();
+
+    fireEvent.mouseDown(screen.getByText('Selectable text'));
+    fireEvent.click(scrim);
+    expect(onClose).not.toHaveBeenCalled();
+
+    // The press is consumed, not sticky: the next click on the scrim —
+    // this time with no press inside the panel — closes the dialog.
+    fireEvent.mouseDown(scrim);
+    fireEvent.click(scrim);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on a click that starts and ends on the scrim', () => {
+    // The counterpart of the guard above: it must not turn into "clicks
+    // outside never close anything".
+    const { onClose, scrim } = renderOpen();
+
+    fireEvent.mouseDown(scrim);
+    fireEvent.click(scrim);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

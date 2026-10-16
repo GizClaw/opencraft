@@ -112,10 +112,6 @@ export function Overlay({
   if (!open && !mounted) return null;
   const [enter, leave] = PANEL_ANIM[variant];
   const scrim = variant === 'bare' ? null : SCRIM[variant];
-  // A press that starts inside the panel and ends on the scrim (a drag
-  // out of a text selection) must not dismiss: the browser reports that
-  // click on the scrim.
-  const pressedInside = pressRef.current;
 
   const surface = (
     <div
@@ -129,7 +125,16 @@ export function Overlay({
       }}
       onClick={(event) => {
         if (variant === 'bare' || onClose === undefined) return;
-        if (pressedInside) return;
+        // A press that starts inside the panel and ends on the scrim (a
+        // drag out of a text selection) must not dismiss: the browser
+        // reports that click on the scrim. The flag has to be read here
+        // rather than during render — writing a ref does not re-render,
+        // so a render-time copy still holds the value from before the
+        // press and the guard never fires.
+        if (pressRef.current) {
+          pressRef.current = false;
+          return;
+        }
         if (event.target === event.currentTarget) onClose();
       }}
     >
