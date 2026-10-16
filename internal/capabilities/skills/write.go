@@ -384,13 +384,6 @@ func (s *Service) Delete(skillPath string) error {
 	if err != nil {
 		return err
 	}
-	info, err := os.Stat(target.doc)
-	if err != nil {
-		return fmt.Errorf("skills: %q does not exist", skillPath)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("skills: %q is not a regular file", skillPath)
-	}
 	rel, err := filepath.Rel(target.root, target.dir)
 	if err != nil {
 		return fmt.Errorf("skills: resolve %q under %q: %w",
@@ -446,17 +439,18 @@ func (s *Service) resolveDeleteTarget(skillPath string) (deleteTarget, error) {
 		return deleteTarget{}, fmt.Errorf("skills: %q does not exist", skillPath)
 	}
 	dir := filepath.Dir(real)
+	realRoot := ""
 	for _, candidate := range s.writableRoots() {
 		abs, err := filepath.Abs(filepath.Clean(candidate))
 		if err != nil {
 			continue
 		}
-		realRoot, err := filepath.EvalSymlinks(abs)
+		root, err := filepath.EvalSymlinks(abs)
 		if err != nil {
 			// A root that cannot be resolved serves nothing.
 			continue
 		}
-		if dir == realRoot {
+		if dir == root {
 			// A SKILL.md sitting directly in a scanned root is listed
 			// as a skill; deleting "it" would RemoveAll the whole root
 			// and every sibling skill with it.
@@ -464,14 +458,29 @@ func (s *Service) resolveDeleteTarget(skillPath string) (deleteTarget, error) {
 				"skills: %q sits directly in a skill root; refusing to delete the root itself",
 				skillPath)
 		}
-		if pathsafe.Within(realRoot, dir) {
-			return deleteTarget{root: realRoot, dir: dir, doc: real}, nil
+		if pathsafe.Within(root, dir) {
+			realRoot = root
+			break
 		}
 	}
-	return deleteTarget{}, fmt.Errorf(
-		"skills: %q is outside the app's own skill roots; "+
-			"plugin-provided and extra-root skills are removed by their owner, not here",
-		skillPath)
+	if realRoot == "" {
+		return deleteTarget{}, fmt.Errorf(
+			"skills: %q is outside the app's own skill roots; "+
+				"plugin skills go away with their plugin, and extra-root skills "+
+				"are removed where they live",
+			skillPath)
+	}
+	// The document has to be a real file, not a FIFO or a device named
+	// SKILL.md: this check belongs to the same decision Delete makes, so
+	// Deletable answers it too.
+	info, err := os.Stat(real)
+	if err != nil {
+		return deleteTarget{}, fmt.Errorf("skills: %q does not exist", skillPath)
+	}
+	if !info.Mode().IsRegular() {
+		return deleteTarget{}, fmt.Errorf("skills: %q is not a regular file", skillPath)
+	}
+	return deleteTarget{root: realRoot, dir: dir, doc: real}, nil
 }
 
 // writableRoots returns every skill root the app itself owns and may
