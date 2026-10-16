@@ -500,18 +500,14 @@ func (s *Store) SetEnabled(id string, enabled bool) error {
 // registry. The installed id comes from the manifest, so the source
 // directory name is irrelevant. Reinstalling an existing plugin is
 // rejected; uninstall it first.
+//
+// The copy and the kraft binary's ad-hoc signature run outside the
+// store lock: both take seconds on a real plugin, and the lock is what
+// every reader of the registry passes through (Entries, List, Asset).
+// Only the moment the registry changes — the rename into place — is
+// serialized, and the destination is re-checked there, so two
+// concurrent installs of one id still leave exactly one plugin.
 func (s *Store) Install(src string) (PluginSummary, error) {
-	s.mu.Lock()
-	moved := false
-	defer func() {
-		s.mu.Unlock()
-		if moved {
-			s.notify()
-		}
-	}()
-	if err := os.MkdirAll(s.root, 0o700); err != nil {
-		return PluginSummary{}, fmt.Errorf("plugins: create dir: %w", err)
-	}
 	info, err := os.Stat(src)
 	if err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: source: %w", err)
@@ -549,7 +545,21 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 				m.ID, m.Version, bv, bv)
 		}
 	}
+	staged, cleanup, err := s.stagePluginDir(src, m)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	defer cleanup()
+
 	dst := filepath.Join(s.root, m.ID)
+	s.mu.Lock()
+	moved := false
+	defer func() {
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
+	}()
 	if _, err := os.Stat(dst); err == nil {
 		return PluginSummary{}, fmt.Errorf(
 			"plugins: %q is already installed", m.ID)
@@ -557,15 +567,8 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 		return PluginSummary{}, fmt.Errorf(
 			"plugins: check destination: %w", err)
 	}
-	if err := copyDir(src, dst); err != nil {
-		telemetry.WarnErr(context.Background(),
-			"plugins: remove partial install failed", os.RemoveAll(dst))
+	if err := os.Rename(staged, dst); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: install: %w", err)
-	}
-	if err := preparePluginDir(dst, m); err != nil {
-		telemetry.WarnErr(context.Background(),
-			"plugins: remove invalid install failed", os.RemoveAll(dst))
-		return PluginSummary{}, err
 	}
 	s.rev++
 	moved = true
@@ -632,6 +635,56 @@ func (s *Store) withBuiltinInfo(sum PluginSummary) PluginSummary {
 	return sum
 }
 
+// requireNewer rejects a source manifest that does not move the plugin
+// forward. It is checked once before the copy (so an obvious mistake
+// costs nothing) and again under the lock at swap time.
+func requireNewer(id string, m, cur *Manifest) error {
+	cmp, err := compareVersions(m.Version, cur.Version)
+	if err != nil {
+		return err
+	}
+	if cmp <= 0 {
+		return fmt.Errorf(
+			"plugins: update %q version %q is not newer than installed %q",
+			id, m.Version, cur.Version)
+	}
+	return nil
+}
+
+// stagePluginDir copies a plugin source into a fresh staging directory
+// under the registry root and prepares it (agent-resource validation,
+// kraft binary permissions, ad-hoc signature). It is the expensive half
+// of an install or update and runs outside the store lock; the caller
+// renames the directory into place under it.
+//
+// The staging directory is a dot-prefixed entry of the registry root,
+// so scans skip it, and it sits on the registry's own filesystem, so
+// the rename that publishes it is atomic. The returned cleanup removes
+// it for the caller that never gets that far; after a successful rename
+// the path no longer exists and cleanup is a no-op.
+func (s *Store) stagePluginDir(src string, m *Manifest) (string, func(), error) {
+	if err := os.MkdirAll(s.root, 0o700); err != nil {
+		return "", nil, fmt.Errorf("plugins: create dir: %w", err)
+	}
+	staged, err := os.MkdirTemp(s.root, ".plugin-stage-"+m.ID+"-")
+	if err != nil {
+		return "", nil, fmt.Errorf("plugins: staging dir: %w", err)
+	}
+	cleanup := func() {
+		telemetry.WarnErr(context.Background(),
+			"plugins: remove staging dir failed", os.RemoveAll(staged))
+	}
+	if err := copyDir(src, staged); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("plugins: stage source: %w", err)
+	}
+	if err := preparePluginDir(staged, m); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return staged, cleanup, nil
+}
+
 // builtinVersion reads the manifest version of the app-bundled builtin
 // with id, or "" when no builtin exists or its manifest is unreadable.
 func (s *Store) builtinVersion(id string) string {
@@ -683,15 +736,13 @@ func summaryFromManifest(m *Manifest, dir string, canRollback bool) PluginSummar
 // directory. The previous version is snapshotted under
 // <root>/.backups/<id> for Rollback. The plugin's enabled state, KV
 // data, secrets and inference profile are preserved.
+//
+// As in Install, the source is read, validated and staged outside the
+// store lock, and the version it replaces is re-read inside it: a
+// concurrent update that landed while this one copied its files is what
+// the second check catches, and the swap below then only ever replaces
+// the version it compared against.
 func (s *Store) Update(id, src string) (PluginSummary, error) {
-	s.mu.Lock()
-	moved := false
-	defer func() {
-		s.mu.Unlock()
-		if moved {
-			s.notify()
-		}
-	}()
 	if err := ValidateID(id); err != nil {
 		return PluginSummary{}, err
 	}
@@ -734,14 +785,8 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 		return PluginSummary{}, fmt.Errorf(
 			"plugins: update source manifest id %q does not match %q", m.ID, id)
 	}
-	cmp, err := compareVersions(m.Version, cur.Version)
-	if err != nil {
+	if err := requireNewer(id, m, cur); err != nil {
 		return PluginSummary{}, err
-	}
-	if cmp <= 0 {
-		return PluginSummary{}, fmt.Errorf(
-			"plugins: update %q version %q is not newer than installed %q",
-			id, m.Version, cur.Version)
 	}
 	if bv := s.builtinVersion(id); bv != "" {
 		cmp, err := compareVersions(m.Version, bv)
@@ -758,18 +803,36 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 		return PluginSummary{}, err
 	}
 
-	tmp, err := os.MkdirTemp(s.root, ".plugin-update-")
+	staged, cleanup, err := s.stagePluginDir(src, m)
 	if err != nil {
-		return PluginSummary{}, fmt.Errorf("plugins: update temp dir: %w", err)
+		return PluginSummary{}, err
 	}
+	defer cleanup()
+
+	s.mu.Lock()
+	moved := false
 	defer func() {
-		telemetry.WarnErr(context.Background(),
-			"plugins: remove update temp failed", os.RemoveAll(tmp))
+		s.mu.Unlock()
+		if moved {
+			s.notify()
+		}
 	}()
-	if err := copyDir(src, tmp); err != nil {
-		return PluginSummary{}, fmt.Errorf("plugins: stage update: %w", err)
+	// The staging above happened outside the lock, so what is installed
+	// now may no longer be what was read then: re-read it, and refuse to
+	// swap over a version this source was never compared against.
+	dir, builtin, err = s.pluginDir(id)
+	if err != nil {
+		return PluginSummary{}, err
 	}
-	if err := preparePluginDir(tmp, m); err != nil {
+	if builtin {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: %q is a builtin plugin and cannot be updated", id)
+	}
+	cur, err = s.readManifest(id)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	if err := requireNewer(id, m, cur); err != nil {
 		return PluginSummary{}, err
 	}
 
@@ -787,7 +850,7 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 	if err := os.Rename(dir, pending); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: backup %q: %w", id, err)
 	}
-	if err := os.Rename(tmp, dir); err != nil {
+	if err := os.Rename(staged, dir); err != nil {
 		restoreErr := os.Rename(pending, dir)
 		telemetry.WarnErr(context.Background(),
 			"plugins: restore current plugin after update swap failure", restoreErr)
