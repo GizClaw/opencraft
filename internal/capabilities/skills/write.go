@@ -388,6 +388,14 @@ func (s *Service) Delete(skillPath string) error {
 		if err != nil {
 			continue
 		}
+		if dir == abs {
+			// A SKILL.md sitting directly in a scanned root is listed
+			// as a skill; deleting "it" would RemoveAll the whole root
+			// and every sibling skill with it.
+			return fmt.Errorf(
+				"skills: %q sits directly in a skill root; refusing to delete the root itself",
+				skillPath)
+		}
 		if pathsafe.Within(abs, dir) {
 			inside = true
 			break
