@@ -259,6 +259,10 @@ func TestDiff(t *testing.T) {
 func TestIsSafePath(t *testing.T) {
 	for _, ok := range []string{
 		"a.txt", "dir/a b.txt", "./a.txt",
+		// Names Windows cannot create but a repository can track. The
+		// check must not refuse them: a caller asking about such a path
+		// would otherwise see "no diff" for a file that has one.
+		"aux.go", "dir/aux.go", "trailing.",
 	} {
 		if !isSafePath(ok) {
 			t.Fatalf("isSafePath(%q) = false, want true", ok)
@@ -266,6 +270,9 @@ func TestIsSafePath(t *testing.T) {
 	}
 	for _, bad := range []string{
 		"", "/abs/path", "..", "../up.txt", "a/../../up.txt",
+		// An element git or the option parser would read as something
+		// other than a path.
+		"-rf", "--", ":magic", "dir:stream", "a//b", "a/./b", ".", "./",
 	} {
 		if isSafePath(bad) {
 			t.Fatalf("isSafePath(%q) = true, want false", bad)
