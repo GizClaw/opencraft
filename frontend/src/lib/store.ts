@@ -20,7 +20,7 @@ import {
   streamFlushInterval,
 } from './stream';
 import { toolResultImages, toolResultText, type ToolImage } from './toolresult';
-import { sameWorkspacePath } from './workspacePath';
+import { sameWorkspacePath, workspaceLabel } from './workspacePath';
 import type {
   AgentSummary,
   AutomationRun,
@@ -2098,7 +2098,7 @@ export const useStore = create<StoreState>((set, get) => {
     reportFrontendError(
       'workspace-switch',
       new Error('workspace switch did not complete'),
-      `wanted ${workspacePath}, active ${get().workspace}`,
+      `wanted ${workspaceLabel(workspacePath)}, active ${workspaceLabel(get().workspace)}`,
     );
     return '';
   };

@@ -3298,9 +3298,11 @@ describe('store: cross-workspace session clicks', () => {
       expect.any(String),
     );
     // The report names both strings, so a future failure says which
-    // workspace the click asked for and which one the window kept.
+    // workspace the click asked for and which one the window kept. Only
+    // the folder names travel: the telemetry copy redacts absolute paths
+    // (F-32), so a full path would arrive as `<path>` and name neither.
     const [, message] = diagnosticsMock.ReportFrontendError.mock.calls[0] ?? [];
-    expect(message).toContain('wanted /tmp/b, active /tmp/a');
+    expect(message).toContain('wanted b, active a');
   });
 
   // A click whose workspace a newer switch already took is dropped

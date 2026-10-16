@@ -18,6 +18,9 @@ const bindingMock = vi.hoisted(() => ({ ReportFrontendPerf: vi.fn() }));
 const vitalsMock = vi.hoisted(() => ({
   inp: null as null | ((metric: unknown) => void),
 }));
+// The switch that gates this channel lives in the probe; the tests flip
+// it directly instead of starting a real sampler.
+const probeMock = vi.hoisted(() => ({ running: false }));
 
 vi.mock('./api', () => ({ api: apiMock }));
 vi.mock('./store', () => storeMock);
@@ -30,6 +33,9 @@ vi.mock('web-vitals', () => ({
   onINP: (cb: (metric: unknown) => void) => {
     vitalsMock.inp = cb;
   },
+}));
+vi.mock('./perfProbe', () => ({
+  perfProbeRunning: () => probeMock.running,
 }));
 
 import { navigationSamples, startRUM } from './rum';
@@ -74,6 +80,21 @@ describe('navigationSamples', () => {
       { name: 'load', value: 800, unit: 'ms' },
     ]);
   });
+
+  // F-37: web vitals and the perf probe write through the same
+  // ReportFrontendPerf binding, so the "frontend perf sampling" switch
+  // has to gate both — a probe-only kill switch still shipped
+  // dom_content_loaded/load/fid/inp off the machine.
+  it('sends nothing while the sampling switch is off', async () => {
+    probeMock.running = false;
+    startRUM();
+    expect(vitalsMock.inp).toBeTypeOf('function');
+
+    vitalsMock.inp!({ name: 'INP', id: 'v2', value: 240 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(bindingMock.ReportFrontendPerf).not.toHaveBeenCalled();
+  });
 });
 
 // startRUM wires the vitals once per page; the samples it sends carry the
@@ -84,6 +105,7 @@ describe('startRUM labels', () => {
     vi.clearAllMocks();
     apiMock.version.mockImplementation(async () => '9.9.9-test');
     storeMock.activeConversationID.mockReturnValue('c-42');
+    probeMock.running = true;
   });
 
   it('stamps a web-vital sample with surface, view, build and conversation', async () => {
