@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from '@cordisjs/core';
 import type { PetPack } from '../pet/pack';
-import type { KVService, PluginModule } from './types';
+import type { KVService, PluginModule, SecretsService } from './types';
 import {
   activatePlugin,
   resetHost,
@@ -17,6 +17,10 @@ import {
 // (see host.ts's moduleLoader).
 const apiMock = vi.hoisted(() => ({
   version: vi.fn(async () => '1.2.3'),
+  secretExists: vi.fn(async () => true),
+  secretDelete: vi.fn(async () => undefined),
+  pluginKVGet: vi.fn(async () => ({ key: 'k', value: 'v' })),
+  pluginKVSet: vi.fn(async () => undefined),
   petRegisterPack: vi.fn(async () => undefined),
   petUnregisterPack: vi.fn(async () => undefined),
 }));
@@ -74,12 +78,22 @@ describe('plugin service isolation', () => {
     const activation = await mount('no-perms', [], (ctx) => {
       seen.storage = ctx.storage;
       seen.secrets = ctx.secrets;
+      // The other lookups, not just the property: a scope can reach a
+      // service through get() or a parent link as well.
+      seen.getStorage = ctx.get('storage');
+      seen.getSecrets = ctx.get('secrets');
+      seen.parentSecrets = (
+        ctx as unknown as { parent?: { secrets?: unknown } }
+      ).parent?.secrets;
       seen.react = ctx.react;
       seen.host = ctx.host;
     });
 
     expect(seen.storage).toBeUndefined();
     expect(seen.secrets).toBeUndefined();
+    expect(seen.getStorage).toBeUndefined();
+    expect(seen.getSecrets).toBeUndefined();
+    expect(seen.parentSecrets).toBeUndefined();
     // The always-available services prove the plugin really ran inside
     // the app: without them the two assertions above would also pass on
     // a context that never got its services.
@@ -90,20 +104,83 @@ describe('plugin service isolation', () => {
 
   it('keeps a granted service usable', async () => {
     const seen: Record<string, unknown> = {};
+    const calls: Promise<unknown>[] = [];
     const activation = await mount(
       'with-kv',
       ['storage:kv'],
       (ctx) => {
         seen.storage = ctx.storage;
         seen.secrets = ctx.secrets;
+        calls.push((ctx.storage as KVService).get('k'));
+        calls.push((ctx.storage as KVService).set('k', 'v'));
       },
       ['storage'],
     );
+    await Promise.all(calls);
 
     expect(seen.storage).toBeTruthy();
     expect(typeof (seen.storage as KVService).get).toBe('function');
     // The grant is per service: secrets stay isolated.
     expect(seen.secrets).toBeUndefined();
+    // The service's own check passes for a caller that carries the
+    // grant, and the calls go out under the plugin's id.
+    expect(apiMock.pluginKVGet).toHaveBeenCalledWith('with-kv', 'k');
+    expect(apiMock.pluginKVSet).toHaveBeenCalledWith('with-kv', 'k', 'v');
+    activation.dispose();
+  });
+
+  it('keeps a granted secrets scope usable', async () => {
+    const calls: Promise<unknown>[] = [];
+    const activation = await mount(
+      'with-secrets',
+      ['secrets:auth'],
+      (ctx) => {
+        calls.push((ctx.secrets as SecretsService).has('OPENAI_API_KEY'));
+        calls.push((ctx.secrets as SecretsService).delete('OLD_KEY'));
+      },
+      ['secrets'],
+    );
+    await Promise.all(calls);
+
+    expect(apiMock.secretExists).toHaveBeenCalledWith('auth', 'OPENAI_API_KEY');
+    expect(apiMock.secretDelete).toHaveBeenCalledWith('auth', 'OLD_KEY');
+    activation.dispose();
+  });
+
+  // The root context is reachable from any scope and holds the real
+  // services; isolation never hid them from it. Before the services
+  // checked their caller, an unpermitted plugin could read and delete
+  // auth secrets through `ctx.root.secrets`.
+  it('refuses the root-context bypass for an unpermitted plugin', async () => {
+    const refusals: string[] = [];
+    const calls: Promise<unknown>[] = [];
+    const attempt = (run: () => Promise<unknown>) => {
+      try {
+        calls.push(run().catch((e) => void refusals.push(String(e))));
+      } catch (e) {
+        // A refusal may also be a synchronous throw; either shape is a
+        // refusal.
+        refusals.push(String(e));
+      }
+    };
+    const activation = await mount('no-perms', [], (ctx) => {
+      const root = ctx.root as Context;
+      attempt(() => (root.secrets as SecretsService).has('OPENAI_API_KEY'));
+      attempt(() => (root.secrets as SecretsService).delete('OLD_KEY'));
+      attempt(() => (root.storage as KVService).get('k'));
+    });
+    await Promise.all(calls);
+
+    const said = refusals.join('\n');
+    expect(said).toContain(
+      'service "secrets" needs permission "secrets:auth", not granted by manifest',
+    );
+    expect(said).toContain(
+      'service "storage" needs permission "storage:kv", not granted by manifest',
+    );
+    expect(apiMock.secretExists).not.toHaveBeenCalled();
+    expect(apiMock.secretDelete).not.toHaveBeenCalled();
+    expect(apiMock.pluginKVGet).not.toHaveBeenCalled();
     activation.dispose();
   });
 

@@ -93,23 +93,51 @@ function callerOf(this: unknown) {
   return ctx;
 }
 
+// The manifest grant a plugin scope carries. Isolation keeps an
+// unpermitted service out of the plugin's own branch, but the root
+// context is reachable from any scope (`ctx.root.secrets`), and what it
+// holds is the real service - so a gated service checks the calling
+// scope's own grant itself. A caller without one (the root context, a
+// scope that did not come from a plugin manifest) is refused.
+function requirePermission(
+  ctx: Context,
+  service: keyof typeof PERMISSION_GATED,
+) {
+  const permission = PERMISSION_GATED[service]!;
+  const granted = (ctx.config as { permissions?: string[] } | undefined)
+    ?.permissions;
+  if (!granted?.includes(permission)) {
+    throw new Error(
+      `service "${service}" needs permission "${permission}", not granted by manifest`,
+    );
+  }
+}
+
 function makeKVService(): KVService {
   return {
     get: async function (this: unknown, key: string) {
-      const id = callerOf.call(this).config.id;
+      const ctx = callerOf.call(this);
+      requirePermission(ctx, 'storage');
+      const id = ctx.config.id;
       const entry = await api.pluginKVGet(id, key);
       return entry.value || null;
     },
     set: function (this: unknown, key: string, value: string) {
-      const id = callerOf.call(this).config.id;
+      const ctx = callerOf.call(this);
+      requirePermission(ctx, 'storage');
+      const id = ctx.config.id;
       return api.pluginKVSet(id, key, value);
     },
     delete: function (this: unknown, key: string) {
-      const id = callerOf.call(this).config.id;
+      const ctx = callerOf.call(this);
+      requirePermission(ctx, 'storage');
+      const id = ctx.config.id;
       return api.pluginKVDelete(id, key);
     },
     list: async function (this: unknown) {
-      const id = callerOf.call(this).config.id;
+      const ctx = callerOf.call(this);
+      requirePermission(ctx, 'storage');
+      const id = ctx.config.id;
       const entries = await api.pluginKVList(id);
       const out: Record<string, string> = {};
       for (const e of entries) out[e.key] = e.value;
@@ -119,9 +147,20 @@ function makeKVService(): KVService {
 }
 
 function makeSecretsService(): SecretsService {
+  // Hard-coded 'auth' scope: the grant, not the service name, is what
+  // says a caller may read or delete those secrets.
   return {
-    has: (name: string) => api.secretExists('auth', name),
-    delete: (name: string) => api.secretDelete('auth', name),
+    // async so a refusal is a rejected promise, the shape the
+    // interface promises; a synchronous throw would crash the calling
+    // plugin's apply() instead.
+    has: async function (this: unknown, name: string) {
+      requirePermission(callerOf.call(this), 'secrets');
+      return api.secretExists('auth', name);
+    },
+    delete: async function (this: unknown, name: string) {
+      requirePermission(callerOf.call(this), 'secrets');
+      return api.secretDelete('auth', name);
+    },
   };
 }
 
