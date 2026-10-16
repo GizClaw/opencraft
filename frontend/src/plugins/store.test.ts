@@ -186,4 +186,32 @@ describe('usePluginStore.setEnabled', () => {
     // The reload is what makes the panel list match the new state.
     expect(apiMock.pluginList).toHaveBeenCalledTimes(1);
   });
+
+  // F-38: the switch flipped back because the follow-up load reused the
+  // pass that was already in flight, so it published the list as it was
+  // *before* the write and the user saw the pre-toggle state until the
+  // next reload.
+  it('publishes the post-write list when a toggle lands during a load', async () => {
+    apiMock.pluginList
+      .mockResolvedValueOnce([plugin({ id: 'one', enabled: true })])
+      .mockResolvedValueOnce([plugin({ id: 'one', enabled: false })]);
+    let release: () => void = () => {};
+    apiMock.pluginBundle.mockReturnValue(
+      new Promise<string>((resolve) => {
+        release = () => resolve('export const apply = () => {}');
+      }),
+    );
+
+    const inFlight = usePluginStore.getState().load();
+    const toggle = usePluginStore.getState().setEnabled('one', false);
+    release();
+    await Promise.all([inFlight, toggle]);
+
+    // Two passes: the one that was in flight, and the fresh one the
+    // write queued behind it.
+    expect(apiMock.pluginList).toHaveBeenCalledTimes(2);
+    expect(usePluginStore.getState().plugins).toEqual([
+      expect.objectContaining({ id: 'one', enabled: false }),
+    ]);
+  });
 });

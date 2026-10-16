@@ -167,8 +167,10 @@ function makePetsRegistrar(packs: PetPack[]): Registrar<PetPack> {
       // than this, because a rejected pack simply never renders. Only
       // track it locally once the registry accepted it, so the two
       // sides cannot disagree about which characters exist.
-      const registered = api.petRegisterPack(tagged).then(
+      let accepted = false;
+      const settled = api.petRegisterPack(tagged).then(
         () => {
+          accepted = true;
           packs.push(tagged);
         },
         (err: unknown) => {
@@ -181,9 +183,18 @@ function makePetsRegistrar(packs: PetPack[]): Registrar<PetPack> {
       const dispose = () => {
         const i = packs.indexOf(tagged);
         if (i >= 0) packs.splice(i, 1);
-        // Unregister after the registration settles so a teardown that
-        // races the add cannot win the race and leave the pack behind.
-        void registered.then(() => api.petUnregisterPack(id));
+        // Only a pack this plugin actually registered may be
+        // unregistered, and only after the registration settled so a
+        // teardown that races the add cannot win the race and leave the
+        // pack behind. A *rejected* registration must leave the
+        // registry untouched: the Go store has no backup for an
+        // override that never happened, so unregistering there deletes
+        // the character carrying that id — the builtin one, when a
+        // plugin tried to shadow it — and the pet window reloads with
+        // nothing to draw.
+        void settled.then(() => {
+          if (accepted) return api.petUnregisterPack(id);
+        });
       };
       ctx.effect(() => dispose);
       return dispose;
@@ -298,6 +309,26 @@ function loadPluginModule(id: string, src: string): Promise<PluginModule> {
     .finally(() => URL.revokeObjectURL(url));
 }
 
+// moduleLoader is the seam between the host and the bundle format. The
+// real loader turns the plugin source into an ES module through a blob
+// URL, which is the only route the Wails webview accepts; a Node test
+// process cannot import blob: URLs at all, so tests may install their
+// own loader and still exercise the real host — the Cordis app, the
+// service registrars and the permission branches are the same either
+// way.
+let moduleLoader: (id: string, src: string) => Promise<PluginModule> =
+  loadPluginModule;
+
+/**
+ * Replaces the bundle loader; null restores the real one. Only tests
+ * use this: the permission model lives in the host, not in the loader.
+ */
+export function setPluginModuleLoader(
+  loader: ((id: string, src: string) => Promise<PluginModule>) | null,
+): void {
+  moduleLoader = loader ?? loadPluginModule;
+}
+
 function defaultApply(mod: unknown): unknown {
   if (typeof mod === 'function') return mod;
   if (mod && typeof mod === 'object') return (mod as PluginModule).apply;
@@ -358,7 +389,7 @@ export async function activatePlugin(
   permissions: string[],
 ): Promise<PluginActivation> {
   if (!app) throw new Error('plugin host not initialized');
-  const mod = await loadPluginModule(id, src);
+  const mod = await moduleLoader(id, src);
   const inject = mod.inject ?? [];
   validateInject(id, inject, permissions);
 
