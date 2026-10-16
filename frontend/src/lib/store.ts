@@ -11,12 +11,7 @@ import {
 } from './appearance';
 import { reportFrontendError } from './frontendErrors';
 import { followLinkTarget } from './linkTarget';
-import { measureInteraction, scheduleFlushCommit } from './perfMetrics';
-import {
-  coalesceStreamEvents,
-  isReasoningDelta,
-  streamFlushInterval,
-} from './stream';
+import { measureInteraction } from './perfMetrics';
 import { sameWorkspacePath, workspaceLabel } from './workspacePath';
 import type {
   AgentSummary,
@@ -41,10 +36,7 @@ import type {
 import type { ToolPage } from '../components/ToolsPanel';
 import { routeBackendEvent, type EventDataSink } from '../state/eventRouter';
 import { stateRoot } from '../state/app';
-import {
-  submissionEffect,
-  type SubmitKind,
-} from '../state/machines/conversation';
+import type { SubmitKind } from '../state/machines/conversation';
 import {
   ConversationState,
   FileViewerState,
@@ -82,7 +74,7 @@ import {
   newestArchivedSeq,
 } from './conv/history';
 import { applyStream } from './conv/stream';
-import { recordFlushDuration } from './stream';
+import { createConvCore } from './conv/core';
 export {
   firstMessageTitle,
   itemText,
@@ -162,7 +154,7 @@ function sameWorkspaceList(
   });
 }
 
-interface StoreState {
+export interface StoreState {
   status: ConfigStatus | null;
   configured: boolean;
   fatal: string | null;
@@ -364,27 +356,25 @@ export function activeConversationID(): string {
     : '';
 }
 
-export const useStore = create<StoreState>((set, get) => {
+export const useStore = create<StoreState>((set, get, store) => {
+  // The bookkeeping lives in conv/core.ts; destructuring keeps the
+  // bodies below reading the names they always did.
+  const core = createConvCore(store);
+  const {
+    clearPendingIndex,
+    conversationTurnState,
+    ensureConversation,
+    flushPendingStreams,
+    openMintedSession,
+    retainLiveConversations,
+    runContextSwitch,
+    submissionStarts,
+    syncPendingIndex,
+    turnSubmission,
+    updateConv,
+    viewerPatch,
+  } = core;
   let toastSeq = 0;
-  let pendingStreamEvents: UIEvent[] = [];
-  // Whether the queue holds nothing but reasoning deltas. Kept on
-  // enqueue so the cadence question is answered once per delta instead
-  // of by rescunning the whole queue (see stream.ts).
-  let pendingStreamVisible = false;
-  let streamFlushRAF: number | null = null;
-  let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
-  // lastStreamFlushAt paces stream commits (see stream.ts for the two
-  // cadences); streamFlushDeadline is when the armed handle hands the
-  // queue to the store.
-  let lastStreamFlushAt = 0;
-  let streamFlushDeadline = 0;
-  // Session switches must land on the backend in the same order the
-  // user requested them. Without this queue, an older resumeSession
-  // can finish after a newer NewChat and move the backend context back
-  // to the old session.
-  let contextSwitchQueue: Promise<void> = Promise.resolve();
-  // Workspace switches are applied in order. Older restores ignore
-  // their result once a newer switch has been requested.
   let workspaceSwitchSeq = 0;
   // Workspace history refreshes race each other: a switch triggers one
   // reload from the "ready" event (before the backend has stamped
@@ -518,97 +508,6 @@ export const useStore = create<StoreState>((set, get) => {
     );
     return '';
   };
-  const runContextSwitch = <T>(op: () => Promise<T>) => {
-    const next = contextSwitchQueue.then(op);
-    contextSwitchQueue = next.then(
-      () => undefined,
-      () => undefined,
-    );
-    return next;
-  };
-  // updateConv applies one patch to a conversation and settles it (see
-  // settleConversation). Everything one event writes belongs in that
-  // single update: one event is one store write, which is what the
-  // stream flush's flush-to-frame probe measures.
-  const updateConv = (id: string, patch: Partial<ConversationState>) =>
-    set((state) => {
-      const conv = state.conversations[id];
-      if (!conv) return state;
-      return {
-        conversations: {
-          ...state.conversations,
-          [id]: settleConversation({ ...conv, ...patch }),
-        },
-      };
-    });
-
-  // syncPendingIndex rebuilds the prompt-id -> conversation map for one
-  // conversation after its pendingInteracts change. Stream deltas never
-  // touch this map, so sidebar/interact selectors stay O(1) instead of
-  // scanning every loaded conversation on each token.
-  const syncPendingIndex = (conversationID: string) => {
-    set((state) => {
-      const conv = state.conversations[conversationID];
-      const promptIDs = new Set(
-        (conv?.pendingInteracts ?? []).map((p) => p.id),
-      );
-      const pendingPromptConvs = { ...state.pendingPromptConvs };
-      let changed = false;
-      for (const [promptID, ownerID] of Object.entries(pendingPromptConvs)) {
-        if (ownerID !== conversationID) continue;
-        if (promptIDs.delete(promptID)) continue;
-        delete pendingPromptConvs[promptID];
-        changed = true;
-      }
-      for (const promptID of promptIDs) {
-        pendingPromptConvs[promptID] = conversationID;
-        changed = true;
-      }
-      if (!changed) return state;
-      return { pendingPromptConvs };
-    });
-  };
-
-  const clearPendingIndex = (conversationID: string) => {
-    set((state) => {
-      const pendingPromptConvs = { ...state.pendingPromptConvs };
-      let changed = false;
-      for (const [promptID, ownerID] of Object.entries(pendingPromptConvs)) {
-        if (ownerID !== conversationID) continue;
-        delete pendingPromptConvs[promptID];
-        changed = true;
-      }
-      if (!changed) return state;
-      return { pendingPromptConvs };
-    });
-  };
-
-  // ensureConversation returns the conversation, creating a busy shell
-  // when it is unknown (a live turn resumed after a frontend reload
-  // routes by conversation_id). Returns undefined only when the id is
-  // empty.
-  const ensureConversation = (convID: string | undefined) => {
-    if (!convID) return undefined;
-    let conv = get().conversations[convID];
-    if (!conv) {
-      set((state) => ({
-        conversations: {
-          ...state.conversations,
-          [convID]: {
-            ...emptyConv(),
-          },
-        },
-      }));
-      conv = get().conversations[convID];
-    }
-    return conv;
-  };
-
-  // startTurnFor is the shared low-level send: it validates the draft,
-  // appends the optimistic user message, and starts one turn in the
-  // given conversation. Which submission starts a turn - and what that
-  // does to a live or in-flight run - is the submission table's answer
-  // (SubmitKind), asked by the callers and again here.
   const startTurnFor = async (
     convID: string,
     text: string,
@@ -1223,155 +1122,8 @@ export const useStore = create<StoreState>((set, get) => {
       get().pendingPromptConvs[promptID],
     activeWorkspace: () => get().workspace,
   };
+  core.setEventSink(eventDataSink);
 
-  // turnSubmission answers the machine module's submission table: what
-  // this submission may do in the phase the conversation's turn is in
-  // (see SUBMISSIONS in the machine module - the guards of its SUBMIT
-  // transitions read the same cells). Every path that hands the turn
-  // something new asks it before spending an IPC or drawing a row.
-  const turnSubmission = (conversationID: string, kind: SubmitKind) =>
-    submissionEffect(
-      stateRoot.registry.get(conversationID)?.getSnapshot(),
-      kind,
-    );
-
-  // submissionStarts is the two cells that begin a turn: a quiet turn
-  // takes one, and a live run gives it up to a barge.
-  const submissionStarts = (conversationID: string, kind: SubmitKind) => {
-    const effect = turnSubmission(conversationID, kind);
-    return effect === 'start' || effect === 'barge';
-  };
-
-  const conversationTurnState = (conversationID: string) => {
-    const actor = stateRoot.registry.get(conversationID);
-    if (!actor) return { name: 'idle' as const };
-    const value = actor.getSnapshot().value as { turn: string };
-    const context = actor.getSnapshot().context as {
-      currentRunID?: string;
-      turnStage?: string;
-      turnError?: string;
-      failureStatus?: string;
-      supersededRunID?: string;
-    };
-    switch (value.turn) {
-      case 'starting':
-        return {
-          name: 'starting' as const,
-          supersededRunID: context.supersededRunID,
-        };
-      case 'running':
-        return {
-          name: 'running' as const,
-          runID: context.currentRunID ?? '',
-          stage: context.turnStage ?? '',
-        };
-      case 'failed':
-        return {
-          name: 'failed' as const,
-          error: context.turnError,
-        };
-      default:
-        return { name: value.turn as 'idle' | 'succeeded' };
-    }
-  };
-
-  const clearStreamFlushHandles = () => {
-    if (streamFlushRAF !== null) cancelAnimationFrame(streamFlushRAF);
-    if (streamFlushTimer !== null) clearTimeout(streamFlushTimer);
-    streamFlushRAF = null;
-    streamFlushTimer = null;
-  };
-
-  const flushPendingStreams = () => {
-    clearStreamFlushHandles();
-    if (pendingStreamEvents.length === 0) return;
-    const events = pendingStreamEvents;
-    pendingStreamEvents = [];
-    pendingStreamVisible = false;
-    const started = performance.now();
-    for (const ev of coalesceStreamEvents(events)) {
-      routeBackendEvent(ev, { root: stateRoot, data: eventDataSink });
-    }
-    lastStreamFlushAt = performance.now();
-    recordFlushDuration(performance.now() - started);
-    // The commit lands on the next frame; perfMetrics turns that into the
-    // flush-to-frame number the probe reports.
-    scheduleFlushCommit(started);
-  };
-
-  const scheduleStreamFlush = () => {
-    const flush = () => flushPendingStreams();
-    const now = performance.now();
-    const interval = streamFlushInterval(
-      pendingStreamEvents,
-      !pendingStreamVisible,
-    );
-    const dueAt = lastStreamFlushAt + interval;
-    if (streamFlushRAF !== null || streamFlushTimer !== null) {
-      // A handle is already armed. Only a queue that wants an earlier
-      // commit than that handle carries may pull it in — prose arriving
-      // in the middle of a reasoning burst, or a tool call landing on
-      // the same beat; a queue that wants a later one never pushes it
-      // out, so nothing waiting is delayed past its own cadence.
-      if (dueAt >= streamFlushDeadline) return;
-      clearStreamFlushHandles();
-    }
-    if (now >= dueAt) {
-      // The queue has been idle: commit on the next frame so the first
-      // delta of a burst lands immediately instead of waiting out the
-      // interval.
-      streamFlushRAF =
-        typeof requestAnimationFrame === 'function'
-          ? requestAnimationFrame(flush)
-          : null;
-      if (streamFlushRAF === null) streamFlushTimer = setTimeout(flush, 0);
-      streamFlushDeadline = now;
-      return;
-    }
-    streamFlushTimer = setTimeout(flush, dueAt - now);
-    streamFlushDeadline = dueAt;
-  };
-
-  // retainLiveConversations drops transcripts that are neither focused
-  // nor backed by a live run, so merely opening many sessions over time
-  // does not grow the in-memory store without bound. Resuming one of
-  // those sessions hydrates from the archive again.
-  const retainLiveConversations = (currentID: string) => {
-    const state = get();
-    const conversations: Record<string, ConversationState> = {};
-    const dropped: string[] = [];
-    for (const [id, conv] of Object.entries(state.conversations)) {
-      if (id === currentID) {
-        conversations[id] = conv;
-        continue;
-      }
-      const actor = stateRoot.registry.get(id);
-      const turnValue = actor?.getSnapshot().value as
-        { turn: string } | undefined;
-      const running =
-        turnValue?.turn === 'starting' || turnValue?.turn === 'running';
-      const mappedRun = stateRoot.registry.hasRun(id);
-      const hasPendingPrompt = conv.pendingInteracts.length > 0;
-      if (running || mappedRun || hasPendingPrompt) {
-        conversations[id] = conv;
-      } else {
-        dropped.push(id);
-      }
-    }
-    if (dropped.length === 0) return;
-    // The viewers of the dropped conversations go with them: the entry
-    // is a handful of tab/diff ids per conversation ever opened, and
-    // resuming a session rebuilds it from the store's own defaults.
-    const viewers = { ...get().viewers };
-    for (const id of dropped) delete viewers[id];
-    set(() => ({ conversations, viewers }));
-    for (const id of dropped) stateRoot.registry.release(id);
-  };
-
-  // reconcileTurnFromArchive replaces a finished live turn with the
-  // archived copy. If stream deltas were coalesced too aggressively or
-  // the runtime sink detached under load, turn_end repairs the
-  // transcript instead of leaving a partial answer visible forever.
   const reconcileTurnFromArchive = async (
     conversationID: string,
     runID: string,
@@ -1546,60 +1298,6 @@ export const useStore = create<StoreState>((set, get) => {
     await syncTranscriptTail(id, anchor);
   };
 
-  const viewerPatch = (id: string | null, patch: Partial<FileViewerState>) => {
-    if (!id) return;
-    set((state) => ({
-      viewers: {
-        ...state.viewers,
-        [id]: { ...(state.viewers[id] ?? viewerDefaults()), ...patch },
-      },
-    }));
-  };
-
-  // openMintedSession materializes a conversation the backend already
-  // minted: the current pointer moved server-side, so this only drives
-  // the focus machine and local shell state without another RPC.
-  const openMintedSession = (
-    snapshot: {
-      conversation_id: string;
-      mode: string;
-      think: string;
-      model: string;
-    },
-    request: number,
-  ) => {
-    stateRoot.sendFocus({
-      type: 'OPEN_SUCCEEDED',
-      request,
-      sessionID: snapshot.conversation_id,
-    });
-    const focus = stateRoot.focusSnapshot;
-    if (
-      focus.value !== 'active' ||
-      focus.context.sessionID !== snapshot.conversation_id
-    ) {
-      return;
-    }
-    const id = snapshot.conversation_id;
-    set((state) => ({
-      toolsView: null,
-      conversations: {
-        ...state.conversations,
-        [id]: emptyConv({
-          mode: snapshot.mode,
-          think: snapshot.think,
-          model: snapshot.model,
-        }),
-      },
-    }));
-    stateRoot.registry.ensure(id, {
-      workspaceGeneration: stateRoot.generation(),
-      readyEmpty: true,
-      workspace: get().workspace,
-    });
-    retainLiveConversations(id);
-  };
-
   return {
     status: null,
     configured: false,
@@ -1770,11 +1468,7 @@ export const useStore = create<StoreState>((set, get) => {
 
     handleEvent: (ev) => {
       if (ev.type === UIEventType.stream) {
-        pendingStreamEvents.push(ev);
-        if (!pendingStreamVisible && !isReasoningDelta(ev)) {
-          pendingStreamVisible = true;
-        }
-        scheduleStreamFlush();
+        core.enqueueStreamEvent(ev);
         return;
       }
       // Non-stream events are ordering boundaries: any buffered deltas
