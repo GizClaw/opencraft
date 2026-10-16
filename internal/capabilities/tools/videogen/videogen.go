@@ -89,6 +89,11 @@ type Tool struct {
 	ws       workspace.Workspace
 	generate generateFunc
 	client   *http.Client
+	// allowPrivate mirrors Settings.AllowPrivate for the download hop:
+	// it exempts the proxy fail-closed rule exactly as it exempts
+	// private destinations (a local provider is a deliberate choice,
+	// not an SSRF hole).
+	allowPrivate bool
 	// providerOptions is the configured knob set per deployment id.
 	providerOptions map[string]map[string]any
 	// extensions renders the provider-addressed video knob fields into
@@ -112,6 +117,7 @@ func New(
 	t := &Tool{
 		ws:              ws,
 		providerOptions: settings.ProviderOptions,
+		allowPrivate:    settings.AllowPrivate,
 		// The download follows a URL the provider hands back, which is
 		// exactly the SSRF surface a tool must not trust: the client
 		// resolves once, refuses private/loopback/link-local
@@ -614,6 +620,14 @@ func (t *Tool) saveVideos(
 // stream itself is capped so a slow or malicious provider cannot grow
 // the in-memory copy beyond the limit.
 func (t *Tool) download(ctx context.Context, url string) ([]byte, error) {
+	// The download URL comes from the provider; through a proxy the
+	// SSRF guard could not pin its resolution, so fail closed before
+	// any connection. netguard.Client enforces the same rule on every
+	// request and redirect hop; this only reports it earlier, with the
+	// tool's own label.
+	if err := netguard.RefuseProxy(Name, url, t.allowPrivate); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, errdefs.Internalf("%s: download: %v", Name, err)

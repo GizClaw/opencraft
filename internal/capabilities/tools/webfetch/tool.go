@@ -149,21 +149,14 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 			return "", err
 		}
 		// The SSRF guard pins DNS to the validated addresses only on
-		// direct dials. Through an HTTP(S) proxy the transport dials the
-		// proxy instead, so the target would be re-resolved by the proxy
-		// and a DNS rebinding window would reopen. Fail closed: refuse
-		// proxy use while the guard is active. YOLO/allow_private paths
-		// resolve allowPrivate to true and are exempt (no SSRF concern).
-		if t.allowPrivate == nil || !t.allowPrivate(ctx) {
-			if proxy, err := netguard.EnvProxy(u.String()); err != nil {
-				return "", errdefs.Validationf(
-					"web_fetch: proxy resolution: %v", err)
-			} else if proxy != nil {
-				return "", errdefs.Validationf(
-					"web_fetch: the SSRF guard cannot pin DNS through proxy %s; "+
-						"unset HTTP(S)_PROXY/ALL_PROXY for this fetch or enable "+
-						"web_fetch.allow_private", proxy.Redacted())
-			}
+		// direct dials; through an HTTP(S) proxy the target would be
+		// re-resolved on the proxy side. Fail closed before doing any
+		// work — netguard.Client applies the same rule to every
+		// request, so a redirect hop cannot slip past this check.
+		// YOLO/allow_private paths are exempt (no SSRF concern).
+		if err := netguard.RefuseProxy(Name, u.String(),
+			t.allowPrivate != nil && t.allowPrivate(ctx)); err != nil {
+			return "", err
 		}
 	}
 
