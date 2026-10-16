@@ -9,13 +9,17 @@ import (
 
 // TestDeleteRemovesOneSkillDirectory is the positive control for the
 // root guard: deleting a skill directory inside a writable root keeps
-// working.
+// working, and Deletable — the predicate the settings delete entry
+// reads — says the same thing about the same input.
 func TestDeleteRemovesOneSkillDirectory(t *testing.T) {
 	svc := newWriteService(t)
 	root := writeRoot(t)
 	skillPath := writeSkill(t, root, "alpha",
 		"name: alpha\ndescription: alpha skill\n")
 
+	if !svc.Deletable(skillPath) {
+		t.Fatal("Deletable refuses a skill inside a writable root")
+	}
 	if err := svc.Delete(skillPath); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
