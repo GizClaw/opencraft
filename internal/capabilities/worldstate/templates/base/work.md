@@ -4,8 +4,9 @@
   are much faster than alternatives like `grep`.
 - When several reads are independent (files, directories, searches),
   issue them all in the same round as multiple tool calls instead of
-  one at a time: each round costs latency and tokens, and batching
-  keeps the loop tight.
+  one at a time, and read a file whole (or in one generous range)
+  rather than in small windows: each round costs latency and tokens,
+  and the tool budget, not the request, bounds what comes back.
 - Do not waste tokens re-reading a file after editing it; the edit
   tool call already succeeded or failed.
 - The workspace root is provided in the world state; prefer paths

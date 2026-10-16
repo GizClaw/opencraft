@@ -114,8 +114,10 @@ func (t *readFileTool) Definition() message.ToolDefinition {
 		"Read a text file from the workspace and return the requested "+
 			"line range. Paths are relative to the workspace root. "+
 			"Returns JSON: {file_path, content, offset, limit, "+
-			"total_lines, is_truncated}. For large files prefer grep "+
-			"or a narrow offset/limit range.",
+			"total_lines, is_truncated}. Read a whole file, or one "+
+			"generous range, rather than probing it in small windows: "+
+			"an oversized result comes back as a head-and-tail excerpt "+
+			"pointing at the full output, so paging only adds rounds.",
 		message.ToolProperty("file_path", "string",
 			"The file to read: relative to the workspace root, or an "+
 				"absolute path under an allowed root (workspace, skill "+

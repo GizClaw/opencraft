@@ -239,9 +239,17 @@ resources:
         # own string fields and re-encoded, so structured results
         # (read_file, exec_command, ...) stay parseable for the model
         # and the UI; non-JSON text keeps the plain head+tail excerpt.
+        #
+        # max_chars is sized so an ordinary source file arrives whole.
+        # At 8k the cap cut most reads down to head+tail, and the
+        # rollouts show what that cost: 19% of read_file results sat
+        # exactly on the cap, and the model answered by probing the
+        # file in 60-140-line windows, each probe its own round. One
+        # read that fits is worth three that don't. The result_limit
+        # backstop above still bounds the whole result.
         truncate:
           enabled: true
-          max_chars: 8000
+          max_chars: 24000
           dir: ${ocraft:TOOL_CACHE}
           work_dir: ${ocraft:WORKDIR}
         # Best-effort secret stripping from tool results before the
