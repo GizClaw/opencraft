@@ -6,7 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func repoGit(t *testing.T, root string, args ...string) string {
@@ -292,4 +294,54 @@ func mustRead(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// The per-repository lock table is a rendezvous, not a registry: two
+// callers on the same root must serialize on the same mutex, and the
+// entry must be gone once nobody holds it. Leaving entries behind means
+// one mutex per repository for the life of the process; deleting one
+// while a caller is still waiting would hand two callers two different
+// mutexes and stop serializing at all.
+func TestLockTableSerializesAndDrains(t *testing.T) {
+	root := t.TempDir()
+
+	const callers = 8
+	var holders, peak atomic.Int32
+	start := make(chan struct{})
+	done := make(chan struct{}, callers)
+	for i := 0; i < callers; i++ {
+		go func() {
+			<-start
+			lock := lockFor(root)
+			lock.mu.Lock()
+			now := holders.Add(1)
+			for {
+				high := peak.Load()
+				if now <= high || peak.CompareAndSwap(high, now) {
+					break
+				}
+			}
+			// Hold long enough that a second holder would be seen.
+			time.Sleep(2 * time.Millisecond)
+			holders.Add(-1)
+			lock.mu.Unlock()
+			lock.release()
+			done <- struct{}{}
+		}()
+	}
+	close(start)
+	for i := 0; i < callers; i++ {
+		<-done
+	}
+	if got := peak.Load(); got != 1 {
+		t.Fatalf("peak concurrent holders = %d, want 1: the table handed "+
+			"out more than one mutex for one repository", got)
+	}
+
+	lockMu.Lock()
+	remaining := len(locks)
+	lockMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("lock table kept %d entries after every caller left", remaining)
+	}
 }
