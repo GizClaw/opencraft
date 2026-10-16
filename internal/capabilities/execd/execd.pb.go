@@ -895,8 +895,15 @@ type HelloOk struct {
 	Build           string                 `protobuf:"bytes,2,opt,name=build,proto3" json:"build,omitempty"`
 	Capabilities    []string               `protobuf:"bytes,3,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
 	SessionId       string                 `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// nonce echoes the per-launch value the parent put on the child's
+	// command line (see LaunchExe). The parent verifies it before the
+	// connection is used, which is what makes the channel a conversation
+	// with the child it forked rather than with whoever connected first
+	// (on Windows the pipe name is dialable by any process the pipe ACL
+	// admits, and the child cannot start before the pipe exists).
+	Nonce         string `protobuf:"bytes,5,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HelloOk) Reset() {
@@ -953,6 +960,13 @@ func (x *HelloOk) GetCapabilities() []string {
 func (x *HelloOk) GetSessionId() string {
 	if x != nil {
 		return x.SessionId
+	}
+	return ""
+}
+
+func (x *HelloOk) GetNonce() string {
+	if x != nil {
+		return x.Nonce
 	}
 	return ""
 }
@@ -2830,13 +2844,14 @@ const file_internal_capabilities_execd_execd_proto_rawDesc = "" +
 	"\x05Hello\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x14\n" +
 	"\x05build\x18\x02 \x01(\tR\x05build\x12\x16\n" +
-	"\x06client\x18\x03 \x01(\tR\x06client\"\x8d\x01\n" +
+	"\x06client\x18\x03 \x01(\tR\x06client\"\xa3\x01\n" +
 	"\aHelloOk\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x14\n" +
 	"\x05build\x18\x02 \x01(\tR\x05build\x12\"\n" +
 	"\fcapabilities\x18\x03 \x03(\tR\fcapabilities\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x04 \x01(\tR\tsessionId\"\xa3\x02\n" +
+	"session_id\x18\x04 \x01(\tR\tsessionId\x12\x14\n" +
+	"\x05nonce\x18\x05 \x01(\tR\x05nonce\"\xa3\x02\n" +
 	"\rSandboxPolicy\x12%\n" +
 	"\x0ewritable_paths\x18\x01 \x03(\tR\rwritablePaths\x12\x1b\n" +
 	"\tenv_allow\x18\x02 \x03(\tR\benvAllow\x12O\n" +

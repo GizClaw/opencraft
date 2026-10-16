@@ -47,8 +47,10 @@ func runExecServer() {
 		"inherited socketpair descriptor (unix)")
 	execdPipe := fs.String("execd-pipe", "",
 		"named pipe path (windows)")
-	_ = fs.String("execd-nonce", "",
-		"per-launch identity nonce recorded in the parent's orphan journal")
+	execdNonce := fs.String("execd-nonce", "",
+		"per-launch identity nonce: recorded in the parent's orphan "+
+			"journal and echoed in the Hello handshake, so the parent "+
+			"only talks to the child it forked")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		execdFatal(2, "opencraft execd: %v", err)
 	}
@@ -126,7 +128,8 @@ func runExecServer() {
 		}
 	}()
 
-	server := execd.New(factory, conn, conn)
+	server := execd.New(factory, conn, conn,
+		execd.WithLaunchNonce(*execdNonce))
 	if err := server.Serve(ctx); err != nil {
 		execdFatal(1, "opencraft execd: %v", err)
 	}

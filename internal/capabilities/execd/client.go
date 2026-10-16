@@ -63,8 +63,40 @@ type Client struct {
 	readDone  chan struct{}
 }
 
+// DialOption configures a Dial handshake.
+type DialOption func(*dialConfig)
+
+type dialConfig struct {
+	// nonce, when set, is what HelloOk must echo back. It is the value
+	// the parent put on the child's command line; a peer that cannot
+	// produce it is not the child this parent forked.
+	nonce string
+}
+
+// VerifyNonce makes the handshake prove the peer is this parent's own
+// child: HelloOk must echo the per-launch nonce passed to LaunchExe.
+// Without it the channel is trusted because of how it was created (on
+// Unix, the socketpair end only the child inherited), which holds on
+// Unix but not on Windows, where any process the named pipe's ACL
+// admits can connect before the child does. A mismatch closes the
+// connection and returns ErrPeerUnverified.
+func VerifyNonce(nonce string) DialOption {
+	return func(cfg *dialConfig) { cfg.nonce = nonce }
+}
+
+// ErrPeerUnverified reports a channel peer that answered the Hello
+// handshake without the nonce this parent passed to its child.
+var ErrPeerUnverified = errors.New(
+	"execd: channel peer did not echo the launch nonce")
+
 // Dial performs the Hello handshake over conn and starts the read loop.
-func Dial(ctx context.Context, conn io.ReadWriteCloser) (*Client, error) {
+func Dial(
+	ctx context.Context, conn io.ReadWriteCloser, opts ...DialOption,
+) (*Client, error) {
+	var cfg dialConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	c := &Client{
 		conn:     conn,
 		reader:   bufio.NewReaderSize(conn, 64<<10),
@@ -86,6 +118,11 @@ func Dial(ctx context.Context, conn io.ReadWriteCloser) (*Client, error) {
 			Message: fmt.Sprintf("child protocol %d, host protocol %d",
 				hello.GetProtocolVersion(), ProtocolVersion),
 		}
+	}
+	if cfg.nonce != "" && hello.GetNonce() != cfg.nonce {
+		closeLog(ctx, "execd: close connection after unverified peer", conn)
+		return nil, fmt.Errorf("%w (got %q)", ErrPeerUnverified,
+			hello.GetNonce())
 	}
 	c.mu.Lock()
 	c.hello = hello
