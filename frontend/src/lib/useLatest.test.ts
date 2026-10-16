@@ -12,7 +12,9 @@ describe('useLatestRequest', () => {
     const { result } = renderHook(() => useLatestRequest());
     const first = result.current.begin();
     expect(result.current.isCurrent(first)).toBe(true);
+
     const second = result.current.begin();
+    expect(result.current.current()).toBe(second);
     expect(result.current.isCurrent(first)).toBe(false);
     expect(result.current.isCurrent(second)).toBe(true);
   });
@@ -20,7 +22,12 @@ describe('useLatestRequest', () => {
   it('retires every ticket once the component unmounts', () => {
     const { result, unmount } = renderHook(() => useLatestRequest());
     const ticket = result.current.begin();
+    expect(result.current.isCurrent(ticket)).toBe(true);
+
     unmount();
+
+    // A response that lands after the component is gone must not write,
+    // schedule a timer or setState behind its back.
     expect(result.current.isCurrent(ticket)).toBe(false);
   });
 

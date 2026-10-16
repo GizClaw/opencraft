@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -9,6 +10,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mountOutsideAct, pressEscape } from '../test/outsideAct';
 import { useStore } from '../lib/store';
+import type { GitChange, GitDiff } from '../lib/types';
 import { GitPanel } from './GitPanel';
 
 const sampleDiff = `diff --git a/a.go b/a.go
@@ -55,6 +57,36 @@ const defaultGitStatus = {
   ],
 };
 
+function stagedChange(path: string): GitChange {
+  return {
+    path,
+    kind: 'modified',
+    staged: true,
+    unstaged: false,
+    untracked: false,
+    unmerged: false,
+    directory: false,
+    is_binary: false,
+    additions: 1,
+    deletions: 1,
+    in_workspace: true,
+  };
+}
+
+// diffOf builds a one-line diff whose body is easy to find on screen.
+function diffOf(text: string): GitDiff {
+  return {
+    content:
+      'diff --git a/f b/f\n' +
+      '--- a/f\n' +
+      '+++ b/f\n' +
+      '@@ -1 +1,2 @@\n' +
+      '-old line\n' +
+      `+${text}\n`,
+    truncated: false,
+  };
+}
+
 const apiMock = vi.hoisted(() => ({
   gitRepo: vi.fn(async () => ({
     in_repo: true,
@@ -76,7 +108,10 @@ const apiMock = vi.hoisted(() => ({
     },
   ]),
   gitBranches: vi.fn(async () => []),
-  gitDiff: vi.fn(async () => ({ content: sampleDiff, truncated: false })),
+  gitDiff: vi.fn(async (_path: string, _staged: boolean): Promise<GitDiff> => ({
+    content: sampleDiff,
+    truncated: false,
+  })),
   gitCommitFiles: vi.fn(async () => ({
     files: [
       {
@@ -289,6 +324,156 @@ describe('GitPanel', () => {
     );
     expect(worktree).toHaveAttribute('aria-pressed', 'true');
     expect(staged).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('keeps the diff of the file the reader moved to when the first answers late', async () => {
+    apiMock.gitStatus.mockResolvedValue({
+      root: '/tmp/w',
+      workspace: '/tmp/w',
+      branch: 'main',
+      truncated: false,
+      entries: [stagedChange('internal/a.go'), stagedChange('internal/b.go')],
+    });
+    let answerA: (diff: GitDiff) => void = () => {};
+    let answerB: (diff: GitDiff) => void = () => {};
+    // First call is file A, second is file B.
+    apiMock.gitDiff
+      .mockImplementationOnce(
+        () =>
+          new Promise<GitDiff>((resolve) => {
+            answerA = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<GitDiff>((resolve) => {
+            answerB = resolve;
+          }),
+      );
+    render(<GitPanel sessionID="s-1" />);
+
+    (await screen.findByText('internal/a.go')).click();
+    await waitFor(() =>
+      expect(apiMock.gitDiff).toHaveBeenCalledWith('internal/a.go', true),
+    );
+
+    // Arrow-jump to the next change before the first diff answered: a
+    // slower `git diff` for the file the reader left must not paint
+    // itself under the title they moved to.
+    fireEvent.keyDown(window, { key: 'ArrowDown' });
+    await waitFor(() =>
+      expect(apiMock.gitDiff).toHaveBeenCalledWith('internal/b.go', true),
+    );
+
+    await act(async () => {
+      answerB(diffOf('bbb'));
+    });
+    expect(await screen.findByText('bbb')).toBeInTheDocument();
+
+    await act(async () => {
+      answerA(diffOf('aaa'));
+    });
+    expect(screen.queryByText('aaa')).not.toBeInTheDocument();
+    expect(screen.getByText('bbb')).toBeInTheDocument();
+    expect(
+      screen.getByRole('dialog', { name: 'internal/b.go' }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the body of the side the toggle landed on', async () => {
+    apiMock.gitStatus.mockResolvedValue({
+      root: '/tmp/w',
+      workspace: '/tmp/w',
+      branch: 'main',
+      truncated: false,
+      entries: [{ ...stagedChange('internal/a.go'), unstaged: true }],
+    });
+    let answerStaged: (diff: GitDiff) => void = () => {};
+    let answerWorktree: (diff: GitDiff) => void = () => {};
+    // First call is the staged half, second the working tree.
+    apiMock.gitDiff
+      .mockImplementationOnce(
+        () =>
+          new Promise<GitDiff>((resolve) => {
+            answerStaged = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<GitDiff>((resolve) => {
+            answerWorktree = resolve;
+          }),
+      );
+    render(<GitPanel sessionID="s-1" />);
+
+    (await screen.findByText('internal/a.go')).click();
+    await waitFor(() =>
+      expect(apiMock.gitDiff).toHaveBeenCalledWith('internal/a.go', true),
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Working tree' }),
+    );
+    await waitFor(() =>
+      expect(apiMock.gitDiff).toHaveBeenCalledWith('internal/a.go', false),
+    );
+
+    await act(async () => {
+      answerWorktree(diffOf('worktree body'));
+    });
+    expect(await screen.findByText('worktree body')).toBeInTheDocument();
+
+    await act(async () => {
+      answerStaged(diffOf('staged body'));
+    });
+    // The toggle says "working tree": the staged half must not land
+    // under it.
+    expect(screen.queryByText('staged body')).not.toBeInTheDocument();
+    expect(screen.getByText('worktree body')).toBeInTheDocument();
+  });
+
+  it('leaves no timer behind when a poll answers after unmount', async () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = render(<GitPanel sessionID="s-1" />);
+      // Fake timers stop waitFor's polling, so the case flushes the
+      // mount's promises itself.
+      for (
+        let i = 0;
+        i < 50 && screen.queryByText('internal/a.go') === null;
+        i += 1
+      ) {
+        await act(async () => {});
+      }
+      expect(screen.getByText('internal/a.go')).toBeInTheDocument();
+      await act(async () => {});
+      expect(apiMock.gitStatus).toHaveBeenCalledTimes(1);
+
+      let answerPoll: (snapshot: typeof defaultGitStatus) => void = () => {};
+      apiMock.gitStatus.mockImplementationOnce(
+        () =>
+          new Promise<typeof defaultGitStatus>((resolve) => {
+            answerPoll = resolve;
+          }),
+      );
+      // The first auto-refresh tick; its status read is still in flight.
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(apiMock.gitStatus).toHaveBeenCalledTimes(2);
+
+      unmount();
+      const armed = vi.getTimerCount();
+      await act(async () => {
+        answerPoll(defaultGitStatus);
+      });
+      await act(async () => {});
+
+      // The poll's "spin done" timer would be created after the panel
+      // unmounted, where the cleanup can no longer know about it.
+      expect(vi.getTimerCount()).toBe(armed);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps binary dual-state files on the no-diff hint without a toggle', async () => {

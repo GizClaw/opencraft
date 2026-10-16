@@ -1,4 +1,10 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mountOutsideAct, pressEscape } from '../test/outsideAct';
 import type { GitCommitFiles, GitDiff, GitLogEntry } from '../lib/types';
@@ -38,6 +44,20 @@ const diff: GitDiff = {
     'diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1 +1,2 @@\n-old line\n+new line\n',
   truncated: false,
 };
+
+// diffOf builds a one-line diff whose body is easy to find on screen.
+function diffOf(text: string): GitDiff {
+  return {
+    content:
+      'diff --git a/f b/f\n' +
+      '--- a/f\n' +
+      '+++ b/f\n' +
+      '@@ -1 +1,2 @@\n' +
+      '-old line\n' +
+      `+${text}\n`,
+    truncated: false,
+  };
+}
 
 describe('CommitDetailModal', () => {
   beforeEach(() => {
@@ -102,5 +122,71 @@ describe('CommitDetailModal', () => {
         'internal/b.go',
       ),
     );
+  });
+
+  it('keeps the file the reader moved to when the first diff answers late', async () => {
+    apiMock.gitCommitFiles.mockResolvedValue({
+      files: [
+        files.files[0],
+        {
+          path: 'internal/b.go',
+          kind: 'added',
+          additions: 2,
+          deletions: 0,
+          is_binary: false,
+        },
+      ],
+      truncated: false,
+    });
+    let answerA: (d: GitDiff) => void = () => {};
+    let answerB: (d: GitDiff) => void = () => {};
+    // First call is the file the modal opens on, second the one the
+    // arrow key moves to.
+    apiMock.gitCommitDiff
+      .mockImplementationOnce(
+        () =>
+          new Promise<GitDiff>((resolve) => {
+            answerA = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<GitDiff>((resolve) => {
+            answerB = resolve;
+          }),
+      );
+
+    const { container } = render(
+      <CommitDetailModal entry={entry} onClose={() => {}} />,
+    );
+    await waitFor(() =>
+      expect(apiMock.gitCommitDiff).toHaveBeenCalledWith(
+        'abc123',
+        'internal/a.go',
+      ),
+    );
+
+    // Move to the second file before the first diff answered.
+    fireEvent.keyDown(window, { key: 'ArrowDown' });
+    await waitFor(() =>
+      expect(apiMock.gitCommitDiff).toHaveBeenCalledWith(
+        'abc123',
+        'internal/b.go',
+      ),
+    );
+
+    await act(async () => {
+      answerA(diffOf('aaa'));
+    });
+    // The superseded answer must not paint its body — and its `finally`
+    // must not end the spinner of the file now being fetched.
+    expect(screen.queryByText('aaa')).not.toBeInTheDocument();
+    expect(container.querySelector('.animate-spin')).not.toBeNull();
+
+    await act(async () => {
+      answerB(diffOf('bbb'));
+    });
+    expect(await screen.findByText('bbb')).toBeInTheDocument();
+    expect(container.querySelector('.animate-spin')).toBeNull();
   });
 });

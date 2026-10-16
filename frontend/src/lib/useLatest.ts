@@ -21,28 +21,41 @@
 // request also retires the older ticket, which is why the older `finally`
 // stays quiet instead of ending the newer load's spinner.
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 export interface LatestRequest {
-  /** begin claims the ticket for one request, right before it is awaited. */
+  /** begin starts a request and returns its ticket. */
   begin(): number;
-  /** isCurrent reports whether `ticket` is still the newest one, on screen. */
+  /** current is the ticket of the newest request; 0 before the first. */
+  current(): number;
+  /** isCurrent reports whether a ticket may still write its result. */
   isCurrent(ticket: number): boolean;
 }
 
 export function useLatestRequest(): LatestRequest {
   const seq = useRef(0);
-  const mounted = useRef(true);
-  useEffect(
-    () => () => {
-      mounted.current = false;
-    },
+  const alive = useRef(true);
+  useEffect(() => {
+    // Set in the body as well as cleared in the cleanup: React runs
+    // effects twice in StrictMode, and the second mount must be live.
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      seq.current += 1;
+    };
+  }, []);
+  return useMemo(
+    () => ({
+      begin: () => {
+        seq.current += 1;
+        return seq.current;
+      },
+      current: () => seq.current,
+      isCurrent: (ticket: number) => alive.current && ticket === seq.current,
+    }),
     [],
   );
-  const begin = useCallback(() => ++seq.current, []);
-  const isCurrent = useCallback(
-    (ticket: number) => mounted.current && ticket === seq.current,
-    [],
-  );
-  return { begin, isCurrent };
 }
+
+/** useLatest is the §B4 spelling of the same hook. */
+export const useLatest = useLatestRequest;
