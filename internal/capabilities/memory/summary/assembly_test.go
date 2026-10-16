@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,7 @@ func storedSlice(msgs []message.Message) []StoredMessage {
 }
 
 type fakeTurnStore struct {
+	mu    sync.Mutex
 	msgs  map[string][]StoredMessage
 	nodes []SummaryNode
 }
@@ -43,6 +45,8 @@ type fakeTurnStore struct {
 // session store appends one: seqs count up from zero. The assembly never
 // writes — it reads what this fake holds — so seeding is the test's job.
 func (f *fakeTurnStore) appendRows(conversationID string, msgs ...message.Message) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	rows := f.msgs[conversationID]
 	next := int64(len(rows))
 	for _, msg := range msgs {
@@ -84,14 +88,20 @@ func (r *recordingStore) LoadBack(ctx context.Context, conversationID string, be
 }
 
 func (f *fakeTurnStore) MaxSeq(_ context.Context, conversationID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return int64(len(f.msgs[conversationID])) - 1, nil
 }
 
 func (f *fakeTurnStore) LoadAll(_ context.Context, conversationID string) ([]StoredMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.msgs[conversationID], nil
 }
 
 func (f *fakeTurnStore) LoadBack(_ context.Context, conversationID string, beforeSeq int64, n int) ([]StoredMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if n <= 0 {
 		return nil, nil
 	}
@@ -109,6 +119,8 @@ func (f *fakeTurnStore) LoadBack(_ context.Context, conversationID string, befor
 }
 
 func (f *fakeTurnStore) UpsertSummaryNode(_ context.Context, n SummaryNode) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for i := range f.nodes {
 		if f.nodes[i].ID == n.ID {
 			f.nodes[i] = n
@@ -120,6 +132,8 @@ func (f *fakeTurnStore) UpsertSummaryNode(_ context.Context, n SummaryNode) erro
 }
 
 func (f *fakeTurnStore) ListSummaryNodes(_ context.Context, conversationID string) ([]SummaryNode, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []SummaryNode
 	for _, n := range f.nodes {
 		if n.ThreadID == conversationID {
@@ -130,6 +144,8 @@ func (f *fakeTurnStore) ListSummaryNodes(_ context.Context, conversationID strin
 }
 
 func (f *fakeTurnStore) DeleteSummaryNodes(_ context.Context, conversationID string, level int, keepID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []SummaryNode
 	for _, n := range f.nodes {
 		if n.ThreadID == conversationID && n.Level == level && n.ID != keepID {
@@ -142,6 +158,8 @@ func (f *fakeTurnStore) DeleteSummaryNodes(_ context.Context, conversationID str
 }
 
 func (f *fakeTurnStore) DeleteSummaryNodesByID(_ context.Context, conversationID string, ids []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	drop := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		drop[id] = true
