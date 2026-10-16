@@ -305,6 +305,7 @@ func (s *Store) appendTurn(
 	now := time.Now().UTC()
 	if convErr == nil {
 		c.CreatedAt = conv.CreatedAt
+		c.TurnCount = conv.TurnCount
 		c.UsageJSON = conv.UsageJSON
 		c.ImportSource = conv.ImportSource
 		c.ImportReady = conv.ImportReady
@@ -319,6 +320,13 @@ func (s *Store) appendTurn(
 	// falls back to the user's first line, and a note the app wrote to
 	// the model is not something the user said. Skipping also leaves an
 	// empty title empty, so the first real turn still names the chat.
+	//
+	// The condition mirrors the title CASE in CommitConversationTurn,
+	// which is what actually guards the column: the value computed here
+	// only ever lands when the conversation is untitled or still has no
+	// turns. TurnCount is read from the stored row so the two agree —
+	// with it unset this clause was always true and every ordinary turn
+	// recomputed a title the CASE then threw away.
 	if origin.Kind == "" && (c.Title == "" || c.TurnCount == 0) {
 		if title := firstArchiveTitle(archived); title != "" {
 			c.Title = title
@@ -629,7 +637,17 @@ func (s *Store) History(ctx context.Context, id string, n int) ([]message.Messag
 	if n == 0 {
 		n = s.window
 	}
-	msgs, err := s.db.ListArchiveMessages(ctx, id)
+	// A bounded window is a bounded read: the limit goes into SQL
+	// instead of decoding the whole transcript and slicing the result
+	// in Go, which would hold the store's single connection across
+	// every message the conversation ever wrote.
+	var msgs []state.ArchiveMessage
+	var err error
+	if n > 0 {
+		msgs, err = s.db.ListArchiveMessagesTail(ctx, id, n)
+	} else {
+		msgs, err = s.db.ListArchiveMessages(ctx, id)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -639,9 +657,6 @@ func (s *Store) History(ctx context.Context, id string, n int) ([]message.Messag
 			Role:    message.Role(m.Role),
 			Content: m.Content,
 		})
-	}
-	if n > 0 && len(out) > n {
-		out = out[len(out)-n:]
 	}
 	return out, nil
 }
@@ -883,21 +898,10 @@ func (s *Store) FirstUserMessage(id string) (string, error) {
 	if err := requireID(id); err != nil {
 		return "", err
 	}
-	msgs, err := s.db.ListArchiveMessagesWithoutTurnKind(
-		context.Background(), id,
-	)
-	if err != nil {
-		return "", err
-	}
-	for _, m := range msgs {
-		if m.Role != string(message.RoleUser) {
-			continue
-		}
-		if text := strings.TrimSpace(m.Content.Text()); text != "" {
-			return text, nil
-		}
-	}
-	return "", nil
+	// The read stops at the first hit (state.FirstUnkindedUserText):
+	// the caller is naming the conversation, not reading it, so the
+	// rest of the transcript is never decoded.
+	return s.db.FirstUnkindedUserText(context.Background(), id)
 }
 
 // SeedStartTitle records the provisional archive fallback title on the
@@ -1180,32 +1184,10 @@ func requireID(id string) error {
 	return nil
 }
 
+// firstArchiveTitle names a conversation from its archived messages.
+// The rule lives with the archive (state.FirstTitle) because the JSON
+// import and the legacy adopt name transcripts too: one transcript
+// reads the same whichever path wrote it.
 func firstArchiveTitle(msgs []message.Message) string {
-	for _, m := range msgs {
-		if m.Role != message.RoleUser {
-			continue
-		}
-		if title := firstLine(m.Content.Text()); title != "" {
-			return title
-		}
-		for _, part := range m.Content.Parts {
-			if _, ok := part.(message.TextPart); !ok {
-				return "[attachment]"
-			}
-		}
-	}
-	return ""
-}
-
-func firstLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = strings.TrimSpace(s[:i])
-	}
-	const maxTitle = 70
-	runes := []rune(s)
-	if len(runes) > maxTitle {
-		return string(runes[:maxTitle]) + "…"
-	}
-	return s
+	return state.FirstTitle(msgs)
 }

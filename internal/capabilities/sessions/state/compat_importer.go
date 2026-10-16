@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+
+	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
@@ -76,16 +79,46 @@ func mapRetiredError(err error) error {
 	return err
 }
 
+// firstImportedTitle is the title for one adopted session: the legacy
+// metadata's title when it carried one, otherwise the first line a
+// person wrote in the transcript. Legacy metadata often had no title at
+// all, and a conversation without one shows up unnamed in the sidebar
+// even though its transcript plainly says what it is about. The rule
+// itself is FirstTitle's, so an adopted session is named exactly like a
+// freshly imported one.
+func firstImportedTitle(data compat.WorkspaceImport) string {
+	if title := strings.TrimSpace(data.Title); title != "" {
+		return title
+	}
+	for _, turn := range data.Turns {
+		msgs := make([]message.Message, 0, len(turn.Messages))
+		for _, m := range turn.Messages {
+			msgs = append(msgs, message.Message{
+				Role:    message.Role(m.Role),
+				Content: m.Content,
+			})
+		}
+		if title := FirstTitle(msgs); title != "" {
+			return title
+		}
+	}
+	return ""
+}
+
 func (i workspaceImporter) importConversation(
 	ctx context.Context, data compat.WorkspaceImport,
 ) error {
+	// The legacy metadata's own counts are not seeded: the turns
+	// written below are the fact, and CommitConversationTurn counts
+	// each one as it writes it. Seeding the row with the metadata's
+	// tally counted every turn twice (the meta's number plus the
+	// per-turn increment), and the final UpsertConversation re-reads
+	// the row, so the archive's own count is what survives.
 	conv := Conversation{
 		ID:           data.ID,
-		Title:        data.Title,
+		Title:        firstImportedTitle(data),
 		CreatedAt:    data.CreatedAt,
 		UpdatedAt:    data.UpdatedAt,
-		TurnCount:    data.TurnCount,
-		MessageCount: data.MessageCount,
 		UsageJSON:    data.UsageJSON,
 		ImportSource: data.ImportSource,
 		ImportReady:  data.ImportReady,

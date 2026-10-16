@@ -741,6 +741,44 @@ func (s *Store) ListArchiveMessages(
 	return out, rows.Err()
 }
 
+// ListArchiveMessagesTail returns the newest limit messages of one
+// conversation, oldest first. A caller that windows the transcript
+// pushes the window into SQL: reading every message and slicing the
+// result in Go would hold the store's single connection across a decode
+// of the whole conversation.
+func (s *Store) ListArchiveMessagesTail(
+	ctx context.Context, conversationID string, limit int,
+) ([]ArchiveMessage, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.db.SQLDB().QueryContext(ctx, `
+		SELECT id, turn_id, seq, role, content_json, created_at
+		FROM archive_messages WHERE conversation_id = ?
+		ORDER BY seq DESC LIMIT ?`, conversationID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list archive messages tail: %w", err)
+	}
+	defer func() {
+		telemetry.WarnErr(ctx, "state: close archive message rows failed", rows.Close())
+	}()
+	out := make([]ArchiveMessage, 0, limit)
+	for rows.Next() {
+		m, err := scanArchiveMessage(rows)
+		if err != nil {
+			return nil, fmt.Errorf("state: scan archive message: %w", err)
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
 // scanArchiveMessage reads one archive_messages row selected as id,
 // turn_id, seq, role, content_json, created_at.
 func scanArchiveMessage(row rowScanner) (ArchiveMessage, error) {
@@ -757,38 +795,55 @@ func scanArchiveMessage(row rowScanner) (ArchiveMessage, error) {
 	return m, nil
 }
 
-// ListArchiveMessagesWithoutTurnKind returns the conversation's archived
-// messages in conversation order, skipping every message whose turn
-// carries a kind. Such a turn is app-authored — a delegation note, for
-// example — so it speaks to the model rather than as someone in the
-// conversation, and a reader asking what the user said (title
-// derivation, above all) must not hear it. The archive keeps every row;
-// this is a reading rule, not a rewrite.
-func (s *Store) ListArchiveMessagesWithoutTurnKind(
+// FirstUnkindedUserText returns the text of the first user message in a
+// turn the app did not author (kind = ''), oldest first. A turn that
+// carries a kind is app-authored — a delegation note, for example — so
+// it speaks to the model rather than as someone in the conversation, and
+// a reader asking what the user said (naming a conversation, above all)
+// must not hear it. The archive keeps every row; this is a reading
+// rule, not a rewrite.
+//
+// Rows are read until the first non-empty text and then abandoned, so a
+// conversation whose early turns carry no text — an attachment-only
+// message, a tool preamble — costs the rows up to the hit rather than a
+// decode of the whole transcript.
+func (s *Store) FirstUnkindedUserText(
 	ctx context.Context, conversationID string,
-) ([]ArchiveMessage, error) {
+) (string, error) {
 	rows, err := s.db.SQLDB().QueryContext(ctx, `
-		SELECT m.id, m.turn_id, m.seq, m.role, m.content_json, m.created_at
+		SELECT m.content_json
 		FROM archive_messages m
 		JOIN archive_turns t ON t.id = m.turn_id
-		WHERE m.conversation_id = ? AND t.kind = ''
-		ORDER BY m.seq`, conversationID)
+		WHERE m.conversation_id = ? AND t.kind = '' AND m.role = ?
+		ORDER BY m.seq`, conversationID, string(message.RoleUser))
 	if err != nil {
-		return nil, fmt.Errorf("state: list unkinded archive messages: %w", err)
+		return "", fmt.Errorf("state: find first user text: %w", err)
 	}
 	defer func() {
 		telemetry.WarnErr(ctx,
-			"state: close unkinded archive message rows failed", rows.Close())
+			"state: close first user text rows failed", rows.Close())
 	}()
-	var out []ArchiveMessage
 	for rows.Next() {
-		m, err := scanArchiveMessage(rows)
-		if err != nil {
-			return nil, fmt.Errorf("state: scan unkinded archive message: %w", err)
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			return "", fmt.Errorf("state: scan first user text: %w", err)
 		}
-		out = append(out, m)
+		var decoded message.Content
+		if err := json.Unmarshal([]byte(content), &decoded); err != nil {
+			return "", fmt.Errorf("state: decode first user text: %w", err)
+		}
+		text := strings.TrimSpace(decoded.Text())
+		if text == "" {
+			continue
+		}
+		// Stop reading: the answer is found, and the remaining rows
+		// would hold the connection for nothing.
+		if err := rows.Close(); err != nil {
+			telemetry.WarnErr(ctx, "state: close first user text rows failed", err)
+		}
+		return text, nil
 	}
-	return out, rows.Err()
+	return "", rows.Err()
 }
 
 // ListArchiveMessagesForTurns loads the messages of the given turns, in
