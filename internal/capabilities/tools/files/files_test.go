@@ -2,6 +2,7 @@ package files
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -323,6 +324,144 @@ func TestGlobDoubleStar(t *testing.T) {
 	}
 	if strings.Contains(gotSingle, "sub/") || !strings.Contains(gotSingle, "b_test.go") {
 		t.Errorf("glob single star semantics: %s", gotSingle)
+	}
+}
+
+// TestGlobAppliesPatternUnderPath pins the meaning of path: the pattern
+// is relative to it. Matching the pattern against workspace-wide paths
+// and afterwards filtering by a "<path>/" prefix could only ever return
+// nothing for a pattern that does not literally start with that prefix,
+// so {pattern:"*.go", path:"pkg"} silently answered "no files".
+func TestGlobAppliesPatternUnderPath(t *testing.T) {
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{
+		"root.go":      "package root",
+		"pkg/b.go":     "package pkg",
+		"pkg/sub/c.go": "package sub",
+		"other/d.go":   "package other",
+	})
+
+	got, err := execute(t, tool.glob(), `{"pattern":"*.go","path":"pkg"}`)
+	if err != nil {
+		t.Fatalf("glob under path: %v", err)
+	}
+	if !strings.Contains(got, `"pkg/b.go"`) {
+		t.Errorf("glob under path missed the direct child: %s", got)
+	}
+	for _, unwanted := range []string{"sub", "other", "root.go"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("glob under path leaked %q: %s", unwanted, got)
+		}
+	}
+
+	deep, err := execute(t, tool.glob(), `{"pattern":"**/*.go","path":"pkg"}`)
+	if err != nil {
+		t.Fatalf("glob deep under path: %v", err)
+	}
+	for _, want := range []string{`"pkg/b.go"`, `"pkg/sub/c.go"`} {
+		if !strings.Contains(deep, want) {
+			t.Errorf("glob deep under path missing %s: %s", want, deep)
+		}
+	}
+	if strings.Contains(deep, "other/") {
+		t.Errorf("glob deep under path escaped the base: %s", deep)
+	}
+
+	if _, err := execute(t, tool.glob(), `{"pattern":"*.go","path":"../pkg"}`); err == nil {
+		t.Error("glob accepted an escaping path")
+	}
+}
+
+func TestGlobReportsTruncationOnlyWhenItCuts(t *testing.T) {
+	old := maxGlobMatches
+	maxGlobMatches = 2
+	t.Cleanup(func() { maxGlobMatches = old })
+
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{
+		"a.go": "package a",
+		"b.go": "package b",
+		"c.go": "package c",
+	})
+
+	got, err := execute(t, tool.glob(), `{"pattern":"*.go"}`)
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if !strings.Contains(got, `"truncated":true`) {
+		t.Errorf("glob dropped a path without reporting truncation: %s", got)
+	}
+	var result struct {
+		Matches   []string `json:"matches"`
+		Truncated bool     `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("glob result is not JSON: %v", err)
+	}
+	if n := len(result.Matches); n != maxGlobMatches {
+		t.Errorf("glob returned %d paths, want the cap %d: %s", n, maxGlobMatches, got)
+	}
+
+	toolSmall, _ := newTestTool(t)
+	writeTree(t, toolSmall.ws, map[string]string{"only.go": "package only"})
+	full, err := execute(t, toolSmall.glob(), `{"pattern":"*.go"}`)
+	if err != nil {
+		t.Fatalf("glob under the cap: %v", err)
+	}
+	if !strings.Contains(full, `"truncated":false`) {
+		t.Errorf("glob called a complete result truncated: %s", full)
+	}
+}
+
+// TestGrepReportsTruncationOnlyWhenTheWalkStops pins the other half of
+// the same rule: truncation means a hit was dropped, so a hit count
+// that lands exactly on the cap is the complete answer it looks like.
+func TestGrepReportsTruncationOnlyWhenTheWalkStops(t *testing.T) {
+	old := maxGrepMatches
+	maxGrepMatches = 2
+	t.Cleanup(func() { maxGrepMatches = old })
+
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{
+		"a.txt": "needle one",
+		"b.txt": "needle two",
+	})
+	got, err := execute(t, tool.grep(), `{"pattern":"needle"}`)
+	if err != nil {
+		t.Fatalf("grep: %v", err)
+	}
+	if strings.Contains(got, `"truncated":true`) {
+		t.Errorf("grep called a complete result truncated: %s", got)
+	}
+	var result struct {
+		Matches   []grepMatch `json:"matches"`
+		Truncated bool        `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("grep result is not JSON: %v", err)
+	}
+	if len(result.Matches) != 2 {
+		t.Errorf("grep returned %d matches, want both: %s", len(result.Matches), got)
+	}
+
+	toolMore, _ := newTestTool(t)
+	writeTree(t, toolMore.ws, map[string]string{
+		"a.txt": "needle one",
+		"b.txt": "needle two",
+		"c.txt": "needle three",
+	})
+	more, err := execute(t, toolMore.grep(), `{"pattern":"needle"}`)
+	if err != nil {
+		t.Fatalf("grep over the cap: %v", err)
+	}
+	if !strings.Contains(more, `"truncated":true`) {
+		t.Errorf("grep stopped at the cap without saying so: %s", more)
+	}
+	if err := json.Unmarshal([]byte(more), &result); err != nil {
+		t.Fatalf("grep result is not JSON: %v", err)
+	}
+	if len(result.Matches) != 2 {
+		t.Errorf("grep returned %d matches, want the cap 2: %s", len(result.Matches), more)
 	}
 }
 

@@ -49,16 +49,23 @@ const (
 	// "binary file matches".
 	binarySniffBytes   = 8 << 10
 	defaultGrepMatches = 100
-	maxGrepMatches     = 1000
 	defaultListDepth   = 4
 	maxListDepth       = 32
 	maxWalkEntries     = 10_000
 	alwaysSkipDir      = ".git"
 )
 
-// maxGrepFiles bounds how many files one grep scans when no match is
-// found. It is a variable so tests can exercise the cap cheaply.
-var maxGrepFiles = 5_000
+// The per-call budgets are variables so tests can exercise the caps
+// cheaply: maxGrepFiles bounds how many files one grep scans when no
+// match is found, maxGrepMatches how many matches it returns, and
+// maxGlobMatches how many paths one glob reports. The walk is what
+// costs, and the cap keeps a pattern that matches half a repository
+// from handing the model a list it cannot use.
+var (
+	maxGrepFiles   = 5_000
+	maxGrepMatches = 1000
+	maxGlobMatches = 1000
+)
 
 // Tool is the workspace-backed file tool group.
 type Tool struct {
@@ -472,7 +479,7 @@ func (t *grepTool) Definition() message.ToolDefinition {
 		message.ToolProperty("fixed_strings", "boolean",
 			"Treat pattern as a literal string, not a regex (default false)."),
 		message.ToolProperty("max_matches", "integer",
-			fmt.Sprintf("Stop after this many matches (default %d, max %d).",
+			fmt.Sprintf("Return at most this many matches (default %d, max %d).",
 				defaultGrepMatches, maxGrepMatches)),
 		message.ToolProperty("include_hidden", "boolean",
 			"Include hidden files and directories (default false)."),
@@ -565,7 +572,11 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 		if !args.IncludeHidden && fshidden.Hidden(entry) {
 			return nil
 		}
-		if len(matches) >= maxMatches {
+		if len(matches) > maxMatches {
+			// The list already holds one match over the cap, so the walk
+			// is on a file whose hits cannot be reported: the result is
+			// incomplete by construction.
+			truncated = true
 			return errStopWalk
 		}
 		scannedFiles++
@@ -611,10 +622,19 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 				LineNumber: lineNumber,
 				Line:       string(line),
 			})
-			capped = len(matches) >= maxMatches
+			// One match over the cap is the smallest amount of evidence
+			// that the cap is hiding hits, and it is what separates a
+			// complete answer from an incomplete one: a scan that stops
+			// as soon as the list is full cannot tell whether the last
+			// hit it kept was also the last hit in the tree, so it
+			// reported truncation for exactly-full results too.
+			capped = len(matches) > maxMatches
 			return !capped
 		})
 		if capped {
+			// The scan stopped at a dropped hit rather than at the end
+			// of its input.
+			truncated = true
 			return errStopWalk
 		}
 		return nil
@@ -622,7 +642,9 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 	if err != nil && !errors.Is(err, errStopWalk) {
 		return "", err
 	}
-	truncated = truncated || len(matches) >= maxMatches
+	if len(matches) > maxMatches {
+		matches = matches[:maxMatches]
+	}
 	payload, err := json.Marshal(map[string]any{
 		"matches":       matches,
 		"truncated":     truncated,
@@ -676,9 +698,10 @@ func (t *globTool) Definition() message.ToolDefinition {
 		GlobName,
 		"Find files in the workspace matching a glob pattern. "+
 			"Supports * (one segment), ** (any number of segments), "+
-			"? and [class]. Returns JSON: {matches:[path]}.",
+			"? and [class]. Returns JSON: {matches:[path], truncated}, "+
+			"with workspace-relative paths.",
 		message.ToolProperty("pattern", "string",
-			"The glob pattern, relative to path (required), e.g. "+
+			"The glob pattern, applied under path (required), e.g. "+
 				"\"**/*_test.go\" or \"internal/**/tool.go\"."),
 		message.ToolProperty("path", "string",
 			"Base directory, relative to the workspace root (default \".\")."),
@@ -716,27 +739,33 @@ func (t *globTool) execute(ctx context.Context, arguments string) (string, error
 	if err := validateDirPath(root); err != nil {
 		return "", err
 	}
-	pattern := args.Pattern
-	if err := validatePattern(pattern); err != nil {
+	if err := validatePattern(args.Pattern); err != nil {
 		return "", err
+	}
+	// The pattern is relative to path, so it is applied under it:
+	// workspace.Glob matches whole workspace paths, and handing it
+	// "*.go" unchanged while filtering the results by the "internal"
+	// prefix meant {pattern:"*.go", path:"internal"} could only ever
+	// find files whose root-relative path literally starts with
+	// "internal" and matches "*.go" — that is, nothing.
+	pattern := args.Pattern
+	if root != "." {
+		pattern = path.Join(root, pattern)
 	}
 	matches, err := workspace.Glob(ctx, t.ws, pattern)
 	if err != nil {
 		return "", err
 	}
-	prefix := ""
-	if root != "." {
-		prefix = strings.TrimSuffix(root, "/") + "/"
-	}
-	filtered := matches[:0]
-	for _, m := range matches {
-		if prefix == "" || strings.HasPrefix(m, prefix) {
-			filtered = append(filtered, m)
-		}
+	truncated := false
+	if len(matches) > maxGlobMatches {
+		matches = matches[:maxGlobMatches]
+		truncated = true
 	}
 	payload, err := json.Marshal(map[string]any{
-		"matches":   filtered,
-		"truncated": false,
+		// Paths are workspace-relative, the namespace every other file
+		// tool reports in.
+		"matches":   matches,
+		"truncated": truncated,
 	})
 	if err != nil {
 		return "", errdefs.Internalf("%s: encode result: %v", GlobName, err)
