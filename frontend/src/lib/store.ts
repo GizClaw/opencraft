@@ -1,24 +1,17 @@
 import { UIEventType } from './events';
 import { create } from 'zustand';
-import i18n from '../i18n';
 import { api } from './api';
 import {
   DEFAULT_UI_SETTINGS,
-  applyUISettings,
-  cacheUISettings,
   readCachedUISettings,
   type UISettings,
 } from './appearance';
-import { followLinkTarget } from './linkTarget';
-import { measureInteraction } from './perfMetrics';
-import { sameWorkspacePath } from './workspacePath';
 import type {
   AgentSummary,
   AttachmentView,
   AutomationRun,
   AutomationTask,
   ConfigStatus,
-  FileTab,
   ModelOption,
   ReplyRequest,
   ResolvedTarget,
@@ -37,24 +30,24 @@ import {
   QueuedInput,
   ToastItem,
   ToastKind,
-  carryUndeliveredSteers,
   emptyConv,
   errorMessage,
   measureTranscript,
   settleConversation,
-  viewerDefaults,
 } from './conv/model';
-import { liveTurnEntry } from './conv/artifacts';
-import {
-  HISTORY_PAGE_TURNS,
-  INITIAL_HISTORY_TURNS,
-  historyPage,
-} from './conv/history';
+import { INITIAL_HISTORY_TURNS, historyPage } from './conv/history';
 import { activeConversationID, createConvCore } from './conv/core';
 import { createWorkspaceGlue } from './conv/workspace';
 import { createConvPaging } from './conv/paging';
 import { createConvTurn } from './conv/turn';
 import { createEventSink } from './conv/writer';
+import { createShellViewers } from './shell/viewers';
+import { createShellSettings } from './shell/settings';
+import { createShellSessions } from './shell/sessions';
+import { createShellHistory } from './shell/history';
+import { createShellWorkspaces } from './shell/workspaces';
+import { createShellAutomations } from './shell/automations';
+import { createShellToasts } from './shell/toasts';
 export { activeConversationID };
 export {
   firstMessageTitle,
@@ -85,10 +78,6 @@ export {
 } from './conv/failure';
 export { streamFlushStats } from './stream';
 
-// gitPickNonce numbers the viewer → Git panel handoffs. A counter (not
-// a timestamp) so two clicks in the same millisecond stay distinct.
-let gitPickNonce = 0;
-
 // storeBytes reports what the loaded transcripts hold, the two byte
 // budgets and the conversation count. The perf probe reports it every
 // window: `proc.mem.footprint` says what the renderer costs, and these
@@ -112,27 +101,6 @@ export function storeBytes(): {
     text += footprint.text;
   }
   return { media, text, conversations };
-}
-
-// sameWorkspaceList reports whether a refreshed history equals the one
-// already in the store. Refreshes fire on every ready event and after
-// every switch, and an unchanged list must not replace the array: the
-// sidebar re-flattens its history tree off it.
-function sameWorkspaceList(
-  prev: WorkspaceMeta[],
-  next: WorkspaceMeta[],
-): boolean {
-  if (prev === next) return true;
-  if (prev.length !== next.length) return false;
-  return prev.every((w, i) => {
-    const other = next[i];
-    return (
-      w.id === other.id &&
-      w.path === other.path &&
-      w.title === other.title &&
-      w.last_opened === other.last_opened
-    );
-  });
 }
 
 export interface StoreState {
@@ -334,29 +302,15 @@ export const useStore = create<StoreState>((set, get, store) => {
   const ws = createWorkspaceGlue(store);
   const paging = createConvPaging(store, core);
   const { actions: turn, helpers: turnHelpers } = createConvTurn(store, core);
+  const viewers = createShellViewers(store, core);
+  const settings = createShellSettings(store, core, applyTheme);
+  const sessions = createShellSessions(store, core, paging, ws);
+  const history = createShellHistory(store, core);
+  const workspaces = createShellWorkspaces(store, ws);
+  const automations = createShellAutomations(store);
+  const toasts = createShellToasts(store);
   const { drainDeferredTailSync, reconcileTurnFromArchive } = paging;
-  const { switchWorkspace, waitForWorkspaceRestore } = ws;
-  const {
-    clearPendingIndex,
-    flushPendingStreams,
-    openMintedSession,
-    retainLiveConversations,
-    runContextSwitch,
-    syncPendingIndex,
-    updateConv,
-    viewerPatch,
-  } = core;
-  let toastSeq = 0;
-  let workspaceSwitchSeq = 0;
-  // Workspace history refreshes race each other: a switch triggers one
-  // reload from the "ready" event (before the backend has stamped
-  // last_opened) and one from the caller once the binding returned.
-  // Only the newest request may apply its snapshot.
-  let workspacesLoadSeq = 0;
-  // The automation list and one task's run list are refreshed by the
-  // same three callers; only the newest answer of each may apply.
-  let automationsLoadSeq = 0;
-  const automationRunsLoadSeq = new Map<string, number>();
+  const { flushPendingStreams } = core;
 
   const eventDataSink = createEventSink(store, core, turnHelpers, paging, ws);
   core.setEventSink(eventDataSink);
@@ -561,785 +515,15 @@ export const useStore = create<StoreState>((set, get, store) => {
     flushStreams: () => flushPendingStreams(),
 
     ...turn,
+    ...viewers,
+    ...settings,
+    ...sessions,
+    ...history,
+    ...workspaces,
+    ...automations,
+    ...toasts,
 
-    openConfig: (tab) => {
-      // Opening the settings page is a render the probe attributes: the
-      // measurement runs to the frame that shows it.
-      void measureInteraction('settings-open', () =>
-        set({ configOpen: true, configTab: tab ?? 'general' }),
-      );
-    },
-    closeConfig: () => set({ configOpen: false }),
-
-    openPalette: () => set({ paletteOpen: true }),
-    closePalette: () => set({ paletteOpen: false }),
-    togglePalette: () => set((state) => ({ paletteOpen: !state.paletteOpen })),
-
-    openShortcuts: () => set({ shortcutsOpen: true }),
-    closeShortcuts: () => set({ shortcutsOpen: false }),
-    toggleShortcuts: () =>
-      set((state) => ({ shortcutsOpen: !state.shortcutsOpen })),
-
-    openTools: (view) => set({ toolsView: view, configOpen: false }),
-    closeTools: () => set({ toolsView: null }),
-
-    openFiles: () => viewerPatch(activeConversationID(), { filesOpen: true }),
-    closeFiles: () => viewerPatch(activeConversationID(), { filesOpen: false }),
-
-    // openFileTarget is the chat's link/file opening router: URL
-    // schemes reach the system browser through the validated binding,
-    // local targets resolve under the document base into the viewer
-    // panel of the active conversation. Workspace directories open the
-    // file tree; the other roots have no tree and go to the system file
-    // manager instead.
-    openFileTarget: (target, base = '') =>
-      followLinkTarget(target, base, {
-        openFile: (res) => get().openResolvedTarget(res),
-        openDir: (res) => {
-          if (res.root !== 'workspace') return api.revealArtifact(res.path);
-          viewerPatch(activeConversationID(), {
-            filesOpen: true,
-            fileTreeDir: res.rel || '.',
-          });
-        },
-        onError: (message) => get().flash(message),
-      }),
-
-    openResolvedTarget: (res) =>
-      set((state) => {
-        const id = activeConversationID();
-        if (!id) return {};
-        const viewer = state.viewers[id] ?? viewerDefaults();
-        // Placeholder tabs are transient: picking a real file from the
-        // tree replaces the active blank tab instead of stacking next
-        // to it. Other placeholder tabs (if any) stay untouched.
-        const tabs = viewer.fileTabs.filter(
-          (t) =>
-            t.key !== res.path &&
-            !(t.path === '' && t.key === viewer.fileActive),
-        );
-        tabs.push({
-          key: res.path,
-          path: res.path,
-          rel: res.rel,
-          root: res.root,
-          name:
-            res.name ||
-            (res.rel ? (res.rel.split('/').pop() ?? res.rel) : res.path),
-          media_type: res.media_type ?? '',
-        });
-        return {
-          viewers: {
-            ...state.viewers,
-            [id]: {
-              ...viewer,
-              filesOpen: true,
-              panelMode: 'files',
-              fileTabs: tabs,
-              fileActive: res.path,
-            },
-          },
-        };
-      }),
-
-    closeFileTab: (key) =>
-      set((state) => {
-        const id = activeConversationID();
-        if (!id) return {};
-        const viewer = state.viewers[id] ?? viewerDefaults();
-        const tabs = viewer.fileTabs.filter((t) => t.key !== key);
-        const active =
-          viewer.fileActive === key
-            ? (tabs[tabs.length - 1]?.key ?? null)
-            : viewer.fileActive;
-        return {
-          viewers: {
-            ...state.viewers,
-            [id]: { ...viewer, fileTabs: tabs, fileActive: active },
-          },
-        };
-      }),
-
-    activateFileTab: (key) =>
-      viewerPatch(activeConversationID(), { fileActive: key }),
-    setPanelMode: (mode) =>
-      viewerPatch(activeConversationID(), { panelMode: mode }),
-    // focusGitPath is the viewer's marks chip: switch the rail to the
-    // Git segment and ask the panel to open this file's diff. The
-    // nonce makes a second click on the same file a fresh handoff.
-    focusGitPath: (path) =>
-      viewerPatch(activeConversationID(), {
-        panelMode: 'git',
-        gitPick: { path, nonce: (gitPickNonce += 1) },
-      }),
-    // consumeGitPick retires a handoff the panel has already answered:
-    // the panel is unmounted whenever the rail shows the Files segment,
-    // so without this a later switch back to Git would replay the pick.
-    consumeGitPick: () =>
-      viewerPatch(activeConversationID(), { gitPick: undefined }),
-    showFileDir: (rel) =>
-      viewerPatch(activeConversationID(), {
-        fileTreeDir: rel || '.',
-        filesOpen: true,
-      }),
-
-    newEmptyTab: () => {
-      const id = activeConversationID();
-      if (!id) return;
-      set((state) => {
-        const viewer = state.viewers[id] ?? viewerDefaults();
-        const key = `untitled-${Date.now()}-${Math.random()
-          .toString(36)
-          .slice(2, 7)}`;
-        const tab: FileTab = {
-          key,
-          path: '',
-          rel: '',
-          root: 'workspace',
-          name: i18n.t('files.newFile'),
-          media_type: '',
-        };
-        return {
-          viewers: {
-            ...state.viewers,
-            [id]: {
-              ...viewer,
-              filesOpen: true,
-              fileTabs: [...viewer.fileTabs, tab],
-              fileActive: key,
-            },
-          },
-        };
-      });
-    },
-
-    newChat: async () => {
-      stateRoot.sendFocus({ type: 'OPEN_NEW' });
-      const request = stateRoot.focusSnapshot.context.request;
-      try {
-        const snapshot = await runContextSwitch(() => api.newChat());
-        openMintedSession(snapshot, request);
-      } catch (err) {
-        stateRoot.sendFocus({
-          type: 'OPEN_FAILED',
-          request,
-          error: errorMessage(err),
-        });
-      }
-      void get().loadSessions();
-    },
-
-    openDraftChat: () => {
-      // A new chat starts as an unsent draft: no session is minted
-      // until the first message picks a workspace and sends.
-      stateRoot.sendFocus({ type: 'OPEN_DRAFT' });
-      set({ toolsView: null, configOpen: false });
-    },
-
-    backFromFailure: () => {
-      stateRoot.sendFocus({ type: 'BACK' });
-    },
-
-    // loadEarlierHistory pages backwards through the archive. The merge
-    // settles the conversation — the byte budgets have to run here, this
-    // is the path that pages screenshot-heavy history into the store —
-    // but skips the message cap, so an explicit "scroll up" is never
-    // undone by a cap that would drop the page just fetched.
-    loadEarlierHistory: async (id) => {
-      const conv = get().conversations[id];
-      if (!conv || conv.historyLoading || !conv.historyHasMore) return 0;
-      const beforeSeq = conv.historySeq ?? 0;
-      updateConv(id, { historyLoading: true });
-      try {
-        const turns = await api.sessionTurns(
-          id,
-          HISTORY_PAGE_TURNS + 1,
-          beforeSeq,
-        );
-        const page = historyPage(turns, HISTORY_PAGE_TURNS);
-        const added = page.messages.length;
-        set((state) => {
-          const current = state.conversations[id];
-          if (!current) return state;
-          const shiftedTurns = current.turnArtifacts.map((t) => ({
-            ...t,
-            start: t.start + added,
-          }));
-          return {
-            conversations: {
-              ...state.conversations,
-              [id]: settleConversation(
-                {
-                  ...current,
-                  messages: [...page.messages, ...current.messages],
-                  turnArtifacts: [...page.turnArtifacts, ...shiftedTurns],
-                  // An empty page carries seq 0: keeping it would say
-                  // "nothing below here is loaded" about a transcript
-                  // that is, and the next incremental read would start
-                  // from the beginning of the archive.
-                  historySeq: added > 0 ? page.historySeq : current.historySeq,
-                  historyHasMore: page.historyHasMore,
-                  historyLoading: false,
-                },
-                { cap: false },
-              ),
-            },
-          };
-        });
-        return added;
-      } catch {
-        updateConv(id, { historyLoading: false });
-        return 0;
-      }
-    },
-
-    retryTranscript: async (id) => {
-      const actor = stateRoot.registry.ensure(id, {
-        workspaceGeneration: stateRoot.generation(),
-        workspace: get().workspace,
-      });
-      const context = actor?.getSnapshot().context as {
-        lastHydrateRequest?: number;
-      };
-      const before = get().conversations[id];
-      const request = (context?.lastHydrateRequest ?? 0) + 1;
-      const generation = stateRoot.generation();
-      actor?.send({ type: 'HYDRATE_REQUESTED', request, generation });
-      try {
-        const turns = await api.sessionTurns(id, INITIAL_HISTORY_TURNS + 1, 0);
-        const page = historyPage(turns, INITIAL_HISTORY_TURNS);
-        set((state) => ({
-          conversations: {
-            ...state.conversations,
-            [id]: settleConversation({
-              ...emptyConv(),
-              mode: state.conversations[id]?.mode ?? 'workspace',
-              think: state.conversations[id]?.think ?? 'medium',
-              model: state.conversations[id]?.model ?? '',
-              // Undelivered steer rows never entered the archive, so a
-              // rebuild from archived turns has to carry them over: they
-              // are the only copy of their text.
-              messages: [
-                ...page.messages,
-                ...carryUndeliveredSteers(before?.messages, page.messages),
-              ],
-              turnArtifacts: page.turnArtifacts,
-              historySeq: page.historySeq,
-              historyHasMore: page.historyHasMore,
-            }),
-          },
-        }));
-        actor?.send({
-          type: 'HYDRATE_OK',
-          request,
-          generation,
-          empty: turns.length === 0,
-        });
-      } catch (err) {
-        actor?.send({
-          type: 'HYDRATE_FAIL',
-          request,
-          generation,
-          error: errorMessage(err),
-        });
-      }
-    },
-
-    resume: (id) =>
-      measureInteraction('resume', async () => {
-        if (activeConversationID() === id) {
-          // Returning to the already-active conversation means closing
-          // whatever overlay/tool page currently covers the chat.
-          set({ toolsView: null, configOpen: false });
-          return;
-        }
-        if (stateRoot.registry.isDeleted(id)) {
-          // This id was deleted in this process and the backend never
-          // reuses a session id, so there is nothing to resume. Saying
-          // so beats switching focus to a conversation whose actor can
-          // never be created (the registry refuses tombstoned ids): the
-          // chat would sit on "loading history" with no event able to
-          // finish it.
-          get().toast(i18n.t('chat.sessionDeleted'), 'warning');
-          return;
-        }
-        stateRoot.sendFocus({ type: 'OPEN_SESSION', id });
-        const request = stateRoot.focusSnapshot.context.request;
-        try {
-          const snapshot = await runContextSwitch(() => api.resumeSession(id));
-          stateRoot.sendFocus({
-            type: 'OPEN_SUCCEEDED',
-            request,
-            sessionID: snapshot.conversation_id,
-          });
-          const focus = stateRoot.focusSnapshot;
-          if (
-            focus.value !== 'active' ||
-            focus.context.sessionID !== snapshot.conversation_id
-          ) {
-            return;
-          }
-          const resolvedID = snapshot.conversation_id;
-          const actor = stateRoot.registry.ensure(resolvedID, {
-            workspaceGeneration: stateRoot.generation(),
-            workspace: get().workspace,
-          });
-          const hydrateRequest = 1;
-          const generation = stateRoot.generation();
-          actor?.send({
-            type: 'HYDRATE_REQUESTED',
-            request: hydrateRequest,
-            generation,
-          });
-          const existing = get().conversations[resolvedID];
-          const actorValue = actor?.getSnapshot().value as
-            { transcript: string; turn: string } | undefined;
-          if (existing && actorValue?.transcript === 'ready') {
-            set({
-              toolsView: null,
-              conversations: {
-                ...get().conversations,
-                [resolvedID]: {
-                  ...get().conversations[resolvedID],
-                  mode: snapshot.mode,
-                  think: snapshot.think,
-                  model: snapshot.model,
-                },
-              },
-            });
-            actor?.send({
-              type: 'HYDRATE_OK',
-              request: hydrateRequest,
-              generation,
-              empty: existing.messages.length === 0,
-            });
-            retainLiveConversations(resolvedID);
-            return;
-          }
-          let turns: Awaited<ReturnType<typeof api.sessionTurns>>;
-          try {
-            turns = await api.sessionTurns(
-              resolvedID,
-              INITIAL_HISTORY_TURNS + 1,
-              0,
-            );
-          } catch (err) {
-            actor?.send({
-              type: 'HYDRATE_FAIL',
-              request: hydrateRequest,
-              generation,
-              error: errorMessage(err),
-            });
-            if (!existing) {
-              set((state) => ({
-                conversations: {
-                  ...state.conversations,
-                  [resolvedID]: emptyConv(),
-                },
-              }));
-            }
-            return;
-          }
-          const page = historyPage(turns, INITIAL_HISTORY_TURNS);
-          const archivedMessages = page.messages;
-          // A live shell may already hold the current run's streamed
-          // messages. Keep them after the archived history; completed
-          // shells are replaced by the archive instead of duplicated.
-          const keepLive =
-            Boolean(existing) &&
-            (actorValue?.turn === 'running' || actorValue?.turn === 'starting');
-          const mergedMessages = keepLive
-            ? [...archivedMessages, ...existing.messages]
-            : [
-                // Undelivered steer rows are not in the archive, so they
-                // travel across the rebuild explicitly (see
-                // carryUndeliveredSteers).
-                ...archivedMessages,
-                ...carryUndeliveredSteers(existing?.messages, archivedMessages),
-              ];
-          // The live run owns every row past the seam the archive ends
-          // at, so it gets the strip that owns them. Without one those
-          // rows read as the last archived turn's: that turn's fold
-          // header names a run that already finished and its steps
-          // collapse under a complete answer (see turnIsLive in
-          // ChatView). The strip carries the run the actor is tracking,
-          // which is what the artifact and turn_end events look their
-          // turn up by, and a strip the shell already had keeps its own
-          // rows (see liveTurnEntry).
-          const liveRunID = (
-            actor?.getSnapshot().context as
-              { currentRunID?: string } | undefined
-          )?.currentRunID;
-          const turnArtifacts = keepLive
-            ? [
-                ...page.turnArtifacts,
-                liveTurnEntry(
-                  archivedMessages.length,
-                  existing.turnArtifacts[existing.turnArtifacts.length - 1],
-                  liveRunID,
-                ),
-              ]
-            : page.turnArtifacts;
-          set((state) => ({
-            toolsView: null,
-            conversations: {
-              ...state.conversations,
-              [resolvedID]: settleConversation({
-                ...emptyConv(),
-                mode: snapshot.mode,
-                think: snapshot.think,
-                model: snapshot.model,
-                messages: mergedMessages,
-                turnArtifacts,
-                historySeq: page.historySeq,
-                historyHasMore: page.historyHasMore,
-                pendingInteracts: existing?.pendingInteracts ?? [],
-              }),
-            },
-          }));
-          if (existing?.pendingInteracts.length) {
-            syncPendingIndex(resolvedID);
-          }
-          actor?.send({
-            type: 'HYDRATE_OK',
-            request: hydrateRequest,
-            generation,
-            empty: turns.length === 0 && !keepLive,
-          });
-          retainLiveConversations(resolvedID);
-        } catch (err) {
-          stateRoot.sendFocus({
-            type: 'OPEN_FAILED',
-            request,
-            error: errorMessage(err),
-          });
-        }
-      }),
-
-    deleteSession: async (id) => {
-      try {
-        // Settle any queued deltas before deleting so a late flush
-        // cannot resurrect the conversation after the tombstone.
-        flushPendingStreams();
-        // The backend stops any live run for the conversation and,
-        // when it was current, mints its replacement in the same call.
-        const next = await runContextSwitch(() => api.deleteSession(id));
-        stateRoot.registry.get(id)?.send({
-          type: 'SESSION_DELETED',
-          deletedAt: new Date().toISOString(),
-        });
-        // The tombstone takes the conversation's run mappings with it:
-        // a deleted chat never ends its turn, so the entries would keep
-        // naming a conversation that is gone (and a late turn_end would
-        // then reconcile it back onto the screen).
-        stateRoot.registry.markDeleted(id);
-        set((state) => {
-          const conversations = { ...state.conversations };
-          delete conversations[id];
-          const viewers = { ...state.viewers };
-          delete viewers[id];
-          return { conversations, viewers };
-        });
-        clearPendingIndex(id);
-        // A tail sync waiting on this conversation holds its id until
-        // that conversation's next turn_end; there will not be one.
-        paging.forgetDeferredTailSync(id);
-        // The backend only mints when the deleted chat was still the
-        // workspace's current conversation once the delete settled.
-        // Open that replacement only when this chat is still focused;
-        // a selection made while the delete waited wins and should not
-        // be stomped by an OPEN_NEW.
-        if (next.conversation_id && activeConversationID() === id) {
-          stateRoot.sendFocus({ type: 'OPEN_NEW' });
-          openMintedSession(next, stateRoot.focusSnapshot.context.request);
-        }
-        await get().loadSessions();
-      } catch (err) {
-        set({ statusText: errorMessage(err) });
-      }
-    },
-
-    setMode: async (mode) => {
-      try {
-        await api.setSessionMode(mode);
-        const convID = activeConversationID();
-        if (convID) updateConv(convID, { mode });
-      } catch (err) {
-        set({ statusText: String(err) });
-      }
-    },
-
-    setThink: async (level) => {
-      try {
-        await api.setThink(level);
-        const convID = activeConversationID();
-        if (convID) updateConv(convID, { think: level });
-      } catch (err) {
-        set({ statusText: String(err) });
-      }
-    },
-
-    setModel: async (model) => {
-      try {
-        await api.setModel(model);
-        const convID = activeConversationID();
-        if (!convID) return;
-        const previous = get().conversations[convID]?.model ?? '';
-        updateConv(convID, { model });
-        // Provider prompt caches are scoped to the model, so switching
-        // mid-conversation re-reads the whole transcript at undiscounted
-        // input price once. Worth one line: the user otherwise reads the
-        // bill (or the sudden latency) as a bug. A conversation that has
-        // not exchanged anything yet has no cache to lose, so it stays
-        // quiet.
-        const hasContent =
-          (get().conversations[convID]?.messages.length ?? 0) > 0;
-        if (hasContent && previous !== '' && previous !== model) {
-          get().toast(i18n.t('chat.modelSwitchCost', { model }), 'warning');
-        }
-      } catch (err) {
-        set({ statusText: String(err) });
-      }
-    },
-
-    setTheme: (theme) => {
-      const resolved = applyTheme(theme);
-      window.localStorage.setItem('opencraft.theme', theme);
-      set({ theme, resolvedTheme: resolved });
-    },
-
-    // setUISettings applies the appearance immediately and mirrors it for
-    // the next first paint; persisting to the desktop document is the
-    // caller's job, so a failed save can roll this back.
-    setUISettings: (settings) => {
-      applyUISettings(settings);
-      cacheUISettings(settings);
-      set({ uiSettings: settings });
-    },
-
-    setSessionDefaults: (d) => set({ sessionDefaults: d }),
-
-    refreshAgents: async () => {
-      try {
-        set({ agents: (await api.listAgents()) ?? [] });
-      } catch {
-        // best-effort
-      }
-    },
-
-    loadSessions: async () => {
-      set({ sessionsLoading: true });
-      try {
-        const sessions = (await api.listSessions()) ?? [];
-        // An id deleted in this process never comes back on screen. The
-        // listing can race the delete — a response computed before the
-        // backend settled, a store restored out of band — and the
-        // sidebar is the one place a dead entry would look openable
-        // while every path into it is refused by the same tombstone.
-        set({
-          sessions: sessions.filter(
-            (session) => !stateRoot.registry.isDeleted(session.id),
-          ),
-        });
-      } catch {
-        // best-effort
-      } finally {
-        set({ sessionsLoading: false });
-      }
-    },
-
-    loadAutomations: async () => {
-      // Starting a task, its settlement and an explicit refresh can
-      // overlap; the answer that arrives last is the one the list shows,
-      // like loadWorkspaces (a stale run's list would reinstate the
-      // Cancel button of a task that just started).
-      const seq = (automationsLoadSeq += 1);
-      try {
-        const next = (await api.automations()) ?? [];
-        if (seq !== automationsLoadSeq) return;
-        set({ automations: next });
-      } catch {
-        // best-effort
-      }
-    },
-
-    loadAutomationRuns: async (taskId: string) => {
-      const seq = (automationRunsLoadSeq.get(taskId) ?? 0) + 1;
-      automationRunsLoadSeq.set(taskId, seq);
-      try {
-        const list = (await api.automationRuns(taskId)) ?? [];
-        if (automationRunsLoadSeq.get(taskId) !== seq) return;
-        set((state) => ({
-          automationRuns: {
-            ...state.automationRuns,
-            [taskId]: list,
-          },
-        }));
-      } catch {
-        // best-effort
-      }
-    },
-
-    loadWorkspaces: async () => {
-      const seq = (workspacesLoadSeq += 1);
-      try {
-        const next = (await api.workspaces()) ?? [];
-        if (seq !== workspacesLoadSeq) return;
-        if (sameWorkspaceList(get().workspaces, next)) return;
-        set({ workspaces: next });
-      } catch {
-        // best-effort
-      }
-    },
-
-    chooseWorkspace: async () => {
-      try {
-        const path = (await api.chooseWorkspace()) ?? '';
-        if (path) await get().openWorkspace(path);
-      } catch (err) {
-        set({ statusText: String(err) });
-      }
-    },
-
-    restoreWorkspaceSession: async (workDir) => {
-      const seq = ++workspaceSwitchSeq;
-      stateRoot.sendFocus({ type: 'WORKSPACE_RESET' });
-      if (!workDir || get().workspace !== workDir) return;
-      let currentSession = '';
-      try {
-        currentSession = await api.currentSession();
-      } catch {
-        // Fall through and mint a fresh session below.
-      }
-      if (seq !== workspaceSwitchSeq || get().workspace !== workDir) {
-        return;
-      }
-      if (!currentSession) {
-        await get().newChat();
-        return;
-      }
-      await get().resume(currentSession);
-      const focus = stateRoot.focusSnapshot;
-      if (
-        seq === workspaceSwitchSeq &&
-        get().workspace === workDir &&
-        focus.value !== 'active'
-      ) {
-        // The saved session is gone or cannot be resumed; land on a
-        // fresh conversation instead of leaving the workspace blank.
-        await get().newChat();
-      }
-    },
-
-    openWorkspace: async (path) => {
-      try {
-        await api.openWorkspace(path);
-        // The runtime rebuild emits "ready"; the ready handler
-        // restores the target workspace's session and refreshes
-        // sessions. Its workspace refresh is not enough to rely on:
-        // it runs before the backend stamped last_opened (see
-        // Workspace.Open), so read the history again here.
-        void get().loadWorkspaces();
-      } catch (err) {
-        set({ statusText: String(err) });
-      }
-    },
-
-    openSessionInWorkspace: async (sessionID, workspacePath) => {
-      if (workspacePath && workspacePath !== get().workspace) {
-        await api.openWorkspace(workspacePath);
-        // The backend emits "ready" asynchronously relative to the
-        // binding response; wait until the store has applied it so a
-        // pending newChat is queued before resume tries to open the
-        // target session in the new workspace.
-        const landed = await switchWorkspace(workspacePath, 5000);
-        if (!landed) {
-          throw new Error('workspace switch did not complete');
-        }
-        if (!sameWorkspacePath(landed, workspacePath)) {
-          // Another workspace's switch took the window while this one
-          // was in flight: the click that is on screen now wins.
-          return;
-        }
-        void get().loadWorkspaces();
-        await waitForWorkspaceRestore();
-        if (get().workspace !== landed) {
-          // The window left again while this switch (and its restore)
-          // was in flight: another workspace was picked in the
-          // meantime. Resuming now would run through bindings that read
-          // whatever workspace is active, so the click still on screen
-          // wins and this one is dropped.
-          return;
-        }
-      }
-      await get().resume(sessionID);
-    },
-
-    sendFirstMessage: async (
-      workspacePath,
-      text,
-      attachments = [],
-      options,
-    ) => {
-      const trimmed = text.trim();
-      if ((!trimmed && attachments.length === 0) || !get().configured) {
-        return false;
-      }
-      const current = get().workspace;
-      const target =
-        workspacePath && workspacePath !== current ? workspacePath : current;
-      if (!target) return false;
-      if (target !== current) {
-        ws.suppressRestore(target);
-        try {
-          await api.openWorkspace(target);
-          const landed = await switchWorkspace(target, 8000);
-          // A draft is a send to a named workspace, so a switch that did
-          // not land — nothing settled, or a newer switch took the window
-          // first — is reported rather than dropped the way a session
-          // click is: the text goes back to the composer and the status
-          // line says why it did not go.
-          if (!landed || !sameWorkspacePath(landed, target)) {
-            throw new Error('workspace switch did not complete');
-          }
-          void get().loadWorkspaces();
-        } catch (err) {
-          ws.suppressRestore(null);
-          set({ statusText: String(err) });
-          return false;
-        }
-        ws.suppressRestore(null);
-      }
-      // The draft becomes a real conversation now: mint it in the
-      // selected workspace and send the staged first message.
-      await get().newChat();
-      if (stateRoot.focusSnapshot.value !== 'active') {
-        return false;
-      }
-      // Draft pre-send choices land on the fresh session before its
-      // first run starts. Without explicit options the minted
-      // conversation already carries the configured session defaults.
-      if (options) {
-        if (options.mode) {
-          await get().setMode(options.mode);
-        }
-        if (options.think) {
-          await get().setThink(options.think);
-        }
-        await get().setModel(options.model ?? '');
-      }
-      await get().send(trimmed, attachments);
-      return true;
-    },
-
-    removeWorkspace: async (id) => {
-      try {
-        await api.removeWorkspace(id);
-        await get().loadWorkspaces();
-      } catch (err) {
-        set({ statusText: String(err) });
-      }
-    },
+    ...turn,
 
     draftComposer: (text) => {
       set({ composerDraft: text });
@@ -1348,20 +532,5 @@ export const useStore = create<StoreState>((set, get, store) => {
     clearComposerDraft: () => {
       set({ composerDraft: '' });
     },
-
-    flash: (text) => get().toast(text),
-    toast: (text, kind = 'info') => {
-      const id = ++toastSeq;
-      set((state) => ({ toasts: [...state.toasts, { id, text, kind }] }));
-      setTimeout(() => {
-        set((state) => ({
-          toasts: state.toasts.filter((t) => t.id !== id),
-        }));
-      }, 3500);
-    },
-    dismissToast: (id) =>
-      set((state) => ({
-        toasts: state.toasts.filter((t) => t.id !== id),
-      })),
   };
 });
