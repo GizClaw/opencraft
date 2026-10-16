@@ -92,6 +92,26 @@ describe('redactDiagnostic', () => {
     expect(out).toContain('Basic authentication required');
   });
 
+  it('drops a quoted JSON key value and a multi-word PEM label', () => {
+    const json = redactDiagnostic('{"password":"hunter2","user":"ada"}', 512);
+    expect(json).not.toContain('hunter2');
+    expect(json).toContain('"user":"ada"');
+
+    // An auth header printed from JSON: the value goes to the end of the
+    // line, like the header rule does in every other spelling.
+    const auth = redactDiagnostic('{"authorization":"Bearer abcdef"}', 512);
+    expect(auth).not.toContain('abcdef');
+
+    const pgp = [
+      '-----BEGIN PGP PRIVATE KEY BLOCK-----',
+      'AAAB',
+      '-----END PGP PRIVATE KEY BLOCK-----',
+    ].join('\n');
+    const out = redactDiagnostic(pgp, 512);
+    expect(out).not.toContain('AAAB');
+    expect(out).toContain('<redacted-private-key>');
+  });
+
   it('truncates a long payload', () => {
     const out = redactDiagnostic('x'.repeat(900), 100);
     expect(out.length).toBeLessThan(200);

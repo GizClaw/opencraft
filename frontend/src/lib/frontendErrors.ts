@@ -22,25 +22,30 @@ const STACK_LIMIT = 2048;
 const REDACTIONS: [RegExp, string][] = [
   // PEM private key blocks run over many lines; the line-oriented rules
   // below would only see the label. The `$` arm covers a log truncated
-  // in the middle of the block.
+  // in the middle of the block, and the label may carry a trailing word
+  // (`PGP PRIVATE KEY BLOCK`).
   [
-    /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+    /-----BEGIN [A-Z ]*PRIVATE KEY[A-Z ]*-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY[A-Z ]*-----|$)/g,
     '<redacted-private-key>',
   ],
   // An auth header carries a scheme and usually more than one token
   // (`Basic dXNlcjpwYXNz`, `Digest username="u", response="…"`), so the
   // whole value goes, to the end of the line. The name stays: it is the
-  // part an operator reads.
+  // part an operator reads. The optional quote between name and
+  // separator is the same header printed from JSON, where a key cannot
+  // be spelled without one.
   [
-    /(\b(?:authorization|proxy-authorization)\b\s*[:=]\s*)[^\n]*/gi,
+    /(\b(?:authorization|proxy-authorization)\b"?\s*[:=]\s*)[^\n]*/gi,
     '$1<redacted>',
   ],
   // `api_key=…`, `"password": "…"`, `token: abc`: the value behind the
   // name never leaves. A quoted value goes whole; otherwise a scheme
   // plus its argument (`Bearer eyJ…`) or the run of non-space text that
-  // follows.
+  // follows. As in the header rule above, the name may carry the quote a
+  // JSON printer puts around it - that is the shape a dumped config or
+  // request body has.
   [
-    /(\b(?:bearer|token|api[_-]?key|apikey|secret|password|passwd|passphrase|credential|signature|sig|access[_-]?token|refresh[_-]?token)\b\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[A-Za-z][\w-]*\s+[A-Za-z0-9._~+/=-]+|[^\s,;\n]+)/gi,
+    /(\b(?:bearer|token|api[_-]?key|apikey|secret|password|passwd|passphrase|credential|signature|sig|access[_-]?token|refresh[_-]?token)\b"?\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[A-Za-z][\w-]*\s+[A-Za-z0-9._~+/=-]+|[^\s,;\n]+)/gi,
     '$1<redacted>',
   ],
   // Secrets in a query string keep their name (the useful part) without
