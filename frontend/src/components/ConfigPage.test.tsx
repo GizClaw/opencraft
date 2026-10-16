@@ -1,8 +1,149 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { UIEventChannel, UIEventType } from '../lib/events';
 import { useStore } from '../lib/store';
 import { ConfigPage } from './ConfigPage';
+
+// The inference config the page loads, and the same config after a plugin
+// upserted a gateway profile: the model on the stored instance is the
+// difference a wholesale refresh would put on screen.
+const storedModel = {
+  name: 'deepseek-v4-flash',
+  kind: 'generate',
+  capabilities: {
+    inputs: ['text'],
+    outputs: ['text'],
+    reasoning: { kind: 'toggle' },
+  },
+  endpoint: '',
+};
+
+const storedInstance = {
+  stable_id: 'inst-aaa',
+  type: 'openai',
+  name: 'primary',
+  api: 'responses',
+  endpoint: 'https://gateway.example/v1',
+  key_source: 'env',
+  key_ref: '',
+  key_set: true,
+  key_env: true,
+  key_keychain: false,
+  models: [storedModel],
+  advanced: { reasoning_channel: 'text' },
+  enabled: true,
+  managed: false,
+};
+
+const inferenceState = {
+  model: '',
+  router: { max_attempts: 3, fallback_on_retry_exhausted: false },
+  instances: [storedInstance],
+};
+
+const pluginInferenceState = {
+  model: '',
+  router: { max_attempts: 3, fallback_on_retry_exhausted: false },
+  instances: [
+    {
+      ...storedInstance,
+      models: [{ ...storedModel, name: 'glm-5.3-flash' }],
+    },
+  ],
+};
+
+// The memory tab's three sections, so a test can open the tab and edit a
+// draft without a card failing to load.
+const memorySettings = {
+  max_raw_messages: 36,
+  preserve_recent: 4,
+  max_summary_bytes: 4096,
+  replay_full_history: false,
+};
+
+const memoryState = {
+  enabled: true,
+  inject_max_items: 12,
+  inject_max_chars: 2048,
+  min_inject_max_items: 1,
+  max_inject_max_items: 50,
+  default_inject_max_items: 12,
+  min_inject_max_chars: 256,
+  max_inject_max_chars: 16384,
+  default_inject_max_chars: 2048,
+  max_items: 200,
+  max_text_bytes: 4096,
+  available: true,
+  workspace: '/w/repo',
+  live: 0,
+  stale: 0,
+};
+
+const reviewState = {
+  enabled: false,
+  every_turns: 5,
+  min_tool_calls: 4,
+  on_failure: true,
+  max_suggestions: 3,
+  timeout_seconds: 90,
+  min_every_turns: 1,
+  max_every_turns: 100,
+  default_every_turns: 5,
+  min_min_tool_calls: 0,
+  max_min_tool_calls: 100,
+  default_min_tool_calls: 4,
+  min_max_suggestions: 1,
+  max_max_suggestions: 10,
+  min_timeout_seconds: 15,
+  max_timeout_seconds: 600,
+  available: true,
+  pending: 0,
+  accepted: 0,
+  discarded: 0,
+};
+
+// The built-in model list the page's catalog popovers read. Its `filter`
+// calls are counted: the whole list used to be swept three times per
+// model row and per render, and the grouping that replaced that is what
+// the sweep test pins.
+const catalogSweeps = { filter: 0 };
+
+const catalogModels = new Proxy(
+  [
+    {
+      id: 'openai/gpt-5.6-sol',
+      type: 'openai',
+      vendor: 'OpenAI',
+      label: 'GPT-5.6 Sol',
+      model: {
+        name: 'gpt-5.6-sol',
+        kind: 'generate',
+        capabilities: { outputs: ['text'], hosted_web_search: true },
+      },
+    },
+    {
+      id: 'zhipu/glm-5.3-flash',
+      type: 'openai',
+      vendor: 'Zhipu AI',
+      label: 'GLM-5.3-Flash',
+      model: {
+        name: 'glm-5.3-flash',
+        kind: 'generate',
+        capabilities: {
+          inputs: ['text', 'image', 'video'],
+          outputs: ['text'],
+        },
+      },
+    },
+  ],
+  {
+    get: (target, prop, receiver) => {
+      if (prop === 'filter') catalogSweeps.filter += 1;
+      return Reflect.get(target, prop, receiver);
+    },
+  },
+);
 
 // The settings page loads every config surface on mount, so the mock
 // answers anything it does not explicitly know with an empty result.
@@ -24,39 +165,7 @@ const apiMock = vi.hoisted(() => {
         impl: 'anthropic',
       },
     ]),
-    configState: vi.fn(async () => ({
-      model: '',
-      router: { max_attempts: 3, fallback_on_retry_exhausted: false },
-      instances: [
-        {
-          stable_id: 'inst-aaa',
-          type: 'openai',
-          name: 'primary',
-          api: 'responses',
-          endpoint: 'https://gateway.example/v1',
-          key_source: 'env',
-          key_ref: '',
-          key_set: true,
-          key_env: true,
-          key_keychain: false,
-          models: [
-            {
-              name: 'deepseek-v4-flash',
-              kind: 'generate',
-              capabilities: {
-                inputs: ['text'],
-                outputs: ['text'],
-                reasoning: { kind: 'toggle' },
-              },
-              endpoint: '',
-            },
-          ],
-          advanced: { reasoning_channel: 'text' },
-          enabled: true,
-          managed: false,
-        },
-      ],
-    })),
+    configState: vi.fn(async () => inferenceState),
     inferenceCatalog: vi.fn(async () => ({
       version: 'test',
       templates: [
@@ -93,35 +202,15 @@ const apiMock = vi.hoisted(() => {
           ],
         },
       ],
-      models: [
-        {
-          id: 'openai/gpt-5.6-sol',
-          type: 'openai',
-          vendor: 'OpenAI',
-          label: 'GPT-5.6 Sol',
-          model: {
-            name: 'gpt-5.6-sol',
-            kind: 'generate',
-            capabilities: { outputs: ['text'], hosted_web_search: true },
-          },
-        },
-        {
-          id: 'zhipu/glm-5.3-flash',
-          type: 'openai',
-          vendor: 'Zhipu AI',
-          label: 'GLM-5.3-Flash',
-          model: {
-            name: 'glm-5.3-flash',
-            kind: 'generate',
-            capabilities: {
-              inputs: ['text', 'image', 'video'],
-              outputs: ['text'],
-            },
-          },
-        },
-      ],
+      models: catalogModels,
     })),
     saveInstances: vi.fn(async () => undefined),
+    memoryConfig: vi.fn(async () => memorySettings),
+    saveMemory: vi.fn(async () => undefined),
+    userMemoryState: vi.fn(async () => memoryState),
+    memoryFacts: vi.fn(async () => []),
+    reviewSettings: vi.fn(async () => reviewState),
+    reviewSuggestions: vi.fn(async () => []),
     modelUsage: vi.fn(async () => [
       {
         model: 'deepseek-v4-flash',
@@ -195,8 +284,31 @@ const apiMock = vi.hoisted(() => {
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
 
+// The inference tab listens for the plugin's config change; the runtime's
+// `On` has to hand back its handler for a test to emit through.
+const events = vi.hoisted(() => ({
+  handlers: new Map<string, (event: { data: unknown }) => void>(),
+}));
+
+vi.mock('@wailsio/runtime', () => ({
+  Events: {
+    On: (name: string, handler: (event: { data: unknown }) => void) => {
+      events.handlers.set(name, handler);
+      return () => events.handlers.delete(name);
+    },
+  },
+}));
+
+function emitInferenceChanged() {
+  const handler = events.handlers.get(UIEventChannel);
+  if (!handler) throw new Error('the page did not subscribe to opencraft:ui');
+  handler({ data: { type: UIEventType.inferenceChanged } });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  events.handlers.clear();
+  catalogSweeps.filter = 0;
   // The page renders through the shared overlay shell and stays mounted
   // for its exit animation (App owns that lifetime), so a unit test has
   // to say it is open.
@@ -603,6 +715,124 @@ describe('ConfigPage inference', () => {
       lifecycle: undefined,
       driver_fields: undefined,
     });
+  });
+
+  it('refuses a save whose driver fields are not a JSON object', async () => {
+    render(<ConfigPage />);
+    await screen.findByPlaceholderText('Model');
+
+    // The row draws the red hint; the save used to go ahead anyway, send
+    // no driver_fields at all, and report success.
+    const spec = screen.getByPlaceholderText('{"wire_model": "MiniMax-H3"}');
+    fireEvent.change(spec, { target: { value: '{oops' } });
+    expect(screen.getAllByText('must be a JSON object')).toHaveLength(1);
+
+    fireEvent.click(screen.getByText('Save & apply'));
+
+    // The second copy is the save bar's error: the submit was refused,
+    // nothing was written, and the page stayed open on the draft.
+    await waitFor(() =>
+      expect(screen.getAllByText('must be a JSON object')).toHaveLength(2),
+    );
+    expect(apiMock.saveInstances).not.toHaveBeenCalled();
+    expect(useStore.getState().configOpen).toBe(true);
+    expect(
+      screen.getByPlaceholderText('{"wire_model": "MiniMax-H3"}'),
+    ).toHaveValue('{oops');
+  });
+
+  it('keeps an edited inference row when a plugin reports a change', async () => {
+    render(<ConfigPage />);
+    const field = () => screen.getByPlaceholderText('Model');
+    await waitFor(() => expect(field()).toHaveValue('deepseek-v4-flash'));
+
+    fireEvent.change(field(), { target: { value: 'deepseek-v4-pro' } });
+
+    // The plugin's change arrives while that edit is unsaved: the rows on
+    // screen are the user's, so the refresh has to wait.
+    (apiMock.configState as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      pluginInferenceState,
+    );
+    emitInferenceChanged();
+    expect(apiMock.configState).toHaveBeenCalledTimes(1);
+    expect(field()).toHaveValue('deepseek-v4-pro');
+
+    // Undoing the edit puts the form back on the loaded values, and the
+    // deferred refresh lands instead of being forgotten.
+    fireEvent.change(field(), { target: { value: 'deepseek-v4-flash' } });
+    await waitFor(() => expect(field()).toHaveValue('glm-5.3-flash'));
+    expect(apiMock.configState).toHaveBeenCalledTimes(2);
+  });
+
+  it('applies the plugin config change when the form is untouched', async () => {
+    render(<ConfigPage />);
+    const field = () => screen.getByPlaceholderText('Model');
+    await waitFor(() => expect(field()).toHaveValue('deepseek-v4-flash'));
+
+    // No unsaved edit: the refresh is what the event is for.
+    (apiMock.configState as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      pluginInferenceState,
+    );
+    emitInferenceChanged();
+
+    await waitFor(() => expect(field()).toHaveValue('glm-5.3-flash'));
+  });
+
+  it('sweeps the built-in model list once per query, not per row', async () => {
+    render(<ConfigPage />);
+    await screen.findByPlaceholderText('Model');
+    expect(screen.getAllByPlaceholderText('Model')).toHaveLength(1);
+
+    // A second model row reads the same two catalog entries. The list
+    // used to be swept three times per row, so adding this row took the
+    // render from three sweeps to six; grouped once per (catalog, query)
+    // it costs none.
+    const atLoad = catalogSweeps.filter;
+    fireEvent.click(screen.getByText('Add instance'));
+    await waitFor(() =>
+      expect(screen.getAllByPlaceholderText('Model')).toHaveLength(2),
+    );
+    expect(catalogSweeps.filter).toBe(atLoad);
+
+    // A keystroke in the open list is one sweep, however many rows ask
+    // for the list it narrows.
+    fireEvent.click(screen.getAllByLabelText('Fill from built-in models')[0]);
+    const search = await screen.findByLabelText('Search built-in models');
+    const atOpen = catalogSweeps.filter;
+    fireEvent.change(search, { target: { value: 'glm' } });
+    expect(catalogSweeps.filter).toBe(atOpen + 1);
+    expect(
+      await screen.findByRole('button', { name: /^glm-5\.3-flash/ }),
+    ).toBeInTheDocument();
+
+    // An empty list must not unmake the trigger it is anchored to.
+    fireEvent.change(search, { target: { value: 'nothing-matches' } });
+    expect(screen.getByText('No matching models.')).toBeInTheDocument();
+    const triggers = screen.getAllByLabelText('Fill from built-in models');
+    expect(triggers).toHaveLength(2);
+  });
+});
+
+describe('ConfigPage memory', () => {
+  it('keeps an unsaved draft when the tab is left and re-entered', async () => {
+    useStore.setState({ configTab: 'memory' });
+    render(<ConfigPage />);
+
+    const raw = await screen.findByLabelText('Raw window');
+    expect(raw).toHaveValue(36);
+
+    // An edit nobody saved: the card's bar says there is a draft.
+    fireEvent.change(raw, { target: { value: '12' } });
+    expect(await screen.findByText('Unsaved changes')).toBeInTheDocument();
+
+    // Coming back to the tab used to reload the form from the server,
+    // which replaced the draft and reset the baseline the bar compares it
+    // against.
+    fireEvent.click(screen.getByRole('tab', { name: 'Interface' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Memory' }));
+
+    expect(await screen.findByLabelText('Raw window')).toHaveValue(12);
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
   });
 });
 

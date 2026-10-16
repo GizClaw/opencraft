@@ -336,6 +336,31 @@ describe('UserMemoryCard', () => {
     expect(apiMock.userMemoryState.mock.calls.length).toBeGreaterThan(1);
   });
 
+  it('keeps an unsaved injection draft when a fact is marked stale', async () => {
+    const user = userEvent.setup();
+    render(<UserMemoryCard />);
+    await screen.findByText('The user runs macOS');
+
+    // A draft nobody saved yet: the bar under the knobs says so.
+    const items = screen.getByLabelText(/Facts per turn/);
+    await user.clear(items);
+    await user.type(items, '8');
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+
+    // Refreshing the fact list is not an edit of those knobs, so the
+    // draft and the bar's verdict have to survive the round trip.
+    const row = within(
+      screen.getByText('The user runs macOS').closest('li') as HTMLElement,
+    );
+    await user.click(row.getByRole('button', { name: 'Stop injecting' }));
+    await waitFor(() =>
+      expect(apiMock.setMemoryFactStale).toHaveBeenCalledWith('f-1', true),
+    );
+    expect(apiMock.userMemoryState.mock.calls.length).toBeGreaterThan(1);
+    expect(screen.getByLabelText(/Facts per turn/)).toHaveValue(8);
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+  });
+
   it('accepts a queued suggestion through the memory write path', async () => {
     const user = userEvent.setup();
     render(<UserMemoryCard />);
