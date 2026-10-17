@@ -1110,7 +1110,13 @@ export interface TelemetryExportStatus {
   configured: boolean;
   endpoint: string;
   insecure: boolean;
-  headerNames: string[];
+  /**
+   * Names of the headers the sink sends; the values are credentials and
+   * never leave the backend. Go marshals a sink with no headers as
+   * `null`, which is what the binding reports, so a consumer that
+   * iterates this has to guard it.
+   */
+  headerNames: string[] | null;
   /** Plugin that installed the active sink; empty for app configuration. */
   owner: string;
 }

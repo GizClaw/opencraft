@@ -357,9 +357,14 @@ type UsagePoint struct {
 
 // ModelUsageSeries returns bucketed usage for one model, or for every
 // model when the name is empty (the dashboard's all-models trend).
+//
+// timeZone is the viewer's IANA zone (empty when the window has none to
+// name) and utcOffsetMinutes its current offset, which answers for day
+// buckets when the name does not resolve — see usage.dayZone.
 func (b *Config) ModelUsageSeries(
 	model string,
 	granularity string,
+	timeZone string,
 	utcOffsetMinutes int,
 	start, end string,
 ) ([]UsagePoint, error) {
@@ -373,7 +378,7 @@ func (b *Config) ModelUsageSeries(
 		g = usage.GranularityDay
 	}
 	rows, err := store.Series(
-		ctx, model, g, utcOffsetMinutes, start, end,
+		ctx, model, g, timeZone, utcOffsetMinutes, start, end,
 	)
 	if err != nil {
 		return nil, err

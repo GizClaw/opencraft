@@ -1,16 +1,43 @@
 import { UIEventType } from '../lib/events';
 import type { StateRoot } from './root';
-import type { ConversationActor } from './actorRegistry';
-import type { ConversationEvent } from './machines/conversation';
+import { isEndedRun, type ConversationEvent } from './machines/conversation';
 import type { UIEvent } from '../lib/types';
 
 type FailedStatus = 'failed' | 'aborted' | 'canceled' | 'interrupted';
 
+// Events components subscribe to on the channel themselves; the shell
+// routes none of them (see routeBackendEvent's default branch).
+const COMPONENT_EVENTS: readonly string[] = [
+  UIEventType.gitChanged,
+  UIEventType.inferenceChanged,
+  UIEventType.telemetryChanged,
+  UIEventType.petPacksChanged,
+  UIEventType.petSettingsChanged,
+  UIEventType.petRuntimeStatus,
+];
+
+// turnEndStatus maps the wire status of a finished turn onto the
+// machine's terminal states. Completion is the one status that has to be
+// named: everything else is a failure, including the backend's "unknown"
+// — the engine status of a run whose wait produced no result, which the
+// host records as a failed run (host.ClassifySettledRun). Reading it as
+// success would show a turn that never finished as an answer, and would
+// drop the error_kind the failure text is picked from.
+function turnEndStatus(status: string): 'completed' | FailedStatus {
+  switch (status) {
+    case 'completed':
+      return 'completed';
+    case 'failed':
+    case 'aborted':
+    case 'canceled':
+    case 'interrupted':
+      return status;
+    default:
+      return 'failed';
+  }
+}
+
 export interface EventDataSink {
-  syncConversationActor?(
-    conversationID: string,
-    actor: ConversationActor,
-  ): void;
   writeConversationData(conversationID: string, ev: UIEvent): void;
   writeGlobalData(ev: UIEvent): void;
   refreshSessionList(): void;
@@ -85,20 +112,10 @@ export function toConversationEvent(
     case UIEventType.turnEnd: {
       const data = ev.data as TurnEndPayload;
       if (!data.run_id) return undefined;
-      const status: 'completed' | FailedStatus =
-        data.status === 'completed' ||
-        !(
-          data.status === 'failed' ||
-          data.status === 'aborted' ||
-          data.status === 'canceled' ||
-          data.status === 'interrupted'
-        )
-          ? 'completed'
-          : (data.status as FailedStatus);
       return {
         type: 'TURN_ENDED',
         runID: data.run_id,
-        status,
+        status: turnEndStatus(data.status),
         error: data.error,
         errorKind: data.error_kind,
       };
@@ -111,31 +128,34 @@ export function toConversationEvent(
 export function canApplyEvent(
   projection: {
     lifecycle: { name: 'alive' | 'deleted' };
-    turn: {
-      name: 'idle' | 'starting' | 'running' | 'succeeded' | 'failed';
-    };
+    endedRunIDs?: string[];
   },
   ev: UIEvent,
 ): boolean {
   if (projection.lifecycle.name === 'deleted') return false;
+  // Whether an event still belongs to the conversation is a question
+  // about the event's run, not about the phase this client last left the
+  // turn in. The phase says where the UI thinks it is, and it knows
+  // nothing about a run the UI never started: a scheduled automation
+  // pinned to the conversation starts its turn whenever its schedule
+  // fires, and a reload adopts a run that was already in flight. Gating
+  // on the phase dropped those runs whole — the live text, the produced
+  // files and the running row — and only a later `session_updated`
+  // brought any of it back. The one genuinely stale event is one from a
+  // run whose ending the actor has already seen; everything else is the
+  // actor's call. That memory is a set, not one slot: a barge-in can
+  // leave an older ending behind without it ever becoming the last one.
   switch (ev.type) {
     case UIEventType.stream:
-      return (
-        projection.turn.name === 'idle' ||
-        projection.turn.name === 'starting' ||
-        projection.turn.name === 'running'
-      );
     case UIEventType.automationRunStarted:
-      return (
-        projection.turn.name === 'idle' ||
-        projection.turn.name === 'starting' ||
-        projection.turn.name === 'running'
-      );
-    case UIEventType.turnEnd:
-      return (
-        projection.turn.name === 'starting' ||
-        projection.turn.name === 'running'
-      );
+    case UIEventType.turnEnd: {
+      const runID = (ev.data as { run_id?: string }).run_id;
+      if (runID === undefined) return true;
+      // The run's own terminal event passes here because the run is
+      // not remembered yet - it is what puts it in the memory. A
+      // replay of it, and every event after it, is dropped.
+      return !isEndedRun(projection, runID);
+    }
     default:
       // artifact/interact/resolved are data-only or are reconciled by
       // the data layer; actor validity is checked there.
@@ -154,22 +174,15 @@ function routeToConversation(
     workspace: deps.data.activeWorkspace?.(),
   });
   if (!actor) return;
-  deps.data.syncConversationActor?.(conversationID, actor);
 
   // Data and state changes stay in one synchronous unit. State is
   // checked first so a late event never reaches the data layer.
   const snapshot = actor.getSnapshot();
-  const value = snapshot.value as unknown as {
-    lifecycle: string;
-    transcript: string;
-    turn: string;
-  };
+  const value = snapshot.value as unknown as { lifecycle: string };
   const projection = {
     lifecycle: { name: value.lifecycle as 'alive' | 'deleted' },
-    turn: {
-      name: value.turn as
-        'idle' | 'starting' | 'running' | 'succeeded' | 'failed',
-    },
+    endedRunIDs: (snapshot.context as unknown as { endedRunIDs?: string[] })
+      .endedRunIDs,
   };
   if (!canApplyEvent(projection, ev)) return;
 
@@ -238,5 +251,16 @@ export function routeBackendEvent(ev: UIEvent, deps: EventRouterDeps) {
       deps.data.refreshAutomations();
       deps.data.refreshAutomationRuns(ev);
       return;
+
+    default:
+      // A backend event the shell does not route is one of two things:
+      // an event a component subscribes to on its own (the git panels,
+      // the config page, the pet windows — listed here), or an event
+      // nobody handles at all. The second kind used to vanish silently,
+      // which is how a renamed wire event stays invisible until someone
+      // notices the feature is dead; in dev it says so.
+      if (!COMPONENT_EVENTS.includes(ev.type) && import.meta.env.DEV) {
+        console.warn(`eventRouter: no route for event "${ev.type}"`);
+      }
   }
 }

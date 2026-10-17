@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { COMPACT_SUMMARY_PREFIX } from './compact';
 import { flushCommitStats, setPerfMetricsEnabled } from './perfMetrics';
-import type { MessageView } from './store';
-import type { WorkspaceMeta } from './types';
+import type { FileViewerState, MessageView } from './store';
+import type { AutomationRun, AutomationTask, WorkspaceMeta } from './types';
 import i18n from '../i18n';
 import { stateRoot } from '../state/app';
 import {
@@ -10,7 +10,6 @@ import {
   friendlyFailure,
   friendlyInterruption,
   itemText,
-  isUserStop,
   pendingConversationIDs,
   streamFlushStats,
   storeBytes,
@@ -36,6 +35,8 @@ const apiMock = vi.hoisted(() => ({
   turnByRunID: vi.fn(),
   loadWorkspaces: vi.fn(),
   loadAutomations: vi.fn(),
+  automations: vi.fn(),
+  automationRuns: vi.fn(),
   openWorkspace: vi.fn(),
   workspaces: vi.fn(),
   setSessionMode: vi.fn(),
@@ -104,7 +105,6 @@ function resetStore() {
         pendingInteracts: [],
       },
     },
-    runConvs: {},
     pendingPromptConvs: {},
     composerDraft: '',
     statusText: '',
@@ -161,6 +161,17 @@ function actorValue(conversationID: string) {
   };
 }
 
+// A bound run is registry state, not store state (S1): the production
+// paths bind a run where its id becomes known, so the cases below seed
+// and read the index through the same door.
+function bindRun(runID: string, conversationID = 's-1') {
+  stateRoot.registry.bindRun(runID, conversationID);
+}
+
+function conversationForRun(runID: string) {
+  return stateRoot.registry.conversationForRun(runID);
+}
+
 beforeEach(() => {
   resetStore();
   vi.clearAllMocks();
@@ -209,7 +220,7 @@ describe('store: send and stream', () => {
       role: 'user',
       text: 'hello',
     });
-    expect(useStore.getState().runConvs['r-1']).toBe('s-1');
+    expect(conversationForRun('r-1')).toBe('s-1');
     expect(apiMock.startTurn).toHaveBeenCalledWith(
       's-1',
       expect.objectContaining({ role: 'user' }),
@@ -218,7 +229,7 @@ describe('store: send and stream', () => {
   });
 
   it('ignores send while busy or unconfigured', async () => {
-    stateRoot.registry.get('s-1')?.send({ type: 'SEND_STARTED' });
+    stateRoot.registry.get('s-1')?.send({ type: 'SUBMIT', kind: 'send' });
     await useStore.getState().send('ignored');
     expect(apiMock.startTurn).not.toHaveBeenCalled();
 
@@ -227,9 +238,30 @@ describe('store: send and stream', () => {
     expect(apiMock.startTurn).not.toHaveBeenCalled();
   });
 
+  it('refuses every submission into a deleted conversation', async () => {
+    // The delete path drops the conversation from the store, so this is
+    // the belt behind it: the table's deleted gate, which the machine's
+    // own guards carry too, keeps the four submission paths from
+    // spending an IPC on a conversation that is gone.
+    stateRoot.registry
+      .get('s-1')
+      ?.send({ type: 'SESSION_DELETED', deletedAt: 'now' });
+
+    expect(useStore.getState().queueInput('queued')).toBe(false);
+    expect(await useStore.getState().sendInterrupt('interrupt')).toBe(false);
+    expect(await useStore.getState().steer('steer')).toBe(false);
+    await useStore.getState().send('send');
+
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+    expect(apiMock.steerTurn).not.toHaveBeenCalled();
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv?.queued).toBeUndefined();
+    expect(conv?.messages).toEqual([]);
+  });
+
   it('sendInterrupt barges in while a turn is running', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     apiMock.startTurn.mockResolvedValue({
       run_id: 'r-new',
@@ -244,7 +276,7 @@ describe('store: send and stream', () => {
       role: 'user',
       text: 'second',
     });
-    expect(useStore.getState().runConvs['r-new']).toBe('s-1');
+    expect(conversationForRun('r-new')).toBe('s-1');
     expect(actorValue('s-1')?.turn).toBe('running');
     expect(actor?.getSnapshot().context).toMatchObject({
       currentRunID: 'r-new',
@@ -264,7 +296,7 @@ describe('store: send and stream', () => {
 
   it('queueInput stages one draft and drains it after turn_end', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
 
     expect(useStore.getState().queueInput('staged')).toBe(true);
@@ -292,13 +324,13 @@ describe('store: send and stream', () => {
     expect(
       useStore.getState().conversations['s-1'].messages.at(-1),
     ).toMatchObject({ role: 'user', text: 'staged' });
-    expect(useStore.getState().runConvs['r-new']).toBe('s-1');
+    expect(conversationForRun('r-new')).toBe('s-1');
     expect(actorValue('s-1')?.turn).toBe('running');
   });
 
   it('drains a staged draft into the workspace that owns the conversation', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     expect(useStore.getState().queueInput('staged elsewhere')).toBe(true);
 
@@ -352,16 +384,16 @@ describe('store: send and stream', () => {
     const conv = useStore.getState().conversations['s-1'];
     expect(conv.queued).toBeUndefined();
     expect(conv.messages.map((m) => m.text)).toEqual(['first', 'second']);
-    expect(useStore.getState().runConvs['r-second']).toBe('s-1');
+    expect(conversationForRun('r-second')).toBe('s-1');
     expect(actorValue('s-1')?.turn).toBe('running');
     expect(actorValue('s-1')?.turn).not.toBe('starting');
   });
 
   it('keeps a Tab draft staged when the turn it waited for fails', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
-    useStore.setState({ runConvs: { 'r-old': 's-1' } });
+    bindRun('r-old');
 
     expect(useStore.getState().queueInput('staged')).toBe(true);
     useStore.getState().handleEvent({
@@ -399,9 +431,9 @@ describe('store: send and stream', () => {
 
   it('restores the superseded run when a barge-in start fails', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
-    useStore.setState({ runConvs: { 'r-old': 's-1' } });
+    bindRun('r-old');
     apiMock.startTurn.mockRejectedValueOnce(new Error('start boom'));
 
     const ok = await useStore.getState().sendInterrupt('second');
@@ -442,7 +474,7 @@ describe('store: send and stream', () => {
     });
     useStore.getState().flushStreams();
     expect(actorValue('s-1')?.turn).toBe('running');
-    expect(useStore.getState().runConvs['r-new']).toBe('s-1');
+    expect(conversationForRun('r-new')).toBe('s-1');
     apiMock.startTurn.mockRejectedValueOnce(new Error('start boom'));
 
     const ok = await useStore.getState().sendInterrupt('second');
@@ -466,11 +498,11 @@ describe('store: send and stream', () => {
 
   it('absorbs the superseded terminal when a barge-in start fails after it ended', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     const base = useStore.getState().conversations['s-1'];
+    bindRun('r-old');
     useStore.setState({
-      runConvs: { 'r-old': 's-1' },
       conversations: {
         's-1': {
           ...base,
@@ -507,7 +539,7 @@ describe('store: send and stream', () => {
         error: 'engine boom',
       },
     });
-    expect(useStore.getState().runConvs['r-old']).toBeUndefined();
+    expect(conversationForRun('r-old')).toBeUndefined();
 
     rejectStart(new Error('start boom'));
     await pending;
@@ -516,7 +548,7 @@ describe('store: send and stream', () => {
     expect(actor?.getSnapshot().context).toMatchObject({
       currentRunID: undefined,
       supersededRunID: undefined,
-      lastEndedRunID: 'r-old',
+      endedRunIDs: ['r-old'],
       failureStatus: 'interrupted',
       turnError: 'engine boom',
     });
@@ -528,13 +560,49 @@ describe('store: send and stream', () => {
     });
   });
 
+  // A plain send that fails produces no run, and the ended-run memory
+  // must survive it: the synthetic terminal event with an empty run id
+  // the catch path used to send wiped the only slot, so the next event
+  // - a late delta of a run that had already ended - read as a new live
+  // run and put the conversation into a turn it could never finish.
+  it('a failed plain send cannot reopen a run that already ended', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    bindRun('r-1');
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    actor?.send({ type: 'TURN_ENDED', runID: 'r-1', status: 'completed' });
+    expect(actorValue('s-1')?.turn).toBe('succeeded');
+
+    apiMock.startTurn.mockRejectedValueOnce(new Error('start boom'));
+    await useStore.getState().send('next');
+    expect(actorValue('s-1')?.turn).toBe('failed');
+
+    useStore.getState().handleEvent({
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: { type: 'part', part: { type: 'text', text: 'late tail' } },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    expect(actorValue('s-1')?.turn).toBe('failed');
+    const conv = useStore.getState().conversations['s-1'];
+    // The delta opened no strip for the finished run and appended no
+    // text: the strip list is still the failed send's own entry.
+    expect(conv.turnArtifacts).toHaveLength(1);
+    expect(conv.turnArtifacts[0].runID).toBeUndefined();
+    expect(assistantTexts(conv.messages)).toEqual([]);
+  });
+
   it('cancelRun during a barge-in start cancels the superseded run', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     // Enter again: the replacement is starting and waiting for r-old
     // to finalize, so Stop must target the superseded run.
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'interrupt' });
     expect(actor?.getSnapshot().context).toMatchObject({
       supersededRunID: 'r-old',
     });
@@ -547,9 +615,9 @@ describe('store: send and stream', () => {
 
   it('cancelRun ignores a not-found superseded run', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'interrupt' });
     apiMock.cancelTurn.mockRejectedValue(new Error('host: turn not found'));
 
     await useStore.getState().cancelRun();
@@ -559,7 +627,7 @@ describe('store: send and stream', () => {
 
   it('takeQueued returns and clears the staged draft', () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     expect(useStore.getState().queueInput('draft to restore')).toBe(true);
 
@@ -710,6 +778,59 @@ describe('store: send and stream', () => {
     expect(useStore.getState().toasts.at(-1)?.text).toBe(
       i18n.t('chat.sessionDeleted'),
     );
+  });
+
+  it('takes the deleted conversation\u2019s run mapping and viewer with it', async () => {
+    apiMock.deleteSession.mockResolvedValue({
+      conversation_id: 's-next',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    bindRun('r-1');
+    bindRun('r-2', 's-2');
+    useStore.setState({
+      viewers: {
+        's-1': { filesOpen: true } as FileViewerState,
+        's-2': { filesOpen: true } as FileViewerState,
+      },
+    });
+
+    await useStore.getState().deleteSession('s-1');
+
+    // The tombstone takes the deleted conversation's run mappings with
+    // it, and only those: the other conversation's run keeps its owner.
+    expect(conversationForRun('r-1')).toBeUndefined();
+    expect(conversationForRun('r-2')).toBe('s-2');
+    expect(useStore.getState().viewers['s-1']).toBeUndefined();
+    expect(useStore.getState().viewers['s-2']).toBeDefined();
+  });
+
+  it('routes a late terminal event of a deleted conversation nowhere', async () => {
+    apiMock.deleteSession.mockResolvedValue({
+      conversation_id: '',
+      mode: '',
+      think: '',
+      model: '',
+    });
+    bindRun('r-1');
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+
+    await useStore.getState().deleteSession('s-1');
+
+    // The run's terminal event lands after the delete. It carries no
+    // conversation id of its own — the id used to be recovered from the
+    // run mapping, which is the mapping the tombstone just dropped, so
+    // the event has nowhere to route and the deleted chat stays off
+    // screen.
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: { run_id: 'r-1', status: 'completed' },
+    });
+
+    const state = useStore.getState();
+    expect(state.conversations['s-1']).toBeUndefined();
+    expect(conversationForRun('r-1')).toBeUndefined();
   });
 
   it('a listing that raced the delete cannot put the row back on the sidebar', async () => {
@@ -871,8 +992,8 @@ describe('store: send and stream', () => {
   });
 
   it('new chat switches to an empty conversation without disturbing active runs', async () => {
+    bindRun('r-old', 's-old');
     useStore.setState({
-      runConvs: { 'r-old': 's-old' },
       conversations: {
         's-old': {
           ...useStore.getState().conversations['s-1'],
@@ -894,7 +1015,7 @@ describe('store: send and stream', () => {
     const state = useStore.getState();
     expect(stateRoot.focusSnapshot.value).toBe('active');
     expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-new');
-    expect(state.runConvs).toEqual({ 'r-old': 's-old' });
+    expect(conversationForRun('r-old')).toBe('s-old');
     expect(state.conversations['s-old']).toBeDefined();
     expect(state.conversations['s-new']).toBeDefined();
     expect(state.conversations['s-new'].messages).toEqual([]);
@@ -1247,8 +1368,8 @@ describe('store: send and stream', () => {
 
   it('folds stream deltas into one assistant message', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    bindRun('r-1');
     useStore.setState({
-      runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
@@ -1340,7 +1461,7 @@ describe('store: send and stream', () => {
 
   it('stamps a live tool call and keeps the image part of its result', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
-    useStore.setState({ runConvs: { 'r-1': 's-1' } });
+    bindRun('r-1');
     const handle = useStore.getState().handleEvent;
 
     handle({
@@ -1412,9 +1533,7 @@ describe('store: send and stream', () => {
 
   it('coalesces queued text deltas into one store update per flush', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
-    useStore.setState({
-      runConvs: { 'r-1': 's-1' },
-    });
+    bindRun('r-1');
     const handle = useStore.getState().handleEvent;
     const storeEvent = (text: string) =>
       handle({
@@ -1453,7 +1572,7 @@ describe('store: send and stream', () => {
     // of timings is capped at 256 entries, so a count derived from the ring
     // would flat-line at 256 forever.
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
-    useStore.setState({ runConvs: { 'r-1': 's-1' } });
+    bindRun('r-1');
     const handle = useStore.getState().handleEvent;
     const before = streamFlushStats().total;
     for (let i = 0; i < 260; i += 1) {
@@ -1490,7 +1609,7 @@ describe('store: send and stream', () => {
       stateRoot.registry
         .get('s-1')
         ?.send({ type: 'RUN_STARTED', runID: 'r-1' });
-      useStore.setState({ runConvs: { 'r-1': 's-1' } });
+      bindRun('r-1');
       useStore.getState().handleEvent({
         type: 'stream',
         data: {
@@ -1526,7 +1645,7 @@ describe('store: send and stream', () => {
       stateRoot.registry
         .get('s-1')
         ?.send({ type: 'RUN_STARTED', runID: 'r-1' });
-      useStore.setState({ runConvs: { 'r-1': 's-1' } });
+      bindRun('r-1');
       const handle = useStore.getState().handleEvent;
       const stream = (kind: 'text' | 'reasoning', text: string) =>
         handle({
@@ -1710,6 +1829,124 @@ describe('store: send and stream', () => {
     expect(text && itemText(text)).toContain('[trimmed');
   });
 
+  // The append path carries the block's length instead of joining it
+  // (see TextItemFields.chars): the cap then measures a number, and the
+  // join happens once, in the renderer. Drift between the two shows up
+  // as a block that folds late or early, so the two are asserted equal.
+  it('keeps a streaming block\u2019s length without joining it', () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    const handle = useStore.getState().handleEvent;
+    const chunk = 't'.repeat(1024);
+    for (let i = 0; i < 40; i += 1) {
+      handle({
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: { type: 'part', part: { type: 'text', text: chunk } },
+        },
+      });
+      // One delta per commit: the block is appended to, not rebuilt from
+      // a coalesced string.
+      useStore.getState().flushStreams();
+    }
+
+    const message = useStore.getState().conversations['s-1']?.messages.at(-1);
+    const item = message?.items.find((it) => it.kind === 'text');
+    const display = item ? itemText(item) : '';
+    expect(display).toHaveLength(40 * chunk.length);
+    expect(item && 'chars' in item ? item.chars : undefined).toBe(
+      display.length,
+    );
+  });
+
+  // settleConversation runs on every write, so it carries the last
+  // measurement of a transcript forward instead of walking it (see
+  // TranscriptFootprint): a row the write left alone is found by identity
+  // and not measured. The probe row counts the reads of its text, which
+  // is the only way to see a measurement that did not happen.
+  it('measures only the rows a write replaced', () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    const handle = useStore.getState().handleEvent;
+    const stream = (text: string) =>
+      handle({
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: { type: 'part', part: { type: 'text', text } },
+        },
+      });
+
+    let reads = 0;
+    const probe = {
+      id: 'm-probe',
+      role: 'user',
+      items: [],
+      attachments: [],
+    } as unknown as MessageView;
+    Object.defineProperty(probe, 'text', {
+      get: () => {
+        reads += 1;
+        return 'an older row';
+      },
+    });
+
+    stream('the answer');
+    const opened = useStore.getState().conversations['s-1'];
+    expect(opened).toBeDefined();
+    useStore.setState({
+      conversations: {
+        ...useStore.getState().conversations,
+        's-1': { ...opened!, messages: [probe, ...opened!.messages] },
+      },
+    });
+    // The commit that follows the new row measures the transcript once;
+    // from then on a delta only ever replaces the row it grows.
+    stream(' grows');
+    useStore.getState().flushStreams();
+    reads = 0;
+    stream(' some more');
+    useStore.getState().flushStreams();
+    expect(reads).toBe(0);
+  });
+
+  // The marker says how much of the block is gone. It is carried outside
+  // the chunk array for exactly this reason: a later fold must not count
+  // the previous marker as dropped content, nor drop it as if it were.
+  it('reports a block\u2019s dropped characters exactly, fold after fold', () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    const handle = useStore.getState().handleEvent;
+    // 400 pushes of 1 KiB against the 256 KiB per-block cap: 144 whole
+    // chunks go, and the marker has to say so.
+    const chunk = 't'.repeat(1024);
+    const pushes = 400;
+    for (let i = 0; i < pushes; i += 1) {
+      handle({
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: { type: 'part', part: { type: 'text', text: chunk } },
+        },
+      });
+      // Committing each delta is what makes the block fold repeatedly;
+      // one coalesced push would fold once and measure nothing.
+      useStore.getState().flushStreams();
+    }
+
+    const message = useStore.getState().conversations['s-1']?.messages.at(-1);
+    const item = message?.items.find((it) => it.kind === 'text');
+    const display = item ? itemText(item) : '';
+    const marker = /…\[trimmed (\d+) chars\]/.exec(display);
+    expect(marker).not.toBeNull();
+    const kept = display.length - (marker?.[0].length ?? 0);
+    expect(Number(marker?.[1])).toBe(pushes * chunk.length - kept);
+  });
+
   it('flushes interleaved streams in arrival order', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     const handle = useStore.getState().handleEvent;
@@ -1772,7 +2009,7 @@ describe('store: send and stream', () => {
       runID: 'r-old',
       status: 'completed',
     });
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-new' });
 
     useStore.getState().handleEvent({
@@ -1792,8 +2029,8 @@ describe('store: send and stream', () => {
 
   it('reconciles a finished turn from the archive', async () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    bindRun('r-1');
     useStore.setState({
-      runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
@@ -1866,8 +2103,8 @@ describe('store: send and stream', () => {
 
   it('turn_end clears busy and removes the run mapping', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    bindRun('r-1');
     useStore.setState({
-      runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
@@ -1880,7 +2117,7 @@ describe('store: send and stream', () => {
     });
 
     expect(actorValue('s-1')?.turn).toBe('succeeded');
-    expect(useStore.getState().runConvs['r-1']).toBeUndefined();
+    expect(conversationForRun('r-1')).toBeUndefined();
   });
 
   it('turn_end stores the backend duration instead of estimating from timestamps', () => {
@@ -1922,8 +2159,8 @@ describe('store: send and stream', () => {
 
   it('failed turn_end stores status on the turn without a message marker', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    bindRun('r-1');
     useStore.setState({
-      runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
@@ -1968,8 +2205,8 @@ describe('store: send and stream', () => {
 
   it('canceled turn_end keeps the transcript clean and records the status', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    bindRun('r-1');
     useStore.setState({
-      runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
@@ -2012,8 +2249,8 @@ describe('store: send and stream', () => {
 
   it('a deadline turn_end records the error kind the notice splits on', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    bindRun('r-1');
     useStore.setState({
-      runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
@@ -2077,32 +2314,6 @@ describe('store: send and stream', () => {
     expect(friendlyInterruption('custom')).toBeTruthy();
     expect(friendlyInterruption('')).toBeNull();
     expect(friendlyInterruption(undefined)).toBeNull();
-  });
-});
-
-describe('isUserStop', () => {
-  it('treats canceled turns as user stops unless a deadline ended them', () => {
-    expect(isUserStop('canceled', 'user_cancel')).toBe(true);
-    expect(isUserStop('canceled')).toBe(true);
-    // The engine reports a deadline and a user stop as the same
-    // `canceled` status; the error kind decides, so a deadline keeps
-    // its diagnostics and never reads as something the user did.
-    expect(isUserStop('canceled', undefined, 'timeout')).toBe(false);
-    expect(isUserStop('canceled', '', 'timeout')).toBe(false);
-  });
-
-  it('treats user_cancel and user_input interruptions as user stops', () => {
-    expect(isUserStop('interrupted', 'user_cancel')).toBe(true);
-    expect(isUserStop('interrupted', 'user_input')).toBe(true);
-  });
-
-  it('keeps non-user interruptions and failures out of the user-stop bucket', () => {
-    expect(isUserStop('interrupted', 'host_shutdown')).toBe(false);
-    expect(isUserStop('interrupted', 'custom')).toBe(false);
-    expect(isUserStop('interrupted', '')).toBe(false);
-    expect(isUserStop('interrupted')).toBe(false);
-    expect(isUserStop('failed', 'user_cancel')).toBe(false);
-    expect(isUserStop('aborted', 'user_cancel')).toBe(false);
   });
 });
 
@@ -2489,7 +2700,7 @@ describe('store: interactions and artifacts', () => {
       durationMs: 1500,
       docs: [{ path: 'reports/brief.md', bytes: 42 }],
     });
-    expect(useStore.getState().runConvs['r-auto']).toBeUndefined();
+    expect(conversationForRun('r-auto')).toBeUndefined();
 
     await vi.waitFor(() => {
       const conv = useStore.getState().conversations['s-1'];
@@ -2509,6 +2720,63 @@ describe('store: interactions and artifacts', () => {
       expect(texts).toContain('wrote it');
       expect(texts).not.toContain('writing the brief');
     });
+  });
+
+  // The case above starts from a fresh actor (idle). In the app the actor
+  // is anything but fresh: the conversation the schedule is pinned to has
+  // already run a turn, so it rests on `succeeded`, and that is where the
+  // routing gate used to drop the automation's whole turn — the text, the
+  // file strip and the running row — until a session_updated happened to
+  // bring the archive back.
+  it('reaches a conversation whose last turn already succeeded', () => {
+    const handle = useStore.getState().handleEvent;
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: { type: 'part', part: { type: 'text', text: 'first answer' } },
+      },
+    });
+    handle({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        status: 'completed',
+      },
+    });
+    useStore.getState().flushStreams();
+    expect(actorValue('s-1')?.turn).toBe('succeeded');
+
+    handle({
+      type: 'automation_run_started',
+      data: {
+        run_id: 'r-auto',
+        conversation_id: 's-1',
+        message: 'write the brief',
+      },
+    });
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-auto',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: { type: 'text', text: 'writing the brief' },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    expect(actorValue('s-1')?.turn).toBe('running');
+    const live = useStore.getState().conversations['s-1'].messages;
+    expect(live.some((m) => m.text === 'write the brief')).toBe(true);
+    const texts = live.flatMap((m) =>
+      m.items.flatMap((it) => (it.kind === 'text' ? [it.text] : [])),
+    );
+    expect(texts).toContain('writing the brief');
   });
 });
 
@@ -2831,7 +3099,7 @@ describe('store: memory budgets', () => {
 
   it('caps one tool result at MAX_TOOL_RESULT_CHARS when it lands', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
-    useStore.setState({ runConvs: { 'r-1': 's-1' } });
+    bindRun('r-1');
     const handle = useStore.getState().handleEvent;
     handle({
       type: 'stream',
@@ -2977,6 +3245,30 @@ describe('store: memory budgets', () => {
     if (newest.kind !== 'tool_call') throw new Error('expected a tool call');
     expect(newest.tool.images).toHaveLength(1);
   });
+
+  it('keeps the history cursor when the archive sends an empty page', async () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [],
+          historyHasMore: true,
+          historySeq: 90,
+        },
+      },
+    });
+    apiMock.sessionTurns.mockResolvedValue([]);
+
+    expect(await useStore.getState().loadEarlierHistory('s-1')).toBe(0);
+
+    const conv = useStore.getState().conversations['s-1'];
+    // The page says the archive holds nothing below, not that the loaded
+    // transcript starts at 0: a cursor of 0 would send the next read back
+    // to the beginning of the session.
+    expect(conv.historySeq).toBe(90);
+    expect(conv.historyHasMore).toBe(false);
+    expect(conv.historyLoading).toBe(false);
+  });
 });
 
 describe('store: cross-workspace session clicks', () => {
@@ -3073,9 +3365,11 @@ describe('store: cross-workspace session clicks', () => {
       expect.any(String),
     );
     // The report names both strings, so a future failure says which
-    // workspace the click asked for and which one the window kept.
+    // workspace the click asked for and which one the window kept. Only
+    // the folder names travel: the telemetry copy redacts absolute paths
+    // (F-32), so a full path would arrive as `<path>` and name neither.
     const [, message] = diagnosticsMock.ReportFrontendError.mock.calls[0] ?? [];
-    expect(message).toContain('wanted /tmp/b, active /tmp/a');
+    expect(message).toContain('wanted b, active a');
   });
 
   // A click whose workspace a newer switch already took is dropped
@@ -3182,6 +3476,22 @@ describe('store: init session bootstrap', () => {
   // The theme mirror is a localStorage preference, so it is what the first
   // frame paints from — before the desktop document reconciles the rest of
   // the appearance.
+  // init seeds the current conversation, and its round trips take a
+  // while: by the time it resolves the store can hold conversations of
+  // its own (a retry after a failed init runs against a shell that has
+  // been in use). A fresh table would drop them.
+  it('seeds the current conversation without dropping the others', async () => {
+    stateRoot.resetWorkspace();
+    stubInitApi({ currentSession: 's-1', workspace: '/tmp/w' });
+    const seeded = useStore.getState().conversations['s-1'];
+    useStore.setState({ conversations: { 's-9': { ...seeded } } });
+
+    await useStore.getState().init();
+
+    expect(useStore.getState().conversations['s-9']).toBeDefined();
+    expect(useStore.getState().conversations['s-1']?.think).toBe('medium');
+  });
+
   it('paints the theme the mirror carries', async () => {
     stateRoot.resetWorkspace();
     stubInitApi({ currentSession: 's-1', workspace: '/tmp/w' });
@@ -3200,9 +3510,9 @@ describe('store: init session bootstrap', () => {
 describe('store: workspace switch session restore', () => {
   it('mints a fresh session for a new workspace and keeps a running conversation alive', async () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    bindRun('r-1');
     useStore.setState({
       workspace: '/tmp/a',
-      runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
@@ -3231,7 +3541,7 @@ describe('store: workspace switch session restore', () => {
     expect(state.conversations['s-1'].messages[0].text).toBe(
       'question from workspace a',
     );
-    expect(state.runConvs['r-1']).toBe('s-1');
+    expect(conversationForRun('r-1')).toBe('s-1');
     expect(actorValue('s-1')?.turn).toBe('running');
   });
 
@@ -3344,9 +3654,9 @@ describe('store: workspace switch session restore', () => {
 
   it('keeps a running conversation visible after a workspace round trip', async () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    bindRun('r-1');
     useStore.setState({
       workspace: '/tmp/a',
-      runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
@@ -3778,7 +4088,7 @@ describe('store: workspace switch session restore', () => {
     });
     expect(conv.turnArtifacts[1]).toMatchObject({ start: 1, runID: 'r-new' });
     expect(assistantTexts(conv.messages)).toEqual(['the real answer']);
-    expect(useStore.getState().runConvs['r-new']).toBe('s-1');
+    expect(conversationForRun('r-new')).toBe('s-1');
   });
 
   // While a send's response is in flight its strip is the trailing live
@@ -3786,7 +4096,7 @@ describe('store: workspace switch session restore', () => {
   // it: nothing is adopted (the response names this strip when it lands)
   // and the run is not mapped before then.
   it("folds a pending send's deltas into its unnamed strip", () => {
-    stateRoot.registry.get('s-1')?.send({ type: 'SEND_STARTED' });
+    stateRoot.registry.get('s-1')?.send({ type: 'SUBMIT', kind: 'send' });
     useStore.setState({
       conversations: {
         's-1': {
@@ -3823,7 +4133,7 @@ describe('store: workspace switch session restore', () => {
       expect.objectContaining({ id: 'pending', start: 0 }),
     ]);
     expect(assistantTexts(conv.messages)).toEqual(['streaming early']);
-    expect(useStore.getState().runConvs['r-late']).toBeUndefined();
+    expect(conversationForRun('r-late')).toBeUndefined();
   });
 
   // A result only ever stamps a call the run itself opened: the walk
@@ -4009,54 +4319,6 @@ describe('store: workspace switch session restore', () => {
   });
 });
 
-describe('firstMessageTitle', () => {
-  const user = (text: string, attachments: unknown[] = []): MessageView => ({
-    id: 'm-1',
-    role: 'user',
-    text,
-    items: [],
-    attachments: attachments as MessageView['attachments'],
-  });
-
-  it('uses the first line of the first user message', () => {
-    expect(
-      firstMessageTitle([
-        user('fix the typo\nand rerun the tests'),
-        user('second prompt'),
-      ]),
-    ).toBe('fix the typo');
-  });
-
-  it('skips empty user text and falls back to [attachment]', () => {
-    expect(firstMessageTitle([user('  '), user('', [{}])])).toBe(
-      '[attachment]',
-    );
-  });
-
-  it('caps the title at 70 runes', () => {
-    const title = firstMessageTitle([user('汉'.repeat(80))]);
-    expect(title).toBe(`${'汉'.repeat(70)}…`);
-  });
-
-  it('returns an empty string without user messages', () => {
-    expect(firstMessageTitle([])).toBe('');
-  });
-
-  // A delegation note is a user-role row the app wrote: the header and
-  // the live title mirror must not name the conversation after the
-  // app's report (the backend's own fallback skips it the same way).
-  it('skips rows the app itself wrote', () => {
-    const note: MessageView = {
-      ...user('[delegated worker "researcher" finished: succeeded]'),
-      kind: 'delegation_note',
-    };
-    expect(firstMessageTitle([note, user('the real question')])).toBe(
-      'the real question',
-    );
-    expect(firstMessageTitle([note])).toBe('');
-  });
-});
-
 // The cost of switching models mid-conversation is invisible in the
 // transcript: provider prompt caches are scoped to the model, so the next
 // request re-reads everything at undiscounted input price. The store says
@@ -4114,9 +4376,9 @@ describe('store: model switch cost notice', () => {
 describe('store: mid-turn steer', () => {
   function runningConversation(runID = 'r-run') {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID });
-    useStore.setState({ runConvs: { [runID]: 's-1' } });
+    bindRun(runID);
     return actor;
   }
 
@@ -4233,6 +4495,36 @@ describe('store: mid-turn steer', () => {
       ['first', 'delivered'],
       ['second', 'pending'],
     ]);
+  });
+
+  it('keeps the draft when a rebuild replaced the row and the RPC rejects', async () => {
+    runningConversation();
+    apiMock.steerTurn.mockImplementation(async () => {
+      // A transcript rebuild (retryTranscript, a hydrate) replaces the
+      // rows while the submission is in flight: the pending row is gone
+      // from the transcript, and nothing ever took its text.
+      const conv = useStore.getState().conversations['s-1'];
+      useStore.setState({
+        conversations: {
+          's-1': {
+            ...conv,
+            messages: conv.messages.filter((m) => !m.steer),
+          },
+        },
+      });
+      throw new Error('turn not found');
+    });
+
+    const ok = await useStore.getState().steer('rebuilt away');
+
+    // The text reached neither the transcript nor the archive, so the
+    // draft is the only place it survives; a missing row is not evidence
+    // that something archived it.
+    expect(ok).toBe(false);
+    expect(steerRows()).toEqual([]);
+    expect(useStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'warning',
+    });
   });
 
   it('marks an undelivered steer in place at turn_end', async () => {
@@ -4394,13 +4686,12 @@ describe('store: mid-turn steer', () => {
 
   it('leaves a row of a live run alone when another run ends', async () => {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-new' });
     // r-old is still registered as live: its terminal event has not
     // landed even though the conversation already moved on to r-new.
-    useStore.setState({
-      runConvs: { 'r-old': 's-1', 'r-new': 's-1' },
-    });
+    bindRun('r-old');
+    bindRun('r-new');
     await useStore.getState().steer('waiting note');
 
     // The row belongs to r-new, which is still waiting for its own
@@ -4434,7 +4725,7 @@ describe('store: mid-turn steer', () => {
       text: 'lost note',
     });
     expect(conv.messages.at(-1)?.steer).toBeUndefined();
-    expect(useStore.getState().runConvs['r-new']).toBe('s-1');
+    expect(conversationForRun('r-new')).toBe('s-1');
   });
 
   it('drops an undelivered row without sending', async () => {
@@ -4486,7 +4777,7 @@ describe('store: mid-turn steer', () => {
       // The run's terminal event never arrived; the conversation reached
       // its idle state another way (a cancel that settled locally).
       actor?.send({ type: 'TURN_ENDED', runID: 'r-run', status: 'completed' });
-      useStore.setState({ runConvs: {} });
+      stateRoot.registry.releaseRun('r-run');
       throw new Error('turn not found');
     });
     apiMock.startTurn.mockResolvedValue({
@@ -4506,13 +4797,13 @@ describe('store: mid-turn steer', () => {
     // The row was pulled back out of the transcript and re-sent as the
     // turn the user meant, not left as an interjection nothing owns.
     expect(conv.messages.at(-1)?.steer).toBeUndefined();
-    expect(useStore.getState().runConvs['r-fallback']).toBe('s-1');
+    expect(conversationForRun('r-fallback')).toBe('s-1');
     expect(useStore.getState().toasts).toHaveLength(0);
   });
 
   it('refuses steer with attachments or without a live run', async () => {
     const busyActor = stateRoot.registry.get('s-1');
-    busyActor?.send({ type: 'SEND_STARTED' });
+    busyActor?.send({ type: 'SUBMIT', kind: 'send' });
     expect(await useStore.getState().steer('no run yet')).toBe(false);
 
     runningConversation();
@@ -4532,9 +4823,9 @@ describe('store: mid-turn steer', () => {
 describe('store: steered rows across transcript rebuilds', () => {
   function runningConversation(runID = 'r-run') {
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID });
-    useStore.setState({ runConvs: { [runID]: 's-1' } });
+    bindRun(runID);
     return actor;
   }
 
@@ -4974,7 +5265,7 @@ describe('store: transcript tail sync', () => {
   it('holds a note that arrives mid-turn until the turn ends', async () => {
     hydratedConversation();
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-2' });
-    useStore.setState({ runConvs: { 'r-2': 's-1' } });
+    bindRun('r-2');
     // The note was written while the turn ran, and the turn's own row is
     // written when it ends: the note's seq is the older of the two.
     const parentTurn = {
@@ -5048,5 +5339,79 @@ describe('store: transcript tail sync', () => {
       { id: 'h-2', start: 2, seq: 2 },
       { id: 'h-3', start: 3, seq: 3 },
     ]);
+  });
+});
+
+// The automation views refresh their lists from three directions at once
+// (a start, a settlement, the panel's own poll), and the answer that
+// arrives last is the one the list shows — unless the store refuses a
+// stale one the way it already does for the workspace list.
+describe('store: automation lists', () => {
+  const task = (id: string): AutomationTask => ({
+    id,
+    name: id,
+    prompt: '',
+    schedule: { type: 'daily', time: '09:00' },
+    workspace: '/tmp/w',
+    mode: 'workspace',
+    model: '',
+    think: 'medium',
+    notify: '',
+    timeout: '15m',
+    enabled: true,
+    created_at: '',
+    updated_at: '',
+    last_run_at: '',
+    last_status: '',
+    next_run_at: '',
+  });
+  const run = (id: string): AutomationRun => ({
+    id,
+    task_id: 't-1',
+    at: '',
+    status: 'succeeded',
+    error: '',
+    conversation_id: '',
+    run_id: '',
+    duration_ms: 0,
+    summary: '',
+  });
+
+  it('keeps only the newest task list', async () => {
+    let releaseFirst: ((list: AutomationTask[]) => void) | undefined;
+    const first = new Promise<AutomationTask[]>((resolve) => {
+      releaseFirst = resolve;
+    });
+    apiMock.automations.mockReturnValueOnce(first);
+    apiMock.automations.mockResolvedValueOnce([task('t-2')]);
+
+    const older = useStore.getState().loadAutomations();
+    const newer = useStore.getState().loadAutomations();
+    await newer;
+    releaseFirst?.([task('t-1')]);
+    await older;
+
+    // The stale answer describes the list as it was before the newer
+    // refresh: a task that has just started would flip back to idle.
+    expect(useStore.getState().automations.map((t) => t.id)).toEqual(['t-2']);
+  });
+
+  it('keeps only the newest run list of one task', async () => {
+    let releaseFirst: ((list: AutomationRun[]) => void) | undefined;
+    const first = new Promise<AutomationRun[]>((resolve) => {
+      releaseFirst = resolve;
+    });
+    apiMock.automationRuns.mockReturnValueOnce(first);
+    apiMock.automationRuns.mockResolvedValueOnce([run('run-2')]);
+
+    const older = useStore.getState().loadAutomationRuns('t-1');
+    const newer = useStore.getState().loadAutomationRuns('t-1');
+    await newer;
+    releaseFirst?.([run('run-1')]);
+    await older;
+
+    expect(
+      (useStore.getState().automationRuns['t-1'] ?? []).map((r) => r.id),
+    ).toEqual(['run-2']);
   });
 });

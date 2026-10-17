@@ -1,7 +1,12 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MCPSection } from './ToolsPanel';
+import {
+  envMapFromText,
+  formatEnvText,
+  MCPSection,
+  parseEnvText,
+} from './ToolsPanel';
 
 const apiMock = vi.hoisted(() => ({
   mcpConfig: vi.fn(),
@@ -173,6 +178,41 @@ describe('MCPSection', () => {
     ]);
   });
 
+  it('stores an env value with its whitespace intact', async () => {
+    // The rows are the only place env values are edited, so what a value
+    // looks like on screen is what has to reach the payload: the save
+    // path used to trim it.
+    apiMock.mcpConfig.mockResolvedValue([
+      {
+        name: 'git',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['mcp-server-git'],
+        env: { TOKEN: ' Basic abc==' },
+      },
+    ]);
+    apiMock.mcpStatus.mockResolvedValue([]);
+    apiMock.saveMCP.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+
+    render(<MCPSection />);
+    await screen.findByText('git');
+    await user.click(screen.getByText('git'));
+    // toHaveValue compares the input's value verbatim: the display-value
+    // query normalizes whitespace and could not tell the two apart.
+    const value = await screen.findByPlaceholderText('VALUE');
+    expect(value).toHaveValue(' Basic abc==');
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await user.click(screen.getByRole('button', { name: 'Save & apply' }));
+
+    expect(apiMock.saveMCP).toHaveBeenCalledWith([
+      expect.objectContaining({
+        name: 'git',
+        env: { TOKEN: ' Basic abc==' },
+      }),
+    ]);
+  });
+
   it('removes a server through the row menu', async () => {
     apiMock.mcpConfig.mockResolvedValue([
       {
@@ -210,5 +250,35 @@ describe('MCPSection', () => {
     expect(screen.queryByText('git')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Save & apply' }));
     expect(apiMock.saveMCP).toHaveBeenCalledWith([]);
+  });
+});
+
+// The env text is read in two places — the dialog's rows and the payload
+// — and they used to disagree: a bare name looked like a key with an
+// empty value in the form and was dropped by the save.
+describe('MCP env text', () => {
+  it('reads a line without "=" as a key with an empty value', () => {
+    expect(parseEnvText('FOO=bar\nBAZ')).toEqual([
+      { key: 'FOO', value: 'bar' },
+      { key: 'BAZ', value: '' },
+    ]);
+    // The same parse feeds the payload, so the row the form shows is the
+    // row that gets saved.
+    expect(envMapFromText('FOO=bar\nBAZ')).toEqual({ FOO: 'bar', BAZ: '' });
+  });
+
+  it('needs a name for a key and keeps the value as typed', () => {
+    // A line starting with '=' names nothing and a blank line is only the
+    // empty row the "add" button round-trips, so neither is a variable.
+    // The value of a real one is stored as it stands.
+    expect(envMapFromText('FOO= bar \n=orphan')).toEqual({ FOO: ' bar ' });
+    expect(envMapFromText('FOO=bar\n\n')).toEqual({ FOO: 'bar' });
+  });
+
+  it('round-trips the rows through the text it read them from', () => {
+    expect(formatEnvText(parseEnvText('A=1\nB='))).toBe('A=1\nB=');
+    // A bare name is the same row with an empty value, so writing the
+    // rows back spells it the one way the payload reads it.
+    expect(formatEnvText(parseEnvText('A=1\nB'))).toBe('A=1\nB=');
   });
 });

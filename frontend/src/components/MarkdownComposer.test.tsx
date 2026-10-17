@@ -1,5 +1,11 @@
 import { createRef } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -74,6 +80,32 @@ describe('MarkdownComposer', () => {
       expect(ref.current?.getMarkdown()).toContain('@src/main.ts');
     });
     expect(apiMock.searchFiles).toHaveBeenCalledWith('');
+  });
+
+  it('does not eat a key the mention popup cannot handle yet', () => {
+    const ref = createRef<MarkdownComposerHandle>();
+    const onSubmit = vi.fn();
+    render(
+      <MarkdownComposer ref={ref} placeholder="Write…" onSubmit={onSubmit} />,
+    );
+    const box = screen.getByRole('textbox');
+
+    act(() => {
+      // "@" starts the suggestion: its popup element is mounted (the keys
+      // are routed to the popup from here on) while its React subtree only
+      // commits on a microtask, so it has no key handler yet.
+      ref.current?.setMarkdown('see @');
+      expect(document.querySelector('.suggestion-popup')).not.toBeNull();
+
+      fireEvent.keyDown(box, { key: 'Enter' });
+    });
+
+    // The key reached the editor, which is what Enter means here: a second
+    // paragraph and no send. Claiming it for a popup that could not handle
+    // it yet left the reader with a dead key — no candidate, no newline and
+    // no send either.
+    expect(box.querySelectorAll('p')).toHaveLength(2);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it('routes Tab to onQueue and Enter to onSubmit outside popups', async () => {

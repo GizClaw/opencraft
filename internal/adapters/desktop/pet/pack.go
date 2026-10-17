@@ -236,21 +236,26 @@ func clonePack(p Pack) Pack {
 // PackStore is the in-memory pet pack registry shared by the main
 // window (plugin registration) and pet windows (rendering). User packs
 // with the same id override builtins; unregistering restores the
-// previous pack so plugin reloads never lose the builtin.
+// previous pack so plugin reloads never lose the builtin. Builtins
+// themselves are never removable: see Unregister.
 type PackStore struct {
-	mu     sync.Mutex
-	byID   map[string]Pack
-	order  []string
-	backup map[string]Pack
+	mu       sync.Mutex
+	byID     map[string]Pack
+	order    []string
+	backup   map[string]Pack
+	builtins map[string]Pack
 }
 
-// NewPackStore seeds the registry with builtin packs.
+// NewPackStore seeds the registry with builtin packs and remembers their
+// ids, which Unregister refuses to delete.
 func NewPackStore(builtins ...Pack) *PackStore {
 	s := &PackStore{
-		byID:   make(map[string]Pack),
-		backup: make(map[string]Pack),
+		byID:     make(map[string]Pack),
+		backup:   make(map[string]Pack),
+		builtins: make(map[string]Pack, len(builtins)),
 	}
 	for _, p := range builtins {
+		s.builtins[p.ID] = p
 		s.Register(p)
 	}
 	return s
@@ -273,7 +278,12 @@ func (s *PackStore) Register(p Pack) bool {
 }
 
 // Unregister removes a pack and restores the pre-override value when
-// one exists.
+// one exists. A builtin is never removed: an id whose current value is
+// the builtin (no override left to restore) is re-seeded instead. That
+// keeps a caller which unregisters an id it never registered — a plugin
+// teardown running after a refused registration, say — from deleting a
+// shipped character; the pet window would otherwise reload with nothing
+// to draw.
 func (s *PackStore) Unregister(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -285,6 +295,9 @@ func (s *PackStore) Unregister(id string) {
 	if _, ok := s.byID[id]; !ok {
 		return
 	}
+	if s.restoreBuiltin(id) {
+		return
+	}
 	delete(s.byID, id)
 	for i, oid := range s.order {
 		if oid == id {
@@ -292,6 +305,21 @@ func (s *PackStore) Unregister(id string) {
 			break
 		}
 	}
+}
+
+// restoreBuiltin puts the builtin pack with this id back in place and
+// reports whether the id names one. The registration order is kept: a
+// builtin that is still listed stays where it was.
+func (s *PackStore) restoreBuiltin(id string) bool {
+	builtin, ok := s.builtins[id]
+	if !ok {
+		return false
+	}
+	if _, listed := s.byID[id]; !listed {
+		s.order = append(s.order, id)
+	}
+	s.byID[id] = builtin
+	return true
 }
 
 // List returns packs in registration order.

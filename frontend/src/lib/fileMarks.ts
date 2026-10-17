@@ -51,16 +51,22 @@ export function classifyMarks(
     paint(layout.tones, range, 'mod');
   }
   for (const del of marks.dels ?? []) {
-    if (del.count <= 0) continue;
-    if (del.after <= 0) {
-      layout.deletes[0].top += del.count;
+    // `after` is an anchor, not an index: it is clamped and truncated
+    // the way paint() treats its ranges, because a fractional or
+    // non-finite value would make `deletes[after]` undefined and throw
+    // during the editor's render (a render error no boundary catches).
+    const count = Math.trunc(del.count);
+    if (!Number.isFinite(count) || count <= 0) continue;
+    const after = Math.trunc(del.after);
+    if (!Number.isFinite(after) || after <= 0) {
+      layout.deletes[0].top += count;
       continue;
     }
-    if (del.after >= lineCount) {
-      layout.deletes[lineCount - 1].bottom += del.count;
+    if (after >= lineCount) {
+      layout.deletes[lineCount - 1].bottom += count;
       continue;
     }
-    layout.deletes[del.after].top += del.count;
+    layout.deletes[after].top += count;
   }
   return layout;
 }

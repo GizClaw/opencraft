@@ -25,6 +25,20 @@ const previews = [
 
 const previewFor = (index: number) => previews[index];
 
+// jsdom has no pointer-event constructor: the event is built by hand and
+// the properties the handler reads are attached to it.
+function pointer(type: string, clientY: number): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.assign(event, { clientY, pointerId: 1, button: 0, buttons: 0 });
+  return event;
+}
+
+// nextFrame waits for the animation frame the ruler scheduled for the
+// sampled pointer.
+function nextFrame(): Promise<void> {
+  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 describe('MessagePeek', () => {
   beforeEach(() => {
     apiMock.resolveTarget.mockReset();
@@ -337,6 +351,79 @@ describe('MessagePeek', () => {
     fireEvent.click(scrubber, { clientY: 200 + 205 / 4 });
 
     expect(onJump).toHaveBeenCalledWith(60);
+    spy.mockRestore();
+  });
+
+  it('coalesces pointer moves into one measurement per frame', async () => {
+    const manyTurns = Array.from({ length: 140 }, (_, i) => ({ index: i }));
+    const rect = {
+      top: 200,
+      height: 205,
+      bottom: 405,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
+    // The tooltip measures itself too, so only the scrubber's own reads are
+    // counted; they are the ones a pointer move forces (a layout, on every
+    // event before this change).
+    let measured = 0;
+    const spy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute('role') === 'slider') measured += 1;
+        return rect;
+      });
+    render(
+      <MessagePeek
+        items={manyTurns}
+        activeRange={{ start: 69, end: 71 }}
+        onJump={vi.fn()}
+        getPreview={previewFor}
+      />,
+    );
+
+    const scrubber = screen.getByRole('slider', {
+      name: 'Message peek: turn scrubber',
+    });
+    measured = 0;
+    // A quarter of the way down the block is turn 60 (see the test above).
+    const clientY = 200 + 205 / 4;
+    act(() => {
+      for (let i = 0; i < 41; i += 1) {
+        scrubber.dispatchEvent(pointer('pointermove', clientY));
+      }
+    });
+    // A move only records where the pointer is; the frame does the work.
+    expect(measured).toBe(0);
+
+    await act(async () => {
+      await nextFrame();
+    });
+    // 41 moves, one measurement, one hovered turn.
+    expect(measured).toBe(1);
+    expect(scrubber).toHaveAttribute('aria-valuenow', '61');
+    expect(scrubber).toHaveAttribute('aria-valuetext', 'Turn 61');
+    expect(
+      document.querySelector('[data-peek-tick="60"]')?.className,
+    ).toContain('bg-accent/70');
+
+    // 41 more moves inside the same dash: another frame measures again, but
+    // the index under the pointer is the one already hovered, so no state is
+    // written for it.
+    act(() => {
+      for (let i = 0; i < 41; i += 1) {
+        scrubber.dispatchEvent(pointer('pointermove', clientY));
+      }
+    });
+    await act(async () => {
+      await nextFrame();
+    });
+    expect(measured).toBe(2);
+    expect(scrubber).toHaveAttribute('aria-valuenow', '61');
     spy.mockRestore();
   });
 });

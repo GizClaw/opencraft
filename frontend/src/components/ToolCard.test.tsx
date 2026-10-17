@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { parseUnifiedDiff } from '../lib/diff';
 import type { ToolView } from '../lib/store';
 import { ApplyPatchView, ToolCard } from './ToolCard';
 
@@ -11,6 +12,13 @@ const apiMock = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
+
+// The diff reader is counted, not replaced: every test below still renders
+// whatever it rendered before, the mock only records the calls.
+vi.mock('../lib/diff', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/diff')>();
+  return { ...actual, parseUnifiedDiff: vi.fn(actual.parseUnifiedDiff) };
+});
 
 beforeEach(() => {
   apiMock.renderPatch.mockReset();
@@ -691,5 +699,106 @@ describe('AskUserView', () => {
     expect(
       screen.getByText(chosen.join(', '), { exact: false }),
     ).toBeInTheDocument();
+  });
+});
+
+// A tool card parses its own payloads: the arguments the call was made
+// with, and the result it produced. Both are read from several places on
+// every render, and a virtualized transcript mounts a row again every time
+// it scrolls back into view, so both are cached per payload (the store
+// replaces a tool object instead of mutating it, which is what makes
+// identity a valid key). These tests count the parses; the cache is what
+// keeps the count at one per payload.
+describe('ToolCard payload parsing', () => {
+  it('parses one payload of arguments once', async () => {
+    const user = userEvent.setup();
+    const args = JSON.stringify({
+      file_path: 'src/store.ts',
+      body: 'line\n'.repeat(4),
+    });
+    const parseSpy = vi.spyOn(JSON, 'parse');
+    const parsedArgs = () =>
+      parseSpy.mock.calls.filter(([text]) => text === args).length;
+
+    render(<ToolCard tool={tool({ name: 'custom_tool', args })} />);
+    // The header summary reads them once...
+    expect(parsedArgs()).toBe(1);
+
+    // ...and the expanded body reads the same payload again from two more
+    // call sites (the summary row and the pretty-printed argument block)
+    // without parsing the text a second time.
+    await user.click(screen.getByRole('button', { name: /custom_tool/ }));
+    expect(parsedArgs()).toBe(1);
+
+    parseSpy.mockRestore();
+  });
+
+  it('parses a tool result once per payload, remounts included', () => {
+    const result = JSON.stringify({
+      exit_code: 0,
+      stdout: 'line\n'.repeat(80),
+      stderr: '',
+    });
+    const parseSpy = vi.spyOn(JSON, 'parse');
+    const parsedResult = () =>
+      parseSpy.mock.calls.filter(([text]) => text === result).length;
+    const payload = tool({ result });
+
+    const first = render(<ToolCard tool={payload} />);
+    expect(parsedResult()).toBe(1);
+
+    // Scrolling away and back mounts the row again with the same payload:
+    // the cache hangs on the data object, not on the component, so the
+    // parse is not repeated.
+    first.unmount();
+    render(<ToolCard tool={payload} />);
+    expect(parsedResult()).toBe(1);
+
+    parseSpy.mockRestore();
+  });
+
+  it('scans a read result for a diff once per payload', () => {
+    const diffSpy = vi.mocked(parseUnifiedDiff);
+    diffSpy.mockClear();
+    const content = 'plain source line\n'.repeat(200);
+    const payload = tool({
+      name: 'read_file',
+      args: '{"file_path":"src/store.ts"}',
+      result: JSON.stringify({
+        file_path: 'src/store.ts',
+        content,
+        offset: 10,
+        total_lines: 1000,
+        is_truncated: true,
+      }),
+    });
+
+    const first = render(<ToolCard tool={payload} />);
+    expect(diffSpy).toHaveBeenCalledTimes(1);
+    // The header still reports the range the read actually returned — the
+    // count and the envelope come from the same cached shape.
+    expect(screen.getByText('Lines 10–209 of 1000')).toBeInTheDocument();
+
+    first.unmount();
+    render(<ToolCard tool={payload} />);
+    expect(diffSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('recounts a written file when a new payload arrives', () => {
+    const write = (lines: number) => {
+      const content = 'line\n'.repeat(lines - 1) + 'line';
+      return tool({
+        name: 'write_file',
+        args: JSON.stringify({ file_path: 'src/big.go', content }),
+      });
+    };
+
+    const { rerender } = render(<ToolCard tool={write(41)} />);
+    expect(screen.getByText('41 lines')).toBeInTheDocument();
+
+    // A streamed delta is a new payload, and a new payload is a new count:
+    // the cache must never outlive the data it was computed from.
+    rerender(<ToolCard tool={write(50)} />);
+    expect(screen.getByText('50 lines')).toBeInTheDocument();
   });
 });

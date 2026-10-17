@@ -52,7 +52,10 @@ const petIdlePauseAfter = 20_000;
 // petGeometryInterval is how often the surface re-measures the drawn
 // character. The box only moves when the pose changes materially, and a
 // report is only sent when it did: Go parks the window and computes the
-// watch spot from it.
+// watch spot from it. The measurement itself is a GPU→CPU readback, so
+// it follows the picture: it is skipped while the runtime is parked or
+// the window is hidden, because a frozen frame cannot measure
+// differently from the last read.
 const petGeometryInterval = 500;
 
 /**
@@ -79,6 +82,13 @@ export default function PetSurface() {
   const reactionTimer = useRef<number | undefined>(undefined);
   const pauseTimer = useRef<number | undefined>(undefined);
   const hiddenRef = useRef(false);
+  // pausedRef tracks whether this surface paused the renderer. Rive's
+  // play() tears its pointer listeners down and re-creates them and
+  // restarts the render loop, so resuming a runtime that was never
+  // paused costs the whole listener setup for nothing — and the
+  // director broadcasts a snapshot on every phase, tool and intent
+  // change.
+  const pausedRef = useRef(false);
   const surfaceRef = useRef<HTMLElement | null>(null);
   const lastIntentSeqRef = useRef(0);
   const reportedGeometryRef = useRef('');
@@ -102,6 +112,20 @@ export default function PetSurface() {
     raf: 0,
   });
 
+  const pauseRive = () => {
+    if (pausedRef.current) return;
+    pausedRef.current = true;
+    riveRef.current?.pause();
+  };
+
+  // resumeRive is the only caller of play(): playback is started either
+  // by a fresh runtime (the mount effect) or by waking a paused one.
+  const resumeRive = () => {
+    if (!pausedRef.current) return;
+    pausedRef.current = false;
+    riveRef.current?.play();
+  };
+
   // Park the runtime once the character has been still for a while:
   // sleeping or idling with no motion, no intent and no fresh payload.
   const scheduleIdlePause = () => {
@@ -118,7 +142,7 @@ export default function PetSurface() {
         return;
       }
       if (!idle) return;
-      riveRef.current?.pause();
+      pauseRive();
     }, petIdlePauseAfter);
   };
 
@@ -142,8 +166,10 @@ export default function PetSurface() {
       setPet(next);
       riveRef.current?.apply(next);
       if (!hiddenRef.current) {
-        // Any fresh payload wakes the renderer back up.
-        riveRef.current?.play();
+        // Any fresh payload wakes the renderer back up — but only one
+        // that is actually parked: play() on a running runtime rebuilds
+        // its listeners and restarts the loop for no reason.
+        resumeRive();
         scheduleIdlePause();
       }
       // One-shots replay only when the intent sequence moved; the
@@ -184,10 +210,10 @@ export default function PetSurface() {
           window.clearTimeout(pauseTimer.current);
           pauseTimer.current = undefined;
         }
-        riveRef.current?.pause();
+        pauseRive();
         return;
       }
-      riveRef.current?.play();
+      resumeRive();
       scheduleIdlePause();
     };
     document.addEventListener('visibilitychange', onVisibility);
@@ -276,6 +302,9 @@ export default function PetSurface() {
         }
         handle = created;
         riveRef.current = created;
+        // A freshly created runtime is playing; only a pause() this
+        // surface performed may be undone by a later play().
+        pausedRef.current = false;
         setRiveReady(true);
         created.resize();
         created.apply(petRef.current);
@@ -326,7 +355,14 @@ export default function PetSurface() {
       });
     };
     report();
-    const timer = window.setInterval(report, petGeometryInterval);
+    // The sampler follows the picture: a parked runtime and a hidden
+    // window both keep the last frame on screen, so re-reading the
+    // pixels cannot change the answer (and the report above is
+    // deduplicated by the geometry key anyway).
+    const timer = window.setInterval(() => {
+      if (pausedRef.current || document.hidden) return;
+      report();
+    }, petGeometryInterval);
     return () => window.clearInterval(timer);
   }, []);
 

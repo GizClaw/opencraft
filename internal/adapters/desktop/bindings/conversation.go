@@ -2,6 +2,7 @@ package bindings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -306,19 +307,37 @@ func resultErr(res *agent.Result) error {
 	return res.Err
 }
 
+// waitStatus names the terminal a settled wait reports. The engine's
+// own statuses are the only ones the wire carries: "unknown" was a
+// local placeholder for a wait that produced no result, and a consumer
+// can do nothing with it but guess (the frontend reads it as a
+// failure). A result-less wait is the caller's context going away —
+// the app is closing and the run goes with it — or a wait that raced
+// the run's own release; both report the terminal they support: a
+// cancelled context is a cancelled turn (the error kind still says
+// timeout when it was a deadline), and anything else failed before the
+// run produced a result.
+func waitStatus(res *agent.Result, waitErr error) string {
+	if res != nil && res.Status != "" {
+		return string(res.Status)
+	}
+	if errors.Is(waitErr, context.Canceled) ||
+		errors.Is(waitErr, context.DeadlineExceeded) {
+		return string(agent.StatusCanceled)
+	}
+	return string(agent.StatusFailed)
+}
+
 func (b *Conversation) waitTurn(
 	ctx context.Context,
 	run *host.Run,
 	contextID string,
 ) {
 	res, err := run.Wait(ctx)
-	status := "unknown"
+	status := waitStatus(res, err)
 	var errText string
-	if res != nil {
-		status = string(res.Status)
-		if res.Err != nil {
-			errText = res.Err.Error()
-		}
+	if res != nil && res.Err != nil {
+		errText = res.Err.Error()
 	}
 	if err != nil && errText == "" {
 		errText = err.Error()

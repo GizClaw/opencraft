@@ -73,7 +73,7 @@ import { UsageModelSelect } from './UsageModelSelect';
 import { UsageRangePicker } from './UsageRangePicker';
 import { MCPSection } from './ToolsPanel';
 import { AdvancedSection } from './InferenceAdvanced';
-import { ModelAdvanced } from './ModelAdvanced';
+import { ModelAdvanced, specJsonError } from './ModelAdvanced';
 import { PluginPanels } from '../plugins/components/PluginPanels';
 import { usePluginStore } from '../plugins/store';
 import { Events } from '@wailsio/runtime';
@@ -207,8 +207,10 @@ function driverFieldsText(fields: Record<string, unknown> | undefined): string {
 }
 
 // driverFieldsPayload reads the edited JSON back. Invalid input yields
-// undefined: the save is blocked by the form's own validation, and the
-// writer validates again.
+// undefined, which would send no driver_fields at all and drop what the
+// model had stored, so save() refuses the submit while specJsonError
+// says the text is not an object (the row draws the red hint meanwhile)
+// and the writer validates again.
 function driverFieldsPayload(
   text: string,
 ): Record<string, unknown> | undefined {
@@ -245,6 +247,63 @@ function credentialPayload(
   }
   if (r.keySet) return { key_source: r.keyKeychain ? 'keychain' : 'literal' };
   return {};
+}
+
+// instancesFromRows is the wire shape of the edited rows. save() submits
+// it, and the unsaved-changes check compares it with the snapshot the
+// form was loaded from, so "is this form edited" has one definition.
+function instancesFromRows(rows: InstanceRow[]): InstanceSpec[] {
+  return rows.map((r) => ({
+    stable_id: r.stableId === '' ? undefined : r.stableId,
+    type: r.type,
+    name: r.name.trim() === '' ? undefined : r.name.trim(),
+    driver: r.driver.trim() === '' ? undefined : r.driver.trim(),
+    api: r.api === '' ? undefined : r.api,
+    endpoint: r.endpoint.trim() === '' ? undefined : r.endpoint.trim(),
+    ...credentialPayload(r),
+    enabled: r.enabled,
+    advanced: r.advanced,
+    models: r.models.map((m) => ({
+      name: m.name,
+      kind: m.kind === '' ? undefined : m.kind,
+      capabilities: {
+        inputs: m.inputs,
+        outputs: m.outputs,
+        reasoning:
+          m.reasoning === ''
+            ? undefined
+            : {
+                kind: m.reasoning,
+                effort_map:
+                  Object.keys(m.reasoningEffortMap).length === 0
+                    ? undefined
+                    : m.reasoningEffortMap,
+              },
+        hosted_web_search: m.webSearch || undefined,
+      },
+      endpoint: m.endpoint.trim() === '' ? undefined : m.endpoint.trim(),
+      limits: {
+        max_input_tokens:
+          m.maxInputTokens === '' ? undefined : m.maxInputTokens,
+        max_output_tokens:
+          m.maxOutputTokens === '' ? undefined : m.maxOutputTokens,
+      },
+      lifecycle: modelLifecyclePayload(m),
+      driver_fields: driverFieldsPayload(m.specJson),
+    })),
+  }));
+}
+
+// inferenceSnapshot renders the inference form (its rows, the router
+// policy and the default model) as one string. The snapshot a load puts
+// in the form and the draft on screen are rendered by this one function,
+// so equality between them means "nothing was edited".
+function inferenceSnapshot(
+  rows: InstanceRow[],
+  router: RouterPolicy,
+  model: string,
+): string {
+  return JSON.stringify({ instances: instancesFromRows(rows), router, model });
 }
 
 // emptyModelRow is the row a new instance or model starts from:
@@ -329,6 +388,25 @@ function templateMatches(
     template.vendor ?? '',
     ...(template.models ?? []).map((m) => m.name),
   ].some((field) => field.toLowerCase().includes(needle));
+}
+
+// groupCatalogModels indexes the built-in model list by provider type,
+// narrowed by the open list's search box: one pass over the catalog,
+// memoized by its caller. The model rows used to filter the whole
+// catalog once each per render (the trigger's visibility check, the list
+// itself and its empty state), which is 3× the catalog per row and per
+// keystroke in the search box.
+function groupCatalogModels(
+  models: InferenceCatalogModel[],
+  query: string,
+): Map<string, InferenceCatalogModel[]> {
+  const byType = new Map<string, InferenceCatalogModel[]>();
+  for (const entry of models.filter((m) => catalogEntryMatches(m, query))) {
+    const list = byType.get(entry.type);
+    if (list === undefined) byType.set(entry.type, [entry]);
+    else list.push(entry);
+  }
+  return byType;
 }
 
 // DiagSection groups the diagnostics tab into scannable blocks. The tab
@@ -485,6 +563,14 @@ export function ConfigPage() {
   // that no longer exists.
   const [newType, setNewType] = useState('');
   const [defaultModel, setDefaultModel] = useState('');
+  // The inference form is a draft of the last server snapshot: rows,
+  // router and defaultModel are the editable copy of it. inferenceBase
+  // keeps that snapshot in the wire shape, so an event-driven refresh
+  // can tell "the user is editing" from "the form is untouched" — the
+  // tab carries no dirty marker of its own. inferencePending remembers a
+  // refresh that arrived while it could not be applied.
+  const [inferenceBase, setInferenceBase] = useState('');
+  const [inferencePending, setInferencePending] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [rules, setRules] = useState<string[]>([]);
@@ -506,6 +592,11 @@ export function ConfigPage() {
   // loaded with the form and updated on every successful save, so the bar
   // cannot claim "unsaved" before the user has touched anything.
   const [memoryBase, setMemoryBase] = useState<MemorySettings | null>(null);
+  // The memory draft versus the values the last load or save put there.
+  // The card's save bar and the memory tab's fetch read the same fact, so
+  // a refetch can never land on an unsaved draft.
+  const memoryDirty =
+    memoryBase !== null && !sameMemorySettings(memory, memoryBase);
   const [diag, setDiag] = useState<DiagnosticsReport | null>(null);
   const [probe, setProbe] = useState<SandboxProbeResult | null>(null);
   const [policyInput, setPolicyInput] = useState('');
@@ -557,36 +648,37 @@ export function ConfigPage() {
       setNewType((prev) =>
         providers.some((p) => p.id === prev) ? prev : (providers[0]?.id ?? ''),
       );
-      setRows(
-        (state.instances ?? []).map((s) => {
-          const models = (s.models ?? []).map(rowModelFromSpec);
-          return {
-            id: newID(),
-            stableId: s.stable_id ?? '',
-            type: s.type,
-            driver: s.driver ?? '',
-            name: s.name ?? '',
-            api: s.api ?? '',
-            key: '',
-            keyRef: s.key_ref ?? '',
-            keySet: s.key_set ?? false,
-            keyEnv: s.key_env ?? false,
-            keyKeychain: s.key_keychain ?? false,
-            models: models.length > 0 ? models : [emptyModelRow()],
-            endpoint: s.endpoint ?? '',
-            advanced: s.advanced ?? {},
-            enabled: s.enabled ?? true,
-            managed: s.managed ?? false,
-          };
-        }),
-      );
-      setRouter(
-        state.router ?? {
-          max_attempts: 2,
-          fallback_on_retry_exhausted: true,
-        },
-      );
+      const nextRows: InstanceRow[] = (state.instances ?? []).map((s) => {
+        const models = (s.models ?? []).map(rowModelFromSpec);
+        return {
+          id: newID(),
+          stableId: s.stable_id ?? '',
+          type: s.type,
+          driver: s.driver ?? '',
+          name: s.name ?? '',
+          api: s.api ?? '',
+          key: '',
+          keyRef: s.key_ref ?? '',
+          keySet: s.key_set ?? false,
+          keyEnv: s.key_env ?? false,
+          keyKeychain: s.key_keychain ?? false,
+          models: models.length > 0 ? models : [emptyModelRow()],
+          endpoint: s.endpoint ?? '',
+          advanced: s.advanced ?? {},
+          enabled: s.enabled ?? true,
+          managed: s.managed ?? false,
+        };
+      });
+      const nextRouter: RouterPolicy = state.router ?? {
+        max_attempts: 2,
+        fallback_on_retry_exhausted: true,
+      };
+      setRows(nextRows);
+      setRouter(nextRouter);
       setDefaultModel(state.model);
+      // The baseline the edited draft is compared against (see
+      // inferenceDirty below).
+      setInferenceBase(inferenceSnapshot(nextRows, nextRouter, state.model));
     } catch (err) {
       setError(String(err));
     }
@@ -596,15 +688,42 @@ export function ConfigPage() {
     void loadInference();
   }, [loadInference]);
 
+  // Did the user edit the inference form since it was loaded (or saved)?
+  // Rendered by the same function as the loaded snapshot, so an untouched
+  // form compares equal to it; the empty string means "nothing loaded
+  // yet", which is never an edit.
+  const inferenceDirty =
+    inferenceBase !== '' &&
+    inferenceBase !== inferenceSnapshot(rows, router, defaultModel);
+
   // Refresh the inference config when a plugin upserts/removes a
-  // gateway profile (e.g. after SSO login/logout).
+  // gateway profile (e.g. after SSO login/logout). That refresh replaces
+  // the rows, the router policy and the default model wholesale, and the
+  // inference tab has no dirty marker (its save button is always live),
+  // so an edit would vanish with nothing said. An unsaved draft
+  // therefore wins: the refresh waits until the form is back on the
+  // loaded values.
   useEffect(() => {
     const off = Events.On(UIEventChannel, (e) => {
       const ev = e.data as UIEvent;
-      if (ev.type === UIEventType.inferenceChanged) void loadInference();
+      if (ev.type !== UIEventType.inferenceChanged) return;
+      if (inferenceDirty) {
+        setInferencePending(true);
+        return;
+      }
+      void loadInference();
     });
     return off;
-  }, [loadInference]);
+  }, [loadInference, inferenceDirty]);
+
+  // A refresh that arrived while the user was editing is deferred, not
+  // dropped: it lands as soon as the draft is clean again (or the form is
+  // saved, which makes the just-saved values the baseline).
+  useEffect(() => {
+    if (!inferencePending || inferenceDirty) return;
+    setInferencePending(false);
+    void loadInference();
+  }, [inferencePending, inferenceDirty, loadInference]);
 
   useEffect(() => {
     if (tab !== 'permissions') return;
@@ -623,11 +742,16 @@ export function ConfigPage() {
     void api
       .memoryConfig()
       .then((next) => {
+        // An unsaved draft wins over the fetch: re-entering the tab used
+        // to reload the form and the baseline it is compared against, so
+        // the edits on screen vanished and the bar stopped saying there
+        // were any.
+        if (memoryDirty) return;
         setMemory(next);
         setMemoryBase(next);
       })
       .catch((err) => setError(String(err)));
-  }, [tab]);
+  }, [tab, memoryDirty]);
 
   useEffect(() => {
     if (tab !== 'diagnostics') return;
@@ -784,6 +908,12 @@ export function ConfigPage() {
       .modelUsageSeries(
         usageModel,
         granularity,
+        // The zone, not just the offset: the day buckets are calendar
+        // days, and this side fills the empty ones by stepping the local
+        // calendar (fillUsageSeries). The offset alone cannot express the
+        // 23- and 25-hour days a DST switch makes, so the two grids would
+        // disagree by a bucket around it.
+        Intl.DateTimeFormat().resolvedOptions().timeZone,
         -new Date().getTimezoneOffset(),
         new Date(window.start).toISOString(),
         new Date(window.end).toISOString(),
@@ -874,14 +1004,31 @@ export function ConfigPage() {
     ]);
   };
 
-  // catalogModelsFor lists the built-in models that belong to one
-  // provider type, optionally filtered by the list's search box. Several
-  // vendors share the OpenAI wire family, so the vendor label is what
-  // tells them apart.
-  const catalogModelsFor = (type: string, query = '') =>
-    modelCatalog.filter(
-      (m) => m.type === type && catalogEntryMatches(m, query),
-    );
+  // The built-in models grouped by provider type. Several vendors share
+  // the OpenAI wire family, so the vendor label is what tells them
+  // apart. Both indexes are computed once per (catalog, query) instead of
+  // once per row per render: the rows used to run three catalog sweeps
+  // each (the trigger's visibility check, the open list and its empty
+  // state), which is 3× the catalog for every keystroke in the search
+  // box.
+  const catalogByType = useMemo(
+    () => groupCatalogModels(modelCatalog, ''),
+    [modelCatalog],
+  );
+  const matchingCatalog = useMemo(
+    () => groupCatalogModels(modelCatalog, catalogQuery),
+    [modelCatalog, catalogQuery],
+  );
+
+  // catalogModelsFor answers whether one provider type has a catalog to
+  // offer. It reads the unfiltered index on purpose: the button it gates
+  // anchors the open list, so a search that matches nothing must not
+  // unmake its own trigger.
+  const catalogModelsFor = (type: string) => catalogByType.get(type) ?? [];
+
+  // catalogForQuery is the same list narrowed by the open list's search
+  // box.
+  const catalogForQuery = (type: string) => matchingCatalog.get(type) ?? [];
 
   // applyCatalogModel fills one model row from the catalog. The patch it
   // produces is typed as a model-only patch on purpose: picking a model
@@ -1033,6 +1180,14 @@ export function ConfigPage() {
     }
     for (const r of rows) {
       for (const m of r.models) {
+        // The row draws the red hint, but the submit has to refuse too:
+        // driverFieldsPayload turns text that is not an object into
+        // undefined, so saving past it would drop the driver fields the
+        // model has stored and report success.
+        if (specJsonError(m.specJson)) {
+          setError(t('config.modelAdvanced.driverFieldsInvalid'));
+          return;
+        }
         if (
           m.reasoning !== '' &&
           Object.keys(m.reasoningEffortMap).length > 0 &&
@@ -1043,48 +1198,13 @@ export function ConfigPage() {
         }
       }
     }
-    const instances: InstanceSpec[] = rows.map((r) => ({
-      stable_id: r.stableId === '' ? undefined : r.stableId,
-      type: r.type,
-      name: r.name.trim() === '' ? undefined : r.name.trim(),
-      driver: r.driver.trim() === '' ? undefined : r.driver.trim(),
-      api: r.api === '' ? undefined : r.api,
-      endpoint: r.endpoint.trim() === '' ? undefined : r.endpoint.trim(),
-      ...credentialPayload(r),
-      enabled: r.enabled,
-      advanced: r.advanced,
-      models: r.models.map((m) => ({
-        name: m.name,
-        kind: m.kind === '' ? undefined : m.kind,
-        capabilities: {
-          inputs: m.inputs,
-          outputs: m.outputs,
-          reasoning:
-            m.reasoning === ''
-              ? undefined
-              : {
-                  kind: m.reasoning,
-                  effort_map:
-                    Object.keys(m.reasoningEffortMap).length === 0
-                      ? undefined
-                      : m.reasoningEffortMap,
-                },
-          hosted_web_search: m.webSearch || undefined,
-        },
-        endpoint: m.endpoint.trim() === '' ? undefined : m.endpoint.trim(),
-        limits: {
-          max_input_tokens:
-            m.maxInputTokens === '' ? undefined : m.maxInputTokens,
-          max_output_tokens:
-            m.maxOutputTokens === '' ? undefined : m.maxOutputTokens,
-        },
-        lifecycle: modelLifecyclePayload(m),
-        driver_fields: driverFieldsPayload(m.specJson),
-      })),
-    }));
+    const instances = instancesFromRows(rows);
     setSaving(true);
     try {
       await api.saveInstances({ instances, router });
+      // What was just written is the form's new baseline: the draft is
+      // no longer an unsaved edit, so a deferred refresh may land.
+      setInferenceBase(inferenceSnapshot(rows, router, defaultModel));
       toast(t('config.saved'));
       closeConfig();
     } catch (err) {
@@ -1790,10 +1910,7 @@ export function ConfigPage() {
                                         className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
                                       />
                                     </div>
-                                    {catalogModelsFor(
-                                      row.type,
-                                      catalogQuery,
-                                    ).map((entry) => (
+                                    {catalogForQuery(row.type).map((entry) => (
                                       <button
                                         key={entry.id}
                                         type="button"
@@ -1812,8 +1929,7 @@ export function ConfigPage() {
                                         </span>
                                       </button>
                                     ))}
-                                    {catalogModelsFor(row.type, catalogQuery)
-                                      .length === 0 && (
+                                    {catalogForQuery(row.type).length === 0 && (
                                       <p className="px-2.5 py-1.5 text-xs text-dim">
                                         {t('config.modelSearchEmpty')}
                                       </p>
@@ -2660,10 +2776,7 @@ export function ConfigPage() {
                   settings={memory}
                   onChange={editMemory}
                   saved={memorySaved}
-                  dirty={
-                    memoryBase !== null &&
-                    !sameMemorySettings(memory, memoryBase)
-                  }
+                  dirty={memoryDirty}
                   saving={memorySaving}
                   error={error}
                   onSave={() => void saveMemory()}

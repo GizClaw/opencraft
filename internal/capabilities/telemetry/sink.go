@@ -153,13 +153,13 @@ func (s Sink) Clone() Sink {
 	return out
 }
 
-// HeaderNames returns the sorted header names of the sink. It never
-// exposes values: header values are credentials, header names are
-// diagnostic.
+// HeaderNames returns the sorted header names of the sink, or an empty
+// list — never nil — when there are none. It never exposes values:
+// header values are credentials, header names are diagnostic. The
+// non-nil empty slice is the contract: the names are handed to the
+// diagnostics card as JSON, and a nil slice marshals to null, which is
+// the shape the card used to crash on.
 func (s Sink) HeaderNames() []string {
-	if len(s.Headers) == 0 {
-		return nil
-	}
 	names := make([]string, 0, len(s.Headers))
 	for name := range s.Headers {
 		names = append(names, name)

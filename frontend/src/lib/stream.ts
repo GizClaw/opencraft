@@ -26,13 +26,23 @@ export const STREAM_REASONING_FLUSH_INTERVAL_MS = 250;
 // committed. Mixed queues (a thought and then prose, or a tool call
 // arriving mid-reasoning) take the text cadence: the answer's own words
 // must never be the slow part.
-export function streamFlushInterval(events: UIEvent[]): number {
+// isReasoningDelta is the per-event half of that test. A caller holding
+// a queue keeps it as a flag while it enqueues (the queue can be
+// thousands of deltas long, and rescanning it on every delta to answer
+// the same question is quadratic); a caller holding the array can ask
+// about the whole array through streamFlushInterval.
+export function isReasoningDelta(ev: UIEvent): boolean {
+  const delta = (ev.data as { delta?: StreamDelta }).delta;
+  return delta?.type === 'part' && delta.part?.type === 'reasoning';
+}
+
+export function streamFlushInterval(
+  events: UIEvent[],
+  reasoningOnly?: boolean,
+): number {
   if (events.length === 0) return STREAM_TEXT_FLUSH_INTERVAL_MS;
-  const reasoningOnly = events.every((ev) => {
-    const delta = (ev.data as { delta?: StreamDelta }).delta;
-    return delta?.type === 'part' && delta.part?.type === 'reasoning';
-  });
-  return reasoningOnly
+  const only = reasoningOnly ?? events.every(isReasoningDelta);
+  return only
     ? STREAM_REASONING_FLUSH_INTERVAL_MS
     : STREAM_TEXT_FLUSH_INTERVAL_MS;
 }
@@ -167,4 +177,47 @@ export function coalesceStreamEvents(events: UIEvent[]): UIEvent[] {
   }
   flushActive();
   return out;
+}
+
+// flushDurations keeps the last few stream-flush timings so the optional
+// perf probe can report the transcript's per-frame cost without a
+// profiler attached. It is a fixed-size ring: no growth, no allocation
+// per flush beyond one number.
+export const FLUSH_SAMPLE_SIZE = 256;
+
+// flushTotal counts every flush of the page's lifetime. The ring above can
+// only ever say how many timings it kept — its capacity, not activity — so
+// the probe diffs this total between reports to get the flushes that
+// happened inside each reporting window.
+export let flushTotal = 0;
+
+export const flushDurations: number[] = [];
+
+export function recordFlushDuration(ms: number) {
+  flushTotal += 1;
+  flushDurations.push(ms);
+  if (flushDurations.length > FLUSH_SAMPLE_SIZE) flushDurations.shift();
+}
+
+// streamFlushStats summarizes the recorded flush timings: total is the
+// page-lifetime count, the percentiles describe the last FLUSH_SAMPLE_SIZE
+// flushes (nearest-rank, which is what the probe reports as P50/P95).
+export function streamFlushStats(): {
+  total: number;
+  p50: number;
+  p95: number;
+  max: number;
+} {
+  if (flushDurations.length === 0) {
+    return { total: flushTotal, p50: 0, p95: 0, max: 0 };
+  }
+  const sorted = [...flushDurations].sort((a, b) => a - b);
+  const pick = (q: number) =>
+    sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
+  return {
+    total: flushTotal,
+    p50: pick(0.5),
+    p95: pick(0.95),
+    max: sorted[sorted.length - 1],
+  };
 }

@@ -23,3 +23,16 @@ export function sameWorkspacePath(a: string, b: string): boolean {
   const left = norm(a);
   return left !== '' && left === norm(b);
 }
+
+/**
+ * workspaceLabel is the folder a workspace path names — what the UI shows
+ * as its title. Diagnostics use it too: a message that carries the full
+ * path reaches the telemetry log as `<path>` (frontendErrors redacts
+ * absolute paths), which would say nothing about which workspace was
+ * involved.
+ */
+export function workspaceLabel(path: string): string {
+  const cut = path.trim().replace(/[/\\]+$/, '');
+  const at = Math.max(cut.lastIndexOf('/'), cut.lastIndexOf('\\'));
+  return at < 0 ? cut : cut.slice(at + 1);
+}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	"go.opentelemetry.io/otel/attribute"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
@@ -247,8 +248,11 @@ type Point struct {
 // Series returns usage bucketed by hour or day, oldest first. An empty
 // model aggregates every model (the dashboard's all-models trend);
 // otherwise only that model's rows are summed. Hour buckets keep the
-// stored UTC hour string; day buckets are local calendar days computed
-// with utcOffsetMinutes, so boundaries match the viewer's timezone.
+// stored UTC hour string; day buckets are local calendar days in the
+// viewer's timezone (see dayZone), so boundaries match the grid the
+// charts fill. A stored hour that does not parse as RFC3339 cannot be
+// placed on a calendar and is skipped, with a warning: one unreadable
+// row must not blank a whole trend.
 // start and end bound the recorded UTC hours ([start, end)); rows are
 // whole UTC hours, and a row is included when its hour starts inside
 // the window. Empty strings leave that side unbounded.
@@ -256,6 +260,7 @@ func (s *Store) Series(
 	ctx context.Context,
 	model string,
 	granularity Granularity,
+	timeZone string,
 	utcOffsetMinutes int,
 	start, end string,
 ) ([]Point, error) {
@@ -308,13 +313,19 @@ func (s *Store) Series(
 	// Day buckets are computed in Go from the raw UTC hours so every
 	// row is labelled with the same local date (hour + offset) that the
 	// viewer sees, independent of the SQL hour-string comparison.
-	zone := time.FixedZone("", utcOffsetMinutes*60)
+	zone := dayZone(timeZone, utcOffsetMinutes)
 	byDay := make(map[string]*Point, len(rawRows))
 	var days []string
+	skipped := 0
 	for _, r := range rawRows {
 		t, err := time.Parse(time.RFC3339, r.hour)
 		if err != nil {
-			return nil, fmt.Errorf("usage: series: parse hour %q: %w", r.hour, err)
+			// A row this build cannot read cannot be placed on the
+			// viewer's calendar. Skipping it keeps the rest of the
+			// trend readable; failing the call would blank the whole
+			// chart over one row no writer in this tree produces.
+			skipped++
+			continue
 		}
 		day := t.In(zone).Format("2006-01-02")
 		p := byDay[day]
@@ -329,9 +340,31 @@ func (s *Store) Series(
 		p.CacheWriteTokens += r.p.CacheWriteTokens
 		p.ReasoningTokens += r.p.ReasoningTokens
 	}
+	if skipped > 0 {
+		telemetry.Warn(ctx, "usage: series: skipped hours that are not RFC3339",
+			attribute.Int("hours", skipped))
+	}
 	out := make([]Point, 0, len(days))
 	for _, day := range days {
 		out = append(out, *byDay[day])
 	}
 	return out, nil
+}
+
+// dayZone resolves where a day starts for the day buckets.
+//
+// The viewer names its own zone (an IANA name, the same one the charts
+// step their empty buckets with); a fixed offset cannot express the days
+// a DST switch makes 23 or 25 hours long, so it would split one local
+// day across two buckets and repeat another's. The offset is still what
+// answers when no name arrives or this machine cannot resolve it (a
+// Windows build without embedded tzdata, an exotic name): coarse beats
+// refusing to draw.
+func dayZone(name string, utcOffsetMinutes int) *time.Location {
+	if name != "" {
+		if loc, err := time.LoadLocation(name); err == nil {
+			return loc
+		}
+	}
+	return time.FixedZone("", utcOffsetMinutes*60)
 }

@@ -48,6 +48,7 @@ import { RefreshControl } from './RefreshControl';
 import { parseUnifiedDiff } from '../lib/diff';
 import { KIND_MARK, groupEntries, kindClass } from '../lib/gitKinds';
 import { useStore } from '../lib/store';
+import { useLatestRequest } from '../lib/useLatest';
 import { useConversationState } from '../state/react';
 import { Events } from '@wailsio/runtime';
 import { dateLabel } from '../lib/format';
@@ -123,6 +124,11 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
   const spinStartedAt = useRef(0);
   const spinEndTimer = useRef<number | null>(null);
   const prevBusy = useRef(busy);
+  const mounted = useRef(true);
+  // diffTicket orders the diff loads: title (`selected`) and body
+  // (`detail`) come from the same ticket, so whichever request is
+  // newest owns both, however the responses interleave.
+  const diffTicket = useLatestRequest();
 
   const beginSpin = useCallback(() => {
     if (spinEndTimer.current !== null) {
@@ -137,23 +143,30 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
   const endSpin = useCallback(() => {
     spinCount.current = Math.max(0, spinCount.current - 1);
     if (spinCount.current > 0) return;
+    // A poll (or a refresh) that was still in flight when the panel
+    // unmounted ends here; scheduling its "spin done" timer would keep
+    // the handle alive past the cleanup that only knows the current one.
+    if (!mounted.current) return;
     // Keep the icon visibly rotating even for very fast refreshes.
     const elapsed = Date.now() - spinStartedAt.current;
     const remaining = Math.max(0, 260 - elapsed);
     spinEndTimer.current = window.setTimeout(() => {
       spinEndTimer.current = null;
+      if (!mounted.current) return;
       setSpinning(false);
     }, remaining);
   }, []);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
       if (spinEndTimer.current !== null) {
         window.clearTimeout(spinEndTimer.current);
+        spinEndTimer.current = null;
       }
-    },
-    [],
-  );
+    };
+  }, []);
 
   const refresh = useCallback(
     async (silent = false) => {
@@ -280,9 +293,12 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
     : -1;
 
   const closeDiff = useCallback(() => {
+    // Retire any diff still in flight: its body belongs to a modal that
+    // is closing.
+    diffTicket.begin();
     setSelected(null);
     setDetail(null);
-  }, []);
+  }, [diffTicket]);
 
   const runWrite = useCallback(
     async (label: string, fn: () => Promise<unknown>) => {
@@ -303,35 +319,44 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
     [flash, refresh],
   );
 
-  const loadSide = useCallback(async (e: GitChange, side: DiffSide) => {
-    const cached = side === 'staged';
-    setDetail(null);
-    if (e.untracked || e.kind === 'untracked') {
-      setDetail({ diff: null, label: '', message: 'untrackedNoDiff' });
-      return;
-    }
-    if (e.unmerged) {
-      setDetail({ diff: null, label: '', message: 'unmergedHint' });
-      return;
-    }
-    if (e.is_binary) {
-      setDetail({ diff: null, label: '', message: 'binaryNoDiff' });
-      return;
-    }
-    try {
-      const diff = await api.gitDiff(e.path, cached);
-      setDetail({
-        diff,
-        label: cached ? 'stagedDiff' : 'worktreeDiff',
-        message: '',
-      });
-    } catch (err) {
-      setDetail({ diff: null, label: '', message: '', error: String(err) });
-    }
-  }, []);
+  const loadSide = useCallback(
+    async (e: GitChange, side: DiffSide, ticket?: number) => {
+      // loadDiff hands its own ticket in: the file it selected and the
+      // body this load writes have to be the same request.
+      const id = ticket ?? diffTicket.begin();
+      const cached = side === 'staged';
+      setDetail(null);
+      if (e.untracked || e.kind === 'untracked') {
+        setDetail({ diff: null, label: '', message: 'untrackedNoDiff' });
+        return;
+      }
+      if (e.unmerged) {
+        setDetail({ diff: null, label: '', message: 'unmergedHint' });
+        return;
+      }
+      if (e.is_binary) {
+        setDetail({ diff: null, label: '', message: 'binaryNoDiff' });
+        return;
+      }
+      try {
+        const diff = await api.gitDiff(e.path, cached);
+        if (!diffTicket.isCurrent(id)) return;
+        setDetail({
+          diff,
+          label: cached ? 'stagedDiff' : 'worktreeDiff',
+          message: '',
+        });
+      } catch (err) {
+        if (!diffTicket.isCurrent(id)) return;
+        setDetail({ diff: null, label: '', message: '', error: String(err) });
+      }
+    },
+    [diffTicket],
+  );
 
   const loadDiff = useCallback(
     async (e: GitChange) => {
+      const id = diffTicket.begin();
       setSelected(e);
       setDetail(null);
       if (e.untracked || e.kind === 'untracked') {
@@ -350,9 +375,9 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
       // staged half and let the modal toggle to the working tree.
       const side: DiffSide =
         e.staged && e.unstaged ? diffSide : e.staged ? 'staged' : 'worktree';
-      await loadSide(e, side);
+      await loadSide(e, side, id);
     },
-    [diffSide, loadSide],
+    [diffSide, diffTicket, loadSide],
   );
 
   const openAt = useCallback(

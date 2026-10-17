@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CalendarDays, ChevronDown } from 'lucide-react';
 import { MAX_USAGE_RANGE_DAYS } from '../lib/usageWindow';
+import { useNowTick } from '../lib/useNowTick';
 import { Popover } from './ui/Popover';
 import { ICON } from './ui/icon';
 
@@ -59,7 +60,13 @@ export function UsageRangePicker({
     setDraftLive(liveEnd);
   }, [open, startMs, endMs, liveEnd]);
 
-  const liveEndMs = draftLive ? Date.now() : draftEnd;
+  // A live end is "now", so the field showing it has to follow the clock
+  // while the panel is open: it read a frozen timestamp otherwise, and the
+  // range it described was the moment the panel opened, not the live
+  // window the page would actually request. The tick runs only while the
+  // panel is open (see useNowTick).
+  const now = useNowTick(open);
+  const liveEndMs = draftLive ? now : draftEnd;
   const spanMs = liveEndMs - draftStart;
   const tooLong = draftStart > 0 && spanMs > MAX_USAGE_RANGE_DAYS * 86_400_000;
   const canApply = draftStart > 0 && liveEndMs > draftStart && !tooLong;
@@ -121,9 +128,7 @@ export function UsageRangePicker({
           </span>
           <input
             type="datetime-local"
-            value={
-              draftLive ? toLocalInput(Date.now()) : toLocalInput(draftEnd)
-            }
+            value={toLocalInput(liveEndMs)}
             disabled={draftLive}
             onChange={(e) => setDraftEnd(fromLocalInput(e.target.value))}
             className="w-full rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-fg outline-none disabled:cursor-not-allowed disabled:opacity-50 focus:border-accent"

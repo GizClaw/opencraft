@@ -31,6 +31,7 @@ import {
 import type { FolderChange } from '../lib/gitKinds';
 import { useStore } from '../lib/store';
 import type { FileNode, FileTab, GitChange, GitFileMarks } from '../lib/types';
+import { useLatestRequest } from '../lib/useLatest';
 import { Button } from './ui/Button';
 import { useOverlayLayer } from '../lib/overlay';
 import { Popover } from './ui/Popover';
@@ -641,6 +642,10 @@ function FileTreePanel({
   const treeDir = useStore((s) => s.viewers[sessionID]?.fileTreeDir ?? '.');
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<{ path: string; is_dir: boolean }[]>([]);
+  // The debounce alone does not order the answers: a slow query can
+  // land after a newer one, leaving the list showing files that do not
+  // match the box. Only the newest search may write `hits`.
+  const searchTicket = useLatestRequest();
   const [entries, setEntries] = useState<Record<string, FileNode[]>>({});
   const [snapshot, setSnapshot] = useState<{
     changes: Record<string, GitChange>;
@@ -752,6 +757,7 @@ function FileTreePanel({
 
   useEffect(() => {
     const q = query.trim();
+    const id = searchTicket.begin();
     if (!q) {
       setHits([]);
       return;
@@ -759,11 +765,15 @@ function FileTreePanel({
     const timer = window.setTimeout(() => {
       void api
         .searchFiles(q, 50, showHidden)
-        .then((h) => setHits(h))
-        .catch(() => setHits([]));
+        .then((h) => {
+          if (searchTicket.isCurrent(id)) setHits(h);
+        })
+        .catch(() => {
+          if (searchTicket.isCurrent(id)) setHits([]);
+        });
     }, 150);
     return () => window.clearTimeout(timer);
-  }, [query, showHidden]);
+  }, [query, showHidden, searchTicket]);
 
   const toggle = (rel: string) => {
     const next = { ...expanded, [rel]: !expanded[rel] };

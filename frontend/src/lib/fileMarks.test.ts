@@ -110,6 +110,32 @@ describe('classifyMarks', () => {
     expect(layout.deletes[2].top).toBe(0);
   });
 
+  it('truncates a deletion anchor instead of indexing with it', () => {
+    // `after` used to be used as an index as-is: a fractional anchor
+    // made `deletes[1.5]` undefined and `.top` threw during the
+    // editor's render, which no chunk boundary catches.
+    const layout = classifyMarks(
+      marks({ dels: [{ after: 1.5, count: 2 }] }),
+      4,
+    );
+    expect(layout.deletes[1].top).toBe(2);
+    expect(layout.deletes[2].top).toBe(0);
+  });
+
+  it('folds an anchor that is not a finite number onto the first line', () => {
+    const layout = classifyMarks(
+      marks({
+        dels: [
+          { after: Number.NaN, count: 1 },
+          { after: 2.7, count: 4 },
+        ],
+      }),
+      4,
+    );
+    expect(layout.deletes[0].top).toBe(1);
+    expect(layout.deletes[2].top).toBe(4);
+  });
+
   it('answers a zero-line document without touching the array', () => {
     const layout = classifyMarks(marks({ adds: [{ start: 1, count: 3 }] }), 0);
     expect(layout.tones).toEqual([]);

@@ -228,4 +228,15 @@ describe('PRDetailModal', () => {
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
     expect(screen.getByText('Add search')).toBeInTheDocument();
   });
+
+  it('shows the state the page fetched, not the list row it opened from', async () => {
+    apiMock.gitHubPRDetail.mockResolvedValue(detail({ state: 'merged' }));
+    render(<PRDetailModal pr={pull} onClose={() => {}} />);
+
+    // The row was clicked while the list still read "open"; by the time
+    // the page answered, the PR had been merged. The chip must not keep
+    // saying open over a merged page.
+    expect(await screen.findByText('Merged')).toBeInTheDocument();
+    expect(screen.queryByText('Open')).not.toBeInTheDocument();
+  });
 });

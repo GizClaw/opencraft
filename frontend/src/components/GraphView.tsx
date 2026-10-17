@@ -140,6 +140,27 @@ function placeNodes(graph: GraphDTO): Map<string, Pos> {
   return pos;
 }
 
+// The canvas is rebuilt from these two keys (see the effects in the
+// editor). They are the same graph seen at two depths: the node key is the
+// node set, so an inspector edit rebuilds nothing and a dragged node keeps
+// its position, while the edge key adds each edge's condition, which the
+// edge component draws (dashed stroke + condition pill).
+function nodeStructureKey(graph: GraphDTO | null): string {
+  if (!graph) return '';
+  return JSON.stringify({ e: graph.entry, n: graph.nodes.map((n) => n.id) });
+}
+
+// edgeStructureKey carries the node key too: an edge's geometry comes from
+// the layout, so adding or removing a node moves the edges as well.
+function edgeStructureKey(graph: GraphDTO | null): string {
+  if (!graph) return '';
+  return JSON.stringify({
+    e: graph.entry,
+    n: graph.nodes.map((n) => n.id),
+    g: graph.edges.map((e) => [e.from, e.to, e.condition ?? '']),
+  });
+}
+
 // edgePathCoords draws one edge between raw handle coordinates:
 // forward = smooth bezier, side = rounded-tight elbow on the right of a
 // column, back = stacked loop below both nodes.
@@ -488,6 +509,17 @@ function FieldLabel({ raw }: { raw: string }) {
   return key ? <>{t(key)}</> : <span className="font-mono">{raw}</span>;
 }
 
+// sameJSON reports whether a field's own text already means the value its
+// parent holds, formatting aside: the forms of one array that read the
+// same must not count as a change.
+function sameJSON(text: string, value: unknown): boolean {
+  try {
+    return JSON.stringify(JSON.parse(text)) === JSON.stringify(value);
+  } catch {
+    return false;
+  }
+}
+
 function GenericField({
   raw,
   path,
@@ -597,12 +629,18 @@ function ArrayField({
   onChange: (path: string[], value: unknown) => void;
 }) {
   const { t } = useTranslation();
-  const [text, setText] = useState(JSON.stringify(value, null, 2));
+  const serialized = JSON.stringify(value, null, 2);
+  const [text, setText] = useState(serialized);
   const [invalid, setInvalid] = useState(false);
+  // Every successful parse is handed to the parent, which gives the array
+  // back with a new identity one render later. Re-syncing the textarea from
+  // that echo re-formats the line under the caret (and leaves the caret at
+  // the end of it) while the user is still typing it, so a resync only
+  // happens when the incoming value says something the box does not.
   useEffect(() => {
-    setText(JSON.stringify(value, null, 2));
+    setText((current) => (sameJSON(current, value) ? current : serialized));
     setInvalid(false);
-  }, [value]);
+  }, [value, serialized]);
   return (
     <label className="flex flex-col gap-1 text-xs text-dim">
       <FieldLabel raw={raw} />
@@ -775,17 +813,8 @@ export function AgentGraphEditor({
   }, [agentName]);
 
   const pos = useMemo(() => (graph ? placeNodes(graph) : new Map()), [graph]);
-  const structureKey = useMemo(
-    () =>
-      graph
-        ? JSON.stringify({
-            e: graph.entry,
-            n: graph.nodes.map((n) => n.id),
-            g: graph.edges.map((e) => e.from + '>' + e.to),
-          })
-        : '',
-    [graph],
-  );
+  const structureKey = useMemo(() => nodeStructureKey(graph), [graph]);
+  const edgeKey = useMemo(() => edgeStructureKey(graph), [graph]);
   const backOrder = useMemo(() => {
     const order = new Map<string, number>();
     let n = 0;
@@ -838,6 +867,14 @@ export function AgentGraphEditor({
         },
       ]);
     }
+  }, [structureKey]);
+
+  // The edges rebuild on their own key, which adds each edge's condition:
+  // the condition is drawn on the canvas (dashed stroke + pill), so editing
+  // it has to redraw the edges — but only the edges, or the rebuild would
+  // drop the positions a node drag put on screen.
+  useEffect(() => {
+    if (!graph) return;
     // Fan out parallel edges across the three handle slots so edges
     // leaving the same node (or entering the same node) never share a
     // connection point.
@@ -868,23 +905,16 @@ export function AgentGraphEditor({
         };
       }),
     );
-  }, [structureKey]);
+  }, [edgeKey]);
 
+  // A node drag is view state: save() writes { id, type, config } and the
+  // layout is computed from the graph on load, so a drag cannot be saved
+  // and must not mark the document dirty — the relayout button changes the
+  // same state without dirtying. Nothing else arrives here either: the
+  // canvas is not connectable and the delete key is off, and the
+  // 'dimensions' change only comes from NodeResizer, which it does not use.
   const onNodesChange = (changes: NodeChange<RFNode<GraphNodeData>>[]) =>
-    setRfNodes((nds) => {
-      if (
-        changes.some(
-          (c) =>
-            c.type === 'position' ||
-            c.type === 'dimensions' ||
-            c.type === 'add' ||
-            c.type === 'remove',
-        )
-      ) {
-        setDirty(true);
-      }
-      return applyNodeChanges(changes, nds);
-    });
+    setRfNodes((nds) => applyNodeChanges(changes, nds));
 
   const selectNode = (id: string) => {
     const node = graph?.nodes.find((n) => n.id === id);

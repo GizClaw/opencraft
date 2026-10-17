@@ -85,12 +85,16 @@ function groupDiffHunks(lines: PatchLineDTO[]): DiffHunkSlice[] {
 // convention followed by a hunk header.
 export function looksLikeUnifiedDiff(text: string): boolean {
   if (/^diff --git /m.test(text)) return true;
-  const oldIdx = text.indexOf('--- ');
-  if (oldIdx < 0) return false;
-  const newIdx = text.indexOf('+++ ', oldIdx + 4);
-  return (
-    newIdx > oldIdx &&
-    /^@@ -\d+(,\d+)? \+\d+(,\d+)? @@/m.test(text.slice(newIdx))
+  // The pair has to be a header pair: on adjacent lines, at the start
+  // of one. Searching for the two markers anywhere in the document
+  // accepted prose that merely mentions diff syntax (a markdown page
+  // whose rule line reads "--- " and whose example block quotes
+  // "+++ "/"@@ -1 +1 @@" somewhere below), and handed it to the diff
+  // renderer as a patch.
+  const pair = /^--- [^\n]*\r?\n\+\+\+ [^\n]*/m.exec(text);
+  if (!pair) return false;
+  return /^@@ -\d+(,\d+)? \+\d+(,\d+)? @@/m.test(
+    text.slice(pair.index + pair[0].length),
   );
 }
 

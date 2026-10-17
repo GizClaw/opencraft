@@ -12,7 +12,7 @@
 //                        never scrolls sideways: the +/- glyph gets its
 //                        own column, so continuation lines align with
 //                        the code rather than under the marker.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -201,11 +201,36 @@ function FileDiff({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
-  const allLines = file.lines ?? [];
+  const allLines = useMemo(() => file.lines ?? [], [file.lines]);
   const truncated =
     maxLines !== undefined && !showAllLines && allLines.length > maxLines;
   const lines = truncated ? allLines.slice(0, maxLines) : allLines;
-  const hunks = groupHunks(lines);
+  // Hunks are grouped from the file's whole line list, so every "@@"
+  // header keeps the counts the patch itself carries: the render cap
+  // decides how many lines are painted, never what a hunk is. Grouping
+  // only the painted slice (the previous behaviour) recomputed the same
+  // hunk from whatever survived the cap, so its header shrank as the
+  // reader scrolled past the cap — and read differently from the same
+  // diff in the Git panel or in the copied patch.
+  const hunks = useMemo(() => groupHunks(allLines), [allLines]);
+  const limit =
+    truncated && maxLines !== undefined ? maxLines : allLines.length;
+  // The visible hunks with the slice of their lines the cap leaves. A
+  // hunk the cap cuts short is labelled where it stops, so its header
+  // (which now reports the hunk's real extent) cannot be read as "that
+  // was all of it".
+  let painted = 0;
+  const shown = hunks
+    .map((hunk) => {
+      const take = Math.max(0, Math.min(hunk.lines.length, limit - painted));
+      painted += take;
+      return {
+        hunk,
+        lines: hunk.lines.slice(0, take),
+        cut: take < hunk.lines.length,
+      };
+    })
+    .filter((h) => h.lines.length > 0);
   return (
     <div className="border-b border-edge last:border-b-0">
       <FileHeader
@@ -216,19 +241,24 @@ function FileDiff({
       />
       {(!collapsible || open) && (
         <>
-          {hunks.length === 0 ? (
+          {shown.length === 0 ? (
             <div className="px-3 py-1.5 font-mono text-micro text-dim">
               {t('tool.diffUnavailable')}
             </div>
           ) : (
-            hunks.map((h, i) => (
+            shown.map((h, i) => (
               <div key={i}>
                 <div className="select-none bg-panel2 px-3 py-0.5 text-center font-mono text-micro text-dim">
-                  {hunkHeader(h)}
+                  {hunkHeader(h.hunk)}
                 </div>
                 {h.lines.map((line, j) => (
                   <GitDiffLine key={j} line={line} wrap={wrap} />
                 ))}
+                {h.cut && (
+                  <div className="select-none border-t border-edge/60 px-3 py-0.5 text-center font-mono text-micro text-dim">
+                    {t('tool.truncated')}
+                  </div>
+                )}
               </div>
             ))
           )}

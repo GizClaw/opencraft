@@ -11,6 +11,9 @@ import { toPetView } from './state';
  */
 export function PetPreview({ pack }: { pack: PetPack }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // The resize listener needs the live handle, and the handle is
+  // created inside the async mount effect.
+  const handleRef = useRef<PetRiveHandle | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,6 +30,7 @@ export function PetPreview({ pack }: { pack: PetPack }) {
           handle.destroy();
           return;
         }
+        handleRef.current = handle;
         handle.apply(toPetView(null));
       } catch (err) {
         setError(String(err));
@@ -34,9 +38,21 @@ export function PetPreview({ pack }: { pack: PetPack }) {
     })();
     return () => {
       cancelled = true;
+      handleRef.current = null;
       handle?.destroy();
     };
   }, [pack]);
+
+  // Keep the drawing surface sized with its box. The preview is a
+  // settings-page card, so a window resize or a move to another display
+  // changes its backing store; without this it keeps the device-pixel
+  // size captured at mount and the character is drawn at the wrong
+  // scale/offset. The pet window listens the same way.
+  useEffect(() => {
+    const onResize = () => handleRef.current?.resize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   return (
     <div className="pet-preview">

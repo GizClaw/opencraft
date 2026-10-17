@@ -379,6 +379,7 @@ export const api = {
   modelUsageSeries: async (
     model: string,
     granularity: 'hour' | 'day',
+    timeZone: string,
     utcOffsetMinutes: number,
     start: string,
     end: string,
@@ -386,6 +387,7 @@ export const api = {
     (await Config.ModelUsageSeries(
       model,
       granularity,
+      timeZone,
       utcOffsetMinutes,
       start,
       end,
@@ -588,7 +590,7 @@ export const api = {
   pluginInvoke: (id: string, method: string, args: string) =>
     Plugin.Invoke(id, method, args),
   telemetryExport: () =>
-    Diagnostics.TelemetryExport() as unknown as Promise<TelemetryExportStatus>,
+    Diagnostics.TelemetryExport() as Promise<TelemetryExportStatus>,
   setTelemetryExport: (enabled: boolean) =>
     Diagnostics.SetTelemetryExport(enabled),
   // pathEnvironment describes the PATH this process runs with; a

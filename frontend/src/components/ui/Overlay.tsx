@@ -38,6 +38,18 @@ const PANEL_ANIM: Record<OverlayVariant, [string, string]> = {
   bare: ['animate-panel-in', 'animate-panel-out'],
 };
 
+// The unmount timer has to outlast the exit animation the variant plays
+// (MOTION in lib/overlay.ts mirrors the tokens). A drawer-right panel
+// leaves on --animate-drawer-out, everything else on --animate-panel-out;
+// the drawer used to inherit the panel's shorter timer and was torn down
+// while its own exit was still running.
+const PANEL_EXIT_MS: Record<OverlayVariant, number> = {
+  center: MOTION.fast,
+  top: MOTION.fast,
+  'drawer-right': MOTION.drawerOut,
+  bare: MOTION.fast,
+};
+
 export function Overlay({
   open,
   onClose,
@@ -50,7 +62,11 @@ export function Overlay({
   trap = true,
   lock = true,
   restoreFocus = true,
-  exitMs = MOTION.fast,
+  /**
+   * Unmount delay, overriding the variant's own exit animation
+   * (PANEL_EXIT_MS). Only for a caller that plays a different animation.
+   */
+  exitMs,
   /**
    * Render into document.body instead of where the caller sits. A
    * dialog opened from inside another surface (a tool dialog inside the
@@ -91,7 +107,10 @@ export function Overlay({
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const pressRef = useRef(false);
-  const { mounted, closing } = usePresence(open, motion ? exitMs : 0);
+  const { mounted, closing } = usePresence(
+    open,
+    motion ? (exitMs ?? PANEL_EXIT_MS[variant]) : 0,
+  );
   useOverlayLayer({
     active: open,
     containerRef: panelRef,
@@ -112,10 +131,6 @@ export function Overlay({
   if (!open && !mounted) return null;
   const [enter, leave] = PANEL_ANIM[variant];
   const scrim = variant === 'bare' ? null : SCRIM[variant];
-  // A press that starts inside the panel and ends on the scrim (a drag
-  // out of a text selection) must not dismiss: the browser reports that
-  // click on the scrim.
-  const pressedInside = pressRef.current;
 
   const surface = (
     <div
@@ -129,7 +144,16 @@ export function Overlay({
       }}
       onClick={(event) => {
         if (variant === 'bare' || onClose === undefined) return;
-        if (pressedInside) return;
+        // A press that starts inside the panel and ends on the scrim (a
+        // drag out of a text selection) must not dismiss: the browser
+        // reports that click on the scrim. The flag has to be read here
+        // rather than during render — writing a ref does not re-render,
+        // so a render-time copy still holds the value from before the
+        // press and the guard never fires.
+        if (pressRef.current) {
+          pressRef.current = false;
+          return;
+        }
         if (event.target === event.currentTarget) onClose();
       }}
     >

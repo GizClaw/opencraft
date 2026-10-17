@@ -58,6 +58,57 @@ export interface PetAlphaGrid {
   alpha: Uint8ClampedArray;
 }
 
+/**
+ * Reusable working buffers for one read-and-analyse pass. Reading the
+ * surface and then walking it used to allocate ~340KB per pointer press
+ * (the alpha copy, the flood fill's visited set and its stack); a
+ * scratch set hands the same buffers to the next pass. The buffers
+ * belong to whoever created the scratch, and a grid built from one
+ * aliases them, so a grid must be consumed before the next read.
+ */
+export interface PetGridScratch {
+  alpha: Uint8ClampedArray | null;
+  seen: Uint8Array | null;
+  pending: Int32Array | null;
+}
+
+/** Creates an empty (lazily sized) scratch set. */
+export function createPetGridScratch(): PetGridScratch {
+  return { alpha: null, seen: null, pending: null };
+}
+
+// alphaBuffer/seenBuffer/pendingBuffer return a buffer of `size` from the
+// scratch set, growing (and remembering) it when the surface changed size.
+function alphaBuffer(
+  scratch: PetGridScratch | null,
+  size: number,
+): Uint8ClampedArray {
+  const reused = scratch?.alpha;
+  if (reused && reused.length === size) return reused;
+  const buffer = new Uint8ClampedArray(size);
+  if (scratch) scratch.alpha = buffer;
+  return buffer;
+}
+
+function seenBuffer(scratch: PetGridScratch | null, size: number): Uint8Array {
+  const reused = scratch?.seen;
+  if (reused && reused.length === size) return reused;
+  const buffer = new Uint8Array(size);
+  if (scratch) scratch.seen = buffer;
+  return buffer;
+}
+
+function pendingBuffer(
+  scratch: PetGridScratch | null,
+  size: number,
+): Int32Array {
+  const reused = scratch?.pending;
+  if (reused && reused.length === size) return reused;
+  const buffer = new Int32Array(size);
+  if (scratch) scratch.pending = buffer;
+  return buffer;
+}
+
 /** Bounding box of the drawn pixels, in device pixels; right/bottom are
  *  exclusive. */
 export interface PetAlphaBounds {
@@ -110,8 +161,13 @@ export function devicePixelPoint(
 /**
  * Reads the whole drawing surface. Null means the pixels cannot be
  * read: a canvas a non-2D renderer owns, or one that is not sized yet.
+ * Passing a scratch set reuses its alpha buffer for the copy (the
+ * ImageData the browser hands back is allocated per call either way).
  */
-export function readAlphaGrid(canvas: HTMLCanvasElement): PetAlphaGrid | null {
+export function readAlphaGrid(
+  canvas: HTMLCanvasElement,
+  scratch: PetGridScratch | null = null,
+): PetAlphaGrid | null {
   let context: CanvasRenderingContext2D | null = null;
   try {
     context = canvas.getContext('2d');
@@ -124,7 +180,9 @@ export function readAlphaGrid(canvas: HTMLCanvasElement): PetAlphaGrid | null {
 
   try {
     const { data } = context.getImageData(0, 0, width, height);
-    const alpha = new Uint8ClampedArray(width * height);
+    // A reused buffer is written end to end below, so it never carries
+    // pixels over from the previous read.
+    const alpha = alphaBuffer(scratch, width * height);
     for (let index = 0, offset = 3; index < alpha.length; index++) {
       alpha[index] = data[offset];
       offset += 4;
@@ -197,20 +255,27 @@ export function alphaBounds(
  * flooding its transparent neighbours never reaches the edge of the
  * drawing surface. A pixel that is painted, or one whose neighbours
  * reach the edge (the empty margin around the character), is not a hole.
+ * The flood fill reuses the scratch buffers when one is passed, and
+ * expands its four neighbours through explicit indices instead of an
+ * array per visited pixel.
  */
 export function enclosedByDrawable(
   grid: PetAlphaGrid,
   x: number,
   y: number,
   threshold: number = PET_HIT_ALPHA,
+  scratch: PetGridScratch | null = null,
 ): boolean {
   const { width, height, alpha } = grid;
   if (x < 0 || y < 0 || x >= width || y >= height) return false;
   const start = y * width + x;
   if (alpha[start] > threshold) return false;
 
-  const seen = new Uint8Array(width * height);
-  const pending = new Int32Array(width * height);
+  const seen = seenBuffer(scratch, width * height);
+  // The stack is index-addressed and re-zeroed by `count`, but the
+  // visited set has to start empty.
+  seen.fill(0);
+  const pending = pendingBuffer(scratch, width * height);
   let count = 0;
   seen[start] = 1;
   pending[count++] = start;
@@ -222,15 +287,35 @@ export function enclosedByDrawable(
     // around the character, so the press missed it.
     if (column === 0 || row === 0 || column === width - 1 || row === height - 1)
       return false;
-    const neighbours = [index - 1, index + 1, index - width, index + width];
-    for (const neighbour of neighbours) {
-      if (seen[neighbour] || alpha[neighbour] > threshold) continue;
-      seen[neighbour] = 1;
-      pending[count++] = neighbour;
+    // The edge check above keeps every neighbour in range.
+    const left = index - 1;
+    if (!seen[left] && alpha[left] <= threshold) {
+      seen[left] = 1;
+      pending[count++] = left;
+    }
+    const right = index + 1;
+    if (!seen[right] && alpha[right] <= threshold) {
+      seen[right] = 1;
+      pending[count++] = right;
+    }
+    const up = index - width;
+    if (!seen[up] && alpha[up] <= threshold) {
+      seen[up] = 1;
+      pending[count++] = up;
+    }
+    const down = index + width;
+    if (!seen[down] && alpha[down] <= threshold) {
+      seen[down] = 1;
+      pending[count++] = down;
     }
   }
   return true;
 }
+
+// One scratch set is kept for the pointer path: a press reads the
+// surface and walks it inside this one call, so the buffers never
+// outlive the grid they describe.
+const hitScratch = createPetGridScratch();
 
 /**
  * Decides whether a pointer press on the pet window landed on the
@@ -248,12 +333,12 @@ export function hitTestPet(
   if (!insidePetRect(rect, clientX, clientY)) return false;
   const point = devicePixelPoint(rect, canvas, clientX, clientY);
   if (!point) return true;
-  const grid = readAlphaGrid(canvas);
+  const grid = readAlphaGrid(canvas, hitScratch);
   if (!grid) return true;
   const x = clampInt(Math.round(point.x), 0, grid.width - 1);
   const y = clampInt(Math.round(point.y), 0, grid.height - 1);
   if (patchMaxAlpha(grid, x, y) > PET_HIT_ALPHA) return true;
-  return enclosedByDrawable(grid, x, y);
+  return enclosedByDrawable(grid, x, y, PET_HIT_ALPHA, hitScratch);
 }
 
 function clampInt(value: number, min: number, max: number): number {

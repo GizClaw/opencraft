@@ -220,6 +220,16 @@ export function UserMemoryCard({
     setSaved(false);
   }, []);
 
+  // applyServerState updates only what the server reports. A list action
+  // (mark stale, edit, delete, accept a suggestion) refreshes the store
+  // the card is about, not the knobs above it: re-seeding those here
+  // would overwrite an unsaved draft and reset the baseline the save bar
+  // compares it against, so the edits vanished without the bar ever
+  // having said "unsaved".
+  const applyServerState = useCallback((next: UserMemoryState) => {
+    setState(next);
+  }, []);
+
   const applyReview = useCallback((next: ReviewState) => {
     setReview(next);
     setReviewEnabled(next.enabled);
@@ -253,7 +263,7 @@ export function UserMemoryCard({
   }, [reload]);
 
   const refreshFacts = async () => {
-    applyState(await api.userMemoryState());
+    applyServerState(await api.userMemoryState());
     setFacts((await api.memoryFacts()) ?? []);
   };
 

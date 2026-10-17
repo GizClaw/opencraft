@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   CartesianGrid,
@@ -417,27 +417,50 @@ export function MetricsCharts({
       : d.toLocaleTimeString();
   };
 
+  // Every metric's chart rows are derived once per fetched batch. Built in
+  // the render body they were re-derived on every render — the probe's own
+  // measurement showed ~30 series over up to 5000 points each being rebuilt
+  // twice per auto-refresh, because the busy flag alone re-renders the
+  // panel before and after every fetch.
+  const charts = useMemo(() => {
+    const built: Record<
+      string,
+      { seriesKeys: string[]; chartRows: MetricRow[] }
+    > = {};
+    for (const def of METRICS) {
+      const points = pointsByMetric[def.name] ?? [];
+      const split = def.split;
+      // One row per timestamp, carrying every series measured at it. The
+      // wire form is one sample per (ts, series) — a split metric arrives
+      // as several rows for the same timestamp, each holding its own key —
+      // and downsample folds a bucket's rows, so a row per sample hands
+      // the fold a bucket that is missing every series but the first.
+      const byTs = new Map<number, MetricRow>();
+      const seriesKeys = new Set<string>();
+      for (const point of points) {
+        const key = split ? (point.attrs?.[split] ?? 'unknown') : 'value';
+        seriesKeys.add(key);
+        const row = byTs.get(point.ts);
+        if (row) row[key] = point.value;
+        else
+          byTs.set(point.ts, {
+            ts: point.ts,
+            [key]: point.value,
+          } as MetricRow);
+      }
+      const rows = Array.from(byTs.values());
+      built[def.name] = {
+        seriesKeys: seriesKeys.size > 0 ? Array.from(seriesKeys) : ['value'],
+        chartRows: downsample(rows, 400, def.aggregate),
+      };
+    }
+    return built;
+  }, [pointsByMetric]);
+
   const renderMetric = (def: MetricDef) => {
-    const points = pointsByMetric[def.name] ?? [];
-    const splitValues = def.split
-      ? Array.from(
-          new Set(
-            points
-              .map((p) => p.attrs?.[def.split!])
-              .filter((v): v is string => Boolean(v)),
-          ),
-        )
-      : [];
-    const rows: MetricRow[] = points.map((p) => {
-      const key = def.split ? (p.attrs?.[def.split!] ?? 'unknown') : 'value';
-      return { ts: p.ts, [key]: p.value } as MetricRow;
-    });
-    const seriesKeys = def.split
-      ? splitValues.length > 0
-        ? splitValues
-        : ['value']
-      : ['value'];
-    const chartRows = downsample(rows, 400, def.aggregate);
+    const chart = charts[def.name];
+    const seriesKeys = chart?.seriesKeys ?? ['value'];
+    const chartRows = chart?.chartRows ?? [];
 
     return (
       <div

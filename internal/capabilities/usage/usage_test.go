@@ -178,7 +178,7 @@ func TestSeriesHourAndDay(t *testing.T) {
 		}
 	}
 
-	hourly, err := store.Series(ctx, "deepseek-chat", GranularityHour, 0, "", "")
+	hourly, err := store.Series(ctx, "deepseek-chat", GranularityHour, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestSeriesHourAndDay(t *testing.T) {
 	}
 
 	// UTC day grouping: all three rows fall on 2026-01-01 / 2026-01-02.
-	utcDays, err := store.Series(ctx, "deepseek-chat", GranularityDay, 0, "", "")
+	utcDays, err := store.Series(ctx, "deepseek-chat", GranularityDay, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestSeriesHourAndDay(t *testing.T) {
 
 	// UTC+8 day grouping: 15:00Z stays on 2026-01-01 local (23:00)
 	// while 17:00Z and the next-day 09:00Z move to 2026-01-02.
-	localDays, err := store.Series(ctx, "deepseek-chat", GranularityDay, 480, "", "")
+	localDays, err := store.Series(ctx, "deepseek-chat", GranularityDay, "Asia/Shanghai", 480, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,6 +226,7 @@ func TestSeriesHourAndDay(t *testing.T) {
 		ctx,
 		"deepseek-chat",
 		GranularityDay,
+		"Asia/Shanghai",
 		480,
 		"2026-01-01T16:00:00Z",
 		"2026-01-02T10:00:00Z",
@@ -269,7 +270,7 @@ func TestSeriesAggregatesAllModels(t *testing.T) {
 	}
 
 	// A model-scoped series still filters to that model.
-	scoped, err := store.Series(ctx, "deepseek-flash", GranularityHour, 0, "", "")
+	scoped, err := store.Series(ctx, "deepseek-flash", GranularityHour, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +279,7 @@ func TestSeriesAggregatesAllModels(t *testing.T) {
 	}
 
 	// The empty model sums every model sharing a bucket.
-	all, err := store.Series(ctx, "", GranularityHour, 0, "", "")
+	all, err := store.Series(ctx, "", GranularityHour, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +291,7 @@ func TestSeriesAggregatesAllModels(t *testing.T) {
 	}
 
 	// The window filter applies to the aggregate as well.
-	windowed, err := store.Series(ctx, "", GranularityHour, 0,
+	windowed, err := store.Series(ctx, "", GranularityHour, "", 0,
 		"2026-09-15T00:00:00Z", "2026-09-16T00:00:00Z")
 	if err != nil {
 		t.Fatal(err)
@@ -320,7 +321,7 @@ func TestRecordAttributionUsesReportTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hourly, err := store.Series(ctx, "deepseek-chat", GranularityHour, 0, "", "")
+	hourly, err := store.Series(ctx, "deepseek-chat", GranularityHour, "", 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +333,7 @@ func TestRecordAttributionUsesReportTime(t *testing.T) {
 		t.Fatalf("hourly attribution = %+v", hourly)
 	}
 	// In UTC+8 both reports land on the same local calendar day.
-	localDays, err := store.Series(ctx, "deepseek-chat", GranularityDay, 480, "", "")
+	localDays, err := store.Series(ctx, "deepseek-chat", GranularityDay, "Asia/Shanghai", 480, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,5 +408,88 @@ func TestSessionCountCountsSessionOnceAcrossModels(t *testing.T) {
 	}
 	if n != 3 {
 		t.Fatalf("session count = %d, want 3", n)
+	}
+}
+
+// dayZone is what the day buckets are cut with. The window sends the
+// zone it draws its empty buckets with, and the two have to agree on
+// where a day starts: on 2026-11-01 New York's offset is -4 before 06:00
+// UTC and -5 after, so the same offset that was right at noon labels the
+// 04:30 UTC row with the wrong date.
+func TestSeriesDayBucketsUseTheViewerZone(t *testing.T) {
+	store, _ := newUsageStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 1, 4, 30, 0, 0, time.UTC)
+	if err := store.Record(ctx, "ws-a", "s-1", "deepseek-chat", at,
+		ocsessions.Usage{InputTokens: 100}); err != nil {
+		t.Fatal(err)
+	}
+
+	days, err := store.Series(
+		ctx, "deepseek-chat", GranularityDay, "America/New_York", -300, "", "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(days) != 1 || days[0].Time != "2026-11-01" {
+		t.Fatalf("named zone days = %+v, want 2026-11-01", days)
+	}
+
+	// No usable name falls back to the offset the window sent.
+	for _, name := range []string{"", "Not/AZone"} {
+		fallback, err := store.Series(
+			ctx, "deepseek-chat", GranularityDay, name, -300, "", "",
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(fallback) != 1 || fallback[0].Time != "2026-10-31" {
+			t.Fatalf("zone %q days = %+v, want 2026-10-31", name, fallback)
+		}
+	}
+}
+
+// A stored hour that is not RFC3339 cannot be placed on a calendar. The
+// day series skips that row (with a warning) instead of failing the call,
+// so one unreadable row cannot blank the dashboard's trend; the hourly
+// view never parsed the string and keeps every row.
+func TestSeriesDaySkipsUnreadableHour(t *testing.T) {
+	store, _ := newUsageStore(t)
+	ctx := context.Background()
+	for _, row := range []struct {
+		hour  string
+		input int64
+	}{
+		{"2026-01-01T15:00:00Z", 100},
+		{"2026-01-01 16:00:00", 50},
+		{"2026-01-02T09:00:00Z", 30},
+	} {
+		if _, err := store.db.ExecContext(ctx, `
+			INSERT INTO model_usage_hourly (
+				model, hour, input_tokens, output_tokens,
+				cache_read_tokens, cache_write_tokens,
+				reasoning_tokens, latency_ms, calls
+			) VALUES (?, ?, ?, 0, 0, 0, 0, 0, 1)
+		`, "deepseek-chat", row.hour, row.input); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	days, err := store.Series(ctx, "deepseek-chat", GranularityDay, "", 0, "", "")
+	if err != nil {
+		t.Fatalf("day series with an unreadable hour: %v", err)
+	}
+	if len(days) != 2 || days[0].Time != "2026-01-01" ||
+		days[0].InputTokens != 100 ||
+		days[1].Time != "2026-01-02" || days[1].InputTokens != 30 {
+		t.Fatalf("days = %+v, want the two readable days", days)
+	}
+
+	hours, err := store.Series(ctx, "deepseek-chat", GranularityHour, "", 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hours) != 3 {
+		t.Fatalf("hourly points = %d, want all three rows", len(hours))
 	}
 }

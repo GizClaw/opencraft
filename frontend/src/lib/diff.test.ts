@@ -77,6 +77,49 @@ describe('toUnifiedDiff', () => {
   });
 });
 
+describe('looksLikeUnifiedDiff', () => {
+  it('accepts a bare file pair followed by a hunk header', () => {
+    // `diff -u` output carries no "diff --git" header; the adjacent
+    // pair is what identifies it.
+    const bare = [
+      '--- a/notes.md',
+      '+++ b/notes.md',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+    ].join('\n');
+    expect(looksLikeUnifiedDiff(bare)).toBe(true);
+    expect(parseUnifiedDiff(bare)).not.toBeNull();
+  });
+
+  it('rejects prose that merely mentions the markers', () => {
+    // A page *about* diff syntax: a rule line reading "--- ", a sentence
+    // naming the "+++ " line, and a hunk header quoted further down. The
+    // three used to be searched for anywhere in the text and together
+    // counted as a patch.
+    const prose = [
+      '--- ',
+      '',
+      'A patch names the new file on its +++ line.',
+      '',
+      '@@ -1 +1 @@ is the hunk header that follows.',
+    ].join('\n');
+    expect(looksLikeUnifiedDiff(prose)).toBe(false);
+  });
+
+  it('rejects a file pair split across other lines', () => {
+    const split = [
+      '--- a/notes.md',
+      '',
+      '+++ b/notes.md',
+      '@@ -1 +1 @@',
+      '-old',
+      '+new',
+    ].join('\n');
+    expect(looksLikeUnifiedDiff(split)).toBe(false);
+  });
+});
+
 describe('parseUnifiedDiff', () => {
   it('detects git diffs', () => {
     expect(looksLikeUnifiedDiff(sampleDiff)).toBe(true);

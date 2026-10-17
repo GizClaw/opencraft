@@ -9,9 +9,10 @@ import { applyCachedUISettings } from './lib/appearance';
 import {
   installConsoleErrorCapture,
   reportFrontendError,
+  setConsoleErrorCaptureGate,
 } from './lib/frontendErrors';
 import { startRUM } from './lib/rum';
-import { installPerfProbe } from './lib/perfProbe';
+import { installPerfProbe, perfProbeRunning } from './lib/perfProbe';
 import { surfaceOf } from './lib/surface';
 import PetSurface from './pet/PetSurface';
 
@@ -25,8 +26,15 @@ const surface = surfaceOf();
 // are forwarded to the Go telemetry pipeline (and printed for devtools).
 installConsoleErrorCapture();
 if (surface === 'main') {
-  startRUM();
+  // The Diagnostics tab's "frontend perf sampling" switch owns every
+  // renderer channel that writes through ReportFrontendPerf: the perf
+  // probe, the web vitals reporter, and the console.error capture. The
+  // probe is installed first so both gates read the switch's state; the
+  // capture gate stays closed in any surface without a switch (the pet
+  // window), where the app's own errors are still reported redacted.
   installPerfProbe();
+  setConsoleErrorCaptureGate(perfProbeRunning);
+  startRUM();
 }
 window.addEventListener('error', (e) => {
   reportFrontendError('window-error', e.error ?? new Error(e.message));

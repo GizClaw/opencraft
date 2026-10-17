@@ -118,6 +118,50 @@ const emptyMCPRow = (): MCPRow => ({
   envText: '',
 });
 
+// MCPEnvRow is one row of the MCP environment editor: a NAME and its
+// value.
+interface MCPEnvRow {
+  key: string;
+  value: string;
+}
+
+// parseEnvText reads the environment text into rows: one line each, split
+// on the first '='. A line without one is a key with an empty value — the
+// form shows exactly that, so the text and the rows never disagree about
+// what is there. Blank lines stay empty rows, which is what the "add"
+// button's fresh row round-trips through.
+export function parseEnvText(text: string): MCPEnvRow[] {
+  if (text === '') return [];
+  return text.split('\n').map((line) => {
+    const eq = line.indexOf('=');
+    return eq < 0
+      ? { key: line, value: '' }
+      : { key: line.slice(0, eq), value: line.slice(eq + 1) };
+  });
+}
+
+// formatEnvText is parseEnvText's inverse, so a list the user did not
+// touch is written back as the text it was read from.
+export function formatEnvText(rows: MCPEnvRow[]): string {
+  return rows.map((r) => `${r.key}=${r.value}`).join('\n');
+}
+
+// envMapFromText is the one rule both halves share: the dialog's rows and
+// the server payload come from the same parse, so a row the form shows as
+// valid cannot disappear on save. A key needs a name (a blank line or a
+// line starting with '=' carries none) and the value is stored as it
+// stands — trimming it would eat the leading space of values like
+// " Basic dXNlcjpwYXNz".
+export function envMapFromText(text: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const { key, value } of parseEnvText(text)) {
+    const name = key.trim();
+    if (name === '') continue;
+    env[name] = value;
+  }
+  return env;
+}
+
 // MCPDetailDialog is the centered configuration form shown when a server
 // is clicked in the MCP list. The dialog edits a local draft and leaves
 // persistence to the surrounding MCPSection's single Save & apply, so
@@ -154,20 +198,10 @@ function MCPDetailDialog({
     setTestResult(null);
   };
 
-  const envRows = useMemo(() => {
-    if (!row.envText) return [];
-    return row.envText.split('\n').map((line) => {
-      const eq = line.indexOf('=');
-      return eq < 0
-        ? { key: line, value: '' }
-        : { key: line.slice(0, eq), value: line.slice(eq + 1) };
-    });
-  }, [row.envText]);
+  const envRows = useMemo(() => parseEnvText(row.envText), [row.envText]);
 
-  const updateEnvRows = (rows: { key: string; value: string }[]) => {
-    update({
-      envText: rows.map((r) => `${r.key}=${r.value}`).join('\n'),
-    });
+  const updateEnvRows = (rows: MCPEnvRow[]) => {
+    update({ envText: formatEnvText(rows) });
   };
 
   const addEnvRow = () => {
@@ -595,12 +629,10 @@ export function MCPSection() {
       .map((a) => a.trim())
       .filter(Boolean);
     if (args.length > 0) srv.args = args;
-    const env: Record<string, string> = {};
-    for (const line of r.envText.split('\n')) {
-      const eq = line.indexOf('=');
-      if (eq <= 0) continue;
-      env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
-    }
+    // The dialog's rows and this payload come from the same parse: a row
+    // the form shows as a valid key is stored, and the value is stored
+    // exactly as it stands (see envMapFromText).
+    const env = envMapFromText(r.envText);
     if (Object.keys(env).length > 0) srv.env = env;
     return srv;
   };

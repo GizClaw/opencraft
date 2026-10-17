@@ -93,23 +93,58 @@ function callerOf(this: unknown) {
   return ctx;
 }
 
+// The manifest grant a plugin scope carries. Isolation keeps an
+// unpermitted service out of the plugin's own branch, but the root
+// context is reachable from any scope (`ctx.root.secrets`), and what it
+// holds is the real service - so a gated service checks the calling
+// scope's own grant itself. A caller without one (the root context, a
+// scope that did not come from a plugin manifest) is refused; the scope
+// the call goes through is what counts, so even a granted plugin cannot
+// reach the app's root service, which is the handle an unpermitted
+// plugin would reach for; a plugin reaches the service through the
+// scope its manifest made, and nothing else does.
+function requirePermission(
+  ctx: Context,
+  service: keyof typeof PERMISSION_GATED,
+) {
+  const permission = PERMISSION_GATED[service]!;
+  const granted = (ctx.config as { permissions?: string[] } | undefined)
+    ?.permissions;
+  if (!granted?.includes(permission)) {
+    throw new Error(
+      `service "${service}" needs permission "${permission}", not granted by manifest`,
+    );
+  }
+}
+
 function makeKVService(): KVService {
   return {
     get: async function (this: unknown, key: string) {
-      const id = callerOf.call(this).config.id;
+      const ctx = callerOf.call(this);
+      requirePermission(ctx, 'storage');
+      const id = ctx.config.id;
       const entry = await api.pluginKVGet(id, key);
       return entry.value || null;
     },
-    set: function (this: unknown, key: string, value: string) {
-      const id = callerOf.call(this).config.id;
+    // async like `get`: a refusal has to be the rejected promise the
+    // interface promises, or a synchronous throw in a plugin's apply()
+    // body is recorded as the whole plugin failing to activate.
+    set: async function (this: unknown, key: string, value: string) {
+      const ctx = callerOf.call(this);
+      requirePermission(ctx, 'storage');
+      const id = ctx.config.id;
       return api.pluginKVSet(id, key, value);
     },
-    delete: function (this: unknown, key: string) {
-      const id = callerOf.call(this).config.id;
+    delete: async function (this: unknown, key: string) {
+      const ctx = callerOf.call(this);
+      requirePermission(ctx, 'storage');
+      const id = ctx.config.id;
       return api.pluginKVDelete(id, key);
     },
     list: async function (this: unknown) {
-      const id = callerOf.call(this).config.id;
+      const ctx = callerOf.call(this);
+      requirePermission(ctx, 'storage');
+      const id = ctx.config.id;
       const entries = await api.pluginKVList(id);
       const out: Record<string, string> = {};
       for (const e of entries) out[e.key] = e.value;
@@ -119,9 +154,20 @@ function makeKVService(): KVService {
 }
 
 function makeSecretsService(): SecretsService {
+  // Hard-coded 'auth' scope: the grant, not the service name, is what
+  // says a caller may read or delete those secrets.
   return {
-    has: (name: string) => api.secretExists('auth', name),
-    delete: (name: string) => api.secretDelete('auth', name),
+    // async so a refusal is a rejected promise, the shape the
+    // interface promises; a synchronous throw would crash the calling
+    // plugin's apply() instead.
+    has: async function (this: unknown, name: string) {
+      requirePermission(callerOf.call(this), 'secrets');
+      return api.secretExists('auth', name);
+    },
+    delete: async function (this: unknown, name: string) {
+      requirePermission(callerOf.call(this), 'secrets');
+      return api.secretDelete('auth', name);
+    },
   };
 }
 
@@ -167,8 +213,10 @@ function makePetsRegistrar(packs: PetPack[]): Registrar<PetPack> {
       // than this, because a rejected pack simply never renders. Only
       // track it locally once the registry accepted it, so the two
       // sides cannot disagree about which characters exist.
-      const registered = api.petRegisterPack(tagged).then(
+      let accepted = false;
+      const settled = api.petRegisterPack(tagged).then(
         () => {
+          accepted = true;
           packs.push(tagged);
         },
         (err: unknown) => {
@@ -181,9 +229,18 @@ function makePetsRegistrar(packs: PetPack[]): Registrar<PetPack> {
       const dispose = () => {
         const i = packs.indexOf(tagged);
         if (i >= 0) packs.splice(i, 1);
-        // Unregister after the registration settles so a teardown that
-        // races the add cannot win the race and leave the pack behind.
-        void registered.then(() => api.petUnregisterPack(id));
+        // Only a pack this plugin actually registered may be
+        // unregistered, and only after the registration settled so a
+        // teardown that races the add cannot win the race and leave the
+        // pack behind. A *rejected* registration must leave the
+        // registry untouched: the Go store has no backup for an
+        // override that never happened, so unregistering there deletes
+        // the character carrying that id — the builtin one, when a
+        // plugin tried to shadow it — and the pet window reloads with
+        // nothing to draw.
+        void settled.then(() => {
+          if (accepted) return api.petUnregisterPack(id);
+        });
       };
       ctx.effect(() => dispose);
       return dispose;
@@ -298,6 +355,26 @@ function loadPluginModule(id: string, src: string): Promise<PluginModule> {
     .finally(() => URL.revokeObjectURL(url));
 }
 
+// moduleLoader is the seam between the host and the bundle format. The
+// real loader turns the plugin source into an ES module through a blob
+// URL, which is the only route the Wails webview accepts; a Node test
+// process cannot import blob: URLs at all, so tests may install their
+// own loader and still exercise the real host — the Cordis app, the
+// service registrars and the permission branches are the same either
+// way.
+let moduleLoader: (id: string, src: string) => Promise<PluginModule> =
+  loadPluginModule;
+
+/**
+ * Replaces the bundle loader; null restores the real one. Only tests
+ * use this: the permission model lives in the host, not in the loader.
+ */
+export function setPluginModuleLoader(
+  loader: ((id: string, src: string) => Promise<PluginModule>) | null,
+): void {
+  moduleLoader = loader ?? loadPluginModule;
+}
+
 function defaultApply(mod: unknown): unknown {
   if (typeof mod === 'function') return mod;
   if (mod && typeof mod === 'object') return (mod as PluginModule).apply;
@@ -358,7 +435,7 @@ export async function activatePlugin(
   permissions: string[],
 ): Promise<PluginActivation> {
   if (!app) throw new Error('plugin host not initialized');
-  const mod = await loadPluginModule(id, src);
+  const mod = await moduleLoader(id, src);
   const inject = mod.inject ?? [];
   validateInject(id, inject, permissions);
 

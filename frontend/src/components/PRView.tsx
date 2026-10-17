@@ -8,6 +8,7 @@ import { AlertTriangle, GitPullRequest, Loader2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { dateLabel } from '../lib/format';
 import type { GitHubPull } from '../lib/types';
+import { useLatestRequest } from '../lib/useLatest';
 import { PRDetailModal } from './PRDetailModal';
 import { AvatarBadge } from './viewer/AvatarBadge';
 import { EmptyState } from './ui/EmptyState';
@@ -18,17 +19,23 @@ export function PRView({ nonce }: { nonce: number }) {
   const [rows, setRows] = useState<GitHubPull[] | null>(null);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<GitHubPull | null>(null);
+  // The nonce moves on every git_changed/turn_end/focus, so two list
+  // loads can be in flight at once; only the newest one may write.
+  const listTicket = useLatestRequest();
 
   const load = useCallback(async () => {
+    const id = listTicket.begin();
     setError('');
     try {
       const list = await api.gitHubPRList();
+      if (!listTicket.isCurrent(id)) return;
       setRows(list);
     } catch (err) {
+      if (!listTicket.isCurrent(id)) return;
       setError(String(err));
       setRows([]);
     }
-  }, []);
+  }, [listTicket]);
 
   // Reload on mount and whenever the GitPanel refresh nonce changes
   // (manual refresh, window focus or a git_changed event).

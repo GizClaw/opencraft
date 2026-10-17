@@ -30,8 +30,26 @@ import { imeKeyOwner } from './ime';
 // The listener sits on the window rather than the document so a key
 // dispatched at either of them reaches it.
 
-/** Exit durations, mirroring the --animate-*-out tokens in style.css. */
-export const MOTION = { fast: 120, base: 160, drawer: 180 } as const;
+/**
+ * Exit durations. Each one is the length of an `--animate-*-out` token in
+ * style.css, and it is the timer that decides when the surface is really
+ * unmounted: a shorter one cuts the animation off (the surface blinks out
+ * mid-fade), a longer one leaves an invisible panel over the window.
+ *
+ * The table used to carry `base` (160ms, the *entrance* duration of the
+ * scrim and the panel) and `drawer` (180ms, the drawer's *entrance*), both
+ * unused, while the two exits actually played — drawer and toast — took the
+ * `fast` default. overlay.test.ts reads the stylesheet and holds this table
+ * against the tokens so the two cannot drift apart again.
+ */
+export const MOTION = {
+  /** --animate-scrim-out / --animate-panel-out: dialogs and palettes. */
+  fast: 120,
+  /** --animate-drawer-out: the drawer-right variant. */
+  drawerOut: 130,
+  /** --animate-toast-out: the toaster's queue sweep. */
+  toast: 140,
+} as const;
 
 interface Layer {
   dismiss: (() => void) | undefined;

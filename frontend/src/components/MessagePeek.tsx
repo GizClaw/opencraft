@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../lib/store';
@@ -70,8 +70,13 @@ export const MessagePeek = memo(function MessagePeek({
   const openFileTarget = useStore((s) => s.openFileTarget);
   // Links inside a preview follow the chat's own rule: they open in the
   // session's file panel, exactly like a link in the transcript.
-  const openLink: MarkdownLinkHandler = (href, base) =>
-    void openFileTarget(href, base ?? '');
+  // The handler is stable so the preview's markdown keeps its memo: a fresh
+  // arrow per render would re-parse the hovered answer on every render of
+  // the ruler.
+  const openLink = useCallback<MarkdownLinkHandler>(
+    (href, base) => void openFileTarget(href, base ?? ''),
+    [openFileTarget],
+  );
   const rootRef = useRef<HTMLDivElement>(null);
   const scrubberRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -184,8 +189,6 @@ export const MessagePeek = memo(function MessagePeek({
     };
   }, [getPreview, hovered, items.length, revision]);
 
-  if (items.length === 0) return null;
-
   // The scrubber's hit area covers the slice rather than the column:
   // pointer position maps onto the turns the block draws, so a quarter
   // of the way down means the same thing whether the session has 41
@@ -204,6 +207,56 @@ export const MessagePeek = memo(function MessagePeek({
       slice.start + Math.floor(progress * (slice.end - slice.start + 1)),
     );
   };
+
+  // A pointer move used to read the scrubber's rect and set state on every
+  // event — dozens per frame while the pointer travels, each one
+  // re-rendering the ruler (41 dashes) and forcing a layout to measure. The
+  // position is now sampled once per frame, and only a change of the index
+  // under the pointer writes state: a move that stays inside one dash does
+  // nothing at all. The tooltip follows `hovered` and the rungs' hover
+  // styling follows it too, so what the ruler shows is unchanged.
+  const moveFrameRef = useRef<number | null>(null);
+  const pendingClientYRef = useRef<number | null>(null);
+  // The frame runs after the render that scheduled it, so it reads the
+  // newest mapping (and with it the newest slice) rather than the closure
+  // of the event that happened to start it.
+  const indexFromPointerRef = useRef(indexFromPointer);
+  indexFromPointerRef.current = indexFromPointer;
+  const cancelPendingMove = () => {
+    if (moveFrameRef.current != null) {
+      cancelAnimationFrame(moveFrameRef.current);
+      moveFrameRef.current = null;
+    }
+    pendingClientYRef.current = null;
+  };
+  useEffect(
+    () => () => {
+      if (moveFrameRef.current != null) {
+        cancelAnimationFrame(moveFrameRef.current);
+        moveFrameRef.current = null;
+      }
+      pendingClientYRef.current = null;
+    },
+    [],
+  );
+  const hoverAtPointer = (clientY: number) => {
+    const index = indexFromPointerRef.current(clientY);
+    setHovered((prev) => (prev === index ? prev : index));
+  };
+  const scheduleHoverAtPointer = (clientY: number) => {
+    pendingClientYRef.current = clientY;
+    if (moveFrameRef.current != null) return;
+    moveFrameRef.current = requestAnimationFrame(() => {
+      moveFrameRef.current = null;
+      const y = pendingClientYRef.current;
+      pendingClientYRef.current = null;
+      if (y == null) return;
+      hoverAtPointer(y);
+    });
+  };
+
+  if (items.length === 0) return null;
+
   // A slice that was cut at either end fades over the last rung of its
   // own scale: the block says "there is more in that direction" while
   // the transcript's own ends stay hard edges, so the block itself is
@@ -320,18 +373,26 @@ export const MessagePeek = memo(function MessagePeek({
               count: Math.max(1, (hovered ?? focusTurn) + 1),
             })}
             onPointerMove={(event) => {
-              const index = indexFromPointer(event.clientY);
-              setHovered((prev) => (prev === index ? prev : index));
+              scheduleHoverAtPointer(event.clientY);
             }}
             onPointerDown={(event) => {
+              // A press answers the pointer where it is, not on the next
+              // frame: drop any move still waiting for one.
+              cancelPendingMove();
               setHovered(indexFromPointer(event.clientY));
             }}
             onClick={(event) => {
               const index = indexFromPointer(event.clientY);
+              // The click takes the hover away; a queued move must not put
+              // the tooltip back after it.
+              cancelPendingMove();
               setHovered(null);
               onJump(index);
             }}
-            onPointerLeave={() => setHovered(null)}
+            onPointerLeave={() => {
+              cancelPendingMove();
+              setHovered(null);
+            }}
             onFocus={() => setHovered(focusTurn)}
             onBlur={() => setHovered(null)}
             onKeyDown={(event) => {

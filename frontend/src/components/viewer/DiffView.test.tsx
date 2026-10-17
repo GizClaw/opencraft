@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { PatchFileDTO } from '../../lib/types';
+import type { PatchFileDTO, PatchLineDTO } from '../../lib/types';
 import { GitDiffView } from './DiffView';
 
 const longLine =
@@ -154,5 +154,26 @@ describe('GitDiffView', () => {
     expect(container.querySelectorAll('.grid').length).toBe(4);
     expect(errors).not.toHaveBeenCalled();
     errors.mockRestore();
+  });
+
+  it('keeps a hunk header counting the whole hunk when the cap cuts it', () => {
+    const lines: PatchLineDTO[] = Array.from({ length: 6 }, (_, i) => ({
+      kind: 'context',
+      old_num: i + 1,
+      new_num: i + 1,
+      text: `line ${i + 1}`,
+    }));
+    render(<GitDiffView files={[file({ lines })]} maxLines={3} />);
+
+    // The cap decides how many rows are painted, not what the hunk is:
+    // its header keeps the numbers the patch carries, so the same hunk
+    // reads the same here and in the Git panel.
+    expect(screen.getByText('@@ -1,6 +1,6 @@')).toBeInTheDocument();
+    expect(screen.getByText('line 3')).toBeInTheDocument();
+    expect(screen.queryByText('line 4')).not.toBeInTheDocument();
+    // The cut is marked where it happens, so a header wider than the
+    // rows under it cannot be read as "that was all of it".
+    expect(screen.getByText('truncated')).toBeInTheDocument();
+    expect(screen.getByText('3 more lines')).toBeInTheDocument();
   });
 });

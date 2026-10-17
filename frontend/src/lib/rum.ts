@@ -3,6 +3,7 @@ import type { Metric } from 'web-vitals';
 
 import * as Diagnostics from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/diagnostics';
 import { buildVersion, reportLabels } from './perfLabels';
+import { perfProbeRunning } from './perfProbe';
 
 // PerfSample mirrors the Go FrontendPerfSample binding model.
 export interface PerfSample {
@@ -13,6 +14,16 @@ export interface PerfSample {
 
 let started = false;
 const lastValue = new Map<string, number>();
+
+// RUM writes through the same ReportFrontendPerf binding the
+// renderer-side probe uses, so it answers to the same switch: while
+// "frontend perf sampling" is off, dom_content_loaded/load/fid/inp stay
+// in the page instead of reaching user.db and any configured OTLP
+// exporter. The switch is read live, so flipping it in the Diagnostics
+// tab takes effect without a reload.
+function samplingEnabled(): boolean {
+  return perfProbeRunning();
+}
 
 // send stamps one sample with the same labels the probe uses (surface,
 // build, active conversation), resolved per sample so a report carries the
@@ -30,6 +41,7 @@ async function send(sample: PerfSample) {
 // estimates for the same metric id (INP improves over the session, CLS grows
 // until the page is hidden); unchanged values are deduplicated.
 function report(metric: Metric, unit: string) {
+  if (!samplingEnabled()) return;
   const name = metric.name.toLowerCase();
   const key = `${metric.id}:${name}`;
   const previous = lastValue.get(key);
@@ -76,6 +88,7 @@ function latestNavigation(): PerformanceNavigationTiming | undefined {
 }
 
 function reportNavigationTiming() {
+  if (!samplingEnabled()) return;
   const nav = latestNavigation();
   if (!nav) return;
   for (const sample of navigationSamples(nav)) {
@@ -91,7 +104,9 @@ function reportNavigationTiming() {
 
 // startRUM wires web-vitals and navigation timing once per page load. It is
 // safe to call before the app shell mounts; unsupported metrics silently
-// produce no observations.
+// produce no observations. Sampling is armed here but only reports while the
+// frontend-sampling switch is on: a switch that stopped the probe but kept
+// web vitals flowing would still be sending renderer data off the machine.
 export function startRUM(): void {
   if (started) return;
   started = true;

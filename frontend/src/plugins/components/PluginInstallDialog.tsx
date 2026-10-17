@@ -1,5 +1,5 @@
 import { FileArchive, FolderOpen, Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { usePluginStore } from '../store';
@@ -7,6 +7,11 @@ import { compareVersions } from '../version';
 import type { PluginSummary } from '../types';
 import { ICON } from '../../components/ui/icon';
 import { Modal } from '../../components/ui/Modal';
+
+// How long typing has to settle before the path is inspected. The
+// inspection is a filesystem probe on the Go side, and a pasted path
+// used to fire one per keystroke.
+const INSPECT_DEBOUNCE_MS = 250;
 
 // PluginInstallDialog installs or updates a plugin from a local
 // directory containing plugin.json or from a zip package. When
@@ -26,17 +31,46 @@ export function PluginInstallDialog({
   const [shadow, setShadow] = useState<PluginSummary | null>(null);
   const isUpdate = pluginId !== undefined;
 
-  const inspect = async (p: string) => {
-    if (!p.trim() || isUpdate) {
+  const inspectTimer = useRef<number | undefined>(undefined);
+  // Sequence guard: only the answer for the newest path may land, so a
+  // slow probe for an earlier path cannot resurrect its warnings after
+  // the user has typed on.
+  const inspectSeq = useRef(0);
+
+  const inspect = (p: string) => {
+    if (inspectTimer.current !== undefined) {
+      window.clearTimeout(inspectTimer.current);
+      inspectTimer.current = undefined;
+    }
+    // Every keystroke invalidates what is in flight, including the one
+    // that only clears the warnings.
+    const probe = p.trim();
+    const seq = ++inspectSeq.current;
+    if (!probe || isUpdate) {
       setShadow(null);
       return;
     }
-    try {
-      setShadow(await api.pluginInspect(p.trim()));
-    } catch {
-      setShadow(null);
-    }
+    inspectTimer.current = window.setTimeout(() => {
+      inspectTimer.current = undefined;
+      void api.pluginInspect(probe).then(
+        (next) => {
+          if (seq === inspectSeq.current) setShadow(next);
+        },
+        () => {
+          if (seq === inspectSeq.current) setShadow(null);
+        },
+      );
+    }, INSPECT_DEBOUNCE_MS);
   };
+
+  useEffect(
+    () => () => {
+      if (inspectTimer.current !== undefined) {
+        window.clearTimeout(inspectTimer.current);
+      }
+    },
+    [],
+  );
 
   const pick = async () => {
     try {
@@ -48,7 +82,7 @@ export function PluginInstallDialog({
       if (dir) {
         setPath(dir);
         setError('');
-        void inspect(dir);
+        inspect(dir);
       }
     } catch (err) {
       setError(String(err));
@@ -66,7 +100,7 @@ export function PluginInstallDialog({
       if (file) {
         setPath(file);
         setError('');
-        void inspect(file);
+        inspect(file);
       }
     } catch (err) {
       setError(String(err));
@@ -120,7 +154,7 @@ export function PluginInstallDialog({
             value={path}
             onChange={(e) => {
               setPath(e.target.value);
-              void inspect(e.target.value);
+              inspect(e.target.value);
             }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') void install();

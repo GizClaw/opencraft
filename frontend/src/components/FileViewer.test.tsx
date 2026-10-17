@@ -19,7 +19,13 @@ const apiMock = vi.hoisted(() => ({
       _showHidden?: boolean,
     ): Promise<{ name: string; path: string; is_dir: boolean }[]> => [],
   ),
-  searchFiles: vi.fn(async () => []),
+  searchFiles: vi.fn(
+    async (
+      _query: string,
+      _limit?: number,
+      _showHidden?: boolean,
+    ): Promise<{ path: string; is_dir: boolean }[]> => [],
+  ),
   setUISettings: vi.fn(async () => undefined),
   // The tree's change badges read the repository snapshot; a workspace
   // outside a repository answers with no entries.
@@ -411,5 +417,41 @@ describe('FileViewer', () => {
 
     expect(await screen.findByText('New file')).toBeInTheDocument();
     await waitFor(() => expect(apiMock.listDir).toHaveBeenCalled());
+  });
+
+  it('ignores a slow search that lands after a newer one', async () => {
+    useStore.setState({ uiSettings: { ...DEFAULT_UI_SETTINGS } });
+    apiMock.listDir.mockResolvedValue([]);
+    let answerFirst: (
+      hits: { path: string; is_dir: boolean }[],
+    ) => void = () => {};
+    apiMock.searchFiles
+      .mockImplementationOnce(
+        () =>
+          new Promise<{ path: string; is_dir: boolean }[]>((resolve) => {
+            answerFirst = resolve;
+          }),
+      )
+      .mockResolvedValueOnce([{ path: 'b.go', is_dir: false }]);
+
+    render(<FileViewer sessionID="s-1" />);
+    (await screen.findByLabelText('Toggle file tree')).click();
+    const box = await screen.findByPlaceholderText(
+      'Type to search workspace files…',
+    );
+
+    fireEvent.change(box, { target: { value: 'a' } });
+    await waitFor(() => expect(apiMock.searchFiles).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(box, { target: { value: 'ab' } });
+    expect(await screen.findByText('b.go')).toBeInTheDocument();
+
+    await act(async () => {
+      answerFirst([{ path: 'a-only.go', is_dir: false }]);
+    });
+    // The slower answer belongs to a query the box no longer holds: the
+    // tree must not list files that do not match what is typed.
+    expect(screen.queryByText('a-only.go')).not.toBeInTheDocument();
+    expect(screen.getByText('b.go')).toBeInTheDocument();
   });
 });

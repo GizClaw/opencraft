@@ -12,7 +12,7 @@ import { useStore } from '../lib/store';
 import { stateRoot } from '../state/app';
 import type { MessageView, TurnArtifacts } from '../lib/store';
 import type { SandboxProcess, SessionMeta } from '../lib/types';
-import { ChatView } from './ChatView';
+import { ChatView, attachmentPreviews } from './ChatView';
 
 const apiMock = vi.hoisted(() => ({
   workspace: vi.fn(),
@@ -444,11 +444,11 @@ describe('ChatView transcript windowing', () => {
   it('force-cancels the superseded run while a barge-in waits', async () => {
     setConversation([]);
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     // A barge-in Enter leaves the conversation starting while the
     // backend interrupts r-old; the banner must offer a force-cancel.
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'interrupt' });
     expect(actor?.getSnapshot().context).toMatchObject({
       supersededRunID: 'r-old',
     });
@@ -467,7 +467,7 @@ describe('ChatView transcript windowing', () => {
   it('Enter with an empty composer delivers a draft kept after a failed turn', async () => {
     setConversation([], []);
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     const conv = useStore.getState().conversations['s-1'];
     useStore.setState({
@@ -519,7 +519,7 @@ describe('ChatView transcript windowing', () => {
   it('hints Enter/Tab behavior while typing during a running turn', async () => {
     setConversation([], []);
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     render(<ChatView />);
 
@@ -542,7 +542,7 @@ describe('ChatView transcript windowing', () => {
   it('keeps Stop reachable while a draft steers with Send', async () => {
     setConversation([], []);
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     apiMock.startTurn.mockResolvedValue({
       run_id: 'r-next',
@@ -582,7 +582,7 @@ describe('ChatView transcript windowing', () => {
 
   it('stages the draft when Enter arrives before the run has an id', async () => {
     setConversation([], []);
-    stateRoot.registry.get('s-1')?.send({ type: 'SEND_STARTED' });
+    stateRoot.registry.get('s-1')?.send({ type: 'SUBMIT', kind: 'send' });
     render(<ChatView />);
 
     await userEvent.setup().click(screen.getByRole('textbox'));
@@ -620,7 +620,7 @@ describe('ChatView transcript windowing', () => {
     );
 
     // The turn starts with the attachment still staged.
-    stateRoot.registry.get('s-1')?.send({ type: 'SEND_STARTED' });
+    stateRoot.registry.get('s-1')?.send({ type: 'SUBMIT', kind: 'send' });
     stateRoot.registry
       .get('s-1')
       ?.send({ type: 'RUN_STARTED', runID: 'r-old' });
@@ -645,7 +645,7 @@ describe('ChatView transcript windowing', () => {
   it('Cmd/Ctrl+Enter sends the draft as a barge-in', async () => {
     setConversation([], []);
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     apiMock.startTurn.mockResolvedValue({
       run_id: 'r-next',
@@ -688,7 +688,7 @@ describe('ChatView transcript windowing', () => {
       { id: 't-1', start: 0, docs: [], runID: 'r-old' },
     ]);
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     render(<ChatView />);
 
@@ -733,7 +733,7 @@ describe('ChatView transcript windowing', () => {
       { id: 't-1', start: 0, docs: [], runID: 'r-old' },
     ]);
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     render(<ChatView />);
 
@@ -768,7 +768,7 @@ describe('ChatView transcript windowing', () => {
       { id: 't-1', start: 0, docs: [], runID: 'r-old' },
     ]);
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     apiMock.startTurn.mockResolvedValue({
       run_id: 'r-next',
@@ -839,7 +839,7 @@ describe('ChatView transcript windowing', () => {
       { id: 't-1', start: 0, docs: [], runID: 'r-old' },
     ]);
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
     render(<ChatView />);
 
@@ -991,6 +991,79 @@ describe('ChatView transcript windowing', () => {
     expect(screen.getAllByRole('menuitem')).toHaveLength(5);
     await user.click(document.body);
     expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
+  });
+
+  // A resumed session carries only the stored path, so the preview crosses
+  // the bridge on mount — and a virtualized transcript mounts the row again
+  // every time it scrolls back into view.
+  function historyImageAttachments(): MessageView['attachments'] {
+    return [
+      {
+        id: 'att-1',
+        kind: 'image',
+        path: '/tmp/history.png',
+        name: 'history.png',
+        media_type: 'image/png',
+      },
+    ];
+  }
+
+  it('fetches a history image once, even after a remount', async () => {
+    attachmentPreviews.clear();
+    apiMock.readAttachment.mockResolvedValue({
+      path: '/tmp/history.png',
+      name: 'history.png',
+      media_type: 'image/png',
+      data_url: 'data:image/png;base64,BBBB',
+    });
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'look at this',
+          items: [],
+          attachments: historyImageAttachments(),
+        },
+      ],
+      [],
+    );
+
+    const first = render(<ChatView />);
+    await screen.findByRole('img', { name: 'history.png' });
+    expect(apiMock.readAttachment).toHaveBeenCalledTimes(1);
+
+    // The row scrolls out of the virtualized window and back: the preview is
+    // cached by path, so it is not fetched (or decoded) again.
+    first.unmount();
+    render(<ChatView />);
+    await screen.findByRole('img', { name: 'history.png' });
+    expect(apiMock.readAttachment).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the file name when a history image is gone', async () => {
+    attachmentPreviews.clear();
+    apiMock.readAttachment.mockRejectedValue(new Error('missing file'));
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'look at this',
+          items: [],
+          attachments: historyImageAttachments(),
+        },
+      ],
+      [],
+    );
+    render(<ChatView />);
+
+    // The failure used to be swallowed, which left the card spinning
+    // forever: the 'missing' fallback was unreachable.
+    await waitFor(() =>
+      expect(screen.getByText('history.png')).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole('img', { name: 'history.png' })).toBeNull();
   });
 
   it('shows worked duration at the top of an artifact turn', () => {
@@ -3228,7 +3301,7 @@ describe('ChatView header', () => {
     // The next turn takes the line over: a send clears the last one's
     // ending rather than leaving two states stacked in one row.
     act(() => {
-      actor?.send({ type: 'SEND_STARTED' });
+      actor?.send({ type: 'SUBMIT', kind: 'send' });
     });
     expect(screen.queryByTestId('chat-turn-stop')).not.toBeInTheDocument();
     expect(screen.getByTestId('chat-run-state')).toHaveTextContent('Running');
@@ -3300,7 +3373,7 @@ describe('ChatView activity card', () => {
   it('keeps the card up after the turn it reported', () => {
     setConversation(assistantTurn());
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     render(<ChatView />);
 
@@ -3360,7 +3433,7 @@ describe('ChatView activity card', () => {
     ]);
     setConversation(assistantTurn());
     const actor = stateRoot.registry.get('s-1');
-    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'SUBMIT', kind: 'send' });
     actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     render(<ChatView />);
 

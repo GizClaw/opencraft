@@ -67,6 +67,12 @@ export function PRDetailModal({
   }, [pr.number, attempt]);
 
   const openURL = detail?.html_url || pr.html_url;
+  // The body below is a freshly fetched detail, while `pr` is the list
+  // row as it looked when it was clicked — a version behind as soon as
+  // the list refreshes (a PR merged while its page is open, a retitled
+  // PR). The header reads whichever of the two is the newer source, so
+  // it cannot say "open" over a merged page.
+  const head = detail ?? pr;
 
   return (
     <>
@@ -76,17 +82,17 @@ export function PRDetailModal({
         panelClassName="flex max-h-[92vh] w-[min(96vw,1080px)] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal"
       >
         <div className="flex h-12 shrink-0 items-center gap-2 border-b border-edge bg-panel2 px-3">
-          <StateChip state={pr.state} />
+          <StateChip state={head.state} />
           <span className="shrink-0 font-mono text-micro text-dim">
             #{pr.number}
           </span>
-          {pr.draft && (
+          {head.draft && (
             <span className="shrink-0 rounded-tight border border-dim/30 px-1 py-px text-micro text-dim">
               {t('git.draft')}
             </span>
           )}
           <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">
-            {pr.title}
+            {head.title}
           </span>
           <button
             onClick={() => void api.openExternal(openURL)}

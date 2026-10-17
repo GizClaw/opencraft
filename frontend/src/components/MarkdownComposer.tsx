@@ -291,10 +291,13 @@ function createMentionRenderer(
       // Enter would swallow the candidate-confirmation keystroke
       // (lib/ime.ts).
       if (imeKeyOwner(event) !== null) return false;
-      if (event.key === 'Enter') {
-        component?.ref?.handleKeyDown(event);
-        return true;
-      }
+      // Only a key the popup actually took is consumed. The popup exists
+      // (onBeforeStart ran) a moment before its React subtree commits
+      // (onStart creates the renderer, the portal mounts on a microtask), so
+      // a keystroke arriving in that window — Enter right after "@" — used
+      // to be swallowed here while nothing handled it: no candidate picked,
+      // no newline, no send. Falling through lets the editor do what the key
+      // means.
       return component?.ref?.handleKeyDown(event) ?? false;
     },
   };

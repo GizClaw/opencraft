@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { parseUnifiedDiff } from '../lib/diff';
+import { useLatestRequest } from '../lib/useLatest';
 import type {
   GitCommitFile,
   GitCommitFiles,
@@ -49,36 +50,51 @@ export function CommitDetailModal({
   const [diffMessage, setDiffMessage] = useState('');
   const [diffError, setDiffError] = useState('');
   const [diffLoading, setDiffLoading] = useState(false);
+  // diffTicket orders the per-file loads: the highlighted row, the body
+  // and the loading flag all belong to the newest request, so a slow
+  // file cannot paint itself under another file's title (nor end the
+  // newer request's spinner).
+  const diffTicket = useLatestRequest();
 
   const selectFile = useCallback(
     async (file: GitCommitFile) => {
+      const id = diffTicket.begin();
       setSelectedPath(file.path);
       setDiff(null);
       setDiffMessage('');
       setDiffError('');
       if (file.is_binary) {
         setDiffMessage('binaryNoDiff');
+        // This request is the newest one, so the flag is its to clear:
+        // the superseded request's `finally` deliberately will not.
+        setDiffLoading(false);
         return;
       }
       setDiffLoading(true);
       try {
         const d = await api.gitCommitDiff(entry.oid, file.path);
+        if (!diffTicket.isCurrent(id)) return;
         setDiff(d);
       } catch (err) {
+        if (!diffTicket.isCurrent(id)) return;
         setDiffError(String(err));
       } finally {
-        setDiffLoading(false);
+        if (diffTicket.isCurrent(id)) setDiffLoading(false);
       }
     },
-    [entry.oid],
+    [entry.oid, diffTicket],
   );
 
   const loadFiles = useCallback(async () => {
+    // A new commit (or a retry) retires the files this modal was
+    // fetching: their diffs belong to the previous list.
+    diffTicket.begin();
     setListError('');
     setSnapshot(null);
     setSelectedPath(null);
     setDiff(null);
     setDiffMessage('');
+    setDiffLoading(false);
     try {
       const snap = await api.gitCommitFiles(entry.oid);
       setSnapshot(snap);
@@ -86,7 +102,7 @@ export function CommitDetailModal({
     } catch (err) {
       setListError(String(err));
     }
-  }, [entry.oid, selectFile]);
+  }, [entry.oid, diffTicket, selectFile]);
 
   useEffect(() => {
     void loadFiles();
