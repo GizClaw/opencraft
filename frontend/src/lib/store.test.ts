@@ -2722,6 +2722,68 @@ describe('store: interactions and artifacts', () => {
     });
   });
 
+  // The prompt travels in the start event because it becomes the run's
+  // user row. A payload from before that field existed carries none, and
+  // the turn still has to open: the row is empty, but it is there, so the
+  // deltas below it stay this run's instead of growing the turn above.
+  it('opens the turn of a start event that carries no message', () => {
+    const handle = useStore.getState().handleEvent;
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-1',
+              role: 'user',
+              text: 'earlier',
+              items: [],
+              attachments: [],
+            },
+            {
+              id: 'm-2',
+              role: 'assistant',
+              text: 'earlier answer',
+              items: [],
+              attachments: [],
+            },
+          ],
+          turnArtifacts: [{ id: 'h-1', start: 0, seq: 1, docs: [] }],
+        },
+      },
+    });
+
+    handle({
+      type: 'automation_run_started',
+      data: { run_id: 'r-quiet', conversation_id: 's-1' },
+    });
+    let conv = useStore.getState().conversations['s-1'];
+    expect(conv.turnArtifacts).toHaveLength(2);
+    expect(conv.turnArtifacts[1]).toMatchObject({ runID: 'r-quiet', start: 2 });
+    expect(conv.messages).toHaveLength(3);
+    expect(conv.messages[2]).toMatchObject({ role: 'user', text: '' });
+
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-quiet',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: { type: 'text', text: 'quiet answer' },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+    conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages).toHaveLength(4);
+    expect(conv.messages[3].items).toEqual([
+      expect.objectContaining({ kind: 'text', text: 'quiet answer' }),
+    ]);
+    // The turn above keeps its own text: the delta stayed below the seam.
+    expect(conv.messages[1].items).toEqual([]);
+  });
+
   // The case above starts from a fresh actor (idle). In the app the actor
   // is anything but fresh: the conversation the schedule is pinned to has
   // already run a turn, so it rests on `succeeded`, and that is where the

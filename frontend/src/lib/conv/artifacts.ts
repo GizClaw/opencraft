@@ -6,6 +6,13 @@ import {
   newTurnID,
 } from './model';
 
+// normalizeTurnStatus is the data layer's reading of a status string, and
+// it only names what it can spell: an unrecognised status becomes
+// undefined, and every caller keeps what the turn already says instead of
+// guessing (writer.ts for a live turn, history.ts for an archived one).
+// The router reads the same field differently on purpose - the turn
+// machine must reach a terminal phase, so anything it does not recognise
+// ends the turn as a failure (turnEndStatus in state/eventRouter.ts).
 export function normalizeTurnStatus(status?: string): TurnStatus | undefined {
   switch (status) {
     case 'completed':
