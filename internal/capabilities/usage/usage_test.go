@@ -425,28 +425,39 @@ func TestSeriesDayBucketsUseTheViewerZone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	days, err := store.Series(
-		ctx, "deepseek-chat", GranularityDay, "America/New_York", -300, "", "",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(days) != 1 || days[0].Time != "2026-11-01" {
-		t.Fatalf("named zone days = %+v, want 2026-11-01", days)
-	}
-
-	// No usable name falls back to the offset the window sent.
-	for _, name := range []string{"", "Not/AZone"} {
-		fallback, err := store.Series(
-			ctx, "deepseek-chat", GranularityDay, name, -300, "", "",
+	// The named-zone half needs a zone database. Without one dayZone falls
+	// back to the offset, which is the second half's property, not this
+	// one's - so the premise is spelled out and the skip prints as its
+	// own subtest rather than hiding in a log line.
+	t.Run("named zone", func(t *testing.T) {
+		if _, err := time.LoadLocation("America/New_York"); err != nil {
+			t.Skipf("no zone database: %v", err)
+		}
+		days, err := store.Series(
+			ctx, "deepseek-chat", GranularityDay, "America/New_York", -300, "", "",
 		)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(fallback) != 1 || fallback[0].Time != "2026-10-31" {
-			t.Fatalf("zone %q days = %+v, want 2026-10-31", name, fallback)
+		if len(days) != 1 || days[0].Time != "2026-11-01" {
+			t.Fatalf("named zone days = %+v, want 2026-11-01", days)
 		}
-	}
+	})
+
+	// No usable name falls back to the offset the window sent.
+	t.Run("offset fallback", func(t *testing.T) {
+		for _, name := range []string{"", "Not/AZone"} {
+			fallback, err := store.Series(
+				ctx, "deepseek-chat", GranularityDay, name, -300, "", "",
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(fallback) != 1 || fallback[0].Time != "2026-10-31" {
+				t.Fatalf("zone %q days = %+v, want 2026-10-31", name, fallback)
+			}
+		}
+	})
 }
 
 // A stored hour that is not RFC3339 cannot be placed on a calendar. The
