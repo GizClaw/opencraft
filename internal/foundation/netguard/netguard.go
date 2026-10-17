@@ -178,7 +178,9 @@ var LookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
 // loopback, private, link-local, multicast, unspecified, the IPv4
 // special-purpose ranges the standard library does not classify
 // (0.0.0.0/8, CGNAT, IETF protocol assignments, benchmarking,
-// reserved), or an IPv6 encoding (NAT64, 6to4) that carries a blocked
+// reserved), the IPv6-only special-purpose prefixes it does not
+// classify either (documentation, Teredo, the local-use translator
+// prefix), or an IPv6 encoding (NAT64, 6to4) that carries a blocked
 // IPv4 address.
 func BlockedIP(ip net.IP) bool {
 	if blockedKind(ip) {
@@ -205,9 +207,18 @@ func blockedKind(ip net.IP) bool {
 
 // blockedV6 covers the IPv6-only special-purpose prefixes the standard
 // library does not classify: the documentation blocks (2001:db8::/32 and
-// 3fff::/20) and the Teredo prefix (2001::/32) — a tunnel carry the
-// guard has no reason to follow, and the range that would otherwise hide
-// a private client address inside a public-looking spelling.
+// 3fff::/20), the Teredo prefix (2001::/32) — a tunnel carry the guard
+// has no reason to follow, and the range that would otherwise hide a
+// private client address inside a public-looking spelling — and the
+// local-use IPv4/IPv6 translation prefix (64:ff9b:1::/48, RFC 8215).
+// The last one is refused whole rather than decoded: RFC 8215 makes it
+// a container for operator-chosen RFC 6052 prefixes (48, 56, 64 or 96
+// bits, each landing the IPv4 address in different bytes), and it
+// exists to translate to private IPv4 in the first place — the one
+// destination a guarded fetch must not follow. Refusing the whole
+// container is the deliberate side of that trade, the way 192.0.0.0/24
+// is refused although a few addresses inside it are globally
+// reachable.
 func blockedV6(ip net.IP) bool {
 	if len(ip) != net.IPv6len {
 		return false
@@ -218,6 +229,9 @@ func blockedV6(ip net.IP) bool {
 	case ip[0] == 0x3f && ip[1] == 0xff && ip[2]&0xf0 == 0:
 		return true
 	case ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0 && ip[3] == 0:
+		return true
+	case ip[0] == 0x00 && ip[1] == 0x64 && ip[2] == 0xff && ip[3] == 0x9b &&
+		ip[4] == 0x00 && ip[5] == 0x01:
 		return true
 	}
 	return false
@@ -265,11 +279,13 @@ func blockedV4(v4 net.IP) bool {
 	return false
 }
 
-// embeddedV4 decodes the IPv4 address carried inside the two IPv6
-// encodings that re-encode one: 6to4 2002::/16 and NAT64 64:ff9b::/96.
-// Without this a private IPv4 target could reach the guard spelled as a
-// "public" IPv6 one. The encodings themselves stay usable while the
-// embedded address is public.
+// embeddedV4 decodes the IPv4 address carried inside the well-known
+// IPv6 encodings that re-encode one: 6to4 2002::/16 and the NAT64
+// prefix 64:ff9b::/96. Without this a private IPv4 target could reach
+// the guard spelled as a "public" IPv6 one. The encodings themselves
+// stay usable while the embedded address is public. (The local-use
+// translation prefix 64:ff9b:1::/48 carries one too, but in any of
+// several layouts; blockedV6 refuses that container whole.)
 func embeddedV4(ip net.IP) net.IP {
 	if len(ip) != net.IPv6len {
 		return nil

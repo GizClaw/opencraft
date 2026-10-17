@@ -13,9 +13,12 @@ import (
 	"testing"
 )
 
-// TestBlockedIP pins the blocked-address classes, including the IPv6
-// encodings that carry an embedded IPv4 (NAT64, 6to4) and the IPv4
-// ranges the standard library does not call private.
+// TestBlockedIP pins the blocked-address classes: the IPv6 encodings
+// that carry an embedded IPv4 (NAT64, 6to4), the IPv4 ranges the
+// standard library does not call private, and the IPv6-only
+// special-purpose prefixes (documentation, Teredo, the local-use
+// translator prefix). Every mask sits next to a sample just outside it,
+// so widening one is a red test rather than a silent hole.
 func TestBlockedIP(t *testing.T) {
 	blocked := []string{
 		"127.0.0.1", "127.255.255.255", "::1",
@@ -31,6 +34,10 @@ func TestBlockedIP(t *testing.T) {
 		"64:ff9b::10.0.0.1", "64:ff9b::127.0.0.1", "64:ff9b::169.254.1.1",
 		"2002:0a00:0001::", "2002:7f00:0001::",
 		"2001:db8::1", "3fff::1", "2001::1",
+		// 64:ff9b:1::/48 is refused whole: a public v4 spelled inside
+		// it does not make the container reachable.
+		"64:ff9b:1::a00:1", "64:ff9b:1::808:808",
+		"64:ff9b:1:abcd:0:5431:c000:221",
 	}
 	for _, raw := range blocked {
 		ip := net.ParseIP(raw)
@@ -49,8 +56,10 @@ func TestBlockedIP(t *testing.T) {
 		"2606:4700:4700::1111",
 		"2001:4860:4860::8888",
 		"3fff:1000::1",
-		"64:ff9b::8.8.8.8", // NAT64 is fine while the embedded v4 is public.
-		"2002:0808:0808::", // so is 6to4.
+		"2001:db9::1", "2001:1::1", // outside the documentation and Teredo blocks
+		"64:ff9b::8.8.8.8",                // NAT64 is fine while the embedded v4 is public.
+		"2002:0808:0808::",                // so is 6to4.
+		"64:ff9a:ffff::1", "64:ff9b:2::1", // the local-use /48's neighbours
 	}
 	for _, raw := range allowed {
 		ip := net.ParseIP(raw)

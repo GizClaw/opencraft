@@ -28,11 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `$TMPDIR`. Clearing caches still removes copies the old layout left
   behind in the cache.
 - A guarded fetch fails closed while an HTTP(S) proxy is configured, on
-  both download paths (`web_fetch` and `generate_video`): a proxy
-  re-resolves the target, so the SSRF guard's DNS pin cannot hold.
-  Unset `HTTP(S)_PROXY`/`ALL_PROXY` for those calls, or set
-  `allow_private` — which also waives the private-destination guard, so
-  prefer the former unless the proxy is this deployment's own.
+  all three download paths (`web_fetch`, `generate_video` and the
+  plugin update download): a proxy re-resolves the target, so the SSRF
+  guard's DNS pin cannot hold. Unset `HTTP(S)_PROXY`/`ALL_PROXY` for
+  those calls, or set `allow_private` — which also waives the
+  private-destination guard, so prefer the former unless the proxy is
+  this deployment's own. The plugin update path has no `allow_private`
+  opt-in (its URLs come from a plugin manifest), so there the refusal
+  stands.
 - `DeleteSkill` only removes skills inside the app's own roots now:
   plugin skills go away with their plugin, and skills from a configured
   `skills.settings.extra_roots` have to be deleted where they live. The
@@ -41,9 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The SSRF guard refuses more address classes: 0.0.0.0/8 and
   100.64.0.0/10, multicast, TEST-NET-1/2/3, 192.0.0.0/24, 192.88.99.0/24,
   198.18.0.0/15, 240.0.0.0/4, and the IPv6 documentation and Teredo
-  prefixes. A self-hosted service on one of those addresses is not
-  reachable through `web_fetch`, `generate_video`, or the plugin update
-  download — which is the point of the list.
+  prefixes, plus RFC 8215's local-use translation prefix
+  (`64:ff9b:1::/48`). A self-hosted service on one of those addresses is
+  not reachable through `web_fetch`, `generate_video`, or the plugin
+  update download — which is the point of the list.
 
 ### Added
 

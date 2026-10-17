@@ -87,8 +87,9 @@ type Options struct {
 	Enabled  bool
 	TopN     int
 	MinScore float64
-	// ExtraRoots are additional absolute skill roots (plugin-provided
-	// skills land here).
+	// ExtraRoots are additional absolute skill roots: a user-configured
+	// skills.settings.extra_roots entry and a plugin host's own roots
+	// both land here.
 	ExtraRoots []string
 	// Disabled lists skill names or absolute SKILL.md paths excluded
 	// from discovery ([[skills.config]] enabled=false semantics).

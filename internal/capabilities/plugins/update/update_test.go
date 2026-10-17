@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
+	"github.com/GizClaw/opencraft/internal/foundation/netguard"
 )
 
 func TestCheckAndFetchZip(t *testing.T) {
@@ -97,6 +99,46 @@ func TestFetchZipChecksumMismatch(t *testing.T) {
 	if _, _, err := FetchZip(context.Background(), info, pol); err == nil ||
 		!strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("FetchZip error = %v, want checksum mismatch", err)
+	}
+}
+
+// TestProxyIsRefused pins the guard's proxy rule on this path: the
+// address checks can only speak for a connection this process makes
+// itself, so a proxy in the environment — which would resolve the target
+// on the far side — is refused before a request goes out. Both entry
+// points are read here because each builds its own client, and
+// AllowPrivate releases the refusal the way it releases every other
+// check in this package.
+func TestProxyIsRefused(t *testing.T) {
+	old := netguard.EnvProxy
+	netguard.EnvProxy = func(string) (*url.URL, error) {
+		return url.Parse("http://proxy.example:3128")
+	}
+	defer func() { netguard.EnvProxy = old }()
+
+	// An address literal, so the check that runs first does not depend
+	// on DNS: the host check passes and the transport's proxy func is
+	// what refuses.
+	const manifestURL = "https://1.1.1.1/latest.json"
+	_, err := CheckWithPolicy(context.Background(), manifestURL, Policy{})
+	if err == nil || !strings.Contains(err.Error(), "cannot pin DNS") {
+		t.Fatalf("CheckWithPolicy error = %v, want the proxy refusal", err)
+	}
+
+	info := plugins.UpdateInfo{
+		Version:     "0.2.0",
+		DownloadURL: "https://1.1.1.1/plugin.zip",
+		Checksum:    "sha256:" + strings.Repeat("a", 64),
+	}
+	if _, _, err := FetchZip(context.Background(), info, Policy{}); err == nil ||
+		!strings.Contains(err.Error(), "cannot pin DNS") {
+		t.Fatalf("FetchZip error = %v, want the proxy refusal", err)
+	}
+
+	// The private-destination policy keeps its proxy: the pin this rule
+	// protects is not in play when the destination is allowed anyway.
+	if err := netguard.RefuseProxy("plugin update", manifestURL, true); err != nil {
+		t.Fatalf("allow-private policy should keep its proxy: %v", err)
 	}
 }
 
