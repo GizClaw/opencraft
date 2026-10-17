@@ -19,7 +19,101 @@ const STACK_LIMIT = 2048;
 // (libraries print request bodies, URLs and file paths), and the Go side
 // escapes newlines and truncates but does not sanitise, so shape-based
 // redaction here is the only gate before the local log and OTLP export.
-const REDACTIONS: [RegExp, string][] = [
+// A replacement is either a template - `$1` expands to the first group -
+// or a function, which receives the match and its groups and decides what
+// survives. The function form gets no template expansion, which is why the
+// loop in redactDiagnostic tests the type before it calls replace.
+// The function form of a replacement: `match`, then one parameter per
+// capture group, then the offset and the whole string (the arguments
+// String.prototype.replace passes). The list stops after the groups it
+// reads - and it is written out rather than indexed out of a rest array,
+// so a capture group added or reordered in the pattern is a compile
+// error rather than a silent swap.
+type RedactionReplacer = (
+  match: string,
+  scheme: string,
+  token: string,
+) => string;
+type Redaction = [RegExp, string | RedactionReplacer];
+
+// SCHEME_PROSE is the closed list of words an English sentence puts after
+// a credential scheme: "Basic authentication required", "Bearer token
+// missing", "the realm challenge", and the fields RFC 6750 spells in a
+// `WWW-Authenticate` answer. Everything else after a scheme is taken to
+// be the credential - the arithmetic has to run that way, because a word
+// missing from this list costs a word of diagnostics while a shape let
+// through costs the credential.
+//
+// Three costs are written down rather than hidden. A credential spelled
+// exactly like one of these words is kept. The scan resumes after the
+// exempted word: the rules above have already run over this text once -
+// the name rule covers `token=<key>` and `token: <key>` - and what
+// follows is seen only by the shape rules below, so a credential that
+// follows a prose word at a space (`bearer token <key>`) reaches the
+// export. And a *spaced* separator is a second gap: `Basic auth = <key>`
+// ends the token at the space, the name rule does not know `auth`, and
+// the value is never looked at again. Both shapes are pinned in the
+// tests as known costs, not as accidents.
+const SCHEME_PROSE = new Set([
+  'access',
+  'and',
+  'auth',
+  'authentication',
+  'authorization',
+  'based',
+  'challenge',
+  'credential',
+  'credentials',
+  'denied',
+  'error',
+  'error_description',
+  'error_uri',
+  'expired',
+  'failed',
+  'header',
+  'headers',
+  'invalid',
+  'is',
+  'missing',
+  'none',
+  'not',
+  'or',
+  'parameter',
+  'parameters',
+  'realm',
+  'required',
+  'scheme',
+  'scope',
+  'support',
+  'token',
+  'tokens',
+  'type',
+  'unsupported',
+  'value',
+  'values',
+  'with',
+  'without',
+]);
+
+// redactSchemeToken keeps the scheme - the part an operator reads - and
+// drops whatever follows it, unless that word is one of the prose words
+// above. The decision is made here rather than by a character class in
+// the pattern: the rule has to match the scheme in any case, and under
+// `/i` a `[A-Z]` test matches lower case too, which is how a prose word
+// would end up read as a credential.
+//
+// The token is the match's tail, so it is cut off by length: substituting
+// the word would also cut it out of the scheme when the two share letters.
+// Trailing `=` is base64 padding - not secret - and it is dropped before
+// the prose test, so `Bearer error="invalid_token"` keeps its `error`.
+const redactSchemeToken: RedactionReplacer = (match, _scheme, token) => {
+  const word = token.replace(/=+$/, '').toLowerCase();
+  return SCHEME_PROSE.has(word)
+    ? match
+    : `${match.slice(0, match.length - token.length)}<redacted>`;
+};
+
+const REDACTIONS: Redaction[] = [
   // PEM private key blocks run over many lines; the line-oriented rules
   // below would only see the label. The `$` arm covers a log truncated
   // in the middle of the block, and the label may carry a trailing word
@@ -39,13 +133,14 @@ const REDACTIONS: [RegExp, string][] = [
     '$1<redacted>',
   ],
   // `api_key=…`, `"password": "…"`, `token: abc`: the value behind the
-  // name never leaves. A quoted value goes whole; otherwise a scheme
-  // plus its argument (`Bearer eyJ…`) or the run of non-space text that
-  // follows. As in the header rule above, the name may carry the quote a
-  // JSON printer puts around it - that is the shape a dumped config or
-  // request body has.
+  // name never leaves. A quoted value goes whole, escapes and all -
+  // stopping at the first quote would leave the rest of the value in the
+  // open; otherwise a scheme plus its argument (`Bearer eyJ…`) or the run
+  // of non-space text that follows. As in the header rule above, the name
+  // may carry the quote a JSON printer puts around it - that is the shape
+  // a dumped config or request body has.
   [
-    /(\b(?:bearer|token|api[_-]?key|apikey|secret|password|passwd|passphrase|credential|signature|sig|access[_-]?token|refresh[_-]?token)\b"?\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[A-Za-z][\w-]*\s+[A-Za-z0-9._~+/=-]+|[^\s,;\n]+)/gi,
+    /(\b(?:bearer|token|api[_-]?key|apikey|secret|password|passwd|passphrase|credential|signature|sig|access[_-]?token|refresh[_-]?token)\b"?\s*[:=]\s*)("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|[A-Za-z][\w-]*\s+[A-Za-z0-9._~+/=-]+|[^\s,;\n]+)/gi,
     '$1<redacted>',
   ],
   // Secrets in a query string keep their name (the useful part) without
@@ -56,17 +151,31 @@ const REDACTIONS: [RegExp, string][] = [
   ],
   // Credentials embedded in a URL: https://user:pass@host.
   [/\/\/[^\s/@:]+:[^\s/@]+@/g, '//<redacted>@'],
-  // A scheme that names its credential by itself, in text that never
-  // spells the header out. The token has to carry an upper-case letter
-  // so the prose word "authentication" does not read as one.
-  [
-    /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]*[A-Z][A-Za-z0-9._~+/=-]*/g,
-    '$1 <redacted>',
-  ],
   // Digest carries its credential in named parameters instead
   // (`username="u", response="…"`); the scheme takes the rest of the
   // line.
   [/(\b(?:Digest|Negotiate|NTLM)\s+)[^\n]*/gi, '$1<redacted>'],
+  // Absolute paths name the user (and the project) even when nothing
+  // secret is in them. They run before the scheme rule below: a drive
+  // letter taken as a token leaves `/private/key.pem` with nothing left
+  // to recognise it by, and Windows spells the separator both ways.
+  [/\b[A-Za-z]:[\\/][^\s"',;]+/g, '<path>'],
+  [
+    /\/(?:Users|home|private|var|tmp|opt|etc|usr|Volumes|root|srv)\/[^\s"',;]*/g,
+    '<path>',
+  ],
+  [/file:\/\/[^\s"',;]+/g, '<path>'],
+  // A scheme that names its credential by itself, in text that never
+  // spells the header out. `=` stays in the token class: a credential
+  // written as `credentials=<base64>` is one token with its name, and
+  // cutting the name off at the separator would leave the value behind
+  // (base64 padding is stripped before the prose test inside the
+  // replacer). It sits between the path rules and the shape rules on
+  // purpose: paths have to see the text first (above), and the shape
+  // rules have to see it last - each of them rewrites a token into
+  // `<redacted-...>`, and a token already carrying one no longer looks
+  // like a token, so the rest of it would escape.
+  [/\b(Bearer|Basic)\s+([A-Za-z0-9._~+/=-]+)/gi, redactSchemeToken],
   // Token prefixes that identify the issuer (OpenAI, GitHub, GitLab,
   // Slack, AWS) and JWTs: recognisable by shape alone.
   [
@@ -80,14 +189,6 @@ const REDACTIONS: [RegExp, string][] = [
   // Long hex runs are hashes, ids and secrets; keep the shape, drop the
   // value.
   [/\b[A-Fa-f0-9]{40,}\b/g, '<redacted-hex>'],
-  // Absolute paths name the user (and the project) even when nothing
-  // secret is in them.
-  [/\b[A-Za-z]:\\[^\s"',;]+/g, '<path>'],
-  [
-    /\/(?:Users|home|private|var|tmp|opt|etc|usr|Volumes|root|srv)\/[^\s"',;]*/g,
-    '<path>',
-  ],
-  [/file:\/\/[^\s"',;]+/g, '<path>'],
 ];
 
 /**
@@ -98,7 +199,10 @@ const REDACTIONS: [RegExp, string][] = [
 export function redactDiagnostic(text: string, limit: number): string {
   let out = text;
   for (const [pattern, replacement] of REDACTIONS) {
-    out = out.replace(pattern, replacement);
+    out =
+      typeof replacement === 'string'
+        ? out.replace(pattern, replacement)
+        : out.replace(pattern, replacement);
   }
   if (out.length > limit) {
     out = `${out.slice(0, limit)}…(+${out.length - limit} chars)`;
