@@ -10,10 +10,13 @@
 // into a main-thread stall.
 //
 // Both helpers are keyed by the same thing the caller would parse anyway,
-// so a stale answer cannot happen: the object memo keys on identity (the
-// store replaces items instead of mutating them, see `TextItemFields.chunks`),
-// and the value memo keys on `===`, which for the strings involved means
-// "the same bytes as last time".
+// so a stale answer cannot happen: the object memo keys on identity, which
+// is sound for every key it has - a tool item is rebuilt when its result
+// lands (`applyStream` in conv/stream.ts), so its identity changes
+// whenever its content does. The one place the store appends in place is
+// a streaming text block's `chunks` array (`mergeAppend`), which is why
+// no memo takes a text item as its key; the value memo keys on `===`,
+// which for the strings involved means "the same bytes as last time".
 
 /**
  * createObjectMemo returns `compute` with its results cached on the identity

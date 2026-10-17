@@ -6,6 +6,43 @@ import { mockBackend } from './mock/backend';
 // full grid of recharts lines, and recharts reports its container's scale
 // on every frame — the animation had to go, or opening the dialog took the
 // UI down with React error #185.
+// The host marshals a sink with no headers as headerNames: null (a nil Go
+// slice prints as null), and the card read `.length` off it — the whole
+// window went down through the root error boundary, on the one tab whose
+// job is to report state. The guard has a unit test; this one proves the
+// tab opens in the app, which is where the crash was seen.
+test('opens the diagnostics tab on a sink with no header names', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (err) => errors.push(err.message));
+
+  await page.addInitScript(mockBackend as never, {
+    telemetryExport: {
+      enabled: true,
+      configured: true,
+      endpoint: 'collector.example:4318',
+      insecure: false,
+      headerNames: null,
+      owner: '',
+    },
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
+  // The OTLP card sits in the DEV tools section.
+  await page.getByRole('checkbox', { name: 'DEV tools' }).check();
+
+  await expect(
+    page.getByText(/Exporting to collector.example:4318/),
+  ).toBeVisible();
+  // No "headers:" segment: there are none to name.
+  await expect(page.getByText(/headers:/)).toHaveCount(0);
+  // The mock's Environment binding is absent, which surfaces as an
+  // unrelated boot error; anything else is ours.
+  expect(errors.filter((e) => !e.includes("reading 'OS'"))).toEqual([]);
+});
+
 test('opens the diagnostics dialogs without crashing the UI', async ({
   page,
 }) => {

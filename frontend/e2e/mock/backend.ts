@@ -32,6 +32,10 @@ export interface MockConfig {
   // metricPoints overrides the Diagnostics.MetricRange answer; leave it
   // unset for the default of "no samples".
   metricPoints?: Array<{ ts: number; value: number; attrs?: unknown }>;
+  // telemetryExport overrides the Diagnostics.TelemetryExport answer. A
+  // sink with no headers marshals headerNames as null on the wire, which
+  // is the shape a card reading `.length` off it falls over on.
+  telemetryExport?: Record<string, unknown>;
   workspaces?: unknown[];
   sessionTurns?: unknown[];
   automations?: unknown[];
@@ -518,14 +522,15 @@ export function mockBackend(cfg?: MockConfig) {
         reloaded: true,
       }),
       SetTelemetryExport: noop,
-      TelemetryExport: async () => ({
-        enabled: true,
-        configured: false,
-        endpoint: '',
-        insecure: false,
-        headerNames: [],
-        owner: '',
-      }),
+      TelemetryExport: async () =>
+        config.telemetryExport ?? {
+          enabled: true,
+          configured: false,
+          endpoint: '',
+          insecure: false,
+          headerNames: [],
+          owner: '',
+        },
     },
     File: {
       Diff: async () => '',
