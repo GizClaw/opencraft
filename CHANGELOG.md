@@ -101,6 +101,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A diagnostic report redacts a credential scheme in any spelling, and
+  stops at the real end of a quoted value. A server's log line prints
+  `bearer`, an opaque token need not carry an upper-case letter, and a
+  JSON string escapes its own quotes — `{"password":"a\"bcd"}` used to
+  leave `bcd` in the telemetry copy while `bearer abcdef` went out whole.
+  The word after a scheme is kept only when it is prose the closed list
+  knows; everything else is the credential.
 - A finished turn folds even while its conversation runs. A session
   resumed with a run still going has no archived turn for that run, so
   the newest archive strip was the turn above it, and the conversation's

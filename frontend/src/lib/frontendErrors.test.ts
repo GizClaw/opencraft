@@ -122,6 +122,123 @@ describe('redactDiagnostic', () => {
     expect(out).toContain('<redacted-private-key>');
   });
 
+  it('redacts a lower-case scheme with no upper-case in the token', () => {
+    // Servers and curl print the scheme's name in lower case, and an
+    // opaque token need not carry an upper-case letter or a digit.
+    const out = redactDiagnostic('proxy said: bearer abcdef', 512);
+    expect(out).not.toContain('abcdef');
+    expect(out).toContain('bearer <redacted>');
+  });
+
+  it('redacts the scheme in every spelling', () => {
+    for (const scheme of ['Bearer', 'bearer', 'BEARER', 'BaSiC', 'basic']) {
+      const out = redactDiagnostic(`${scheme} 4f9c2a1b8e7d`, 512);
+      expect(out).not.toContain('4f9c2a1b8e7d');
+      expect(out).toContain(`${scheme} <redacted>`);
+    }
+  });
+
+  it('leaves the word a sentence puts after the scheme', () => {
+    for (const text of [
+      'Basic authentication required',
+      'Basic auth required',
+      'Bearer token missing',
+      'Basic credentials expired',
+    ]) {
+      expect(redactDiagnostic(text, 512)).toBe(text);
+    }
+  });
+
+  it('takes an escaped quote with the JSON value it belongs to', () => {
+    // A `"` inside a JSON string is escaped, so a value arm that stops
+    // at the first quote leaves the rest of the value behind - and the
+    // keys that follow are a different field, not the tail of this one.
+    const out = redactDiagnostic('{"password":"a\\"bcd","user":"ada"}', 512);
+    expect(out).not.toContain('bcd');
+    expect(out).toContain('"user":"ada"');
+  });
+
+  it('lets a path go as a path, not as the scheme token', () => {
+    // The drive letter is a token-shaped word; if the scheme rule took
+    // it, the rest of the path would have nothing left to recognise it
+    // by. Windows spells the separator both ways.
+    for (const path of [
+      'C:\\private\\key.pem',
+      'C:/private/key.pem',
+      '/Users/ada/key.pem',
+    ]) {
+      const out = redactDiagnostic(`basic ${path}`, 512);
+      expect(out).not.toContain('key.pem');
+      expect(out).toContain('basic <path>');
+    }
+  });
+
+  it('redacts a scheme token the shape rules would only partly rewrite', () => {
+    // A 40-char hex run with more token behind it: the hex rule would
+    // replace the run and leave the tail, which no longer looks like a
+    // token to the scheme rule. The scheme rule therefore runs before
+    // the shape rules.
+    const out = redactDiagnostic(
+      'Bearer ABCDEF0123456789abcdef0123456789abcdef.b3f1c2',
+      512,
+    );
+    expect(out).not.toContain('b3f1c2');
+    expect(out).toContain('Bearer <redacted>');
+  });
+
+  it('leaves a WWW-Authenticate answer readable', () => {
+    const header =
+      'WWW-Authenticate: Bearer error="invalid_token", error_description="expired", error_uri="https://api.example/errors#invalid_token"';
+    expect(redactDiagnostic(header, 512)).toBe(header);
+  });
+
+  it('folds case when it decides a word is prose', () => {
+    for (const text of [
+      'BEARER AUTHENTICATION REQUIRED',
+      'Basic TOKEN',
+      'bearer Credentials',
+    ]) {
+      expect(redactDiagnostic(text, 512)).toBe(text);
+    }
+  });
+
+  it('redacts a credential written as name=value behind a scheme', () => {
+    // The word after the scheme is a name here, not prose: the value
+    // behind the `=` is the credential, and the name rule above does not
+    // know these names. Keeping `=` in the token class is what makes the
+    // two one token.
+    for (const text of [
+      'Basic credentials=dXNlcjpwYXNz',
+      'Basic auth=dXNlcjpwYXNz',
+      'Bearer access=dXNlcjpwYXNz',
+    ]) {
+      const out = redactDiagnostic(text, 512);
+      expect(out).not.toContain('dXNlcjpwYXNz');
+    }
+  });
+
+  it('drops the padding with the token it belongs to', () => {
+    expect(redactDiagnostic('Bearer dXNlcjpwYXNz==', 512)).toBe(
+      'Bearer <redacted>',
+    );
+  });
+
+  it('records the costs the rules choose', () => {
+    // Not accidents: the scan resumes after a prose word, so a credential
+    // that follows one at a space is not seen again (the rules above ran
+    // already, and the shape rules match shapes); a spaced separator is
+    // the same gap (the name rule does not know `auth`); and an adjective
+    // `basic` in prose takes the next word with it. Each would fail here
+    // if someone changed the trade, which is the point.
+    expect(
+      redactDiagnostic('sent without Bearer header, token 4f9c2a1b8e7d', 512),
+    ).toContain('4f9c2a1b8e7d');
+    expect(redactDiagnostic('Basic auth = 4f9c2a1b8e7d', 512)).toContain(
+      '4f9c2a1b8e7d',
+    );
+    expect(redactDiagnostic('basic usage', 512)).toBe('basic <redacted>');
+  });
+
   it('truncates a long payload', () => {
     const out = redactDiagnostic('x'.repeat(900), 100);
     expect(out.length).toBeLessThan(200);
