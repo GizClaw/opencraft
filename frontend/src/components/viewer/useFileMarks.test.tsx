@@ -174,4 +174,39 @@ describe('useFileMarks', () => {
       '/tmp/w/internal/b.go',
     );
   });
+
+  it('keeps the new file when the old file read answers after the switch', async () => {
+    let releaseOld: ((m: GitFileMarks) => void) | undefined;
+    apiMock.gitFileMarks.mockReturnValueOnce(
+      new Promise<GitFileMarks>((resolve) => {
+        releaseOld = resolve;
+      }),
+    );
+    const { result, rerender } = renderHook(
+      ({ tab }: { tab: FileTab }) => useFileMarks(tab, true),
+      { initialProps: { tab: TAB } },
+    );
+    // The first read is still in flight when the reader switches.
+    await act(async () => {});
+    apiMock.gitFileMarks.mockResolvedValueOnce(
+      marks({ path: 'internal/b.go', mtime_ns: 11 }),
+    );
+    rerender({
+      tab: {
+        ...TAB,
+        key: 'k2',
+        path: '/tmp/w/internal/b.go',
+        rel: 'internal/b.go',
+        name: 'b.go',
+      },
+    });
+    await waitFor(() => expect(result.current?.path).toBe('internal/b.go'));
+
+    // The retired read answers last. Its marks would be drawn on the
+    // lines of a different file.
+    await act(async () => {
+      releaseOld?.(marks());
+    });
+    expect(result.current?.path).toBe('internal/b.go');
+  });
 });

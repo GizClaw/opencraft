@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -237,6 +238,30 @@ describe('PRDetailModal', () => {
     // the page answered, the PR had been merged. The chip must not keep
     // saying open over a merged page.
     expect(await screen.findByText('Merged')).toBeInTheDocument();
+    expect(screen.queryByText('Open')).not.toBeInTheDocument();
+  });
+
+  it('keeps the page of the pull request it moved to', async () => {
+    let releaseFirst: ((d: GitHubPRDetail) => void) | undefined;
+    apiMock.gitHubPRDetail.mockReturnValueOnce(
+      new Promise<GitHubPRDetail>((resolve) => {
+        releaseFirst = resolve;
+      }),
+    );
+    const { rerender } = render(<PRDetailModal pr={pull} onClose={() => {}} />);
+
+    const next: GitHubPull = { ...pull, number: 8, title: 'Add caching' };
+    apiMock.gitHubPRDetail.mockResolvedValueOnce(
+      detail({ ...next, state: 'merged' }),
+    );
+    rerender(<PRDetailModal pr={next} onClose={() => {}} />);
+    expect(await screen.findByText('Merged')).toBeInTheDocument();
+
+    // #7 answered only now. Its page is not what the modal shows.
+    await act(async () => {
+      releaseFirst?.(detail({ state: 'open', title: 'Add search' }));
+    });
+    expect(screen.getByText('Merged')).toBeInTheDocument();
     expect(screen.queryByText('Open')).not.toBeInTheDocument();
   });
 });
