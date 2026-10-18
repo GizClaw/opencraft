@@ -85,6 +85,19 @@ describe('ErrorBoundary inline', () => {
     expect(onMount).toHaveBeenCalledTimes(1);
   });
 
+  it('puts the card in the frame the surface owned', () => {
+    const { container } = render(
+      <ErrorBoundary inline scope="settings" frame="fixed inset-0 grid">
+        <AlwaysThrows />
+      </ErrorBoundary>,
+    );
+
+    // The settings page fills the window; a bare card would land in the
+    // column the page was covering.
+    expect(container.querySelector('.fixed.inset-0')).not.toBeNull();
+    expect(screen.getByText(i18n.t('app.surfaceFailed'))).toBeInTheDocument();
+  });
+
   it('stops offering a retry once the same failure repeats', async () => {
     const user = userEvent.setup();
     render(

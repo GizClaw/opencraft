@@ -17,6 +17,11 @@ interface Props {
   // selection) has to drop that data here: remounting the same state
   // just renders the same crash again.
   onRetry?: () => void;
+  // frame is where the inline card goes when the surface had a place of
+  // its own to give up: the settings page and the tools panel are laid
+  // out by their own container, and a bare card would land under the
+  // rail instead of where the reader was looking.
+  frame?: string;
   // maxRetries is how many times the *same* failure may be retried
   // before the card stops offering "Try again" — a deterministic error
   // crashes again on every attempt — and points at Reload instead.
@@ -91,7 +96,7 @@ export class ErrorBoundary extends Component<Props, State> {
     const retryable = this.state.retries <= this.maxRetries;
 
     if (this.props.inline) {
-      return (
+      const card = (
         <div className="rounded-control border border-err/40 bg-err/5 px-3 py-2 text-xs">
           <p className="font-medium text-err">{i18n.t('app.surfaceFailed')}</p>
           <p className="mt-1 break-words text-dim">{detail}</p>
@@ -112,6 +117,11 @@ export class ErrorBoundary extends Component<Props, State> {
             </button>
           </div>
         </div>
+      );
+      return this.props.frame ? (
+        <div className={this.props.frame}>{card}</div>
+      ) : (
+        card
       );
     }
 
