@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
 import { Events, System } from '@wailsio/runtime';
 import { ChatView } from './components/ChatView';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Sidebar } from './components/Sidebar';
 import { SidebarResizeHandle } from './components/SidebarResizeHandle';
 import { StatusBar } from './components/StatusBar';
@@ -189,18 +190,34 @@ export default function App() {
         {/* The seam between the two columns, and the only control that
             moves it. */}
         <SidebarResizeHandle value={sidebarW} onChange={setSidebarW} />
+        {/* Each surface owns its failure. The boundary sits here, not at
+            the root, so a crash in one of them leaves the rail, the status
+            bar and the way out alive: the reader changes view instead of
+            restarting the app. */}
         {toolsView ? (
-          <Suspense
-            fallback={
-              <div className="flex-1 grid place-items-center text-dim text-sm">
-                {t('app.starting')}
-              </div>
-            }
+          <ErrorBoundary
+            inline
+            scope="tools"
+            frame="flex-1 grid place-items-center p-6"
           >
-            <ToolsPanel />
-          </Suspense>
+            <Suspense
+              fallback={
+                <div className="flex-1 grid place-items-center text-dim text-sm">
+                  {t('app.starting')}
+                </div>
+              }
+            >
+              <ToolsPanel />
+            </Suspense>
+          </ErrorBoundary>
         ) : workspace ? (
-          <ChatView />
+          <ErrorBoundary
+            inline
+            scope="chat"
+            frame="flex-1 grid place-items-center p-6"
+          >
+            <ChatView />
+          </ErrorBoundary>
         ) : (
           <WelcomeView />
         )}
@@ -208,9 +225,15 @@ export default function App() {
       {workspace && !toolsView && <SubagentDock />}
       <StatusBar isMac={isMac} />
       {settingsMounted && (
-        <Suspense fallback={null}>
-          <ConfigPage />
-        </Suspense>
+        <ErrorBoundary
+          inline
+          scope="settings"
+          frame="fixed inset-0 z-[var(--oc-z-overlay)] grid place-items-center bg-bg p-6"
+        >
+          <Suspense fallback={null}>
+            <ConfigPage />
+          </Suspense>
+        </ErrorBoundary>
       )}
       <Toaster />
       <CommandPalette isMac={isMac} runShortcut={runShortcut} />

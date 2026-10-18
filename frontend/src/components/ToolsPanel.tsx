@@ -38,6 +38,7 @@ import { PluginManager } from '../plugins/components/PluginManager';
 import { ICON } from './ui/icon';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
+import { ErrorBoundary } from './ErrorBoundary';
 import { ConfirmDialog } from './ui/ConfirmDialog';
 import { EmptyState } from './ui/EmptyState';
 import { Modal } from './ui/Modal';
@@ -1824,11 +1825,17 @@ export function ToolsPanel() {
               </div>
             }
           >
-            <AgentGraphEditor
-              agentName={editingAgent}
-              onClose={() => setEditingAgent(null)}
-              onSaved={() => void refreshAgents()}
-            />
+            <ErrorBoundary
+              inline
+              scope="agent-graph"
+              frame="grid h-full place-items-center"
+            >
+              <AgentGraphEditor
+                agentName={editingAgent}
+                onClose={() => setEditingAgent(null)}
+                onSaved={() => void refreshAgents()}
+              />
+            </ErrorBoundary>
           </Suspense>
         ) : (
           <>
