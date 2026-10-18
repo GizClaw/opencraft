@@ -175,6 +175,22 @@ describe('useFileMarks', () => {
     );
   });
 
+  it('keeps the marks when only the tab object changes', async () => {
+    apiMock.gitFileMarks.mockResolvedValue(marks());
+    const { result, rerender } = renderHook(
+      ({ tab }: { tab: FileTab }) => useFileMarks(tab, true),
+      { initialProps: { tab: TAB } },
+    );
+    await waitFor(() => expect(result.current).not.toBeNull());
+
+    // The parent re-rendered and handed over a fresh object for the same
+    // file. Nothing about the file changed, so the gutter must neither
+    // blank for a frame nor re-read.
+    rerender({ tab: { ...TAB } });
+    expect(result.current).toEqual(marks());
+    expect(apiMock.gitFileMarks).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the new file when the old file read answers after the switch', async () => {
     let releaseOld: ((m: GitFileMarks) => void) | undefined;
     apiMock.gitFileMarks.mockReturnValueOnce(
