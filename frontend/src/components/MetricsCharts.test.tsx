@@ -10,7 +10,14 @@
 // and after every fetch) rebuilt all ~30 charts — 5000 points each at
 // range=all — twice per refresh, inside the very view the perf probe
 // measures.
-import { act, render, screen } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import i18n from '../i18n';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MetricsCharts } from './MetricsCharts';
 import type { MetricRow } from '../lib/metricSeries';
@@ -110,6 +117,46 @@ describe('MetricsCharts', () => {
       expect(row.child).toBeGreaterThan(0);
       expect(row.gpu).toBeGreaterThan(0);
     }
+  });
+
+  it('keeps the spinner with the newest refresh', async () => {
+    // Two batches, both held open: the panel must still be spinning after
+    // the older one answers, because the fetch the reader is waiting for
+    // is the other one.
+    // One resolver per call: a batch is every metric the panel asked for,
+    // and the `Promise.all` behind it settles only when all have answered.
+    const batches: ((points: Point[]) => void)[][] = [];
+    let batch = 0;
+    diagnosticsMock.MetricRange.mockImplementation(
+      () =>
+        new Promise<Point[]>((resolve) => {
+          (batches[batch] ??= []).push(resolve);
+        }),
+    );
+
+    render(<MetricsCharts />);
+    // The panel holds every chart behind the first load, so the title is
+    // no landmark here: wait for the first batch to be issued instead.
+    await waitFor(() => expect(batches[0]?.length).toBeGreaterThan(0));
+    const spinner = () => document.querySelector('.animate-spin');
+    expect(spinner()).not.toBeNull();
+
+    batch = 1;
+    fireEvent.click(
+      screen.getByRole('button', { name: i18n.t('config.metricsRefresh') }),
+    );
+
+    // The first batch answers last, and its `finally` was what ended the
+    // newer fetch's spinner early.
+    await act(async () => {
+      for (const resolve of batches[0] ?? []) resolve(footprint(1));
+    });
+    expect(spinner()).not.toBeNull();
+
+    await act(async () => {
+      for (const resolve of batches[1] ?? []) resolve(footprint(2));
+    });
+    expect(spinner()).toBeNull();
   });
 
   it('rebuilds the series per batch of points, not per render', async () => {
