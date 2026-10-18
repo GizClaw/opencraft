@@ -14,6 +14,7 @@ import { Events } from '@wailsio/runtime';
 import { api } from '../../lib/api';
 import { marksSignature } from '../../lib/fileMarks';
 import type { FileTab, GitFileMarks } from '../../lib/types';
+import { useLatestRequest } from '../../lib/useLatest';
 
 // POLL_MS is the idle re-read interval. Deliberately the same as the
 // Git panel's status poll: the two are never mounted at once.
@@ -39,15 +40,15 @@ export function useFileMarks(
     enabled && tab !== null && tab.root === 'workspace' && path !== '';
   const [marks, setMarks] = useState<GitFileMarks | null>(null);
   const signature = useRef('');
-  const seq = useRef(0);
+  const marksTicket = useLatestRequest();
   const timer = useRef<number | null>(null);
 
   const read = useCallback(async () => {
     if (!active) return;
-    const id = (seq.current += 1);
+    const id = marksTicket.begin();
     try {
       const res = await api.gitFileMarks(path);
-      if (id !== seq.current) return;
+      if (!marksTicket.isCurrent(id)) return;
       const next = marksSignature(res);
       if (next === signature.current) return;
       signature.current = next;
@@ -55,11 +56,11 @@ export function useFileMarks(
     } catch {
       // Marks are decoration: a failing read (a vanished file, a broken
       // git) drops them instead of surfacing an error in the viewer.
-      if (id !== seq.current) return;
+      if (!marksTicket.isCurrent(id)) return;
       signature.current = '';
       setMarks(null);
     }
-  }, [active, path]);
+  }, [active, path, marksTicket]);
 
   const schedule = useCallback(() => {
     if (timer.current !== null) return;
@@ -74,10 +75,13 @@ export function useFileMarks(
   // frame would draw marks on the wrong lines.
   useEffect(() => {
     signature.current = '';
-    seq.current += 1;
+    // The read of the file being left is retired here, not by the read
+    // that follows: with the switch off there is no new read, and the
+    // answer in flight would still paint the old file's marks.
+    marksTicket.retire();
     setMarks(null);
     if (active) void read();
-  }, [active, read]);
+  }, [active, read, marksTicket]);
 
   useEffect(() => {
     if (!active) return;

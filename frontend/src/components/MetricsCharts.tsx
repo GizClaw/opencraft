@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   CartesianGrid,
@@ -12,6 +12,7 @@ import {
 
 import * as Diagnostics from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/diagnostics';
 import { RefreshControl } from './RefreshControl';
+import { useLatestRequest } from '../lib/useLatest';
 import { CHART_AXIS, CHART_GRID, SERIES } from '../lib/chartPalette';
 import { formatMetricSample } from '../lib/metricFormat';
 import {
@@ -351,11 +352,14 @@ export function MetricsCharts({
   const [failed, setFailed] = useState(false);
   const [pollMs, setPollMs] = useState(30_000);
   const [busy, setBusy] = useState(false);
-  const seq = useRef(0);
+  // The spinner belongs to the newest batch: a poll that started before
+  // the reader changed the range must not end the spinner of the fetch
+  // they are waiting for (its own `finally` included).
+  const chartTicket = useLatestRequest();
 
   const refresh = useCallback(
     async (silent: boolean) => {
-      const id = ++seq.current;
+      const id = chartTicket.begin();
       if (!silent) setLoading(true);
       setBusy(true);
       setFailed(false);
@@ -373,19 +377,19 @@ export function MetricsCharts({
             return [def.name, (points ?? []) as MetricPoint[]] as const;
           }),
         );
-        if (id !== seq.current) return;
+        if (!chartTicket.isCurrent(id)) return;
         setPointsByMetric(Object.fromEntries(entries));
       } catch {
-        if (id !== seq.current) return;
+        if (!chartTicket.isCurrent(id)) return;
         setFailed(true);
       } finally {
-        if (id === seq.current) {
+        if (chartTicket.isCurrent(id)) {
           setBusy(false);
           if (!silent) setLoading(false);
         }
       }
     },
-    [range],
+    [range, chartTicket],
   );
 
   useEffect(() => {

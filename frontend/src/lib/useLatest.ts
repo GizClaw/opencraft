@@ -8,11 +8,12 @@
 // that still says "open" for a merged PR, a spinner the stale `finally` ends
 // early).
 //
-// The repository already solved this ad hoc in three places (`FilePreviewPane`'s
-// `loadSeq`, `useFileMarks`'s `seq.current`, `PRDetailModal`'s `alive`);
-// this is that guard, once. It is deliberately not a data-fetching hook:
-// the guards differ in *what* they own (one panel's detail, a spinner, a
-// selection), and the one thing they share is the ticket.
+// It started as the pattern three components had hand-rolled side by side
+// (`FilePreviewPane`'s `loadSeq`, `useFileMarks`'s `seq.current`,
+// `PRDetailModal`'s `alive`); they now call this instead, and the guard is
+// written once. It is deliberately not a data-fetching hook: the callers
+// differ in *what* they own (one panel's detail, a spinner, a selection),
+// and the one thing they share is the ticket.
 //
 // Unmount is part of the contract, not an afterthought. A response that
 // arrives after the panel closed must not write state, and a `finally`
@@ -30,6 +31,13 @@ export interface LatestRequest {
   current(): number;
   /** isCurrent reports whether a ticket may still write its result. */
   isCurrent(ticket: number): boolean;
+  /**
+   * retire invalidates every ticket issued so far without taking one. A
+   * caller needs it on a *change of subject* — a tab switch, a different
+   * pull request — where the answer in flight belongs to what the reader
+   * left behind and nothing is going to ask for it again.
+   */
+  retire(): void;
 }
 
 export function useLatestRequest(): LatestRequest {
@@ -52,10 +60,10 @@ export function useLatestRequest(): LatestRequest {
       },
       current: () => seq.current,
       isCurrent: (ticket: number) => alive.current && ticket === seq.current,
+      retire: () => {
+        seq.current += 1;
+      },
     }),
     [],
   );
 }
-
-/** useLatest is the §B4 spelling of the same hook. */
-export const useLatest = useLatestRequest;
