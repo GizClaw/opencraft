@@ -118,6 +118,7 @@ export function handlerSources(
 export function mockBackend(cfg?: MockConfig) {
   const win = window as unknown as Record<string, unknown> & {
     __emit?: (name: string, data: unknown) => void;
+    __ocPerfReports?: unknown[][];
   };
   const config: MockConfig = cfg ?? {};
   let newChatSeq = 0;
@@ -133,6 +134,9 @@ export function mockBackend(cfg?: MockConfig) {
   // text went to the live run with that run's id instead of into the Tab
   // queue. Specs read them back from window.__ocSteerCalls.
   const steerCalls: { runID: string; text: string }[] = [];
+  // Perf probe reports, one entry per report (a batch of samples).
+  const perfReports: unknown[][] = [];
+  win.__ocPerfReports = perfReports;
   // StartTurn call log: "continue" on an interrupted turn leaves the
   // composer as exactly one Conversation.StartTurn, so the request body
   // is the only proof it carried the turn's own message instead of a
@@ -461,7 +465,12 @@ export function mockBackend(cfg?: MockConfig) {
         removed: null,
       }),
       ReportFrontendError: noop,
-      ReportFrontendPerf: noop,
+      // The renderer's performance probe reports through this binding, and
+      // the baseline harness (e2e/baseline.spec.ts) has to see what it sent
+      // to put numbers next to a change. Every report is kept verbatim.
+      ReportFrontendPerf: async (samples: unknown[]) => {
+        perfReports.push(samples);
+      },
       RunSandboxProbe: async () => ({ ok: true }),
       // The command-pool card reads and writes desktop.json; a fixed
       // shape is enough for the UI tests.
