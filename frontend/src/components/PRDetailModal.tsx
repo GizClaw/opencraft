@@ -29,6 +29,7 @@ import type {
   PatchFileDTO,
   PatchLineDTO,
 } from '../lib/types';
+import { useLatestRequest } from '../lib/useLatest';
 import { Markdown, type MarkdownLinkHandler } from './Markdown';
 import { AvatarBadge } from './viewer/AvatarBadge';
 import { useFilePreview } from './viewer/FilePreviewModal';
@@ -48,23 +49,21 @@ export function PRDetailModal({
   const [detail, setDetail] = useState<GitHubPRDetail | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const detailTicket = useLatestRequest();
 
   useEffect(() => {
-    let alive = true;
+    const id = detailTicket.begin();
     setError('');
     setDetail(null);
     void api
       .gitHubPRDetail(pr.number)
       .then((d) => {
-        if (alive) setDetail(d);
+        if (detailTicket.isCurrent(id)) setDetail(d);
       })
       .catch((err: unknown) => {
-        if (alive) setError(String(err));
+        if (detailTicket.isCurrent(id)) setError(String(err));
       });
-    return () => {
-      alive = false;
-    };
-  }, [pr.number, attempt]);
+  }, [pr.number, attempt, detailTicket]);
 
   const openURL = detail?.html_url || pr.html_url;
   // The body below is a freshly fetched detail, while `pr` is the list

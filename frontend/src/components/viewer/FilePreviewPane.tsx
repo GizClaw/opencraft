@@ -15,6 +15,7 @@ import { api } from '../../lib/api';
 import { reportFrontendError } from '../../lib/frontendErrors';
 import { useStore } from '../../lib/store';
 import type { FilePreview, FileTab, GitFileMarks } from '../../lib/types';
+import { useLatestRequest } from '../../lib/useLatest';
 import { Markdown } from '../Markdown';
 import { ICON } from '../ui/icon';
 
@@ -116,36 +117,44 @@ export function FilePreviewPane({
   const [error, setError] = useState('');
   const [showMd, setShowMd] = useState(isMarkdownFile(tab.name));
   const [videoFailed, setVideoFailed] = useState(false);
-  const loadSeq = useRef(0);
+  const loadTicket = useLatestRequest();
 
   // load reads the file. `silent` is the background path: the payload
   // swaps in place under the existing render (no spinner, no cleared
   // error) and an unchanged body keeps the previous object, so the
   // editor is not told to replace text that is already on screen.
-  const load = useCallback(async (path: string, silent: boolean) => {
-    const id = (loadSeq.current += 1);
-    if (!silent) {
-      setPreview(null);
-      setError('');
-      setVideoFailed(false);
-    }
-    try {
-      const p = await api.readPreview(path);
-      if (id !== loadSeq.current) return;
-      setPreview((prev) => {
-        if (silent && prev && sameBody(prev, p)) {
-          // Same content, new stamp: adopt the stamp so the next marks
-          // refresh does not read the file again.
-          return { ...prev, mtime_ns: p.mtime_ns, size: p.size };
-        }
-        return p;
-      });
-      setError('');
-    } catch (err) {
-      if (id !== loadSeq.current) return;
-      setError(String(err));
-    }
-  }, []);
+  //
+  // The ticket is what keeps a read of the file the reader left from
+  // painting over the one they moved to: switching tabs starts a second
+  // read, and either can answer first. It also covers the dialog closing
+  // mid-read — the pane is gone, and the payload has nobody to write to.
+  const load = useCallback(
+    async (path: string, silent: boolean) => {
+      const id = loadTicket.begin();
+      if (!silent) {
+        setPreview(null);
+        setError('');
+        setVideoFailed(false);
+      }
+      try {
+        const p = await api.readPreview(path);
+        if (!loadTicket.isCurrent(id)) return;
+        setPreview((prev) => {
+          if (silent && prev && sameBody(prev, p)) {
+            // Same content, new stamp: adopt the stamp so the next marks
+            // refresh does not read the file again.
+            return { ...prev, mtime_ns: p.mtime_ns, size: p.size };
+          }
+          return p;
+        });
+        setError('');
+      } catch (err) {
+        if (!loadTicket.isCurrent(id)) return;
+        setError(String(err));
+      }
+    },
+    [loadTicket],
+  );
 
   useEffect(() => {
     void load(tab.path, false);

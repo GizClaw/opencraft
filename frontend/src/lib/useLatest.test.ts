@@ -39,4 +39,19 @@ describe('useLatestRequest', () => {
     expect(result.current.isCurrent(0)).toBe(false);
     expect(result.current.isCurrent(99)).toBe(false);
   });
+
+  it('retires the ticket in flight when the subject changes', () => {
+    const { result } = renderHook(() => useLatestRequest());
+    const ticket = result.current.begin();
+
+    // A tab switch or a different pull request: the answer on its way
+    // describes something the reader has left, and no newer request is
+    // coming to replace it.
+    act(() => {
+      result.current.retire();
+    });
+
+    expect(result.current.isCurrent(ticket)).toBe(false);
+    expect(result.current.isCurrent(result.current.begin())).toBe(true);
+  });
 });
