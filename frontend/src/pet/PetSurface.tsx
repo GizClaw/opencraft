@@ -49,14 +49,22 @@ function reportRuntimeStatus(status: PetRuntimeStatus) {
 // rAF loop, so pausing is what stops the CPU cost of a still frame.
 const petIdlePauseAfter = 20_000;
 
-// petGeometryInterval is how often the surface re-measures the drawn
-// character. The box only moves when the pose changes materially, and a
-// report is only sent when it did: Go parks the window and computes the
-// watch spot from it. The measurement itself is a GPU→CPU readback, so
-// it follows the picture: it is skipped while the runtime is parked or
-// the window is hidden, because a frozen frame cannot measure
-// differently from the last read.
-const petGeometryInterval = 500;
+// petGeometryHeartbeat is the slow re-measure that covers what no
+// snapshot announces: an animation running inside one state (the walk
+// cycle, idle breathing) keeps drawing without a new payload. Go parks
+// the window and computes the watch spot from the box, so the box has
+// to stay honest, but the measurement is a GPU→CPU readback of the
+// whole canvas — the one thing on this surface that must not run on a
+// fast clock. Pose changes measure on their own (see the sampler
+// effect), and a frozen frame cannot measure differently from the last
+// read, so a parked or hidden surface skips the heartbeat outright.
+const petGeometryHeartbeat = 2_000;
+
+// petGeometrySettleFrames is how long a pose change waits before its
+// pixels are read. A snapshot writes the view model; Rive draws it on
+// its own animation frame, so a read in the same task (or the next one,
+// whichever loop runs first) still sees the pose before it.
+const petGeometrySettleFrames = 2;
 
 /**
  * PetSurface is the whole-screen pet renderer mounted by the
@@ -94,6 +102,12 @@ export default function PetSurface() {
   const reportedGeometryRef = useRef('');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const riveRef = useRef<PetRiveHandle | null>(null);
+  // requestMeasureRef is how the paths that move the character ask the
+  // sampler below for a read: the surface state handler (a pose change)
+  // and the resize listener (a new drawing surface). It is written by
+  // the sampler effect, which owns the pending frame.
+  const requestMeasureRef = useRef<(frames?: number) => void>(() => {});
+  const measureFrameRef = useRef(0);
   // Latest surface state for the rover-independent readers (the idle
   // park timer and the mount path). It is written where the state is
   // produced, not during render, so two payloads delivered in the same
@@ -165,6 +179,9 @@ export default function PetSurface() {
       petRef.current = next;
       setPet(next);
       riveRef.current?.apply(next);
+      // A new pose is a new picture: read it back once it has been
+      // drawn instead of waiting for the heartbeat.
+      requestMeasureRef.current(petGeometrySettleFrames);
       if (!hiddenRef.current) {
         // Any fresh payload wakes the renderer back up — but only one
         // that is actually parked: play() on a running runtime rebuilds
@@ -215,6 +232,9 @@ export default function PetSurface() {
       }
       resumeRive();
       scheduleIdlePause();
+      // The window may have been resized (or the character moved) while
+      // nothing was drawing; the heartbeat did not run for it either.
+      requestMeasureRef.current(petGeometrySettleFrames);
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
@@ -308,6 +328,9 @@ export default function PetSurface() {
         setRiveReady(true);
         created.resize();
         created.apply(petRef.current);
+        // The first frame this runtime draws is the first one worth
+        // measuring: until now the canvas held nothing to read.
+        requestMeasureRef.current(petGeometrySettleFrames);
         const mounted = created.status();
         setStatus(mounted);
         // The renderer is the only side that has the asset loaded, so
@@ -332,7 +355,12 @@ export default function PetSurface() {
 
   // Keep the Rive drawing surface sized with the window.
   useEffect(() => {
-    const onResize = () => riveRef.current?.resize();
+    const onResize = () => {
+      riveRef.current?.resize();
+      // The art box is measured in CSS pixels against the surface, so a
+      // resized window moves every number in the report.
+      requestMeasureRef.current(petGeometrySettleFrames);
+    };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
@@ -340,8 +368,15 @@ export default function PetSurface() {
   // Tell Go where the character is actually drawn. The OS window is a
   // transparent stage around it, so the dock position and the watch
   // spot would otherwise be computed against the wrong rectangle.
+  //
+  // The sampler runs on two signals and one slow fallback. A pose
+  // change and a resize each ask for a read once their frame has been
+  // drawn (they are the moments the box can move for a reason we know);
+  // the heartbeat covers the animation playing inside a single state.
+  // Nothing here measures on a fast clock: the readback is the
+  // expensive part, and its cost has to follow the picture.
   useEffect(() => {
-    const report = () => {
+    const measure = () => {
       const geometry = measurePetGeometry(
         canvasRef.current,
         surfaceRef.current,
@@ -354,16 +389,42 @@ export default function PetSurface() {
         console.warn('pet: geometry report failed', err);
       });
     };
-    report();
-    // The sampler follows the picture: a parked runtime and a hidden
-    // window both keep the last frame on screen, so re-reading the
-    // pixels cannot change the answer (and the report above is
-    // deduplicated by the geometry key anyway).
+    // requestMeasure waits out `frames` animation frames before
+    // reading, and a second request replaces the one already waiting:
+    // only the newest picture is worth measuring.
+    const requestMeasure = (frames = 0) => {
+      if (measureFrameRef.current !== 0) {
+        cancelAnimationFrame(measureFrameRef.current);
+      }
+      let left = frames;
+      const tick = () => {
+        if (left > 0) {
+          left -= 1;
+          measureFrameRef.current = requestAnimationFrame(tick);
+          return;
+        }
+        measureFrameRef.current = 0;
+        measure();
+      };
+      measureFrameRef.current = requestAnimationFrame(tick);
+    };
+    requestMeasureRef.current = requestMeasure;
+    requestMeasure();
+    // A parked runtime and a hidden window both keep the last frame on
+    // screen, so re-reading the pixels cannot change the answer — the
+    // heartbeat is skipped, not deferred into a burst on wake.
     const timer = window.setInterval(() => {
       if (pausedRef.current || document.hidden) return;
-      report();
-    }, petGeometryInterval);
-    return () => window.clearInterval(timer);
+      requestMeasure();
+    }, petGeometryHeartbeat);
+    return () => {
+      window.clearInterval(timer);
+      if (measureFrameRef.current !== 0) {
+        cancelAnimationFrame(measureFrameRef.current);
+        measureFrameRef.current = 0;
+      }
+      requestMeasureRef.current = () => {};
+    };
   }, []);
 
   const onPointerDown = (event: React.PointerEvent) => {
@@ -387,6 +448,10 @@ export default function PetSurface() {
     }
     const drag = dragRef.current;
     drag.active = true;
+    // A press is the last moment the box is worth reading: the drag and
+    // the dock spot that follows it are anchored on what is on screen
+    // now, not on what the heartbeat last saw.
+    requestMeasureRef.current();
     // The pet walks while the window is dragged; Go turns the gesture
     // into walking/facing values (see beginPetDrag).
     void api.petBeginDrag().catch((err) => {
