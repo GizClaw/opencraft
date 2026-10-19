@@ -129,8 +129,6 @@ export class PreviewCache {
   private land(path: string, url: string, token: number) {
     const previous = this.entries.get(path);
     if (previous !== undefined && previous.token !== token) return;
-    if (previous?.url) this.chars -= previous.url.length;
-    this.entries.delete(path);
     this.entries.set(path, { url });
     this.chars += url.length;
     this.evict();

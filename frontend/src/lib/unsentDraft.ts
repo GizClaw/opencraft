@@ -5,6 +5,13 @@
 // best-effort by design, and a switch that would drop a draft is one it
 // skips.
 //
+// The draft it can keep is the one the switch would not touch anyway: a
+// composer that has not been committed to a session yet. A draft typed
+// inside a session is cleared by the switch itself - the focus resets to
+// no-session and ChatView empties the composer on the way in - so the
+// reload is never what takes that one, and this flag says nothing about
+// it.
+//
 // The attachment half is not about the bytes - a pasted image is already
 // on disk (`File.ImportPastedImage` writes it, and the staged view
 // carries its path) - but about the tray: which files are staged, in what

@@ -19,8 +19,9 @@
 // So the cut is taken at a line boundary outside a fence, preferring the
 // blank line that ends a section, and never one that follows a heading -
 // but never so far back that the "preview" is the first line and the fold
-// hides the rest: a boundary that sits more than half the budget below the
-// limit is passed over for the line at the limit.
+// hides the rest: a boundary that sits more than a quarter of the budget
+// below the limit is passed over for the line at the limit (see
+// sectionWithin).
 //
 // One thing the cut must not change is what the shown part means: a
 // reference-style link keeps its definition at the end of the block (and
@@ -64,7 +65,7 @@ export function markdownPreview(
   // Without them remark renders `[guide]` as literal text, which is the
   // one way a fold would change what the preview says, not just how much
   // of it is there. They are a handful of lines in a block of thousands.
-  const definitions = definitionsAfter(text, cut);
+  const definitions = definitionsAfter(text, cut, fence);
   if (definitions) shown += `\n\n${definitions}`;
   return { shown };
 }
@@ -154,9 +155,17 @@ function sectionWithin(limit: number, cut: number): boolean {
 // part of the block the fold hides, so the preview keeps resolving the
 // references in it. Fenced lines are skipped: a definition inside a code
 // block is code, and appending it would point a link at it.
-function definitionsAfter(text: string, cut: number): string {
+//
+// openFence is the fence the cut landed inside, if it did (the last-resort
+// cut): the scan starts inside that block, so its lines are code until the
+// closer, whether or not this function saw the opener.
+function definitionsAfter(
+  text: string,
+  cut: number,
+  openFence: FenceMarker | null,
+): string {
   let out = '';
-  let fence: FenceMarker | null = null;
+  let fence: FenceMarker | null = openFence;
   let start = cut;
   while (start < text.length) {
     const newline = text.indexOf('\n', start);
@@ -198,8 +207,13 @@ function isDefinition(text: string, start: number, end: number): boolean {
   let i = start;
   while (i < end && i - start < 3 && text[i] === ' ') i += 1;
   if (i >= end || text[i] !== '[') return false;
-  const close = text.indexOf(']:', i);
-  return close > i + 1 && close < end;
+  // The label has to close on this line, and the scan stops where the line
+  // does: a tail of `[` lines would otherwise cost the rest of the block
+  // per line, and the block is the fold's whole tail.
+  for (let close = i + 2; close + 1 < end; close += 1) {
+    if (text[close] === ']' && text[close + 1] === ':') return true;
+  }
+  return false;
 }
 
 // fenceMarker reads the fence a line opens (or closes). CommonMark allows

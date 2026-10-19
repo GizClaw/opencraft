@@ -292,6 +292,21 @@ describe('workspace switch session restore', () => {
     expect(apiMock.reloadWindow).not.toHaveBeenCalled();
   });
 
+  it('a re-pick whose backend is elsewhere is still a switch', async () => {
+    // The window switches on what the ready event carries, so one that
+    // never arrived leaves it believing the wrong workspace. Re-picking
+    // the workspace it believes it is on was the way out of that state;
+    // the getter tells a repair from an ordinary re-pick without paying
+    // a runtime rebuild.
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    apiMock.workspace.mockResolvedValueOnce('/tmp/elsewhere');
+
+    await useStore.getState().openWorkspace('/tmp/w');
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/w');
+    expect(apiMock.reloadWindow).toHaveBeenCalledTimes(1);
+  });
+
   it('a composer with unsent work keeps the page', async () => {
     // The draft and the attachments staged beside it live in the view's
     // own state: a reload would drop them with nothing to restore from,

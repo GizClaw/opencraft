@@ -202,4 +202,21 @@ describe('markdownPreview', () => {
     expect(preview).not.toBeNull();
     expect(preview!.shown).not.toContain('[guide]:');
   });
+
+  it('leaves a definition inside the fence the cut landed in alone', () => {
+    // The last-resort cut is the one that can sit inside a fence: the
+    // scan for hidden definitions then starts in code, and everything
+    // below it is code until the closer - not a definition to hoist.
+    const text = [
+      '```md',
+      'x'.repeat(3000),
+      '',
+      '[guide]: ./refs/guide.md',
+      '',
+      '```',
+    ].join('\n');
+    const preview = markdownPreview(text, 2048);
+    expect(preview).not.toBeNull();
+    expect(preview!.shown).not.toContain('[guide]:');
+  });
 });

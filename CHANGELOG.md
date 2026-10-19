@@ -66,9 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   control, because a block's cost is paid per character — markdown gives
   every inline span, list item and code line an element and a text node
   of its own, and each is a WebKit object that outlives the row. The
-  block the reader watched arrive stays whole while it is the
-  transcript's last row, so the fold does not land under them when the
-  turn ends; a turn that a later one pushed above is history, and history
+  block the reader watched arrive stays whole while the stream is still
+  writing into it - the transcript's last row, or the newest answer with
+  only an interjection below it - so the fold does not land under them
+  when the turn ends, or when they speak into the run and a steer row
+  appears; an answer a newer one pushed above is history, and history
   folds. The cut is a section boundary near the budget (never a heading
   with its body behind the fold) and carries the reference and footnote
   definitions the shown part needs, so the preview says what the block
@@ -83,12 +85,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`Core.ReloadWindow`, asking `Shell` for the mechanism). It is refused
   while any workspace has a live run, whose text arrives as deltas into
   this window, and skipped while the composer holds work that only exists
-  in this document — an unsent draft, a staged attachment — or when the
-  switch names the workspace the window is already on. The two flows that
-  carry on through the backend after a switch — opening a session,
-  sending a first message — keep the window they have, since a reload
-  would drop the resume or the message. A switch that keeps the page
-  asks again next time; nothing retries a refusal.
+  in this document — the draft of a conversation that has not started, a
+  staged attachment — or when the switch names the workspace the window
+  and the backend are both already on (the backend is asked, so a window
+  that missed its ready event can still put itself right by re-picking).
+  The two flows that carry on through the backend after a switch —
+  opening a session, sending a first message — keep the window they have,
+  since a reload would drop the resume or the message. A switch that
+  keeps the page asks again next time; nothing retries a refusal.
 - The engine's assembly half runs on flowcraft's `craft`. A Host loads a
   `config.View` (`LoadDocument` becomes `LoadView`) and builds one
   `craft.Craft` per Host (`BuildRuntime` becomes `BuildAssembly`): the

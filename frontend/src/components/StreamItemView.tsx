@@ -31,10 +31,12 @@ const BLOCK_FOLD_CHARS = 2 << 10;
 // A settled block longer than BLOCK_FOLD_CHARS renders its first section
 // and a control instead of the whole answer, unless the reader is still
 // on it: a block whose text arrived through this window's live stream
-// (TextItemFields.streamed) and which is still the transcript's last row.
-// That block the reader watched grow, and folding it under them the moment
-// the turn ends would take away what they were reading. The exemption ends
-// with the position: once a later turn lands below it, the block is
+// (TextItemFields.streamed) and which the stream is still writing into -
+// the newest answer while a run is live, which a steer row below it does
+// not change. That
+// block the reader watched grow, and folding it under them the moment the
+// turn ends would take away what they were reading. The exemption ends
+// with the position: once a newer answer lands below it, the block is
 // history like the ones above it, and the scene the fold exists for - a
 // reader scrolling back through a long session - is exactly where it
 // applies.
@@ -47,7 +49,9 @@ const AssistantText = memo(function AssistantText({
   text: string;
   streaming: boolean;
   streamed: boolean;
-  // atTail says the block is in the transcript's last row.
+  // atTail says the block is the one the stream is writing into: the
+  // transcript's last row, or the newest answer while a run is live (an
+  // interjection below it does not end it).
   atTail: boolean;
 }) {
   const { t, i18n } = useTranslation();
@@ -83,8 +87,12 @@ const AssistantText = memo(function AssistantText({
           <ChevronDown size={ICON.xs} className="shrink-0" />
           {t('chat.foldAnswerShow', {
             // Formatted for the UI language, not the system locale, and
-            // handed over as the count it is.
-            chars: new Intl.NumberFormat(i18n.language).format(text.length),
+            // handed over as the count it is. An unset language is a
+            // RangeError to Intl, and this is a render: undefined asks
+            // for the runtime's default instead.
+            chars: new Intl.NumberFormat(i18n.language || undefined).format(
+              text.length,
+            ),
           })}
         </button>
       ) : expanded ? (

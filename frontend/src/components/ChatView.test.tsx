@@ -14,6 +14,7 @@ import type { MessageView, TurnArtifacts } from '../lib/store';
 import type { SandboxProcess, SessionMeta } from '../lib/types';
 import { ChatView } from './ChatView';
 import { attachmentPreviews } from '../lib/attachmentPreviews';
+import { hasUnsentDraft } from '../lib/unsentDraft';
 
 const apiMock = vi.hoisted(() => ({
   workspace: vi.fn(),
@@ -1209,6 +1210,56 @@ describe('ChatView transcript windowing', () => {
     expect(
       screen.getByRole('button', { name: /Show full answer/ }),
     ).toBeInTheDocument();
+  });
+
+  it('keeps a watched answer whole while a steer row sits below it', () => {
+    // A steer is not a new turn: turn.ts appends the row into the live
+    // one, so the answer above it is still the row the deltas belong to.
+    // Reading the exemption as "the transcript's last row" folded the
+    // answer under the reader the moment they interjected.
+    const watched = longAnswer(6000, 'Watched');
+    setConversation([
+      { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+      {
+        id: 'm-a1',
+        role: 'assistant',
+        text: '',
+        items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+        attachments: [],
+      },
+      {
+        id: 'm-u2',
+        role: 'user',
+        text: 'and also fix the header',
+        items: [],
+        attachments: [],
+        steer: 'pending',
+      },
+    ]);
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+    expect(screen.getByText(/Watched 50/)).toBeInTheDocument();
+  });
+
+  it('a workspace switch empties the composer, so no draft waits for the reload', async () => {
+    // The guard in shell/workspaces.ts keeps the page for a draft only
+    // when the switch would not clear it anyway: the focus reset below is
+    // what a workspace switch does, and the composer goes with it.
+    setConversation([
+      { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+    ]);
+    render(<ChatView />);
+    await userEvent.setup().type(screen.getByRole('textbox'), 'half a thought');
+    await waitFor(() => expect(hasUnsentDraft()).toBe(true));
+
+    act(() => stateRoot.sendFocus({ type: 'WORKSPACE_RESET' }));
+
+    expect(hasUnsentDraft()).toBe(false);
+    expect(screen.getByRole('textbox')).not.toHaveTextContent('half a thought');
   });
 
   it('shows worked duration at the top of an artifact turn', () => {

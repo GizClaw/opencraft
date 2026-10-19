@@ -113,14 +113,17 @@ export function createShellWorkspaces(
       // switch: it would rebuild the runtime behind the reader and, if it
       // reached the reload below, throw the page away for nothing.
       //
-      // This compares what the window believes it is on, which is what the
-      // picker showed. A window whose ready event never arrived can believe
-      // the wrong thing, and then this returns early where the call used to
-      // re-open the workspace the backend is actually on; that divergence
-      // predates the guard, no binding reports the backend's workdir, and a
-      // guard that paid a runtime rebuild on every ordinary re-pick to cover
-      // it is the worse trade.
-      if (sameWorkspacePath(path, get().workspace)) return;
+      // The window's own belief is not enough to decide that: it switches
+      // on what the ready event carries, so one that never arrived leaves
+      // it believing the wrong workspace - and re-picking the workspace it
+      // believes it is on used to be the way out of that state (the call
+      // re-opened the backend's actual workspace and the next ready pulled
+      // the window back in line). The backend's answer is one getter, not
+      // a rebuild, so the early return only holds when both agree.
+      if (sameWorkspacePath(path, get().workspace)) {
+        const active = await api.workspace().catch(() => '');
+        if (!active || sameWorkspacePath(active, path)) return;
+      }
       try {
         await api.openWorkspace(path);
         // The runtime rebuild emits "ready"; the ready handler
@@ -150,9 +153,17 @@ export function createShellWorkspaces(
         // Two things keep the page, both expected rather than rare: a
         // live run anywhere in the process (its deltas are addressed to
         // this window; the Go side logs the refusal with the workspace
-        // list), and a composer with something in it (see unsentDraft,
-        // which keeps the call from being made, so this one leaves no Go
-        // log line - the composer is the visible reason). Neither is
+        // list), and a composer holding work that only this document has
+        // (see unsentDraft, which keeps the call from being made, so this
+        // one leaves no Go log line - the composer is the visible
+        // reason). The second covers the composer of a conversation that
+        // has not started yet; a draft typed inside a session is cleared
+        // by the switch itself (WORKSPACE_RESET puts the focus back to
+        // no-session, and ChatView empties the composer on the way in),
+        // so the reload is never what takes it. The one thing a switch
+        // can still drop is a settings edit that has not reached disk:
+        // SettingsGeneral debounces its slider and flushes on unmount,
+        // and this navigation may replace the page first. Neither half is
         // retried here - the next switch asks again.
         if (!hasUnsentDraft()) {
           void api
