@@ -43,7 +43,16 @@ export function mergeAppend(
   } else {
     msg.items = [
       ...items,
-      capTextItem({ kind, id: newID('part'), text, chars: text.length }),
+      capTextItem({
+        kind,
+        id: newID('part'),
+        text,
+        chars: text.length,
+        // Only the live path marks a block this way: a delta is proof the
+        // reader (or at least this window) saw the text arrive, which is
+        // what keeps the transcript from folding it away at the turn end.
+        streamed: true,
+      }),
     ];
   }
 }

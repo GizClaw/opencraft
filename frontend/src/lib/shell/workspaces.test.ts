@@ -7,6 +7,7 @@ import type { WorkspaceMeta } from '../types';
 import { stateRoot } from '../../state/app';
 import { useStore } from '../store';
 import { apiMock } from '../../test/apiMock';
+import { attachmentPreviews } from '../attachmentPreviews';
 import {
   actorValue,
   assistantTexts,
@@ -266,6 +267,66 @@ describe('workspace switch session restore', () => {
     );
     expect(texts).toContain('previous question');
     expect(texts).toContain('previous answer');
+  });
+
+  it('a workspace switch hands the window back to a fresh page', async () => {
+    // The switch is the memory boundary: the transcript the reader left
+    // (its decoded images, its text objects, the high-water mark behind
+    // them) only goes away with the document that holds it.
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+
+    await useStore.getState().openWorkspace('/tmp/b');
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/b');
+    expect(apiMock.reloadWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('a switch a flow keeps working through does not reload', async () => {
+    // openSessionInWorkspace and sendFirstMessage switch the backend and
+    // then keep going through it (resume the session, send the first
+    // message). A reload would land a new page after the binding returned
+    // and drop that work, so only the plain switch reloads.
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    apiMock.workspace.mockResolvedValue('/tmp/other');
+
+    await useStore.getState().sendFirstMessage('/tmp/other', 'hello');
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/other');
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-new',
+      expect.objectContaining({ role: 'user' }),
+      '/tmp/other',
+    );
+    expect(apiMock.reloadWindow).not.toHaveBeenCalled();
+  });
+
+  it('a workspace switch drops the window attachment previews', async () => {
+    // The previews belong to the workspace the window is leaving: those
+    // paths name files it is no longer looking at, and a cache that
+    // outlived every switch was the window's largest unbounded map.
+    await attachmentPreviews.load('/tmp/left-behind.png', async () => 'x');
+    expect(attachmentPreviews.size).toBe(1);
+
+    apiMock.currentSession.mockResolvedValue('');
+    apiMock.sessionTurns.mockResolvedValue([]);
+    useStore.setState({ workspace: '/tmp/b' });
+    useStore.getState().handleEvent({
+      type: 'ready',
+      data: {
+        needed: false,
+        default_model: 'm',
+        default_reasoning: true,
+        work_dir: '/tmp/a',
+        user_dir: '/tmp/u',
+        version: 'test',
+        agents: 0,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(useStore.getState().workspace).toBe('/tmp/a');
+    });
+    expect(attachmentPreviews.size).toBe(0);
   });
 
   it('ready after a workspace change restores the saved session', async () => {

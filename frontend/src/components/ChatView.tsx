@@ -107,6 +107,7 @@ import { groupToolCalls, type ToolCallItem } from '../lib/stream';
 import { useToolElapsedLabel, workedForLabel } from '../lib/toolTiming';
 import { ICON } from './ui/icon';
 import { Overlay } from './ui/Overlay';
+import { attachmentPreviews } from '../lib/attachmentPreviews';
 import { Popover } from './ui/Popover';
 import { IconButton } from './ui/Button';
 
@@ -1625,66 +1626,34 @@ function TurnSummaryHeader({
 // AttachmentImage renders one image attachment. Live sends carry the
 // data URL already; resumed history has only the stored path, so the
 // component fetches the preview from the backend on mount (WKWebView
-// cannot load file:// directly).
-//
-// attachmentPreviews caches one preview per path for the life of the
-// window: a virtualized transcript mounts a row again every time it
-// scrolls back into view, and without the cache the same bytes crossed the
-// bridge and were decoded again on every pass. A fetch that is still in
-// flight is cached as well, so two rows naming one file (a re-sent
-// attachment, a remount racing the first response) share one request. Only
-// a real preview is remembered: one that failed is dropped, so a file that
-// comes back is picked up on the next mount instead of staying missing for
-// the session. Exported so tests can start from a cold cache.
-export const attachmentPreviews = new Map<string, string | Promise<string>>();
-
-// cachedPreview is the part of the cache that is already usable: a preview
-// that has landed. An in-flight request is not a URL.
-function cachedPreview(path: string): string | undefined {
-  const cached = attachmentPreviews.get(path);
-  return typeof cached === 'string' ? cached : undefined;
-}
+// cannot load file:// directly). The cache it fetches through
+// (lib/attachmentPreviews) is a bounded LRU and a module singleton: one
+// request per path across remounts and re-sent attachments, and a budget
+// a window scrolling back through a screenshot-heavy session cannot
+// outgrow.
 
 function AttachmentImage({ att }: { att: AttachmentView }) {
   const [url, setUrl] = useState(
-    () => att.data_url ?? cachedPreview(att.path) ?? '',
+    () => att.data_url ?? attachmentPreviews.landed(att.path) ?? '',
   );
   const openFileTarget = useStore((s) => s.openFileTarget);
   useEffect(() => {
     if (url) return;
-    const cached = attachmentPreviews.get(att.path);
     let live = true;
-    if (typeof cached === 'string') {
-      setUrl(cached);
-      return;
-    }
-    const request =
-      cached ??
-      api
-        .readAttachment(att.path)
-        .then((dto) => {
-          const dataUrl = dto.data_url ?? '';
-          // An empty payload reads like a file that is gone.
-          if (!dataUrl) {
-            attachmentPreviews.delete(att.path);
-            return 'missing';
-          }
-          attachmentPreviews.set(att.path, dataUrl);
-          return dataUrl;
-        })
-        .catch(() => {
-          // The file is gone (deleted, moved, rotated out of the archive).
-          // Show the file name instead of a spinner that never stops — the
-          // rejected fetch used to be swallowed, which left the card
-          // loading forever because this state was unreachable. The failed
-          // request is dropped so the next mount can try again.
-          attachmentPreviews.delete(att.path);
-          return 'missing';
-        });
-    attachmentPreviews.set(att.path, request);
-    void request.then((preview) => {
-      if (live) setUrl(preview);
-    });
+    // An empty payload reads like a file that is gone, and a failed read
+    // (deleted, moved, rotated out of the archive) does too: show the file
+    // name instead of a spinner that never stops. The cache drops both, so
+    // the next mount tries again.
+    attachmentPreviews
+      .load(att.path, () =>
+        api.readAttachment(att.path).then((dto) => dto.data_url ?? ''),
+      )
+      .then((preview) => {
+        if (live) setUrl(preview || 'missing');
+      })
+      .catch(() => {
+        if (live) setUrl('missing');
+      });
     return () => {
       live = false;
     };

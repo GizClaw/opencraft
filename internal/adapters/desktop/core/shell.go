@@ -375,6 +375,22 @@ func (s *Shell) FocusMain() {
 	main.Focus()
 }
 
+// ReloadMain drops the main window's document and loads the page again,
+// which is the only way to give the renderer back what it cannot be talked
+// out of: WebKit keeps its own copies of the objects behind a transcript,
+// and the process high-water mark only comes down when the document that
+// filled it is gone. It answers whether there was a window to reload - the
+// headless entry point has none, and before attachment neither has the
+// desktop shell.
+func (s *Shell) ReloadMain() bool {
+	_, main := s.attached()
+	if main == nil {
+		return false
+	}
+	main.Reload()
+	return true
+}
+
 // OpenURL opens an http(s) URL in the system default browser.
 func (s *Shell) OpenURL(url string) {
 	app, _ := s.attached()

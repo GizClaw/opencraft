@@ -554,6 +554,14 @@ export const api = {
   // frontend.* metrics.
   perfProbe: () => Diagnostics.PerfProbe() as unknown as Promise<boolean>,
   setPerfProbe: (enabled: boolean) => Diagnostics.SetPerfProbe(enabled),
+  // reloadWindow drops the window's document and loads the page again: the
+  // boundary a workspace switch reaches and a long session has no other way
+  // to. Bounding what the DOM holds (row windowing, folded answers, the
+  // preview LRU) stops the next allocation; it does not give back what WebKit
+  // already keeps, and only a fresh document does. The answer says whether
+  // the page is going away; false is a live run (its stream lives in this
+  // window) or a backend without a window.
+  reloadWindow: () => Diagnostics.ReloadWindow() as unknown as Promise<boolean>,
   // httpProbe is the DEV switch for the provider round-trip probe: it
   // records when a provider request leaves the process and when the
   // response headers arrive ("httpprobe:" log lines), which is the split

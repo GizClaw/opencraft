@@ -255,6 +255,31 @@ func (b *Diagnostics) SetPerfProbe(enabled bool) error {
 	return b.core.Shell.SetPerfProbe(enabled)
 }
 
+// ReloadWindow drops the window's document and loads the page again. It is
+// the memory boundary a long session has no other way to reach: bounding
+// what the DOM holds (row windowing, folded answers, an LRU for previews)
+// stops the next allocation, it does not hand back what WebKit already
+// holds, and only a fresh document gives the process its high-water mark
+// back.
+//
+// It refuses while any workspace has a live run: that run's text arrives as
+// deltas into this window, and a reload would land the new page after the
+// deltas it never saw - a turn that stays empty until it ends. It answers
+// whether it reloaded; false is the window keeping the page it has.
+func (b *Diagnostics) ReloadWindow() bool {
+	ctx := b.core.Shell.Context()
+	if busy := b.core.BusyWorkspaces(); len(busy) > 0 {
+		flowtelemetry.Info(ctx, "diagnostics: window reload deferred, a run is live",
+			attribute.String("workspaces", strings.Join(busy, ", ")))
+		return false
+	}
+	if !b.core.Shell.ReloadMain() {
+		return false
+	}
+	flowtelemetry.Info(ctx, "diagnostics: window reloaded")
+	return true
+}
+
 // HTTPProbeDTO is the diagnostics view of the provider round-trip
 // probe: the persisted switch, the environment override, whether the
 // transport is wrapped right now and, when it is not, the MCP

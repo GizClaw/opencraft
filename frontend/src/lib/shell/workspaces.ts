@@ -115,6 +115,16 @@ export function createShellWorkspaces(
         // it runs before the backend stamped last_opened (see
         // Workspace.Open), so read the history again here.
         void get().loadWorkspaces();
+        // The switch is also the window's memory boundary. The page this
+        // one replaces was holding a transcript the reader has left: its
+        // decoded images, its WebKit text objects, and a high-water mark
+        // the window only gives back by going away. Here, and nowhere
+        // later: the binding has returned, so the backend is on the new
+        // workspace and a fresh page boots straight onto it, and nothing
+        // of the switch has been painted yet, so nothing on screen is
+        // lost. A live run keeps the page (the binding answers false) and
+        // the switch stays the ordinary one the ready handler applies.
+        void api.reloadWindow();
       } catch (err) {
         set({ statusText: String(err) });
       }

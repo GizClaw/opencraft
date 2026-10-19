@@ -12,7 +12,8 @@ import { useStore } from '../lib/store';
 import { stateRoot } from '../state/app';
 import type { MessageView, TurnArtifacts } from '../lib/store';
 import type { SandboxProcess, SessionMeta } from '../lib/types';
-import { ChatView, attachmentPreviews } from './ChatView';
+import { ChatView } from './ChatView';
+import { attachmentPreviews } from '../lib/attachmentPreviews';
 
 const apiMock = vi.hoisted(() => ({
   workspace: vi.fn(),
@@ -1064,6 +1065,126 @@ describe('ChatView transcript windowing', () => {
       expect(screen.getByText('history.png')).toBeInTheDocument(),
     );
     expect(screen.queryByRole('img', { name: 'history.png' })).toBeNull();
+  });
+
+  // A workspace switch drops the window's previews (conv/workspace.ts):
+  // the paths name files of the workspace the reader left, and the bytes
+  // are the window's, not one conversation's.
+  it('re-reads a preview the workspace switch dropped', async () => {
+    attachmentPreviews.clear();
+    apiMock.readAttachment.mockResolvedValue({
+      path: '/tmp/history.png',
+      name: 'history.png',
+      media_type: 'image/png',
+      data_url: 'data:image/png;base64,BBBB',
+    });
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'look at this',
+          items: [],
+          attachments: historyImageAttachments(),
+        },
+      ],
+      [],
+    );
+
+    const first = render(<ChatView />);
+    await screen.findByRole('img', { name: 'history.png' });
+    expect(apiMock.readAttachment).toHaveBeenCalledTimes(1);
+
+    first.unmount();
+    attachmentPreviews.clear();
+    render(<ChatView />);
+    await screen.findByRole('img', { name: 'history.png' });
+    expect(apiMock.readAttachment).toHaveBeenCalledTimes(2);
+  });
+
+  // A settled answer long enough to be worth folding renders its first
+  // section and a control; the rest is one click away (StreamItemView).
+  // The node count is what the fold is for: every character costs the
+  // renderer an element or a text node, and they outlive the row.
+  function longAnswer(chars: number, label = 'Part'): string {
+    const section = (i: number) =>
+      `## ${label} ${i}\n\nParagraph ${i} explains what happened, with \`code\` inline.\n\n`;
+    return Array.from(
+      { length: Math.ceil(chars / section(0).length) },
+      (_, i) => section(i),
+    ).join('');
+  }
+
+  it('folds a long settled answer and expands it on request', async () => {
+    const text = longAnswer(6000);
+    setConversation([
+      {
+        id: 'm-user',
+        role: 'user',
+        text: 'explain everything',
+        items: [],
+        attachments: [],
+      },
+      {
+        id: 'm-answer',
+        role: 'assistant',
+        text: '',
+        items: [{ kind: 'text', id: 'p-1', text }],
+        attachments: [],
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<ChatView />);
+
+    expect(screen.getByRole('heading', { name: 'Part 0' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Part 50' })).toBeNull();
+    const control = screen.getByRole('button', {
+      name: /Show full answer/,
+    });
+    expect(control).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(control);
+    expect(
+      screen.getByRole('heading', { name: 'Part 50' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Collapse answer' }));
+    expect(screen.queryByRole('heading', { name: 'Part 50' })).toBeNull();
+  });
+
+  it('keeps a short answer, and one the reader watched arrive, whole', () => {
+    const short = longAnswer(600, 'Short');
+    const watched = longAnswer(6000, 'Watched');
+    setConversation([
+      {
+        id: 'm-answer',
+        role: 'assistant',
+        text: '',
+        items: [
+          { kind: 'text', id: 'p-1', text: short },
+          // streamed is what mergeAppend stamps on a block whose deltas
+          // this window folded in: the reader saw it grow, so it is not
+          // folded away at the turn end.
+          { kind: 'text', id: 'p-2', text: watched, streamed: true },
+        ],
+        attachments: [],
+      },
+    ]);
+    render(<ChatView />);
+
+    // Both blocks are rendered whole: the short one fits, and the long one
+    // is not folded because its deltas arrived here.
+    expect(
+      screen.getByRole('heading', { name: 'Short 7' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Watched 50' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
   });
 
   it('shows worked duration at the top of an artifact turn', () => {

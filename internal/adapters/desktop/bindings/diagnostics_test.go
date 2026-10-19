@@ -45,6 +45,20 @@ func TestReportFrontendErrorEscapesNewlines(t *testing.T) {
 	t.Fatal("missing frontend error record")
 }
 
+// TestReloadWindowWithoutWindow pins the answer the frontend branches on:
+// a shell with no main window (headless, or before the entry point attaches
+// one) reports that nothing was reloaded, so the caller keeps whatever state
+// it was about to hand back instead of assuming the page restarted.
+func TestReloadWindowWithoutWindow(t *testing.T) {
+	dir := t.TempDir()
+	c := core.NewCore(dir, dir, "")
+	c.Shell.SetContext(context.Background())
+
+	if NewDiagnosticsBinding(c).ReloadWindow() {
+		t.Fatal("ReloadWindow reported a reload with no window attached")
+	}
+}
+
 func TestDiagnosticsReportSandboxBackend(t *testing.T) {
 	dir := t.TempDir()
 	c := core.NewCore(dir, dir, "")

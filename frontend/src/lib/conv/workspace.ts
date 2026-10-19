@@ -2,6 +2,7 @@ import type { StoreApi } from 'zustand';
 import type { StoreState } from '../store';
 import { stateRoot } from '../../state/app';
 import { api } from '../api';
+import { attachmentPreviews } from '../attachmentPreviews';
 import { reportFrontendError } from '../frontendErrors';
 import { sameWorkspacePath, workspaceLabel } from '../workspacePath';
 
@@ -49,6 +50,12 @@ export function createWorkspaceGlue(store: StoreApi<StoreState>) {
     // focus is reset; the session restore below decides which
     // conversation the new workspace shows.
     stateRoot.sendFocus({ type: 'WORKSPACE_RESET' });
+    // The window's attachment previews belong to the workspace it is
+    // leaving: those paths name files it is no longer looking at, and the
+    // cache is the one transcript surface that outlives a conversation.
+    // Dropping it here also gives back the bytes a switch is the natural
+    // boundary for.
+    attachmentPreviews.clear();
     set({
       workspace: workDir,
       toolsView: null,

@@ -417,6 +417,11 @@ export function mockBackend(cfg?: MockConfig) {
     Diagnostics: {
       ClearCaches: async () => ({ dirs: [], bytes: 0 }),
       PerfProbe: async () => false,
+      // A store-driven workspace switch asks the window to reload, which
+      // is the real backend's memory boundary. The page under test is the
+      // spec's page: it answers false (what a live run gets) instead of
+      // navigating away mid-assertion.
+      ReloadWindow: async () => false,
       SetPerfProbe: noop,
       CaptureHeapProfile: async () => ({
         path: '/user/diagnostics/heap-test.pprof',

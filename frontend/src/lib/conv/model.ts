@@ -98,6 +98,12 @@ export interface TextItemFields {
   chunks?: string[];
   chars?: number;
   dropped?: number;
+  // streamed marks a block whose text arrived through the live stream in
+  // this window, so the transcript knows the reader watched it grow and
+  // keeps it whole instead of folding its tail behind a control (see
+  // StreamItemView). Blocks replayed from history carry no marker: they
+  // were already written when the window saw them.
+  streamed?: true;
 }
 
 // AssistantItem preserves stream order; the two text kinds stay separate
