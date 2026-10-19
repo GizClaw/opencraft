@@ -88,7 +88,11 @@ func (createTool) Definition() message.ToolDefinition {
 		DisallowAdditionalProperties().Build()
 }
 
-func (createTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
+func (createTool) Metadata() tool.ToolMeta {
+	// May block on the user's answer (a confirmation prompt);
+	// exempt from the assembly's generic tool timeout.
+	return tool.ToolMeta{SelfTimeout: true}
+}
 
 // Execute implements tool.Tool. The tool result is a single text part;
 // the tool has no multimodal output.
@@ -174,7 +178,11 @@ func (updateTool) Definition() message.ToolDefinition {
 	).Required("name").DisallowAdditionalProperties().Build()
 }
 
-func (updateTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
+func (updateTool) Metadata() tool.ToolMeta {
+	// May block on the user's answer (a confirmation prompt);
+	// exempt from the assembly's generic tool timeout.
+	return tool.ToolMeta{SelfTimeout: true}
+}
 
 // Execute implements tool.Tool. The tool result is a single text part;
 // the tool has no multimodal output.
@@ -244,7 +252,11 @@ func (removeTool) Definition() message.ToolDefinition {
 	).Required("name").DisallowAdditionalProperties().Build()
 }
 
-func (removeTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
+func (removeTool) Metadata() tool.ToolMeta {
+	// May block on the user's answer (a confirmation prompt);
+	// exempt from the assembly's generic tool timeout.
+	return tool.ToolMeta{SelfTimeout: true}
+}
 
 // Execute implements tool.Tool. The tool result is a single text part;
 // the tool has no multimodal output.

@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
+
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/files"
 )
 
 // TestEmbeddedToolsWireSessionSearch pins the deploy wiring: the source
@@ -262,5 +265,95 @@ func TestEmbeddedToolsViewImageFitsPartBudget(t *testing.T) {
 			"view_image max_bytes %d marshals to %d bytes, over the %d-byte part budget",
 			imageSettings.MaxBytes, len(wire), *budget,
 		)
+	}
+}
+
+// TestEmbeddedToolsReadWindowFitsTruncateCap pins the relationship
+// between the read tool's window and the result policy above it: a
+// window larger than middlewares.truncate.max_chars is cut a second
+// time after the tool already chose a range, and what the model gets
+// back is the two ends of a range instead of the range. The budget
+// leaves room for the JSON envelope and the other text in the result.
+func TestEmbeddedToolsReadWindowFitsTruncateCap(t *testing.T) {
+	userDir := t.TempDir()
+	mgr, err := Open(Options{UserDir: userDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mgr.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toolsSettings struct {
+		Middlewares struct {
+			Truncate struct {
+				Enabled  bool `json:"enabled"`
+				MaxChars int  `json:"max_chars"`
+			} `json:"truncate"`
+		} `json:"middlewares"`
+	}
+	if err := json.Unmarshal(
+		view.Document.Resources["tools"].Settings, &toolsSettings,
+	); err != nil {
+		t.Fatalf("decode tools settings: %v", err)
+	}
+	truncate := toolsSettings.Middlewares.Truncate
+	if !truncate.Enabled || truncate.MaxChars <= 0 {
+		t.Fatalf("tools assembly declares no truncate cap: %+v", truncate)
+	}
+	if files.ReadResultChars >= truncate.MaxChars {
+		t.Fatalf("read window %d leaves no room under the %d-char cap; "+
+			"a read would be excerpted after the tool chose its range",
+			files.ReadResultChars, truncate.MaxChars)
+	}
+	// The envelope carries file_path, offset, limit, total_lines,
+	// is_truncated, next_offset, escaping, and the truncate middleware
+	// also counts the other text in the result: a budget within a
+	// couple of characters of the cap is not headroom.
+	if headroom := truncate.MaxChars - files.ReadResultChars; headroom < 1024 {
+		t.Fatalf("read window %d leaves only %d chars under the %d-char cap",
+			files.ReadResultChars, headroom, truncate.MaxChars)
+	}
+}
+
+// TestEmbeddedToolsSetTheToolTimeout pins the deploy's generic per-call
+// deadline: the assembly builds the timeout middleware by hand so it can
+// read each tool's SelfTimeout claim, and it only does so when the
+// section names a default. A renamed key or a lost indent then leaves
+// every tool without a bound while each package test still passes, which
+// is what the rollout corpus caught once already.
+func TestEmbeddedToolsSetTheToolTimeout(t *testing.T) {
+	userDir := t.TempDir()
+	mgr, err := Open(Options{UserDir: userDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mgr.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toolsSettings struct {
+		Middlewares struct {
+			Timeout struct {
+				Default string `json:"default"`
+			} `json:"timeout"`
+		} `json:"middlewares"`
+	}
+	if err := json.Unmarshal(
+		view.Document.Resources["tools"].Settings, &toolsSettings,
+	); err != nil {
+		t.Fatalf("decode tools settings: %v", err)
+	}
+	spec := toolsSettings.Middlewares.Timeout.Default
+	if spec == "" {
+		t.Fatal("tools assembly declares no middlewares.timeout.default: " +
+			"every tool that does not bound itself is unbounded")
+	}
+	d, err := time.ParseDuration(spec)
+	if err != nil {
+		t.Fatalf("middlewares.timeout.default %q does not parse: %v", spec, err)
+	}
+	if d <= 0 {
+		t.Fatalf("middlewares.timeout.default %q is not a positive bound", spec)
 	}
 }

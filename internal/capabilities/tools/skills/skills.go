@@ -240,7 +240,9 @@ func (installTool) Definition() message.ToolDefinition {
 }
 
 func (installTool) Metadata() tool.ToolMeta {
-	return tool.ToolMeta{MutatesState: true}
+	// May block on the user's answer (a confirmation prompt);
+	// exempt from the assembly's generic tool timeout.
+	return tool.ToolMeta{MutatesState: true, SelfTimeout: true}
 }
 
 // Execute implements tool.Tool. The tool result is a single text part;
@@ -312,7 +314,9 @@ func (createTool) Definition() message.ToolDefinition {
 }
 
 func (createTool) Metadata() tool.ToolMeta {
-	return tool.ToolMeta{MutatesState: true}
+	// May block on the user's answer (a confirmation prompt);
+	// exempt from the assembly's generic tool timeout.
+	return tool.ToolMeta{MutatesState: true, SelfTimeout: true}
 }
 
 // Execute implements tool.Tool. The tool result is a single text part;
@@ -399,7 +403,9 @@ func (modifyTool) Definition() message.ToolDefinition {
 }
 
 func (modifyTool) Metadata() tool.ToolMeta {
-	return tool.ToolMeta{MutatesState: true}
+	// May block on the user's answer (a confirmation prompt);
+	// exempt from the assembly's generic tool timeout.
+	return tool.ToolMeta{MutatesState: true, SelfTimeout: true}
 }
 
 // Execute implements tool.Tool. The tool result is a single text part;

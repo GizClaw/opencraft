@@ -113,7 +113,11 @@ func (t *CommandTool) Definition() message.ToolDefinition {
 			"it may run outside the sandbox; an approved retry adds a "+
 			"note field saying so. Quote any argument that contains a "+
 			"space (for example a Windows path), since arguments are "+
-			"split on whitespace.",
+			"split on whitespace. The call blocks until the command "+
+			"exits — a long job (a build, a test, a sweep) belongs in "+
+			"one call; bound it with timeout_seconds when it might "+
+			"hang, and never sleep-poll for a job to finish. Use "+
+			"exec_session for interactive or background processes.",
 		message.ToolProperty("command", "string",
 			"The shell command line to run (required), e.g. "+
 				"\"rg --files internal | rg httpclient\"."),
@@ -122,13 +126,20 @@ func (t *CommandTool) Definition() message.ToolDefinition {
 		message.ToolProperty("stdin", "string",
 			"Bytes piped to the command's stdin. Omit when the command does not read stdin."),
 		message.ToolProperty("timeout_seconds", "number",
-			"Per-call timeout in seconds. Zero or negative disables the tool-level timeout."),
+			"Per-call timeout in seconds. The call blocks until the "+
+				"command exits; with no positive timeout (omitted, zero or "+
+				"negative) a long job runs to completion and the run's stop "+
+				"is the only bound. A positive value caps the command."),
 	).Required("command").DisallowAdditionalProperties().Build()
 }
 
-// Metadata implements tool.ToolMetadata.
+// Metadata implements tool.ToolMetadata. The tool bounds itself: a
+// command runs until it exits or timeout_seconds fires, and the
+// run's stop kills it. The assembly therefore must not wrap it in
+// the generic tool timeout, which would kill every long job at the
+// default and push the model into sleep-polling loops.
 func (t *CommandTool) Metadata() tool.ToolMeta {
-	return tool.ToolMeta{MutatesState: true}
+	return tool.ToolMeta{MutatesState: true, SelfTimeout: true}
 }
 
 // Execute implements tool.Tool.
