@@ -1,7 +1,12 @@
 // conv/failure.ts: how a terminal status and an interrupt cause read
 // to the user.
 import { describe, expect, it } from 'vitest';
-import { friendlyFailure, friendlyInterruption, isUserStop } from './failure';
+import {
+  friendlyFailure,
+  friendlyInterruption,
+  isUserStop,
+  turnNeedsAttention,
+} from './failure';
 
 describe('isUserStop', () => {
   it('treats canceled turns as user stops unless a deadline ended them', () => {
@@ -26,6 +31,34 @@ describe('isUserStop', () => {
     expect(isUserStop('interrupted')).toBe(false);
     expect(isUserStop('failed', 'user_cancel')).toBe(false);
     expect(isUserStop('aborted', 'user_cancel')).toBe(false);
+  });
+});
+
+describe('turnNeedsAttention', () => {
+  it('marks the endings the reader has to come back to', () => {
+    expect(turnNeedsAttention('failed')).toBe(true);
+    expect(turnNeedsAttention('aborted')).toBe(true);
+    // A deadline and a user stop share the wire status; the error kind
+    // is the only thing that tells them apart, and a cut-off turn is
+    // worth opening.
+    expect(turnNeedsAttention('canceled', 'timeout')).toBe(true);
+    // Everything the client cannot name is a failure on the transcript
+    // side too (eventRouter's turnEndStatus), so the row follows it.
+    expect(turnNeedsAttention('')).toBe(true);
+    expect(turnNeedsAttention(undefined)).toBe(true);
+    expect(turnNeedsAttention('some_future_status')).toBe(true);
+  });
+
+  it('leaves the endings the reader already knows alone', () => {
+    expect(turnNeedsAttention('completed')).toBe(false);
+    // A stop is the reader's own click, and a barge-in delivers its own
+    // text: neither is news by the time the turn settles.
+    expect(turnNeedsAttention('canceled', 'user_cancel')).toBe(false);
+    expect(turnNeedsAttention('canceled', '')).toBe(false);
+    // The host was shutting down or the app restarted: the transcript
+    // says so where the turn sits, and there is nothing to open.
+    expect(turnNeedsAttention('interrupted', 'host_shutdown')).toBe(false);
+    expect(turnNeedsAttention('interrupted', 'app_restart')).toBe(false);
   });
 });
 

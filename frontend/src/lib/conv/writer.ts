@@ -453,6 +453,8 @@ export function createEventSink(
 
     refreshSessionList: () => void get().loadSessions(),
     sessionUpdated: (id) => void syncTranscriptTail(id),
+    openConversation: (id, workspace) =>
+      void get().openFromNotification(id, workspace),
     refreshAutomations: () => void get().loadAutomations(),
     refreshAutomationRuns: (ev) => {
       const data = ev.data as AutomationRun;

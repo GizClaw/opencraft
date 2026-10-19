@@ -51,6 +51,7 @@ export function resetStore() {
       },
     },
     pendingPromptConvs: {},
+    turnAttention: {},
     composerDraft: '',
     statusText: '',
     lastUsage: null,

@@ -35,6 +35,21 @@ describe('resume, delete and new chat', () => {
     expect(apiMock.resumeSession).not.toHaveBeenCalled();
   });
 
+  it('opening the row clears the mark its failed turn left', async () => {
+    // Clicking the row is the reader answering it. Both branches clear:
+    // the early return for the conversation already on screen is still a
+    // click on the row that was asking.
+    useStore.setState({ turnAttention: { 's-1': 'r-1' } });
+
+    await useStore.getState().resume('s-1');
+    expect(useStore.getState().turnAttention).toEqual({});
+
+    // And another row's mark is not collateral.
+    useStore.setState({ turnAttention: { 's-2': 'r-2' } });
+    await useStore.getState().resume('s-1');
+    expect(useStore.getState().turnAttention).toEqual({ 's-2': 'r-2' });
+  });
+
   it('resume refuses an id this process already deleted', async () => {
     stateRoot.registry.markDeleted('s-2');
 
@@ -128,6 +143,22 @@ describe('resume, delete and new chat', () => {
     expect(useStore.getState().toasts.at(-1)?.text).toBe(
       i18n.t('chat.sessionDeleted'),
     );
+  });
+
+  it('a delete forgets the mark too, since the row never comes back', async () => {
+    apiMock.deleteSession.mockResolvedValue({
+      conversation_id: 's-next',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    useStore.setState({ turnAttention: { 's-1': 'r-1', 's-2': 'r-2' } });
+
+    await useStore.getState().deleteSession('s-1');
+
+    // Session ids are never reused (deleted_conversations), so a mark
+    // left behind would only ever be a leak.
+    expect(useStore.getState().turnAttention).toEqual({ 's-2': 'r-2' });
   });
 
   it('takes the deleted conversation\u2019s run mapping and viewer with it', async () => {
@@ -509,6 +540,77 @@ describe('cross-workspace session clicks', () => {
     expect(diagnosticsMock.ReportFrontendError).not.toHaveBeenCalled();
     expect(apiMock.resumeSession).not.toHaveBeenCalled();
     expect(useStore.getState().workspace).toBe('/tmp/c');
+  });
+});
+
+// A system banner is a click from outside the app: the window may be on
+// another workspace and covered by a tool page, and the conversation the
+// banner is about is the one the reader asked for.
+
+describe('notification click', () => {
+  it('opens the conversation in the workspace the banner named', async () => {
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    apiMock.workspace.mockResolvedValue('/tmp/b');
+    apiMock.currentSession.mockResolvedValue('');
+    apiMock.resumeSession.mockResolvedValue({
+      conversation_id: 's-b',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    useStore.setState({
+      workspace: '/tmp/a',
+      toolsView: 'plugins',
+      configOpen: true,
+    });
+
+    await useStore.getState().openFromNotification('s-b', '/tmp/b');
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/b');
+    expect(useStore.getState().workspace).toBe('/tmp/b');
+    expect(apiMock.resumeSession).toHaveBeenCalledWith('s-b');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-b');
+    // The click lands on the conversation, not on whatever page covered
+    // it when the window lost focus.
+    expect(useStore.getState().toolsView).toBeNull();
+    expect(useStore.getState().configOpen).toBe(false);
+  });
+
+  it('opens a banner that lost its workspace where the window is', async () => {
+    await useStore.getState().openFromNotification('s-2', '');
+
+    expect(apiMock.openWorkspace).not.toHaveBeenCalled();
+    expect(apiMock.resumeSession).toHaveBeenCalledWith('s-2');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-2');
+  });
+
+  it('stops at the refusal when the conversation lives elsewhere', async () => {
+    // A producer that predates the workspace field names the
+    // conversation only. When that conversation belongs to another
+    // workspace, the backend refuses it: the window stays on the chat it
+    // had (the failure says why) instead of being pointed at an id its
+    // own store can never fill.
+    apiMock.resumeSession.mockRejectedValue(
+      new Error('conversation: session "s-x" is not in workspace "/tmp/w"'),
+    );
+
+    await useStore.getState().openFromNotification('s-x', '');
+
+    expect(apiMock.openWorkspace).not.toHaveBeenCalled();
+    expect(stateRoot.focusSnapshot.value).toBe('failed');
+    expect(stateRoot.focusSnapshot.context.sessionID).not.toBe('s-x');
+  });
+
+  it('says so when the workspace would not open', async () => {
+    apiMock.openWorkspace.mockRejectedValue(new Error('no such workspace'));
+
+    await useStore.getState().openFromNotification('s-b', '/tmp/b');
+
+    expect(apiMock.resumeSession).not.toHaveBeenCalled();
+    expect(useStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'warning',
+      text: i18n.t('chat.switchFailed'),
+    });
   });
 });
 

@@ -24,6 +24,15 @@ const (
 	notifyFallbackTitle = "OpenCraft"
 )
 
+// Banner kinds, the namespace half of a banner id. One conversation
+// keeps one banner per kind: a second turn ending replaces its own
+// banner and leaves the input request standing next to it.
+const (
+	bannerInteract   = "interact"
+	bannerTurnEnd    = "turn-end"
+	bannerAutomation = "automation"
+)
+
 // handleDesktopNotification is installed as the core shell's notification
 // sink. interact/turn_end reach it as UI events that also notify; the
 // automation result reaches it through Shell.Notify because the
@@ -41,18 +50,24 @@ func (d *Desktop) handleDesktopNotification(typ string, data any) {
 		if !ok {
 			return
 		}
+		conversationID, _ := spec["conversation_id"].(string)
+		workspace, _ := spec["workspace"].(string)
 		title, _ := spec["title"].(string)
 		body := strings.TrimSpace(title)
 		if body == "" {
 			body = texts.NotifyInteract
 		}
-		d.sendNotification("interact", notifyFallbackTitle, body)
+		d.sendNotification(
+			bannerID(bannerInteract, conversationID),
+			notifyFallbackTitle, body,
+			openConversationData(conversationID, workspace),
+		)
 	case core.NotifyTurnEnd:
 		ev, ok := data.(core.TurnEndEvent)
 		if !ok || ev.Notify != nil && !*ev.Notify {
 			return
 		}
-		title := d.sessionTitle(ev.ConversationID)
+		title := d.sessionTitle(ev.Workspace, ev.ConversationID)
 		if title == "" {
 			title = notifyFallbackTitle
 		}
@@ -66,14 +81,25 @@ func (d *Desktop) handleDesktopNotification(typ string, data any) {
 		if snippet != "" {
 			body += "\n" + snippet
 		}
-		d.sendNotification("turn-end", title, body)
+		d.sendNotification(
+			bannerID(bannerTurnEnd, ev.ConversationID),
+			title, body,
+			openConversationData(ev.ConversationID, ev.Workspace),
+		)
 	case core.NotifyAutomation:
 		payload, ok := data.(map[string]any)
 		if !ok {
 			return
 		}
+		taskID, _ := payload["task_id"].(string)
+		conversationID, _ := payload["conversation_id"].(string)
+		workspace, _ := payload["workspace"].(string)
 		title, body := automationNotification(texts, payload)
-		d.sendNotification("automation-turn-end", title, body)
+		d.sendNotification(
+			bannerID(bannerAutomation, taskID),
+			title, body,
+			openConversationData(conversationID, workspace),
+		)
 	}
 }
 
@@ -103,12 +129,16 @@ func automationNotification(
 	return title, body
 }
 
-// sendNotification pushes one best-effort system notification.
-func (d *Desktop) sendNotification(id, title, body string) {
+// sendNotification pushes one best-effort system notification. data
+// travels with the banner so activating it can name the conversation and
+// the workspace that owns it; the platform hands the map back untouched
+// in NotificationResponse.UserInfo.
+func (d *Desktop) sendNotification(id, title, body string, data map[string]any) {
 	err := d.notifications.SendNotification(notifications.NotificationOptions{
 		ID:    id,
 		Title: title,
 		Body:  body,
+		Data:  data,
 	})
 	if err != nil {
 		telemetry.WarnErr(context.Background(),
@@ -117,10 +147,88 @@ func (d *Desktop) sendNotification(id, title, body string) {
 	}
 }
 
-// sessionTitle resolves the persisted conversation title for the current
-// workspace Host. It falls back to "" so callers can use the app name.
-func (d *Desktop) sessionTitle(contextID string) string {
-	h := d.core.ActiveHost()
+// bannerID names one banner. The id is the replacement key — macOS and
+// Linux replace a banner still in the notification center, Windows
+// re-raises by id — so a second result for the same conversation updates
+// its banner instead of stacking a column of them. A payload without a
+// conversation falls back to the bare kind, which still replaces the
+// previous untargeted banner of that kind.
+func bannerID(kind, key string) string {
+	if key == "" {
+		return kind
+	}
+	return kind + ":" + key
+}
+
+// openConversationData is what a banner carries so that activating it can
+// reopen its conversation. Empty values are dropped rather than sent as
+// empty strings: a click then opens nothing instead of switching to a
+// conversation that is not there.
+func openConversationData(conversationID, workspace string) map[string]any {
+	data := map[string]any{}
+	if conversationID != "" {
+		data["conversation_id"] = conversationID
+	}
+	if workspace != "" {
+		data["workspace"] = workspace
+	}
+	return data
+}
+
+// handleNotificationResponse reopens the conversation a banner belongs to
+// when the user activates it. It runs on the platform's notification
+// thread — macOS keeps its completion handler waiting until this
+// returns — so the window work moves to a goroutine of its own.
+func (d *Desktop) handleNotificationResponse(result notifications.NotificationResult) {
+	if result.Error != nil {
+		telemetry.WarnErr(context.Background(),
+			"desktop: notification response unusable", result.Error)
+		return
+	}
+	ev, ok := notificationOpenTarget(
+		result.Response.ActionIdentifier, result.Response.UserInfo)
+	if !ok {
+		return
+	}
+	go func() {
+		d.core.Shell.FocusMain()
+		d.core.Shell.Emit(core.EventOpenConversation, ev)
+	}()
+}
+
+// notificationOpenTarget maps an activated banner onto the conversation
+// to open. Only the default action counts — a dismissal, or a button a
+// future build adds, means something else — and only a banner that named
+// a conversation has a target. The payload crosses JSON on every
+// platform, so values are read with a string assertion: an unexpected
+// type is a banner without a target, not a panic on the notification
+// thread.
+func notificationOpenTarget(
+	actionID string, data map[string]any,
+) (core.OpenConversationEvent, bool) {
+	if actionID != notifications.DefaultActionIdentifier {
+		return core.OpenConversationEvent{}, false
+	}
+	conversationID, _ := data["conversation_id"].(string)
+	if conversationID == "" {
+		return core.OpenConversationEvent{}, false
+	}
+	workspace, _ := data["workspace"].(string)
+	return core.OpenConversationEvent{
+		ConversationID: conversationID,
+		Workspace:      workspace,
+	}, true
+}
+
+// sessionTitle resolves the persisted conversation title for the Host
+// that owns workspace, falling back to the window's own. A turn that
+// finishes in a background workspace has no title on the active Host, so
+// asking it first would put the app name on every background banner.
+func (d *Desktop) sessionTitle(workspace, contextID string) string {
+	h := d.core.Runtime.HostFor(workspace)
+	if h == nil {
+		h = d.core.ActiveHost()
+	}
 	if h == nil {
 		return ""
 	}

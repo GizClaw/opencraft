@@ -21,6 +21,7 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 	sessionID := conv.New("/tmp/w")
 	conv.TrackRun("/tmp/w", sessionID, "r-1")
 	p.SetRunConvResolver(conv.ConversationForRun)
+	p.SetRunWorkspaceResolver(conv.WorkspaceForRun)
 	events := make(chan map[string]any, 1)
 	p.SetNotifier(func(_ string, data any) {
 		events <- data.(map[string]any)
@@ -56,6 +57,7 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 			ID             string `json:"id"`
 			RunID          string `json:"run_id"`
 			ConversationID string `json:"conversation_id"`
+			Workspace      string `json:"workspace"`
 			Kind           string `json:"kind"`
 			Severity       string `json:"severity"`
 			Title          string `json:"title"`
@@ -82,6 +84,11 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 		}
 		if dto.ConversationID != sessionID {
 			t.Errorf("conversation_id = %q, want %q", dto.ConversationID, sessionID)
+		}
+		// The row that starts blinking belongs to the workspace whose
+		// Host is asking, which need not be the one on screen.
+		if dto.Workspace != "/tmp/w" {
+			t.Errorf("workspace = %q, want the run's workspace", dto.Workspace)
 		}
 		if len(dto.Body) != 1 ||
 			dto.Body[0].Type != "text" ||
@@ -110,6 +117,91 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Ask did not return after answer")
+	}
+}
+
+// TestCorePromptNamesTheRunsWorkspace pins the assembly rather than the
+// resolver: NewCoreWithPaths installs the run → workspace lookup, so an
+// interact event emitted by a Prompt nobody wired by hand still names
+// the workspace whose Host is asking. Without the wiring the field is
+// silently absent, and the frontend then attributes the row - and the
+// banner click - to whatever workspace happens to be on screen.
+func TestCorePromptNamesTheRunsWorkspace(t *testing.T) {
+	home := t.TempDir()
+	other := t.TempDir()
+	c := NewCore(t.TempDir(), t.TempDir(), home)
+	sessionID := c.Conversation.New(home)
+	c.Conversation.TrackRun(home, sessionID, "r-1")
+	// The window moves on before the prompt lands: the answer belongs to
+	// the workspace the run was started from.
+	c.SetWorkDir(other)
+
+	events := make(chan map[string]any, 1)
+	c.Prompt.SetNotifier(func(_ string, data any) {
+		events <- data.(map[string]any)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_, _ = c.Prompt.Ask(ctx, interact.Spec{
+			ID:    "p-1",
+			RunID: "r-1",
+			Kind:  interact.KindText,
+			Title: "Question",
+		})
+	}()
+
+	select {
+	case data := <-events:
+		if data["workspace"] != home {
+			t.Fatalf("workspace = %v, want the run's workspace %q",
+				data["workspace"], home)
+		}
+		if data["conversation_id"] != sessionID {
+			t.Fatalf("conversation_id = %v, want %q",
+				data["conversation_id"], sessionID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("interact event was not emitted")
+	}
+	if !c.Prompt.Answer("p-1", "", "", nil, true) {
+		t.Fatal("Answer did not resolve pending prompt")
+	}
+}
+
+// TestPromptAskOmitsUnknownWorkspace covers the other half of the
+// workspace field: a run the desktop never tracked has no workspace to
+// name, and the event must then carry no key at all rather than an empty
+// one the router would read as a workspace called "".
+func TestPromptAskOmitsUnknownWorkspace(t *testing.T) {
+	p := NewPrompt()
+	events := make(chan map[string]any, 1)
+	p.SetNotifier(func(_ string, data any) {
+		events <- data.(map[string]any)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_, _ = p.Ask(ctx, interact.Spec{
+			ID:    "p-1",
+			RunID: "r-unknown",
+			Kind:  interact.KindText,
+			Title: "Question",
+		})
+	}()
+
+	select {
+	case data := <-events:
+		if workspace, ok := data["workspace"]; ok {
+			t.Fatalf("workspace key present for an unknown run: %v", workspace)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("interact event was not emitted")
+	}
+	if ok := p.Answer("p-1", "", "", nil, true); !ok {
+		t.Fatal("Answer did not resolve pending prompt")
 	}
 }
 

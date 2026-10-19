@@ -148,6 +148,14 @@ func NewCoreWithPaths(p Paths) *Core {
 	// or renders anything, and the predicate reads the mode off the
 	// run's workspace Host.
 	c.Prompt.SetAutoApprover(c.autoApproveConfirm)
+	// Every interact event names what the reader has to look at: the
+	// conversation the run belongs to and the workspace whose Host is
+	// asking. Both come from the run registry, so a prompt raised by a
+	// background workspace points its row at that workspace instead of
+	// the one on screen. Installed here, next to the approver, because a
+	// Prompt nobody wired is a Prompt whose events are missing fields.
+	c.Prompt.SetRunConvResolver(c.Conversation.ConversationForRun)
+	c.Prompt.SetRunWorkspaceResolver(c.Conversation.WorkspaceForRun)
 	runtime.Manager().SetAgentPlugins(plugin.Store, plugin.Kraft)
 	runtime.Manager().SetAutomationHost(NewAutomationHost(runtime))
 	runtime.Manager().SetPluginInstaller(NewPluginInstaller(c))

@@ -26,8 +26,14 @@ type TurnEndEvent struct {
 	// and automation turns both execute as AssistantAgentID today;
 	// delegated subagent turns will carry their own id.
 	AgentID string `json:"agent_id,omitempty"`
-	Status  string `json:"status"`
-	Error   string `json:"error,omitempty"`
+	// Workspace is the workspace whose Host ran the turn. A window can
+	// be looking at a different one by the time the turn ends: the
+	// sidebar has to file the row under its own workspace, and the
+	// banner's click has to open the conversation there instead of
+	// wherever the window happens to be.
+	Workspace string `json:"workspace,omitempty"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
 	// InterruptCause / ErrorKind are the structured class of a failed
 	// turn (an engine interrupt cause, an inference error kind, or the
 	// harness-level timeout). The UI renders from these; Error stays for
@@ -90,6 +96,20 @@ type SteerPendingEvent struct {
 	// the run's next boundary. Zero means a boundary has taken every
 	// interjection the run was handed.
 	SteerPending int `json:"steer_pending"`
+}
+
+// OpenConversationEvent asks the window to show one conversation. It is
+// an intent, not a change of state: the only producer is the desktop
+// shell, when the user activates a system notification, and the window
+// answers by switching to the conversation the way a click in the
+// sidebar would.
+type OpenConversationEvent struct {
+	ConversationID string `json:"conversation_id"`
+	// Workspace is the workspace whose Host ran the conversation. The
+	// window switches to it when it differs from the current one; an
+	// empty value means the producer could not name it, and the window
+	// stays where it is.
+	Workspace string `json:"workspace,omitempty"`
 }
 
 // CompactionEvent mirrors worldstate.CompactionReport onto the wire.
