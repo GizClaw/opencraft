@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/workspace"
@@ -860,5 +861,80 @@ func TestReadFileLimitBelowBudgetWins(t *testing.T) {
 	}
 	if got.NextOffset != 11 {
 		t.Fatalf("next_offset = %d, want 11", got.NextOffset)
+	}
+}
+
+// TestJSONStringLenMatchesMarshal pins the read budget's unit to the
+// encoder it has to agree with: a window is spent in JSON bytes, so every
+// escape the encoder emits has to be counted the same way here. Each case
+// is a byte sequence encoding/json treats differently.
+func TestJSONStringLenMatchesMarshal(t *testing.T) {
+	cases := []string{
+		"",
+		"plain ascii",
+		`quote " in it`,
+		`backslash \ in it`,
+		"tabs\tnewlines\nreturns\rbell\a form\f back\b",
+		"markup <div class=\"a\">&amp;</div>",
+		"del \x7f stays one byte",
+		"unicode 中文 and emoji 😀",
+		"separators \u2028\u2029",
+		string([]byte{0xff, 0xfe, 'a'}),
+	}
+	for _, c := range cases {
+		enc, err := json.Marshal(c)
+		if err != nil {
+			t.Fatalf("marshal %q: %v", c, err)
+		}
+		// A JSON string literal is the quotes around the escaped body.
+		if want, got := len(enc)-2, jsonStringLen([]byte(c)); got != want {
+			t.Errorf("jsonStringLen(%q) = %d, want %d (encoded %s)", c, got, want, enc)
+		}
+	}
+}
+
+// TestReadFileWindowFitsEncodedBudget: a window is bounded by what the
+// result costs once encoded, not by the bytes of the file. Markup and
+// terminal control codes expand to six bytes per character, so a window
+// sized on the file's own bytes runs past the truncate cap — the policy
+// then cuts it a second time and the model holds the two ends of a range
+// it was told was whole.
+func TestReadFileWindowFitsEncodedBudget(t *testing.T) {
+	tool, _ := newTestTool(t)
+	var b strings.Builder
+	for i := 1; b.Len() < 60_000; i++ {
+		fmt.Fprintf(&b, "line %04d <div class=\"a\">&amp;</div> \x1b[31mred\x1b[0m\n", i)
+	}
+	writeTree(t, tool.ws, map[string]string{"noisy.html": b.String()})
+
+	// middlewares.truncate.max_chars: a result at or above the cap is
+	// excerpted, so every window has to stay under it.
+	const truncateCap = 24_000
+	offset := 1
+	for reads := 0; ; reads++ {
+		if reads > 20 {
+			t.Fatal("windows did not finish the file")
+		}
+		args := fmt.Sprintf(`{"file_path":"noisy.html","offset":%d}`, offset)
+		raw, err := execute(t, tool.read(), args)
+		if err != nil {
+			t.Fatalf("read_file %s: %v", args, err)
+		}
+		if runes := utf8.RuneCountInString(raw); runes >= truncateCap {
+			t.Fatalf("window %s encodes to %d runes, want under the %d cap",
+				args, runes, truncateCap)
+		}
+		var got readResult
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatalf("decode read_file result: %v (%s)", err, raw)
+		}
+		if !got.IsTruncated {
+			break
+		}
+		if got.NextOffset <= offset {
+			t.Fatalf("next_offset = %d does not advance past offset %d",
+				got.NextOffset, offset)
+		}
+		offset = got.NextOffset
 	}
 }

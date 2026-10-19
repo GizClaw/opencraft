@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
@@ -39,15 +40,23 @@ const (
 	GlobName = "glob"
 )
 
-// ReadResultChars is the content budget of one read. The assembly's
-// truncate middleware caps a result at middlewares.truncate.max_chars
-// (24000 in tools.yaml) and answers anything longer with a head-and-tail
-// excerpt plus a cache pointer. A window below that cap comes back
-// whole, so a read is a complete range the model can page from, and
-// next_offset says where the next one starts. Without the budget a read
-// of a long file is cut twice — once at the line limit and again by the
-// middleware — which leaves the model holding the two ends of a range
-// whose middle it cannot reach in one call.
+// ReadResultChars is the budget of one read, counted on the encoded
+// result. The assembly's truncate middleware caps a result at
+// middlewares.truncate.max_chars (24000 in tools.yaml) and answers
+// anything longer with a head-and-tail excerpt plus a cache pointer. A
+// window below that cap comes back whole, so a read is a complete range
+// the model can page from, and next_offset says where the next one
+// starts. Without the budget a read of a long file is cut twice — once
+// at the line limit and again by the middleware — which leaves the model
+// holding the two ends of a range whose middle it cannot reach in one
+// call.
+//
+// The budget counts the JSON encoding, not the bytes of the file: the
+// middleware measures the result on the wire, where one character can
+// cost six bytes. A log of terminal control codes and a markup fragment
+// both expand past the headroom under the cap, so a window sized on the
+// file's own bytes would be cut a second time — the case this budget
+// exists to prevent.
 const ReadResultChars = 20_000
 
 const (
@@ -126,8 +135,9 @@ func (t *readFileTool) Definition() message.ToolDefinition {
 			"it. Paths are relative to the workspace root. Returns JSON: "+
 			"{file_path, content, offset, limit, total_lines, "+
 			"is_truncated, next_offset}. A window carries as much as one "+
-			"result can hold (about 20000 characters, or limit lines if "+
-			"that is smaller); when lines remain, next_offset is where "+
+			"result can hold (about 20000 characters, fewer when the "+
+			"text needs escaping, or limit lines if that is smaller); "+
+			"when lines remain, next_offset is where "+
 			"the next read continues. Read a file whole when it fits, and "+
 			"continue from next_offset otherwise: probing in small "+
 			"ranges costs a round per probe.",
@@ -264,6 +274,7 @@ func joinLineRange(data []byte, start, end, budget int) (string, int) {
 	line := 0
 	idx := 0
 	reached := start
+	encoded := 0
 	for line < end && idx < len(data) {
 		nl := bytes.IndexByte(data[idx:], '\n')
 		lineEnd := len(data)
@@ -271,13 +282,19 @@ func joinLineRange(data []byte, start, end, budget int) (string, int) {
 			lineEnd = idx + nl
 		}
 		if line >= start {
-			if b.Len() > 0 && b.Len()+1+(lineEnd-idx) > budget {
+			cost := jsonStringLen(data[idx:lineEnd])
+			if b.Len() > 0 {
+				// The '\n' that joins this line to the previous one.
+				cost++
+			}
+			if b.Len() > 0 && encoded+cost > budget {
 				break
 			}
 			if b.Len() > 0 {
 				b.WriteByte('\n')
 			}
 			b.Write(data[idx:lineEnd])
+			encoded += cost
 			reached = line + 1
 		}
 		if nl < 0 {
@@ -287,6 +304,52 @@ func joinLineRange(data []byte, start, end, budget int) (string, int) {
 		line++
 	}
 	return b.String(), reached
+}
+
+// jsonStringLen returns the bytes a JSON string literal holding b takes,
+// which is what the read budget is measured in. It mirrors encoding/json
+// for a string value: the quote, the backslash and the short escapes
+// cost two bytes, other control characters and the line separators cost
+// six, and so do the HTML set (Marshal escapes it by default) and every
+// byte of invalid UTF-8, which the encoder replaces with \ufffd. The two
+// must agree exactly: a cheaper estimate lets a window grow past the
+// result policy's cap, and a dearer one hands back windows shorter than
+// the result could carry. TestJSONStringLenMatchesMarshal pins them.
+func jsonStringLen(b []byte) int {
+	n := 0
+	for i := 0; i < len(b); {
+		c := b[i]
+		switch {
+		case c == '"' || c == '\\' ||
+			c == '\n' || c == '\r' || c == '\t' || c == '\b' || c == '\f':
+			n += 2
+			i++
+		case c < 0x20:
+			n += 6
+			i++
+		case c < utf8.RuneSelf:
+			if c == '<' || c == '>' || c == '&' {
+				n += 6
+			} else {
+				n++
+			}
+			i++
+		default:
+			r, size := utf8.DecodeRune(b[i:])
+			switch {
+			case r == utf8.RuneError && size == 1:
+				n += 6
+				i++
+			case r == '\u2028' || r == '\u2029':
+				n += 6
+				i += size
+			default:
+				n += size
+				i += size
+			}
+		}
+	}
+	return n
 }
 
 // ---------------------------------------------------------------------------
