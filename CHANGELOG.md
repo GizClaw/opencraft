@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scaled onto the measurement now, keeping their shares, and the popover
   says the split is a proportion; snapshots already stored are repaired on
   read. (#250)
+- The context meter's header no longer rounds a prompt that ran past the
+  model window down to "100%". That line divides the prompt by the window
+  — the one ratio in the meter that can pass its whole, which an
+  estimate-only snapshot from an unfolded full-history replay or a provider
+  counting past the window it enforces both do — but it shared the slice
+  rounding, whose 99.95% floor exists to stop a nearly-full slice reading
+  as 100%. A 4.24M prompt against a 1M window read "100% of 1M" next to a
+  full, red bar; it now prints the multiple it is. The slice percentages
+  are unchanged. (#252)
 
 ## [0.7.0] - 2026-10-19
 
