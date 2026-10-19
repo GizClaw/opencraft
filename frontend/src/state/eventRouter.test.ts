@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { routeBackendEvent, type EventDataSink } from './eventRouter';
+import {
+  canApplyEvent,
+  routeBackendEvent,
+  toConversationEvent,
+  type EventDataSink,
+} from './eventRouter';
 import { StateRoot } from './root';
 
 function fakeSink() {
@@ -383,5 +388,134 @@ describe('event router', () => {
     expect(root.registry.get('s-1')?.getSnapshot().value).toMatchObject({
       turn: 'succeeded',
     });
+  });
+});
+
+describe('toConversationEvent', () => {
+  const stageOf = (part: Record<string, unknown>) =>
+    (
+      toConversationEvent({
+        type: 'stream',
+        data: { run_id: 'r-1', delta: { part } },
+      }) as { stage?: string }
+    ).stage;
+
+  it('names the stage a stream delta is in', () => {
+    expect(stageOf({ type: 'reasoning' })).toBe('reasoning');
+    expect(stageOf({ type: 'text' })).toBe('text');
+    expect(stageOf({ type: 'tool_call', call: { name: 'read_file' } })).toBe(
+      'tool:read_file',
+    );
+    // A call the delta did not name still says it is a tool call: the
+    // stage drives the label, and a missing name must not erase it.
+    expect(stageOf({ type: 'tool_call' })).toBe('tool:');
+    expect(stageOf({ type: 'artifact' })).toBeUndefined();
+    expect(stageOf({})).toBeUndefined();
+  });
+
+  it('drops the events a run id is missing from', () => {
+    expect(
+      toConversationEvent({ type: 'stream', data: { delta: {} } }),
+    ).toBeUndefined();
+    expect(
+      toConversationEvent({ type: 'turn_end', data: { status: 'completed' } }),
+    ).toBeUndefined();
+    expect(
+      toConversationEvent({ type: 'automation_run_started', data: {} }),
+    ).toBeUndefined();
+  });
+
+  it('maps the wire status and carries the error and its kind', () => {
+    expect(
+      toConversationEvent({
+        type: 'turn_end',
+        data: { run_id: 'r-1', status: 'completed' },
+      }),
+    ).toEqual({
+      type: 'TURN_ENDED',
+      runID: 'r-1',
+      status: 'completed',
+      error: undefined,
+      errorKind: undefined,
+    });
+
+    // "unknown" is the engine status of a wait that produced no result.
+    // It is a failure, and it keeps the error_kind the failure text is
+    // chosen from - a deadline and a user stop share the status.
+    expect(
+      toConversationEvent({
+        type: 'turn_end',
+        data: {
+          run_id: 'r-1',
+          status: 'unknown',
+          error: 'no answer',
+          error_kind: 'timeout',
+        },
+      }),
+    ).toEqual({
+      type: 'TURN_ENDED',
+      runID: 'r-1',
+      status: 'failed',
+      error: 'no answer',
+      errorKind: 'timeout',
+    });
+  });
+
+  it('leaves the data-only events to the data layer', () => {
+    expect(
+      toConversationEvent({ type: 'artifact', data: { run_id: 'r-1' } }),
+    ).toBeUndefined();
+    expect(
+      toConversationEvent({ type: 'steer_pending', data: { run_id: 'r-1' } }),
+    ).toBeUndefined();
+  });
+});
+
+describe('canApplyEvent', () => {
+  const alive = { lifecycle: { name: 'alive' as const } };
+  const endedTurn = {
+    type: 'turn_end',
+    data: { run_id: 'r-1', status: 'completed' },
+  };
+
+  it("lets a run's own ending through and drops the replay", () => {
+    expect(canApplyEvent(alive, endedTurn)).toBe(true);
+    expect(canApplyEvent({ ...alive, endedRunIDs: ['r-1'] }, endedTurn)).toBe(
+      false,
+    );
+  });
+
+  it('asks the ended-run set, not a single slot', () => {
+    // A barge-in leaves an older ending behind without it ever becoming
+    // the last one; both runs stay remembered, so neither can be
+    // resurrected by a late delta.
+    const ended = { ...alive, endedRunIDs: ['r-old', 'r-new'] };
+    expect(
+      canApplyEvent(ended, { type: 'stream', data: { run_id: 'r-old' } }),
+    ).toBe(false);
+    expect(
+      canApplyEvent(ended, { type: 'stream', data: { run_id: 'r-live' } }),
+    ).toBe(true);
+  });
+
+  it('lets an event with no run id through', () => {
+    expect(canApplyEvent(alive, { type: 'stream', data: {} })).toBe(true);
+  });
+
+  it('drops everything once the conversation is deleted', () => {
+    const deleted = { lifecycle: { name: 'deleted' as const } };
+
+    expect(
+      canApplyEvent(deleted, { type: 'stream', data: { run_id: 'r-1' } }),
+    ).toBe(false);
+    expect(canApplyEvent(deleted, endedTurn)).toBe(false);
+  });
+
+  it('has no say over the data-only events', () => {
+    // artifact/interact/resolved are reconciled by the data layer; the
+    // actor never sees them, so the gate must not filter them.
+    expect(
+      canApplyEvent(alive, { type: 'artifact', data: { run_id: 'r-1' } }),
+    ).toBe(true);
   });
 });
