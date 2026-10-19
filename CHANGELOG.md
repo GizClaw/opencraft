@@ -51,6 +51,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A sidebar row says what it wants before it is opened. Three marks
+  share the one slot beside the title and the most pressing wins: a
+  pending prompt (the run is waiting on an answer only the reader can
+  give) blinks the row and shows a question mark, a run in flight keeps
+  the spinner, and a turn that ended badly leaves a red mark
+  (`turnNeedsAttention`: `failed` or `aborted`, or `canceled` when
+  `error_kind` is `timeout` — a manual Stop and an interrupted turn do
+  not). The failed mark is store state keyed by conversation, not actor
+  state, so a row is right in a workspace this window never opened; it
+  tracks "the last turn that ended", so a retry that works takes its own
+  mark away, and clicking the row (either branch of `resume`) or
+  deleting it clears it.
+- A notification banner opens the conversation that raised it. The
+  `turn_end` and `interact` stream events name the workspace that owns
+  the run (`BIND_WORKSPACE` on the Go side), so a banner raised by a
+  background workspace lands on that conversation instead of the one on
+  screen. Banners replace one another per conversation
+  (`turn-end:<id>`, `interact:<id>`, `automation:<task>`), so a burst of
+  turns cannot stack a queue of notifications over the chat.
 - A path written in backticks in the transcript opens the file. One
   inline code span is classified as a path or a URL (`linkTarget.ts`):
   a chip renders where plain code would, a click resolves it the way a
