@@ -28,10 +28,12 @@ import (
 //
 // What the estimates describe is the prompt the turn *opened* with. A
 // turn that folds mid-way rewrites the conversation prefix it was given
-// (compact.js moves the folded rounds to another channel), so on the
-// turn that folds the conversation slice is one generation old — the
-// residual absorbs the difference, and the next turn's prepare measures
-// the folded prompt from scratch.
+// (compact.js moves the folded rounds to another channel), so on that turn
+// the conversation slice is a generation old and the estimates run past
+// what the call carried. Normalize scales them back onto the measurement
+// and marks the snapshot Scaled: the total stays the provider's count, and
+// the split says it is a proportion. The next turn's prepare measures the
+// folded prompt from scratch.
 
 // contextEstimate is the board form of the prepare-time half: one token
 // estimate per category id.

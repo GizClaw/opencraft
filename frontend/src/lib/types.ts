@@ -700,9 +700,15 @@ export interface ContextCategoryUsage {
 // produced no usage report leaves measured_tokens at zero and the
 // categories are estimates only. limit_tokens is the input window of the
 // model that served the call, zero when the deployment declares none.
+//
+// scaled says the split was shrunk onto the measurement (the estimates ran
+// past it, as they do on a turn that folds the conversation mid-way): the
+// total is still the provider's count, and the popover says the slices are
+// proportions rather than an account of the request.
 export interface ContextUsageDTO {
   measured_tokens: number;
   categories: ContextCategoryUsage[];
+  scaled?: boolean;
   model?: string;
   limit_tokens?: number;
   at?: string;

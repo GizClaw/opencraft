@@ -174,6 +174,10 @@ export function ContextMeter({ usage }: { usage: ContextUsageDTO }) {
         ? 'var(--color-warn)'
         : 'var(--color-accent)';
   const estimated = (usage.measured_tokens ?? 0) <= 0;
+  // A measured prompt whose estimates ran past the measurement is scaled
+  // onto it: the total is exact, the split is a proportion. Saying so is
+  // the difference between a meter and a guess that looks like a meter.
+  const scaled = !estimated && usage.scaled === true;
 
   if (total <= 0) return null;
 
@@ -291,6 +295,11 @@ export function ContextMeter({ usage }: { usage: ContextUsageDTO }) {
           {estimated && (
             <p className="mt-2 border-t border-edge pt-2 text-micro leading-snug text-faint">
               {t('chat.contextEstimated')}
+            </p>
+          )}
+          {scaled && (
+            <p className="mt-2 border-t border-edge pt-2 text-micro leading-snug text-faint">
+              {t('chat.contextScaled')}
             </p>
           )}
         </Popover>
