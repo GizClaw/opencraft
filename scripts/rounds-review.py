@@ -84,6 +84,47 @@ SIZE_BANDS = (
 REREAD_WINDOW = 4
 
 
+# exec_command's argument name is "command"; "cmd" is its one alias,
+# accepted so a model habit costs nothing (exec/command.go). A report
+# that reads only "command" cannot see a quarter of the exec calls.
+COMMAND_ALIASES = ("command", "cmd")
+
+# The tool runs a command directly (no shell) only when every whitespace
+# token is built from these characters -- directArgs/safeWord in
+# exec/command.go, with POSIX as the platform (Windows additionally
+# allows a backslash, which is an escape on POSIX shells).
+DIRECT_SAFE = set(
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "0123456789_./:+-"
+)
+
+
+def command_text(args):
+    """command_text is the command line one exec call asked for."""
+    if not isinstance(args, dict):
+        return ""
+    for name in COMMAND_ALIASES:
+        value = args.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def direct_argv(cmd):
+    """direct_argv reports whether the tool would skip the shell.
+
+    Mirrors directArgs: the token split has to round-trip exactly, and
+    every token has to be a bare word. Anything else (quotes, pipes,
+    quotes, redirects, &&, globs, $, tabs, repeated spaces) is the
+    shell's business.
+    """
+    fields = cmd.split()
+    if not fields or " ".join(fields) != cmd:
+        return False
+    return all(all(ch in DIRECT_SAFE for ch in f) for f in fields)
+
+
 def size_band(n):
     for lo, hi, name in SIZE_BANDS:
         if lo <= n < hi:
@@ -259,7 +300,7 @@ def scan_rollouts(home, since, until):
     edit_events = 0
     rereads = 0
     repeat_calls = 0
-    exec_total = exec_chained = exec_multiline = exec_sleep = 0
+    exec_total = exec_shell = exec_direct = exec_cd = exec_multiline = exec_sleep = 0
     timeout_results = 0
     for turn in turns:
         seen = collections.Counter()
@@ -279,12 +320,16 @@ def scan_rollouts(home, since, until):
                     read_whole += 1
             elif tool == "exec_command":
                 exec_total += 1
-                cmd = args.get("command") or ""
-                if isinstance(cmd, str):
+                cmd = command_text(args)
+                if direct_argv(cmd):
+                    exec_direct += 1
+                else:
+                    exec_shell += 1
+                if cmd:
                     if "\n" in cmd:
                         exec_multiline += 1
-                    if any(ch in cmd for ch in ("&&", ";", "|", "$(", "`")) or "\n" in cmd:
-                        exec_chained += 1
+                    if cmd.startswith("cd ") and ("&&" in cmd or ";" in cmd):
+                        exec_cd += 1
                     if "sleep " in cmd:
                         exec_sleep += 1
             if len(call) > 5:
@@ -338,7 +383,9 @@ def scan_rollouts(home, since, until):
         "rereads": rereads,
         "repeat_calls": repeat_calls,
         "exec_total": exec_total,
-        "exec_chained": exec_chained,
+        "exec_shell": exec_shell,
+        "exec_direct": exec_direct,
+        "exec_cd": exec_cd,
         "exec_multiline": exec_multiline,
         "exec_sleep": exec_sleep,
         "verify_calls": verify_calls,
@@ -519,7 +566,9 @@ def main():
             },
             "exec": {
                 "total": roll["exec_total"],
-                "shell_wrapped": roll["exec_chained"],
+                "direct": roll["exec_direct"],
+                "shell_wrapped": roll["exec_shell"],
+                "leading_cd": roll["exec_cd"],
                 "multiline": roll["exec_multiline"],
                 "sleep_polls": roll["exec_sleep"],
                 "verify_calls": roll["verify_calls"],
@@ -634,8 +683,11 @@ def main():
     print()
     print("== exec")
     if roll["exec_total"]:
-        share = 100.0 * roll["exec_chained"] / roll["exec_total"]
-        print(f"exec_command {roll['exec_total']}: shell-wrapped {roll['exec_chained']} ({share:.0f}%), "
+        share = 100.0 * roll["exec_shell"] / roll["exec_total"]
+        cd_share = 100.0 * roll["exec_cd"] / roll["exec_total"]
+        print(f"exec_command {roll['exec_total']}: through a shell {roll['exec_shell']} ({share:.0f}%), "
+              f"direct {roll['exec_direct']}; "
+              f"leading `cd ... &&` {roll['exec_cd']} ({cd_share:.0f}%), "
               f"multiline {roll['exec_multiline']}, sleep-polls {roll['exec_sleep']}, "
               f"timeout results {roll['timeout_results']}, "
               f"test/build {roll['verify_calls']}")
