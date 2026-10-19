@@ -4112,7 +4112,10 @@ export function ChatView() {
                         data-tip={t('chat.modelLabel')}
                         className="flex min-w-0 items-center gap-1.5 rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
                       >
-                        <Sparkles size={ICON.xs} className="shrink-0 text-accent" />
+                        <Sparkles
+                          size={ICON.xs}
+                          className="shrink-0 text-accent"
+                        />
                         <span className="max-w-32 truncate">{modelLabel}</span>
                         {thinkSupported && (
                           // The thinking level is the first thing to go:
