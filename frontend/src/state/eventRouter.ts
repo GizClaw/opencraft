@@ -62,6 +62,7 @@ export interface EventRouterDeps {
 interface StreamPayload {
   run_id?: string;
   conversation_id?: string;
+  workspace?: string;
   delta?: {
     part?: {
       type?: string;
@@ -73,9 +74,31 @@ interface StreamPayload {
 interface TurnEndPayload {
   run_id?: string;
   conversation_id?: string;
+  workspace?: string;
   status: string;
   error?: string;
   error_kind?: string;
+}
+
+/**
+ * eventWorkspace returns the workspace an event says owns its run, when
+ * it says one. The backend stamps it on the three events that carry a
+ * run (stream, interact, turn_end) because the window may be looking at
+ * another workspace by the time any of them arrives.
+ */
+function eventWorkspace(ev: UIEvent): string | undefined {
+  switch (ev.type) {
+    case UIEventType.stream:
+    case UIEventType.interact:
+    case UIEventType.turnEnd: {
+      const workspace = (ev.data as { workspace?: unknown }).workspace;
+      return typeof workspace === 'string' && workspace !== ''
+        ? workspace
+        : undefined;
+    }
+    default:
+      return undefined;
+  }
 }
 
 function streamStage(delta: StreamPayload['delta']): string | undefined {
@@ -169,11 +192,20 @@ function routeToConversation(
   deps: EventRouterDeps,
 ) {
   if (deps.root.registry.isDeleted(conversationID)) return;
+  const bound = eventWorkspace(ev);
   const actor = deps.root.registry.ensure(conversationID, {
     workspaceGeneration: deps.root.generation(),
-    workspace: deps.data.activeWorkspace?.(),
+    workspace: bound ?? deps.data.activeWorkspace?.(),
   });
   if (!actor) return;
+  // ensure() is a get-or-create: an actor this client already holds keeps
+  // the options it was made with. The backend naming a workspace is the
+  // authority on where the row belongs, so a conversation adopted from a
+  // background run — registered under whatever workspace the window was
+  // on at the time — is rebound here instead of staying where it landed.
+  if (bound && actor.getSnapshot().context.workspace !== bound) {
+    actor.send({ type: 'BIND_WORKSPACE', workspace: bound });
+  }
 
   // Data and state changes stay in one synchronous unit. State is
   // checked first so a late event never reaches the data layer.

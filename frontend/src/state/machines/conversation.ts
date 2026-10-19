@@ -208,6 +208,18 @@ export const conversationMachine = createMachine({
     workspace: input.workspace,
     emptyTranscript: input.readyEmpty ?? false,
   }),
+  // Which workspace owns this conversation is control-plane metadata
+  // about the run, not about the turn, so every phase accepts the
+  // rebind: the first event of a run started in a workspace this client
+  // has not touched is often the only thing that says where its row
+  // belongs, and it can arrive in any phase.
+  on: {
+    BIND_WORKSPACE: {
+      actions: assign({
+        workspace: ({ event }) => event.workspace,
+      }),
+    },
+  },
   states: {
     lifecycle: {
       initial: 'alive',

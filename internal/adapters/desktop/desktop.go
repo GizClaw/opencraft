@@ -541,6 +541,10 @@ func (d *Desktop) runAutomation(
 		end.InterruptCause = class.InterruptCause
 		end.ErrorKind = class.ErrorKind
 		end.AgentID = core.AssistantAgentID
+		// A run the window watched had this workspace current; naming it
+		// keeps the turn_end shape the same as a turn started from the
+		// composer (bindings.Conversation.waitTurn).
+		end.Workspace = task.Workspace
 		end.Notify = &notify
 		d.core.Shell.Emit(core.EventTurnEnd, end)
 	} else if notify {

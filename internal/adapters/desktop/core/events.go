@@ -26,8 +26,14 @@ type TurnEndEvent struct {
 	// and automation turns both execute as AssistantAgentID today;
 	// delegated subagent turns will carry their own id.
 	AgentID string `json:"agent_id,omitempty"`
-	Status  string `json:"status"`
-	Error   string `json:"error,omitempty"`
+	// Workspace is the workspace whose Host ran the turn. A window can
+	// be looking at a different one by the time the turn ends: the
+	// sidebar has to file the row under its own workspace, and the
+	// banner's click has to open the conversation there instead of
+	// wherever the window happens to be.
+	Workspace string `json:"workspace,omitempty"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
 	// InterruptCause / ErrorKind are the structured class of a failed
 	// turn (an engine interrupt cause, an inference error kind, or the
 	// harness-level timeout). The UI renders from these; Error stays for

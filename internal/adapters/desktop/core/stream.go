@@ -39,7 +39,12 @@ type StreamEvent struct {
 	ConversationID string
 	AgentID        string
 	ParentRunID    string
-	Delta          agent.StreamDeltaPayload
+	// Workspace is the workspace whose Host runs the turn. The window
+	// registers the conversation under it, so the live row of a
+	// background workspace lands in that workspace's session list
+	// instead of the one on screen.
+	Workspace string
+	Delta     agent.StreamDeltaPayload
 }
 
 // streamKey identifies the stream a delta belongs to: only adjacent
@@ -223,6 +228,7 @@ func (s *Shell) deliverStream(ev StreamEvent, kind message.PartKind, text string
 		"conversation_id": ev.ConversationID,
 		"agent_id":        ev.AgentID,
 		"parent_run_id":   ev.ParentRunID,
+		"workspace":       ev.Workspace,
 		"delta":           delta,
 	})
 }

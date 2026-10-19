@@ -21,6 +21,7 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 	sessionID := conv.New("/tmp/w")
 	conv.TrackRun("/tmp/w", sessionID, "r-1")
 	p.SetRunConvResolver(conv.ConversationForRun)
+	p.SetRunWorkspaceResolver(conv.WorkspaceForRun)
 	events := make(chan map[string]any, 1)
 	p.SetNotifier(func(_ string, data any) {
 		events <- data.(map[string]any)
@@ -56,6 +57,7 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 			ID             string `json:"id"`
 			RunID          string `json:"run_id"`
 			ConversationID string `json:"conversation_id"`
+			Workspace      string `json:"workspace"`
 			Kind           string `json:"kind"`
 			Severity       string `json:"severity"`
 			Title          string `json:"title"`
@@ -82,6 +84,11 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 		}
 		if dto.ConversationID != sessionID {
 			t.Errorf("conversation_id = %q, want %q", dto.ConversationID, sessionID)
+		}
+		// The row that starts blinking belongs to the workspace whose
+		// Host is asking, which need not be the one on screen.
+		if dto.Workspace != "/tmp/w" {
+			t.Errorf("workspace = %q, want the run's workspace", dto.Workspace)
 		}
 		if len(dto.Body) != 1 ||
 			dto.Body[0].Type != "text" ||
@@ -110,6 +117,41 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Ask did not return after answer")
+	}
+}
+
+// TestPromptAskOmitsUnknownWorkspace covers the other half of the
+// workspace field: a run the desktop never tracked has no workspace to
+// name, and the event must then carry no key at all rather than an empty
+// one the router would read as a workspace called "".
+func TestPromptAskOmitsUnknownWorkspace(t *testing.T) {
+	p := NewPrompt()
+	events := make(chan map[string]any, 1)
+	p.SetNotifier(func(_ string, data any) {
+		events <- data.(map[string]any)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_, _ = p.Ask(ctx, interact.Spec{
+			ID:    "p-1",
+			RunID: "r-unknown",
+			Kind:  interact.KindText,
+			Title: "Question",
+		})
+	}()
+
+	select {
+	case data := <-events:
+		if workspace, ok := data["workspace"]; ok {
+			t.Fatalf("workspace key present for an unknown run: %v", workspace)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("interact event was not emitted")
+	}
+	if ok := p.Answer("p-1", "", "", nil, true); !ok {
+		t.Fatal("Answer did not resolve pending prompt")
 	}
 }
 

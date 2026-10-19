@@ -165,6 +165,71 @@ describe('event router', () => {
     }
   });
 
+  // The three events that carry a run say which workspace owns it; the
+  // window's own workspace is only the fallback. A run started in a
+  // background workspace reaches this client while the window is
+  // looking elsewhere, and an actor registered under the wrong
+  // workspace files its row under the wrong project (which is also
+  // where a Mod+N digit then leads).
+  it('registers a conversation under the workspace its event names', () => {
+    const root = new StateRoot();
+    const { sink } = fakeSink();
+    routeBackendEvent(
+      {
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          workspace: '/tmp/background',
+          delta: { part: { type: 'text', text: 'hi' } },
+        },
+      },
+      { root, data: { ...sink, activeWorkspace: () => '/tmp/on-screen' } },
+    );
+
+    expect(root.workspaceOf('s-1')).toBe('/tmp/background');
+  });
+
+  it('rebinds an actor registered under another workspace', () => {
+    const root = new StateRoot();
+    const { sink } = fakeSink();
+    // ensure() is get-or-create: an actor made before the backend named
+    // a workspace keeps the options it was created with, so the event
+    // that knows better has to move it.
+    root.registry.ensure('s-1', {
+      workspaceGeneration: root.generation(),
+      workspace: '/tmp/on-screen',
+    });
+    routeBackendEvent(
+      {
+        type: 'turn_end',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          status: 'completed',
+          workspace: '/tmp/background',
+        },
+      },
+      { root, data: sink },
+    );
+
+    expect(root.workspaceOf('s-1')).toBe('/tmp/background');
+  });
+
+  it('falls back to the active workspace for an event that names none', () => {
+    const root = new StateRoot();
+    const { sink } = fakeSink();
+    routeBackendEvent(
+      {
+        type: 'turn_end',
+        data: { run_id: 'r-1', conversation_id: 's-1', status: 'completed' },
+      },
+      { root, data: { ...sink, activeWorkspace: () => '/tmp/on-screen' } },
+    );
+
+    expect(root.workspaceOf('s-1')).toBe('/tmp/on-screen');
+  });
+
   it('tombstoned conversations never reach data or actors', () => {
     const root = new StateRoot();
     root.registry.markDeleted('s-1');

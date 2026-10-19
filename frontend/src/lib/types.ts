@@ -669,6 +669,8 @@ export interface InteractDTO {
   id: string;
   run_id: string;
   conversation_id?: string;
+  /** The workspace whose Host is asking (core.Prompt's interact payload). */
+  workspace?: string;
   kind: string;
   severity: InteractSeverity;
   title: string;

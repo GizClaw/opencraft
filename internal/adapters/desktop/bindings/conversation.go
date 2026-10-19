@@ -109,6 +109,7 @@ func (b *Conversation) StartTurn(
 			ConversationID: contextID,
 			AgentID:        agentIDOrAssistant(env),
 			ParentRunID:    env.ParentRunID(),
+			Workspace:      workDir,
 			Delta:          delta,
 		})
 		return nil
@@ -197,7 +198,7 @@ func (b *Conversation) StartTurn(
 			}
 			go func() {
 				defer releaseSink()
-				b.waitTurn(ctx, run, contextID)
+				b.waitTurn(ctx, run, contextID, workDir)
 			}()
 			handedOff = true
 			return nil
@@ -332,6 +333,7 @@ func (b *Conversation) waitTurn(
 	ctx context.Context,
 	run *host.Run,
 	contextID string,
+	workDir string,
 ) {
 	res, err := run.Wait(ctx)
 	status := waitStatus(res, err)
@@ -349,6 +351,10 @@ func (b *Conversation) waitTurn(
 		requestID, responseID,
 		lastAssistantOutput(res), finishedAt, durationMs, res,
 	)
+	// The workspace the run was started in, not the one the window is
+	// on now: an event that named the active workspace would file a
+	// background turn's ending under whatever the user switched to.
+	end.Workspace = workDir
 	if end.SteerPending == nil {
 		flowtelemetry.Warn(context.WithoutCancel(ctx),
 			"conversation: undelivered steer count unreadable; "+
