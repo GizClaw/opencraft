@@ -9,8 +9,11 @@
 // composer that has not been committed to a session yet. A draft typed
 // inside a session is cleared by the switch itself - the focus resets to
 // no-session and ChatView empties the composer on the way in - so the
-// reload is never what takes that one, and this flag says nothing about
-// it.
+// reload is never what takes that one, and this flag alone says nothing
+// about which of the two it is looking at. Its reader pairs it with the
+// focus (shell/workspaces.ts): the reset that clears a session's draft is
+// a commit away, and a page kept on a draft the switch is about to drop
+// would skip the boundary for nothing.
 //
 // The attachment half is not about the bytes - a pasted image is already
 // on disk (`File.ImportPastedImage` writes it, and the staged view

@@ -310,8 +310,12 @@ describe('workspace switch session restore', () => {
   it('a composer with unsent work keeps the page', async () => {
     // The draft and the attachments staged beside it live in the view's
     // own state: a reload would drop them with nothing to restore from,
-    // so the switch skips its memory boundary instead.
+    // so the switch skips its memory boundary instead. This is the
+    // composer of a conversation that has not started - it is what
+    // survives the reset - and the case below is the draft that does not.
     apiMock.openWorkspace.mockResolvedValue(undefined);
+    useStore.getState().openDraftChat();
+    expect(stateRoot.focusSnapshot.value).toBe('no-session');
     setUnsentDraft(true);
     try {
       await useStore.getState().openWorkspace('/tmp/b');
@@ -321,6 +325,26 @@ describe('workspace switch session restore', () => {
 
     expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/b');
     expect(apiMock.reloadWindow).not.toHaveBeenCalled();
+  });
+
+  it('a draft the switch clears does not keep the page', async () => {
+    // The flag says the composer holds text, not whose text it is: the
+    // switch resets the focus to no-session and ChatView empties the
+    // composer on the way in, so a draft typed inside a session goes with
+    // the switch. Reading the flag alone left the answer to whichever of
+    // the ready event and the binding's return came first.
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    await useStore.getState().newChat();
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    setUnsentDraft(true);
+    try {
+      await useStore.getState().openWorkspace('/tmp/b');
+    } finally {
+      setUnsentDraft(false);
+    }
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/b');
+    expect(apiMock.reloadWindow).toHaveBeenCalledTimes(1);
   });
 
   it('a switch a flow keeps working through does not reload', async () => {

@@ -27,6 +27,20 @@ export function createShellWorkspaces(
   const get = store.getState;
   const { switchWorkspace } = ws;
 
+  // keepForComposer says the page holds a draft this switch would not
+  // clear. The flag comes from the composer (lib/unsentDraft), so it
+  // answers "there is text or an attachment in the composer" without
+  // saying whose it is: a draft typed inside a session is emptied by the
+  // switch - the reset below lands on no-session and ChatView clears the
+  // composer on the way in - and only a draft of a conversation that has
+  // not started survives the reset. The focus is still the one of the
+  // workspace being left, so it is what separates the two; asking after
+  // the reset committed would make the answer depend on whether the ready
+  // event beat the binding's return.
+  function keepForComposer(): boolean {
+    return hasUnsentDraft() && stateRoot.focusSnapshot.value === 'no-session';
+  }
+
   // sameWorkspaceList reports whether a refreshed history equals the one
   // already in the store. Refreshes fire on every ready event and after
   // every switch, and an unchanged list must not replace the array: the
@@ -119,7 +133,9 @@ export function createShellWorkspaces(
       // believes it is on used to be the way out of that state (the call
       // re-opened the backend's actual workspace and the next ready pulled
       // the window back in line). The backend's answer is one getter, not
-      // a rebuild, so the early return only holds when both agree.
+      // a rebuild, so the early return holds when both agree - and an
+      // unanswerable one counts as agreement: the repair waits for an
+      // answer rather than rebuilding a runtime on a guess.
       if (sameWorkspacePath(path, get().workspace)) {
         const active = await api.workspace().catch(() => '');
         if (!active || sameWorkspacePath(active, path)) return;
@@ -156,16 +172,18 @@ export function createShellWorkspaces(
         // list), and a composer holding work that only this document has
         // (see unsentDraft, which keeps the call from being made, so this
         // one leaves no Go log line - the composer is the visible
-        // reason). The second covers the composer of a conversation that
-        // has not started yet; a draft typed inside a session is cleared
-        // by the switch itself (WORKSPACE_RESET puts the focus back to
-        // no-session, and ChatView empties the composer on the way in),
-        // so the reload is never what takes it. The one thing a switch
-        // can still drop is a settings edit that has not reached disk:
-        // SettingsGeneral debounces its slider and flushes on unmount,
-        // and this navigation may replace the page first. Neither half is
-        // retried here - the next switch asks again.
-        if (!hasUnsentDraft()) {
+        // reason). The second is the draft of a conversation that has not
+        // started yet, and the flag alone cannot tell it from one typed
+        // inside a session: the switch itself clears that one
+        // (WORKSPACE_RESET puts the focus back to no-session, ChatView
+        // empties the composer on the way in), and the flag learns about
+        // it a commit later - which is why the focus is read beside it
+        // rather than waiting for the clearing to land. The one thing a
+        // switch can still drop is a settings edit that has not reached
+        // disk: SettingsGeneral debounces its slider and flushes on
+        // unmount, and this navigation may replace the page first.
+        // Neither half is retried here - the next switch asks again.
+        if (!keepForComposer()) {
           void api
             .reloadWindow()
             .catch((err) => reportFrontendError('reload-window', err));
