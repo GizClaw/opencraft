@@ -53,6 +53,7 @@ import collections
 import contextlib
 import glob
 import json
+import re
 import os
 import shutil
 import sqlite3
@@ -82,6 +83,24 @@ SIZE_BANDS = (
 # read 30 calls later is the model working again, not the edit failing to
 # hand its context back.
 REREAD_WINDOW = 4
+
+# A command that sleeps is the poll (see the exec section of the report);
+# `rg "sleep " tools/` is a search for the word and shows up in no counter
+# but this one, so the pattern is anchored at a command position.
+SLEEP_POLL = re.compile(r"(?:^|[;&|(\n]\s*)sleep\s+(?:\d|\.\d)")
+
+# A test or build run, anchored the same way for the same reason: the
+# count is meant to be executions, not mentions. A command position is the
+# start, a separator, or a new line, optionally after assignments — the
+# documented lint invocation prefixes two of them (PATH=... GOTOOLCHAIN=...).
+COMMAND_POS = r"(?:^|[;&|(\n]\s*)(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
+VERIFY = re.compile(
+    COMMAND_POS + r"(?:"
+    r"go\s+(?:test|build|vet)|npm\s+(?:test|run)|make(?:\s|$)|pytest|"
+    r"cargo\s+(?:test|build|check)|tsc(?:\s|$)|golangci-lint|staticcheck|"
+    r"(?:npx\s+)?(?:vitest|playwright)"
+    r")"
+)
 
 
 # exec_command's argument name is "command"; "cmd" is its one alias,
@@ -135,28 +154,49 @@ def size_band(n):
 def parse_when(s, end_of_day):
     """parse_when accepts YYYY-MM-DD (that UTC day) or RFC3339.
 
-    A timestamp without an offset is read as UTC, which is what the
-    rollouts carry: leaving it naive made the window comparison raise
-    TypeError against their offset-aware times instead of filtering.
+    A bare date means that day where the reader lives, not the UTC day
+    the rollouts are stamped in: the usual run is "before the change" and
+    "after it", and a UTC boundary cuts the day in the middle (eight
+    hours late here) while both reports still look right. A timestamp
+    without an offset is local for the same reason, and a naive value no
+    longer raises TypeError against the rollouts' offset-aware times.
     """
     s = s.strip()
     try:
         if len(s) == 10:
-            d = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            d = datetime.strptime(s, "%Y-%m-%d")
             if end_of_day:
                 d = d.replace(hour=23, minute=59, second=59, microsecond=999999)
-            return d
-        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return d.astimezone()
+        d = parse_iso(s)
     except ValueError:
         raise SystemExit(f"rounds-review: bad date {s!r} (want YYYY-MM-DD or RFC3339)")
-    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    return d if d.tzinfo else d.astimezone()
+
+
+_FRACTION = re.compile(r"\.(\d+)")
+
+
+def parse_iso(s):
+    """parse_iso accepts any number of fractional digits.
+
+    Python 3.10 and older take exactly three or six, and the engine
+    writes whatever the clock has — 57.99359Z is five. Every timestamp
+    shaped like that raised ValueError, and its turn then fell outside
+    every --since/--until window while the report looked clean (104 of
+    them on this corpus). Normalizing to six digits first is enough.
+    """
+    return datetime.fromisoformat(
+        _FRACTION.sub(lambda m: "." + (m.group(1) + "000000")[:6],
+                      s.replace("Z", "+00:00"), count=1)
+    )
 
 
 def event_time(s):
     if not s:
         return None
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return parse_iso(s)
     except ValueError:
         return None
 
@@ -214,6 +254,7 @@ def read_rollout(path, stats, since, until):
                 continue
             kind = o.get("type")
             if kind == "turn.started":
+                pending.clear()
                 if cur is not None:
                     # A new turn opening over an unclosed one: the run
                     # was interrupted (a stop, a crash, a restart), so
@@ -258,13 +299,24 @@ def read_rollout(path, stats, since, until):
                     continue
                 tool, files, cid, key, args = cur.calls[idx]
                 content = o.get("content")
+                if content is None:
+                    # A handful of tools never record their result
+                    # (delegation_status, tool_search, delegate): the
+                    # rollout keeps the call and the event. Sized as the
+                    # string "null" they landed in the smallest band and
+                    # pulled every percentile down; they are counted and
+                    # left out of the sizes instead.
+                    stats["results_without_content"] += 1
+                    cur.calls[idx] = (tool, files, cid, key, args, None)
+                    continue
                 text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
                 low = text.lower()
                 result = {
                     "len": len(text),
                     "excerpt": EXCERPT_MARKER in text,
                     "error": bool(o.get("is_error")),
-                    "timeout": "timed out" in low or "deadline exceeded" in low,
+                    "timeout": bool(o.get("is_error"))
+                    and ("timed out" in low or "deadline exceeded" in low),
                 }
                 cur.calls[idx] = (tool, files, cid, key, args, result)
             elif kind == "item.assistant_message":
@@ -276,10 +328,18 @@ def read_rollout(path, stats, since, until):
         turns.append(cur)
     kept = []
     for t in turns:
-        if since and t.start and t.start < since:
-            continue
-        if until and t.start and t.start > until:
-            continue
+        if t.start is None:
+            # No start time means the turn cannot be placed in a
+            # window. Counting it as inside would make a window report a
+            # corpus it does not cover, so it is left out and counted.
+            if since or until:
+                stats["undated_turns"] += 1
+                continue
+        else:
+            if since and t.start < since:
+                continue
+            if until and t.start > until:
+                continue
         kept.append(t)
     return kept
 
@@ -314,6 +374,7 @@ def scan_rollouts(home, since, until):
     rereads = 0
     repeat_calls = 0
     exec_total = exec_shell = exec_direct = exec_cd = exec_multiline = exec_sleep = 0
+    results_without_content = stats["results_without_content"]
     timeout_results = 0
     for turn in turns:
         seen = collections.Counter()
@@ -328,7 +389,8 @@ def scan_rollouts(home, since, until):
             if tool == "read_file":
                 if isinstance(args.get("offset"), (int, float)) or isinstance(args.get("limit"), (int, float)):
                     read_windowed += 1
-                    window_limits[int(args.get("limit") or 0)] += 1
+                    limit = args.get("limit")
+                    window_limits[int(limit) if isinstance(limit, (int, float)) else 0] += 1
                 else:
                     read_whole += 1
             elif tool == "exec_command":
@@ -343,9 +405,9 @@ def scan_rollouts(home, since, until):
                         exec_multiline += 1
                     if cmd.startswith("cd ") and ("&&" in cmd or ";" in cmd):
                         exec_cd += 1
-                    if "sleep " in cmd:
+                    if SLEEP_POLL.search(cmd):
                         exec_sleep += 1
-            if len(call) > 5:
+            if len(call) > 5 and call[5] is not None:
                 res = call[5]
                 result_sizes[tool].append(res["len"])
                 if res["excerpt"]:
@@ -363,13 +425,8 @@ def scan_rollouts(home, since, until):
         for i, call in enumerate(turn.calls):
             tool, files = call[0], call[1]
             if tool == "exec_command":
-                cmd = (call[4] or {}).get("command") or ""
-                if isinstance(cmd, str) and any(
-                    probe in cmd
-                    for probe in ("go test", "go build", "go vet", "npm test", "npm run",
-                                  "make ", "pytest", "cargo ", "tsc", "golangci-lint",
-                                  "staticcheck", "vitest", "playwright")
-                ):
+                cmd = command_text(call[4])
+                if VERIFY.search(cmd):
                     verify_calls += 1
             if tool not in mutating or not files:
                 continue
@@ -384,7 +441,9 @@ def scan_rollouts(home, since, until):
         "turns": len(turns),
         "bad_lines": stats["bad_lines"],
         "unfinished_turns": stats["unfinished_turns"],
+        "undated_turns": stats["undated_turns"],
         "orphan_results": stats["orphan_results"],
+        "results_without_content": stats["results_without_content"],
         "tools": tools,
         "tool_errors": tool_errors,
         "tool_excerpts": tool_excerpts,
@@ -420,10 +479,13 @@ def open_readonly(path, copies):
     answers CANTOPEN rather than opening the file it was given — which is
     how one workspace's 2100 rounds once dropped out of a report in
     silence. The way through is a snapshot: copy the database and its WAL
-    sidecars, then open the copy as immutable. Immutable is exact for a
-    copy nothing else can write, and it is what lets SQLite read a WAL
-    store with no index at all. paths is appended to when that happens,
-    so the report can say how many stores were read as a copy.
+    sidecars, then open the copy read-write and let SQLite replay the WAL
+    into it. Immutable is wrong here, and quietly so: it tells SQLite the
+    file cannot have changed, so it skips recovery — a copy whose newest
+    commits are still in the -wal answers "no such table" for a table the
+    store has been writing for a week. Nothing but this function can see
+    the copy, so writing to it is free. paths is appended to when that
+    happens, so the report can say how many stores were read as a copy.
     """
     try:
         con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
@@ -441,9 +503,7 @@ def open_readonly(path, copies):
             for suffix in ("", "-wal", "-shm"):
                 if os.path.exists(path + suffix):
                     shutil.copy2(path + suffix, os.path.join(tmp, name + suffix))
-            con = sqlite3.connect(
-                f"file:{os.path.join(tmp, name)}?immutable=1", uri=True,
-            )
+            con = sqlite3.connect(os.path.join(tmp, name))
         except BaseException:
             shutil.rmtree(tmp, ignore_errors=True)
             raise
@@ -483,6 +543,7 @@ def scan_rounds(home):
 
     per_conv = []
     stores = 0
+    skipped = []
     deleted = set()
     with_turns = 0
     for sessions_db in sorted(glob.glob(os.path.join(home, "workspaces", "*", "sessions", "session.db"))):
@@ -501,6 +562,7 @@ def scan_rounds(home):
                     pass
         except sqlite3.Error as err:
             print(f"rounds-review: skipping {sessions_db}: {err}", file=sys.stderr)
+            skipped.append(sessions_db)
             continue
         stores += 1
         with_turns += len(rows)
@@ -516,6 +578,7 @@ def scan_rounds(home):
     calls_deleted = sum(v[0] for k, v in usage.items() if k in deleted and k not in joined)
     coverage = {
         "stores": stores,
+        "stores_skipped": len(skipped),
         "stores_snapshotted": len(copies),
         "calls_total": calls_total,
         "calls_in_conversations": calls_joined,
@@ -537,6 +600,8 @@ def main():
 
     since = parse_when(args.since, False) if args.since else None
     until = parse_when(args.until, True) if args.until else None
+    if since and until and since > until:
+        raise SystemExit("rounds-review: --since is after --until")
     home = os.path.expanduser(args.home)
     if not os.path.isdir(home):
         raise SystemExit(f"rounds-review: no OpenCraft home at {home}")
@@ -552,10 +617,17 @@ def main():
 
     if args.json:
         out = {
+            "window": {
+                "since": args.since,
+                "until": args.until,
+                "since_utc": since.isoformat() if since else None,
+                "until_utc": until.isoformat() if until else None,
+            },
             "files": roll["files"],
             "turns": roll["turns"],
             "bad_lines": roll["bad_lines"],
             "unfinished_turns": roll["unfinished_turns"],
+            "undated_turns": roll["undated_turns"],
             "orphan_results": roll["orphan_results"],
             "tools": dict(roll["tools"]),
             "tool_results": {
@@ -564,9 +636,15 @@ def main():
                     "excerpted": roll["tool_excerpts"].get(tool, 0),
                     "errors": roll["tool_errors"].get(tool, 0),
                     "p50_chars": pct(sizes, 50),
+                    "p90_chars": pct(sizes, 90),
+                    "bands": {
+                        name: sum(1 for n in sizes if size_band(n) == name)
+                        for _, _, name in SIZE_BANDS
+                    },
                 }
                 for tool, sizes in roll["result_sizes"].items()
             },
+            "results_without_content": roll["results_without_content"],
             "reads": {
                 "windowed": roll["read_windowed"],
                 "whole": roll["read_whole"],
@@ -589,13 +667,22 @@ def main():
             },
             "turn_shape": {
                 "turns_without_write": roll["no_write_turns"],
-                "calls_before_first_write_p50": pct(roll["before_first_write"], 50),
-                "calls_after_last_write_p50": pct(roll["after_last_write"], 50),
+                "calls_before_first_write_p50": (
+                    pct(roll["before_first_write"], 50) if roll["before_first_write"] else None
+                ),
+                "calls_after_last_write_p50": (
+                    pct(roll["after_last_write"], 50) if roll["after_last_write"] else None
+                ),
             },
             "compactions": roll["compactions"],
             "coverage": coverage,
         }
-        if rounds:
+        if not rounds:
+            # The key is always there: a consumer that reads
+            # out["rounds"] must not have to guess whether the ledger was
+            # empty or the field was never written.
+            out["rounds"] = None
+        else:
             per_turn = [calls / turns for _, turns, calls, _, _ in rounds]
             out["rounds"] = {
                 "conversations": len(rounds),
@@ -618,6 +705,9 @@ def main():
           f"compactions {roll['compactions']}, results without a call {roll['orphan_results']}")
     print("turns here are the retained ones (rotation drops the oldest generation); "
           "rounds below come from the databases and cover every turn")
+    if roll["turns"] == 0 and windows_note:
+        print("no turn falls in this window: the shape, read and exec sections "
+              "below are empty, which is not a corpus of zero work")
 
     print()
     print("== rounds (model calls per turn, all-time)")
@@ -648,7 +738,10 @@ def main():
                   f"without usage rows {coverage['conversations_without_usage']}; "
                   f"stores read {coverage['stores']}"
                   + (f" ({coverage['stores_snapshotted']} from a snapshot)"
-                     if coverage["stores_snapshotted"] else ""))
+                     if coverage["stores_snapshotted"] else "")
+                  + (f", {coverage['stores_skipped']} unreadable — their calls are counted "
+                     "below as sessions that are not conversations"
+                     if coverage["stores_skipped"] else ""))
 
     total_calls = sum(roll["tools"].values())
     print()
@@ -709,8 +802,10 @@ def main():
     print("== checks (bad lines should be 0; a result without a call is a lost call line)")
     print(f"bad_lines {roll['bad_lines']}, orphan_results {roll['orphan_results']}, "
           f"unfinished_turns {roll['unfinished_turns']}, "
+          f"outside the window for want of a date {roll['undated_turns']}, "
           f"results {sum(len(v) for v in roll['result_sizes'].values())} of {total_calls} calls "
-          "(a call with no result was interrupted)")
+          "(a call with no result was interrupted), "
+          f"{roll['results_without_content']} results carry no content (not sized)")
 
 
 if __name__ == "__main__":
