@@ -100,13 +100,18 @@ function foldPoint(
     const newline = text.indexOf('\n', start);
     const end = newline < 0 ? text.length : newline;
     const after = newline < 0 ? end : end + 1;
-    if (start <= limit && limit < after) fenceAtLimit = fence;
+    // The cut's own line decides the fence at the cut: it can sit inside
+    // an opener (the preview keeps code up to the limit) as well as inside
+    // a closer (the block ends before it).
+    if (start <= limit && limit < after) {
+      fenceAtLimit = fenceAtCut(fence, text.slice(start, limit));
+    }
     const body = text.slice(start, end);
     const marker = fenceMarker(body);
     if (marker) {
       if (!fence) {
         fence = marker;
-      } else if (marker.char === fence.char && marker.length >= fence.length) {
+      } else if (fenceCloses(body, fence)) {
         fence = null;
       }
     } else if (!fence && after <= limit) {
@@ -156,9 +161,9 @@ function sectionWithin(limit: number, cut: number): boolean {
 // references in it. Fenced lines are skipped: a definition inside a code
 // block is code, and appending it would point a link at it.
 //
-// openFence is the fence the cut landed inside, if it did (the last-resort
-// cut): the scan starts inside that block, so its lines are code until the
-// closer, whether or not this function saw the opener.
+// openFence is the fence still open at the cut, if the last-resort cut
+// landed inside one: the scan starts inside that block, so its lines stay
+// code until this scanner reads the closer.
 function definitionsAfter(
   text: string,
   cut: number,
@@ -174,7 +179,7 @@ function definitionsAfter(
     if (marker) {
       if (!fence) {
         fence = marker;
-      } else if (marker.char === fence.char && marker.length >= fence.length) {
+      } else if (fenceCloses(text.slice(start, end), fence)) {
         fence = null;
       }
     } else if (!fence && isDefinition(text, start, end)) {
@@ -216,10 +221,33 @@ function isDefinition(text: string, start: number, end: number): boolean {
   return false;
 }
 
-// fenceMarker reads the fence a line opens (or closes). CommonMark allows
-// up to three spaces of indentation and requires the run to be at least
-// three characters of one kind; a longer run can only be closed by one at
-// least as long, which is what the caller checks.
+// fenceAtCut answers the fence still open at a cut taken inside `line`:
+// the one the scan already carried, after the part of the line the cut
+// shows has been read as the opener or the closer it is. A run the cut
+// went through is not a fence yet - the preview would end mid-run, which
+// remark reads as prose.
+function fenceAtCut(
+  fence: FenceMarker | null,
+  shown: string,
+): FenceMarker | null {
+  if (fence) return fenceCloses(shown, fence) ? null : fence;
+  return fenceMarker(shown);
+}
+
+// fenceCloses reads `line` as the closer of `fence`: the same character, a
+// run at least as long, at most three spaces in, and nothing but spaces
+// after it (CommonMark). A code line that happens to start with ```js is
+// therefore still code; reading it as the closer ended the block early and
+// handed everything under it to the fold as prose.
+function fenceCloses(line: string, fence: FenceMarker): boolean {
+  const match = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+  if (!match) return false;
+  return match[1][0] === fence.char && match[1].length >= fence.length;
+}
+
+// fenceMarker reads the fence a line opens. CommonMark allows up to three
+// spaces of indentation and requires the run to be at least three
+// characters of one kind; an info string may follow it.
 function fenceMarker(line: string): FenceMarker | null {
   const match = /^ {0,3}(`{3,}|~{3,})/.exec(line);
   if (!match) return null;

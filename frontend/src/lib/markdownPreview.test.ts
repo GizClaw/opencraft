@@ -219,4 +219,45 @@ describe('markdownPreview', () => {
     expect(preview).not.toBeNull();
     expect(preview!.shown).not.toContain('[guide]:');
   });
+
+  it('reads an opener the cut landed on as an open fence', () => {
+    // The last-resort cut can sit on the opener line itself: inside the
+    // info string (`'+'```j'+'`) or right before the newline (`'+'```md'+'`). The
+    // preview then ends with an open fence, so the definition under it is
+    // code - and the preview gets the closer that keeps it code.
+    const text = [
+      '```md',
+      '',
+      '[guide]: ./refs/guide.md',
+      '',
+      '```',
+      '',
+      'x'.repeat(2000),
+    ].join('\n');
+    for (const limit of [4, 5]) {
+      const preview = markdownPreview(text, limit);
+      expect(preview).not.toBeNull();
+      expect(fenceCount(preview!.shown) % 2).toBe(0);
+      expect(preview!.shown).not.toContain('[guide]:');
+    }
+  });
+
+  it('keeps a code line that starts with ``` inside the block', () => {
+    // A closing fence has nothing but whitespace after it, so the `'+'```js'+'`
+    // below is a line of the block. Reading it as the closer made the
+    // definition under it something to hoist into the preview, outside the
+    // code it belongs to.
+    const text = [
+      '```md',
+      'x'.repeat(3000),
+      '',
+      '```js',
+      '[guide]: ./refs/guide.md',
+      '',
+      '```',
+    ].join('\n');
+    const preview = markdownPreview(text, 2048);
+    expect(preview).not.toBeNull();
+    expect(preview!.shown).not.toContain('[guide]:');
+  });
 });
