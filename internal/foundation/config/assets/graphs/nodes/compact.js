@@ -36,6 +36,14 @@
 // crude in both directions and a fold costs a summarization call plus a
 // prompt-cache invalidation. An estimate at or past the whole window is
 // not deferred: that request would simply fail.
+//
+// Reading cost: this node runs before every round, so it reads the channel
+// by count and tail (board.channelLen / channelTail / lastMessage) and
+// projects the whole conversation only on a round that actually folds. The
+// bulk of the estimate is never rendered here at all: the prepare hook
+// publishes the token count of the prefix this turn opens with
+// (world.compact.base_tokens / base_len), so a round renders only what it
+// appended since (worldstate/compactbase.go).
 var cfg = config || {};
 var PRESERVE = cfg.preserve_recent || 10;
 var BUDGET = cfg.budget_chars || 4096;
@@ -68,7 +76,17 @@ var FALLBACK_MAX_INPUT_TOKENS = 128000;
 // are world-state sections counted below. system_prompt_tokens is kept
 // for custom graphs that still configure a static prompt.
 var SYS_PROMPT_TOKENS = cfg.system_prompt_tokens || 0;
-var channel = board.channel(board.MAIN_CHANNEL) || [];
+// len is this round's channel length; the messages themselves stay in Go
+// until a decision needs them (messages() below).
+var len = board.channelLen(board.MAIN_CHANNEL);
+var channel = null;
+// messages projects the channel into script objects. It is the most
+// expensive read this node can make — one object graph per message — so it
+// is taken only on the rounds that fold.
+function messages() {
+  if (channel === null) channel = board.channel(board.MAIN_CHANNEL) || [];
+  return channel;
+}
 var count = Number(board.getVar("world.sections.count") || 0);
 var compactCount = Number(board.getVar("world.compact.count") || 0);
 // epoch counts folds applied in THIS turn. A fold rewrites the channel
@@ -279,19 +297,60 @@ function measuredPrompt(plainEstimate) {
   var usage = parseUsage(board.getVar("llm_usage"));
   var anchored = Number(board.getVar("world.compact.anchor_len") || 0);
   var anchoredEpoch = Number(board.getVar("world.compact.anchor_epoch") || 0);
-  if (usage && anchored > 0 && anchored <= channel.length &&
+  if (usage && anchored > 0 && anchored <= len &&
       anchoredEpoch === cumulativeFolds()) {
     // Exact: the measured call saw exactly this channel's first `anchored`
     // messages, and nothing was folded since.
-    return usage.tokens + estimateTokens(channel.slice(anchored));
+    return usage.tokens + estimateTokens(tailFrom(anchored));
   }
   var previous = previousAnchor;
-  if (previous && previous.messages <= channel.length) {
+  if (previous && previous.messages <= len) {
     var covered =
-      previous.tokens + estimateTokens(channel.slice(previous.messages));
+      previous.tokens + estimateTokens(tailFrom(previous.messages));
     return Math.max(covered, plainEstimate);
   }
   return 0;
+}
+
+// tailFrom projects the messages after index `start` (the last len-start of
+// the channel). Everything before it is already accounted for — by a
+// measurement, or by the prepare-time base — so it is the only part of a
+// long conversation a sizing round has to look at.
+function tailFrom(start) {
+  var n = len - start;
+  if (n <= 0) return [];
+  return board.channelTail(board.MAIN_CHANNEL, n) || [];
+}
+
+// plainEstimateTokens is the round's character estimate of the whole
+// prompt, in the same estimate the Go side budgets with (summarytext).
+//
+// The bulk of the prompt — the world sections and the replayed history —
+// was rendered once by the prepare hook, which publishes its token count
+// and the prefix length it covers as world.compact.base_tokens/base_len.
+// This round renders only what was appended since: the turn's own message
+// plus whatever the last rounds exchanged.
+//
+// The base dies with the prefix it describes. A fold rewrites that prefix
+// (the fold path drops the base), and so does a turn that opens without a
+// published one: the fallback below measures the whole channel once and
+// re-stamps the pair, which is exact for every later round of the same run
+// because the channel only grows.
+function plainEstimateTokens() {
+  var baseLen = Number(board.getVar("world.compact.base_len"));
+  var baseTokens = Number(board.getVar("world.compact.base_tokens"));
+  if (baseLen >= 0 && baseLen <= len && baseTokens > 0) {
+    return SYS_PROMPT_TOKENS + baseTokens + estimateTokens(tailFrom(baseLen));
+  }
+  // Go through messages(), not board.channel(): if this round goes on to
+  // fold, the fold path wants the same projection and must not pay for a
+  // second one.
+  var total = estimateTokens(messages());
+  if (total > 0) {
+    board.setVar("world.compact.base_len", len);
+    board.setVar("world.compact.base_tokens", total);
+  }
+  return SYS_PROMPT_TOKENS + total;
 }
 
 // Resolve the selected model's max input tokens once per turn via the
@@ -332,7 +391,9 @@ function resolveMaxInputTokens() {
 // Paired with the usage that node records, it is what makes the next
 // round's measurement exact.
 function stampAnchor() {
-  board.setVar("world.compact.anchor_len", channel.length);
+  // Re-read the length: a fold in this round rewrote the channel after len
+  // was taken, and this stamp decides what the llm node is about to send.
+  board.setVar("world.compact.anchor_len", board.channelLen(board.MAIN_CHANNEL));
   board.setVar("world.compact.anchor_epoch", cumulativeFolds());
   // The two counts the turn-end hook reads: the conversation's fold
   // generation (so a later turn can tell whether a stored measurement is
@@ -351,7 +412,7 @@ function stampAnchor() {
 // providers reject). Both wait for the next round.
 function appendNotice(text) {
   if (board.getVar("world.compact.notice_sent") === true) return;
-  var last = channel[channel.length - 1];
+  var last = board.lastMessage(board.MAIN_CHANNEL);
   if (!last || last.role === "user" || hasUnansweredToolCall(last)) return;
   board.appendChannel(board.MAIN_CHANNEL, {
     role: "user",
@@ -381,7 +442,7 @@ function hasUnansweredToolCall(m) {
 // the same fold.
 if (board.getVar("world.compact.pending")) {
   var patch = null;
-  var last = channel[channel.length - 1];
+  var last = board.lastMessage(board.MAIN_CHANNEL);
   if (last && last.role === "tool") {
     var parts = last.content.parts || [];
     for (var i = 0; i < parts.length; i++) {
@@ -400,7 +461,7 @@ if (board.getVar("world.compact.pending")) {
   }
   // Tail is [synthetic assistant, compact result]; everything before
   // them is the conversation this node last saw.
-  var base = channel.slice(0, Math.max(count, channel.length - 2));
+  var base = messages().slice(0, Math.max(count, len - 2));
   var foldStart = Number(board.getVar("world.compact.fold_start") || count);
   var foldEnd = Number(board.getVar("world.compact.fold_end") || -1);
   var prevSummary = board.getVar("world.compact.summary_text") || "";
@@ -457,22 +518,18 @@ if (board.getVar("world.compact.pending")) {
   board.setVar("world.compact.fold_start", 0);
   board.setVar("world.compact.fold_end", -1);
   board.setVar("tool_pending", false);
-  // The channel the llm node is about to see is settled here: the write
-  // above (rebuilt, or base for a failed fold) decides it, and only its
-  // length is read below. Keep the array that was just written instead
-  // of projecting the whole channel back for one number.
-  channel = applied ? rebuilt : base;
+  // The published base described the prefix this fold just rewrote (or
+  // moved, on a failure): drop it, so the next round measures the new
+  // prefix once instead of sizing against a shape that is gone.
+  board.setVar("world.compact.base_len", -1);
   stampAnchor();
   return;
 }
 
 // Check mode: fold only when the prompt is measured (or, past the whole
 // window, estimated) to exceed the model's budget.
-var worldPrefix = channel.slice(0, count);
-var conversation = channel.slice(count);
 var maxTokens = resolveMaxInputTokens();
-var plainEstimate = SYS_PROMPT_TOKENS + estimateTokens(worldPrefix) +
-  estimateTokens(conversation);
+var plainEstimate = plainEstimateTokens();
 var measured = measuredPrompt(plainEstimate);
 var estimate = measured > 0 ? measured : plainEstimate;
 var threshold = Math.floor(maxTokens * RATIO);
@@ -496,37 +553,42 @@ if (board.getVar("world.compact.turn_start_seeded") !== true) {
 }
 if (turnStart < count) turnStart = count;
 
-var foldStart = count;
-if (turnStart === foldStart) foldStart = count + 1;
-var foldEnd = Math.max(foldStart, channel.length - PRESERVE);
-if (turnStart > foldStart && turnStart < foldEnd) {
-  // Fold everything before the user message first; later rounds may
-  // fold what follows it.
-  foldEnd = turnStart;
-}
-// Keep tool calls with their results: the preserved side must not start
-// with a tool message whose call is being folded away.
-while (
-  foldEnd > foldStart &&
-  channel[foldEnd] &&
-  channel[foldEnd].role === "tool"
-) {
-  foldEnd--;
-}
+// The boundary is about messages, not counts: project the channel only on
+// the rounds that can fold.
+if (shouldCompact) {
+  var foldStart = count;
+  if (turnStart === foldStart) foldStart = count + 1;
+  var msgs = messages();
+  var foldEnd = Math.max(foldStart, len - PRESERVE);
+  if (turnStart > foldStart && turnStart < foldEnd) {
+    // Fold everything before the user message first; later rounds may
+    // fold what follows it.
+    foldEnd = turnStart;
+  }
+  // Keep tool calls with their results: the preserved side must not start
+  // with a tool message whose call is being folded away.
+  while (
+    foldEnd > foldStart &&
+    msgs[foldEnd] &&
+    msgs[foldEnd].role === "tool"
+  ) {
+    foldEnd--;
+  }
 
-// A failed fold is not retried against an unchanged boundary: the next
-// new message moves the boundary and makes the retry meaningful. Past the
-// whole window that rule inverts — the request cannot be sent as it
-// stands, so the retry is the only way back inside the window (the compact
-// tool degrades to a mechanical digest when no model summary can be
-// produced, so the retry has a path to succeed).
-var failedEnd = Number(board.getVar("world.compact.failed_end") || -1);
-if (shouldCompact && failedEnd >= 0 && failedEnd === foldEnd && !overWindow) {
-  shouldCompact = false;
+  // A failed fold is not retried against an unchanged boundary: the next
+  // new message moves the boundary and makes the retry meaningful. Past the
+  // whole window that rule inverts — the request cannot be sent as it
+  // stands, so the retry is the only way back inside the window (the compact
+  // tool degrades to a mechanical digest when no model summary can be
+  // produced, so the retry has a path to succeed).
+  var failedEnd = Number(board.getVar("world.compact.failed_end") || -1);
+  if (failedEnd >= 0 && failedEnd === foldEnd && !overWindow) {
+    shouldCompact = false;
+  }
 }
 
 if (shouldCompact) {
-  var fold = channel.slice(foldStart, foldEnd);
+  var fold = messages().slice(foldStart, foldEnd);
   if (fold.length > 0) {
     var args = {
       conversation: fold.map(function (m) {

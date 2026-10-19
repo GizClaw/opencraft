@@ -45,6 +45,9 @@ function boardStub() {
   return {
     MAIN_CHANNEL: 'main',
     channel: () => [],
+    channelLen: () => 0,
+    channelTail: () => [],
+    lastMessage: () => null,
     getVar: () => 0,
     setVar: () => {},
     setChannel: () => {},

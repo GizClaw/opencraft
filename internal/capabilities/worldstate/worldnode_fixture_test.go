@@ -15,6 +15,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
 
 // The world node is the one graph script that prepends model-visible
@@ -42,6 +43,12 @@ type worldNodeCase struct {
 	// TailBlock is the string Go writes to world.tail_block; empty when
 	// the turn has no per-turn context, in which case the var is unset.
 	TailBlock string `json:"tail_block,omitempty"`
+	// BaseLen is the message count Go publishes as the channel prefix a
+	// turn opens with (world.compact.base_len). The mirror test checks it
+	// against the messages the world node actually prepends: the
+	// compaction node sizes each round from that pair, so a prefix
+	// shorter than the one on the channel under-estimates every fold.
+	BaseLen int `json:"base_len"`
 	// Existing is the channel the node finds on the board when it runs.
 	Existing []json.RawMessage `json:"existing"`
 }
@@ -94,6 +101,8 @@ func worldNodeFixtureCases(t *testing.T, workBase string) []worldNodeCase {
 			// Always an array, never null: the mirror test iterates it.
 			Existing: []json.RawMessage{},
 		}
+		baseLen, _ := board.GetVar(config.BoardVarPromptBaseLen)
+		entry.BaseLen, _ = baseLen.(int)
 		for _, m := range ch {
 			raw, err := json.Marshal(m)
 			if err != nil {
