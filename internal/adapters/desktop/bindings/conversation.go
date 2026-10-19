@@ -448,6 +448,15 @@ func (b *Conversation) SessionMode() string {
 // deleted ids (state.ErrRetired), so the id can come back neither from
 // this Host nor from a later one, and focusing it would open a chat
 // that can never arrive.
+//
+// A conversation this workspace's store does not own is refused the
+// same way. Focusing one would point the workspace's current
+// conversation at an id it knows nothing about: the chat opens empty,
+// and the next turn is then accepted as that id's (workspaceHasConversation
+// trusts the current one) while the transcript it writes belongs to no
+// store. The click that reaches here without a workspace - a banner
+// from a producer that predates the workspace field - gets this
+// refusal instead of silently adopting another workspace's chat.
 func (b *Conversation) ResumeSession(id string) error {
 	ctx := b.core.Shell.Context()
 	workDir := b.core.ActiveWorkDir()
@@ -461,6 +470,9 @@ func (b *Conversation) ResumeSession(id string) error {
 	}
 	if retired {
 		return fmt.Errorf("conversation: session %q was deleted", id)
+	}
+	if _, err := b.resolveConversationWorkspace(ctx, workDir, id); err != nil {
+		return err
 	}
 	mode, err := h.Sessions().Mode(ctx, id)
 	if err != nil {

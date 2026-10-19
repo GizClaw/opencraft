@@ -584,6 +584,23 @@ describe('notification click', () => {
     expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-2');
   });
 
+  it('stops at the refusal when the conversation lives elsewhere', async () => {
+    // A producer that predates the workspace field names the
+    // conversation only. When that conversation belongs to another
+    // workspace, the backend refuses it: the window stays on the chat it
+    // had (the failure says why) instead of being pointed at an id its
+    // own store can never fill.
+    apiMock.resumeSession.mockRejectedValue(
+      new Error('conversation: session "s-x" is not in workspace "/tmp/w"'),
+    );
+
+    await useStore.getState().openFromNotification('s-x', '');
+
+    expect(apiMock.openWorkspace).not.toHaveBeenCalled();
+    expect(stateRoot.focusSnapshot.value).toBe('failed');
+    expect(stateRoot.focusSnapshot.context.sessionID).not.toBe('s-x');
+  });
+
   it('says so when the workspace would not open', async () => {
     apiMock.openWorkspace.mockRejectedValue(new Error('no such workspace'));
 

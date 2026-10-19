@@ -409,9 +409,12 @@ export function createShellSessions(
      * openFromNotification reopens the conversation a system banner
      * belongs to. The click arrives from outside the app: the window may
      * be on another workspace, and it may be covered by a tool page or
-     * the config panel, so both are closed first. The hop itself is
-     * openSessionInWorkspace's — a switch a newer click took still wins,
-     * and a workspace that never landed still throws.
+     * the config panel. Both are closed before the hop rather than after
+     * it: the click's answer is either the conversation or the failure
+     * that says it could not open, and both are drawn on the chat the
+     * page was covering. The hop itself is openSessionInWorkspace's — a
+     * switch a newer click took still wins, and a workspace that never
+     * landed still throws.
      */
     openFromNotification: async (sessionID, workspacePath) => {
       set({ toolsView: null, configOpen: false });
@@ -422,7 +425,10 @@ export function createShellSessions(
         }
         // A banner from a producer that could not name its workspace
         // still names the conversation, which is the one thing the
-        // click promised: open it where the window already is.
+        // click promised: open it where the window already is. The
+        // backend refuses an id this workspace's store does not own, so
+        // the fallback lands on that refusal instead of adopting
+        // another workspace's conversation as this one's.
         await get().resume(sessionID);
       } catch {
         get().toast(i18n.t('chat.switchFailed'), 'warning');
