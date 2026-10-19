@@ -6,277 +6,205 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-19
+
 ### Upgrade notes
 
 - A user layer that copies parts of the assembly speaks the upstream
   vocabulary now: the hook host is `hooks.Runner`, its observer is
-  `hooks.SubagentObserver` (whose dependency is `runner:`, not
-  `hooks:`), and the attachment hook is `media.attachments`. `tool.exec`
-  no longer takes an `escalator` dependency — the escalation front end
-  comes from the sandbox runner — and the tool-output bound spells
-  `result_limit.max`, not `max_chars`. The embedded layer moved with
-  them, so a profile that overrides nothing is unaffected.
-- The env override that forces the HTTP probe on is
-  `FLOWCRAFT_HTTP_PROBE` now, because the probe itself lives in
-  flowcraft; `OPENCRAFT_HTTP_PROBE` turns nothing on. The persisted
-  switch (`desktop.json`, `diagnostics.httpProbe`) is unchanged.
-- Staged skill copies have left the sandbox-writable cache
-  (`APP_HOME/staged` now, which the file tools' `readonly_roots`
-  follows): a confined command can still read and run a staged script,
-  but not rewrite the material the model reads as skill reference, so a
-  script that writes beside itself has to use the workspace or
-  `$TMPDIR`. Clearing caches still removes copies the old layout left
-  behind in the cache.
-- A guarded fetch fails closed while an HTTP(S) proxy is configured, on
-  all three download paths (`web_fetch`, `generate_video` and the
-  plugin update download): a proxy re-resolves the target, so the SSRF
-  guard's DNS pin cannot hold. Unset `HTTP(S)_PROXY`/`ALL_PROXY` for
-  those calls, or set `allow_private` — which also waives the
-  private-destination guard, so prefer the former unless the proxy is
-  this deployment's own. The plugin update path has no `allow_private`
-  opt-in (its URLs come from a plugin manifest), so there the refusal
-  stands.
-- `DeleteSkill` only removes skills inside the app's own roots now:
-  plugin skills go away with their plugin, and skills from a configured
+  `hooks.SubagentObserver` (whose dependency is `runner:`), and the
+  attachment hook is `media.attachments`; `tool.exec` no longer takes an
+  `escalator` dependency, and the tool-output bound spells
+  `result_limit.max`. The embedded layer moved with them, so a profile that
+  overrides nothing is unaffected. (#229)
+- The env override that forces the HTTP probe on is `FLOWCRAFT_HTTP_PROBE`
+  now, because the probe lives in flowcraft; `OPENCRAFT_HTTP_PROBE` turns
+  nothing on. The persisted switch (`desktop.json`,
+  `diagnostics.httpProbe`) is unchanged. (#232)
+- Staged skill copies live in `APP_HOME/staged`, outside the sandbox-writable
+  cache (the file tools' `readonly_roots` follows): a confined command can
+  read and run a staged script, but not rewrite the material the model reads
+  as skill reference. A script that writes beside itself has to use the
+  workspace or `$TMPDIR`. (#232)
+- A guarded fetch fails closed while an HTTP(S) proxy is configured, on all
+  three download paths (`web_fetch`, `generate_video`, the plugin update
+  download): a proxy re-resolves the target, so the SSRF guard's DNS pin
+  cannot hold. Unset `HTTP(S)_PROXY`/`ALL_PROXY` for those calls, or set
+  `allow_private` — which also waives the private-destination guard, so
+  prefer the former unless the proxy is this deployment's own. The plugin
+  update path has no opt-in. (#232, #234)
+- The SSRF guard refuses more address classes: 0.0.0.0/8 and 100.64.0.0/10,
+  multicast, TEST-NET-1/2/3, 192.0.0.0/24, 192.88.99.0/24, 198.18.0.0/15,
+  240.0.0.0/4, the IPv6 documentation and Teredo prefixes, plus RFC 8215's
+  `64:ff9b:1::/48`. A self-hosted service on one of those addresses is not
+  reachable through `web_fetch`, `generate_video`, or the plugin update
+  download — which is the point. (#232, #234)
+- `DeleteSkill` only removes skills inside the app's own roots now: plugin
+  skills go away with their plugin, and skills under
   `skills.settings.extra_roots` have to be deleted where they live. The
-  settings page hides the delete entry for those rows — the rest of the
-  row menu (pin, archive) stays.
+  settings page hides the delete entry for those rows. (#234)
 - Memory settings default to full-history replay (`replay_full_history:
   true`): the prompt is the whole conversation and the compact node folds
-  only when the measured usage exceeds the serving model's input window,
-  which the router reports per model. The raw window
-  (`max_raw_messages`/`preserve_recent`) is still what a fold leaves
-  behind, but it no longer bounds what a turn sends — a mostly-empty
-  window costs nothing extra because the conversation prefix is one cache
-  hit. A user layer written before the switch existed keeps the new
-  default; set `replay_full_history: false` in `resources.mem.settings` to
-  go back to a per-turn cost bounded by the raw window.
-- The SSRF guard refuses more address classes: 0.0.0.0/8 and
-  100.64.0.0/10, multicast, TEST-NET-1/2/3, 192.0.0.0/24, 192.88.99.0/24,
-  198.18.0.0/15, 240.0.0.0/4, and the IPv6 documentation and Teredo
-  prefixes, plus RFC 8215's local-use translation prefix
-  (`64:ff9b:1::/48`). A self-hosted service on one of those addresses is
-  not reachable through `web_fetch`, `generate_video`, or the plugin
-  update download — which is the point of the list.
+  only when the measured usage exceeds the serving model's input window. The
+  raw window (`max_raw_messages`/`preserve_recent`) is still what a fold
+  leaves behind, but it no longer bounds what a turn sends — an empty window
+  costs nothing extra because the prefix is one cache hit. Set
+  `replay_full_history: false` in `resources.mem.settings` for the old
+  per-turn bound.
 
 ### Added
 
-- A sidebar row says what it wants before it is opened. Three marks
-  share the one slot beside the title and the most pressing wins: a
-  pending prompt (the run is waiting on an answer only the reader can
-  give) blinks the row and shows a question mark, a run in flight keeps
-  the spinner, and a turn that ended badly leaves a red mark
-  (`turnNeedsAttention`: `failed` or `aborted`, or `canceled` when
-  `error_kind` is `timeout` — a manual Stop and an interrupted turn do
-  not). The failed mark is store state keyed by conversation, not actor
-  state, so a row is right in a workspace this window never opened; it
-  tracks "the last turn that ended", so a retry that works takes its own
-  mark away, and clicking the row (either branch of `resume`) or
-  deleting it clears it.
-- A notification banner opens the conversation that raised it. The
-  `turn_end` and `interact` stream events carry the workspace whose Host
-  owns the run, so a banner raised by a background workspace lands on
-  that conversation instead of the one on screen; the chat actor takes
-  the field in through the conversation machine's `BIND_WORKSPACE`
-  event, which pins the actor's workspace and changes no turn state. A
-  click whose conversation the shown workspace does not own is refused
-  by the resume binding instead of opening an empty chat. Banners
-  replace one another per conversation (`turn-end:<id>`, `interact:<id>`,
-  `automation:<task>`), so a burst of turns cannot stack a queue of
-  notifications over the chat.
-- A path written in backticks in the transcript opens the file. One
-  inline code span is classified as a path or a URL (`linkTarget.ts`):
-  a chip renders where plain code would, a click resolves it the way a
-  markdown link does — a file in the viewer, a directory in the chat
-  rail — and a `:line[:column]` tag is peeled so the click lands on the
-  file the tag points into. Everything a code span can also be (a
-  command, an identifier, a version tag, `12:30`) stays plain text.
-- The composer meters the context: a ring in its footer reads the prompt's
-  size against the serving model's input window (`12.3k / 200k`), and the
-  popover splits that number into what filled it — system prompt,
-  environment and permissions, AGENTS.md, user memory, folded summary,
-  conversation, the turn's plan/skills block, and the residual the harness
-  cannot itemize (tool schemas, provider framing). The estimate half is
-  written at prepare time (`worldstate/contextusage.go`, board var
-  `world.context.usage`) from the sections the turn is about to send; the
-  turn-end hook pairs it with the provider's own count of that request and
-  stores the result as the conversation's `context_usage` document, so the
-  meter survives a restart and a workspace switch at the same numbers the
-  live turn showed. The two halves ride one hook because they describe one
-  request, and the residual absorbs the difference instead of being spread
-  over estimates that would then read as measurement.
+- A sidebar row says what it wants before it is opened. Three marks share
+  the slot beside the title and the most pressing wins: a pending prompt
+  blinks the row and shows a question mark, a run in flight keeps the
+  spinner, and a turn that ended badly leaves a red mark
+  (`turnNeedsAttention`: `failed`, `aborted`, or `canceled` with
+  `error_kind: timeout` — a manual Stop does not). The mark is store state
+  keyed by conversation, so a background workspace's row is right too, and a
+  retry that works, a click or a delete clears it. (#245)
+- A notification banner opens the conversation that raised it. `turn_end`
+  and `interact` carry the workspace whose Host owns the run, and the chat
+  actor pins it through `BIND_WORKSPACE`, so a banner from a background
+  workspace lands on its own conversation. A click the shown workspace does
+  not own is refused instead of opening an empty chat, and banners replace
+  one another per conversation rather than stacking. (#245)
+- A path written in backticks in the transcript opens the file. One inline
+  code span is classified as a path or a URL (`linkTarget.ts`): a chip
+  renders where plain code would, a click resolves it like a markdown link
+  (a file in the viewer, a directory in the chat rail), and a
+  `:line[:column]` tag is peeled. A command, identifier, version tag or
+  `12:30` stays plain text. (#230)
+- The composer meters the context. A ring in the footer reads the prompt
+  against the serving model's window (`12.3k / 200k`), and the popover
+  splits it into system prompt, environment and permissions, AGENTS.md, user
+  memory, folded summary, conversation, the turn's plan/skills block, and
+  the residual the harness cannot itemize (tool schemas, provider framing).
+  The estimate is written at prepare time (`worldstate/contextusage.go`) and
+  paired at turn end with the provider's count of that request, stored as
+  the conversation's `context_usage` document, so it survives a restart and a
+  workspace switch at the live turn's numbers.
 
 ### Changed
 
-- A long answer in the transcript folds. A settled markdown block past
-  2k characters renders its first section and puts the rest behind one
-  control, because a block's cost is paid per character — markdown gives
-  every inline span, list item and code line an element and a text node
-  of its own, and each is a WebKit object that outlives the row. The
-  block the reader watched arrive stays whole while the stream is still
-  writing into it - the transcript's last row, or the newest answer with
-  only an interjection below it - so the fold does not land under them
-  when the turn ends, or when they speak into the run and a steer row
-  appears; an answer a newer one pushed above is history, and history
-  folds. The cut is a section boundary near the budget (never a heading
-  with its body behind the fold) and carries the reference and footnote
-  definitions the shown part needs, so the preview says what the block
-  says. The window also keeps what it has already parsed: a block
-  re-mounted as it scrolls back is the tree built for it the first time
-  (`lib/markdownCache`, bounded in source characters so one huge answer
-  cannot hold them all), and the attachment preview cache is a bounded
-  LRU a workspace switch clears.
-- A workspace switch starts a fresh document. Nothing hands back what
-  WebKit already holds — a transcript's nodes are live objects — except a
-  page that goes away, so the main window reloads after the switch lands
-  (`Core.ReloadWindow`, asking `Shell` for the mechanism). It is refused
-  while any workspace has a live run, whose text arrives as deltas into
-  this window, and skipped while the composer holds work that only exists
-  in this document — the draft of a conversation that has not started, a
-  staged attachment — or when the switch names the workspace the window
-  and the backend are both already on (the backend is asked, so a window
-  that missed its ready event can still put itself right by re-picking).
-  The two flows that carry on through the backend after a switch —
-  opening a session, sending a first message — keep the window they have,
-  since a reload would drop the resume or the message. A switch that
-  keeps the page asks again next time; nothing retries a refusal.
-- The memory policy ships with full-history replay on. The folded summary
-  plus raw window is what a turn falls back to after a fold, not the bound
-  on what it sends: the compact node folds when the prompt's measured size
-  crosses the serving model's input window, so a conversation that fits
-  costs one cache hit per turn instead of a truncated view of itself.
-  `replay_full_history: false` in `resources.mem.settings` restores the
-  old bound.
-- The engine's assembly half runs on flowcraft's `craft`. A Host loads a
-  `config.View` (`LoadDocument` becomes `LoadView`) and builds one
-  `craft.Craft` per Host (`BuildRuntime` becomes `BuildAssembly`): the
-  four embedded layers are the Definition's base layers, `-config` plus
-  the user layer are craft's overlay, and layer merging happens once,
-  inside craft. The factory list is `coreCapabilities()` +
-  `appCapabilities()` plus the values, usage and delegation registrars,
-  and the six caller-owned externals are injected through
-  `craft.Options.Externals`. `engine.Controller` wraps the Craft and its
-  runtime key, so `Runtime`/`Close`/`Drain` are craft calls and a
-  settings reload is `craft.ReloadRuntimeWith` over the re-read overlay;
-  `ReloadResult.GenerationID` stays the one source for the generation
-  the desktop reports and the sessions store checks against.
+- A long answer in the transcript folds: a settled markdown block past 2k
+  characters renders its first section and puts the rest behind one control,
+  because a block's cost is paid per character. The block the reader watched
+  arrive stays whole while the stream writes into it; an answer a newer one
+  pushed above is history, and history folds. The cut is a section boundary
+  near the budget and carries the reference definitions the shown part needs.
+  Parsed blocks are kept in `lib/markdownCache` (bounded in source
+  characters), attachment previews in a bounded LRU. (#246)
+- A workspace switch starts a fresh document: WebKit hands nothing back
+  except a page that goes away, so the main window reloads after the switch
+  lands (`Core.ReloadWindow`). It is refused while any workspace has a live
+  run, and skipped while the composer holds a draft or a staged attachment,
+  or when the switch names the workspace both sides are already on. (#246)
+- The engine's assembly half runs on flowcraft's `craft`: a Host loads a
+  `config.View` and builds one `craft.Craft` per Host, the four embedded
+  layers are its base layers, `-config` plus the user layer are its overlay,
+  and merging happens once, inside craft. The factory list is
+  `coreCapabilities()` + `appCapabilities()` plus the values, usage and
+  delegation registrars, the six caller-owned externals go through
+  `craft.Options.Externals`, and a settings reload is
+  `craft.ReloadRuntimeWith`. (#229)
 - The single-instance identity is derived where it is used: `guilock`
-  computes the canonical root id itself instead of the launch result
-  carrying an `InstanceID`, and the Wails shell option that spoke a
-  second protocol beside the GUI lock is gone, leaving one gate.
-  `OPENCRAFT_NO_SINGLE_INSTANCE` still turns the lock off.
-- The build's Go pin is 1.26.9 (from 1.26.0) and `govulncheck` is v1.9.0:
-  the newer scanner reports the standard library advisories that 1.26.1
-  fixed as reaching this code, and `go.mod` is the version CI's
-  `setup-go` and the release builds read, so the patch reaches the
-  shipped binaries rather than only telling the scanner about it.
+  computes the canonical root id itself, and the Wails option that spoke a
+  second protocol beside the GUI lock is gone. `OPENCRAFT_NO_SINGLE_INSTANCE`
+  still turns the lock off. (#229)
+- The build's Go pin is 1.26.9 and `govulncheck` is v1.9.0, so the standard
+  library advisories 1.26.1 fixed reach the shipped binaries rather than only
+  the scanner. (#229)
+- Tool results carry three times more text (8000 to 24000 characters), so a
+  300-line source file arrives in one read. Oversized results still spill to
+  the tool cache and return as a head-and-tail excerpt, and `result_limit`
+  (32768 runes) still bounds the whole result. Context per call rises where
+  results were cut, so compaction may trigger sooner. (#244)
+- The pet's geometry sampler reads the drawing surface when the picture
+  changes instead of twice a second: idle drops to 0.5 reads/s (0 while
+  parked) and a working surface reads once per pose, with a 2s heartbeat for
+  movement only an animation announces. (#241)
 
 ### Removed
 
-- The packages that moved upstream in this cycle are gone from the tree
-  and their callers import flowcraft's copies: `capabilities/hooks` (the
-  settings manager, its observer and the resource factory) to
-  `core/hooks`, `capabilities/secrets` to `backends/secret`, the media
-  prepare hook to `core/media/hook` (the engine's own video-hint pass
-  went with it), sandbox escalation to `core/sandbox`, the tool-output
-  bounds (`resultlimit`, `truncate`) to `core/tool/middleware`,
-  `foundation/utils/{filetype,fsatomic,httpprobe,imageutil,pathsafe,search,wsread}`
-  and `platform/wslock` to `core/utils/*` (`wslock` is `core/utils/lock`
-  now), and the e2e fake provider to `core/inference/inferencetest`. The
-  CI lanes lose the wslock cases with the package.
+- The packages that moved upstream are gone from the tree and their callers
+  import flowcraft's copies: `capabilities/hooks` to `core/hooks`,
+  `capabilities/secrets` to `backends/secret`, the media prepare hook to
+  `core/media/hook`, sandbox escalation to `core/sandbox`, the tool-output
+  bounds to `core/tool/middleware`, `foundation/utils/*` and
+  `platform/wslock` to `core/utils/*`, and the e2e fake provider to
+  `core/inference/inferencetest`. (#229)
 
 ### Fixed
 
-- A diagnostic report redacts a credential scheme in any spelling, and
-  stops at the real end of a quoted value. A server's log line prints
-  `bearer`, an opaque token need not carry an upper-case letter, and a
-  JSON string escapes its own quotes — `{"password":"a\"bcd"}` used to
-  leave `bcd` in the telemetry copy while `bearer abcdef` went out whole.
-  The word after a scheme is kept only when it is prose the closed list
-  knows; everything else is the credential.
-- `grep` searches the file it is given. Its `path` had to name a
-  directory, so "in this file, where is X?" came back as a validation
-  error telling the caller to pass the directory instead (139 times
-  across 37 sessions on the review corpus, 92 of them the last call of
-  their turn — a round spent to learn nothing). A path that names a
-  file now searches that file through the same scan the directory walk
-  uses: same 1 MiB bound, same binary rule, same match cap and
-  truncation flag, and the named entry is searched even when hidden, as
-  `read_file` does.
-- A whole-file read comes back as one window it can page from. The read
-  tool answered up to 1000 lines and the result policy then cut that at
-  the cap, so a longer file arrived as the two ends of a range whose
-  middle nothing named — and the model, unable to continue from it,
-  probed in 40-130 line windows instead (66% of reads carry an
-  offset/limit, and 19% of read results sat exactly on the cap). The
-  window is now what one result holds (about 20000 characters of
-  encoded result, or the requested limit if smaller), `is_truncated`
-  says whether lines remain, and `next_offset` names where the next read
-  starts; consecutive windows tile the file, so a caller never derives
-  an offset. A single line past the budget still comes back whole,
-  because a window of nothing cannot be paged from.
-- A finished turn folds even while its conversation runs. A session
-  resumed with a run still going has no archived turn for that run, so
-  the newest archive strip was the turn above it, and the conversation's
-  busy flag kept that turn's steps expanded under its own completed
-  answer. The window now opens the live run a strip of its own at the
-  seam the archive ends at (`liveTurnEntry`), carries the run the actor
-  is tracking so the artifact and turn_end events find their turn, and
-  folds by the strip's own record (`turnIsLive`) — a resumed run renders
-  Working… above its own rows while the turn above it folds.
-- A run the window only met on the wire gets a turn of its own before
-  its first delta is folded in. The app restarted, or the session was
-  opened while its run was already going, so the transcript holds
-  nothing of that run — the archive does not carry a live turn — and its
-  streamed text used to grow the last archived answer instead. The
-  stream path opens the run the same strip the hydrate opens
-  (`liveRunTurn`), registers it as live (so a barge-in that cannot start
-  resumes watching it rather than reading it as interrupted) and bounds
-  every delta to the rows at or after that strip (`applyStream`) — a
-  turn that already failed is not a live entry for the next run either.
-  The run's answer, its files and its fold header are its own turn, and
-  the archived turn replaces those rows, question included, when the run
-  ends.
-- A workspace switch lands on the spelling the workspace history
-  carries. The active workspace and the row recorded for it were spelled
-  by two rules (`filepath.Clean` against clean-and-absolute), so a path
-  that reached the window the way the picker's fallback input hands it —
-  relative, or with a trailing separator — made the sidebar read every
-  row of the active workspace as another workspace's, and a click on one
-  was answered with "already announced" while the window waited out its
-  deadline and reported "workspace switch did not complete". Both halves
-  now go through `config.CanonicalWorkDir` — which the workspace id, the
-  layout and the history row share — the announcement is compared the
-  way the window compares it, and a session click a newer switch already
-  took is dropped instead of reported (a draft that lost its race still
-  says so: the text goes back to the composer).
-- The tool knob menus stay inside the window: the panel is portaled to
-  the body as a fixed layer, so its percentage min-width measured the
-  viewport and `min-w-full` stretched every menu across the whole
-  window. A rem floor with a viewport cap replaces it.
+- A view that crashes takes its own surface down, not the window: chat,
+  tools (the agent graph editor has a boundary of its own) and settings each
+  have an error boundary, so one bad row no longer drops the sidebar, the
+  status bar and the way back. (#239)
+- A tool call that owns its deadline is no longer cut at the assembly's 5m
+  default. The timeout middleware now receives a catalog, so `SelfTimeout` is
+  honored for `exec_command` on a long job, a bounded `exec_session` wait
+  (which gains an optional `timeout_seconds`), `ask_user`, and the agent and
+  automation confirmations. Waiting on the user or a background job stops
+  being killed mid-flight, and the prompt says waiting is one blocking call,
+  never a sleep-poll loop. (#244)
+- `grep` searches the file it is given. A path naming a file came back as a
+  validation error telling the caller to pass the directory — 139 times
+  across 37 sessions, 92 of them the last call of their turn. The file is
+  searched through the same scan the walk uses: same 1 MiB bound, binary
+  rule, match cap and truncation flag, and a hidden entry named directly is
+  searched as `read_file` does. (#244)
+- A whole-file read is one window it can page from: what a result holds
+  (about 20000 characters of encoded result, or the requested limit),
+  `is_truncated` saying whether lines remain, `next_offset` naming where the
+  next read starts, so windows tile the file. A single line past the budget
+  still comes back whole. (#244)
+- A run the window resumed or only met on the wire gets a turn of its own.
+  The live run opens a strip at the seam the archive ends at and the turn
+  above it folds; a run with no rows in the transcript opens the same strip
+  before its first delta, registers it as live (so a barge-in that cannot
+  start resumes watching it) and bounds every delta to that strip, instead of
+  growing the last archived answer. (#230)
+- A workspace switch lands on the spelling the history carries, and a
+  scheduled task records that same spelling: both go through
+  `config.CanonicalWorkDir`, which the workspace id, the layout, the sidebar
+  rows and the pool's keys share. A path that arrived relative or with a
+  trailing separator no longer makes the sidebar read the active workspace's
+  rows as another workspace's, a click a newer switch already took is
+  dropped instead of reported (a draft that lost its race still says so),
+  and the tool's preview folds the path it stores. (#230, #231)
+- A steer keeps its text when a rebuild took its row away. The rebuild
+  treated the steer bookkeeping as its own, so a rejection removed the row
+  and reported success while the composer cleared the draft, and a success
+  could leave a row nothing would settle. One rule now carries the rows the
+  archive never saw across the rebuild, with the registration that owes them
+  a boundary. (#242)
+- The tool knob menus stay inside the window: portaled to the body as a
+  fixed layer, their percentage min-width measured the viewport and
+  `min-w-full` stretched every menu across it. A rem floor with a viewport
+  cap replaces it. (#230)
 - The in-memory transcript cap cuts only at a turn boundary, and what it
-  cuts stays reachable. When no boundary sat below the exact cut it fell
-  back to cutting inside a turn, and the oldest rows stayed behind
-  without the strip that owns them — a half turn whose files and fold
-  header were gone, or, for a live turn, a run whose strip was cut away
-  while its rows remained, so the files it produced and the archived
-  copy that replaces its rows had nothing left to attach to. The trim
-  now moves down to the next boundary instead (backing up to the largest
-  boundary below the cut when there is one), never lands on a strip that
-  owns no rows — the seam a run met on the wire opens before its first
-  row lands — and keeps a transcript that is a single turn whole. The
-  paging cursor moves with the cut, past the turns it dropped, and "load
-  earlier" comes back when the window had thought the oldest turn was
-  the first one it still holds: the dropped turns are one page away
-  instead of gone.
-- A scheduled task's workspace is recorded in the canonical spelling
-  (`config.CanonicalWorkDir`), the one the workspace id, the layout, the
-  sidebar rows and the pool's keys speak. Automations were the last
-  writer that kept whatever spelling it was handed, so a task created
-  over the API with a trailing separator or a `..` was the one workspace
-  path recorded a second way — the task editor listed it beside the
-  canonical row as a workspace apart. The tool's preview folds it too,
-  so the path the confirmation shows is the path that gets stored.
+  cuts stays reachable. The trim moves down to the next boundary instead of
+  cutting inside a turn, never lands on a strip that owns no rows, and keeps
+  a transcript that is a single turn whole; the paging cursor moves with the
+  cut, so the dropped turns are one page away and "load earlier" comes back.
+  (#231)
+- A sandbox `env_policy` that only injects no longer hands the child the host
+  environment, provider keys included: nil resolves to the curated default
+  allowlist at all three translation points, and an explicit empty list still
+  means "inherit nothing". (#232)
+- Filesystem containment is enforced by handle, not by spelling: reads under
+  a readonly root go through an `os.Root` pinned at that root, so a symlink
+  planted in the sandbox-shared cache leaks nothing. A root-level `SKILL.md`
+  is refused as a delete target, so removing it no longer takes the whole
+  skill root with it. (#232)
+
+### Security
+
+- A diagnostic report redacts a credential scheme in any spelling and stops
+  at the real end of a quoted value: `bearer abcdef` used to go out whole, an
+  opaque token need not carry an upper-case letter, and
+  `{"password":"a\"bcd"}` left `bcd` in the telemetry copy. The word after a
+  scheme is kept only when it is prose the closed list knows. (#235)
 
 ## [0.6.1] - 2026-10-07
 
