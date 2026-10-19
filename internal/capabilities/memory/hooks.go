@@ -130,6 +130,11 @@ func (s commitSettings) scopeFor(id agent.Identity) corememory.Scope {
 // injected context when persisting a turn.
 const worldSectionsCountVar = "world.sections.count"
 
+// worldHistoryCountVar is the board var the world node sets to the
+// number of replayed conversation messages it appended between the
+// world-state sections and this turn's messages (full-history replay).
+const worldHistoryCountVar = "world.history.count"
+
 // extractConversation is ExtractTurnMessages over one finished result.
 func extractConversation(req *agent.Request, res *agent.Result) []message.Message {
 	var board *agent.Board
@@ -165,14 +170,29 @@ func ExtractTurnMessages(
 	req *agent.Request,
 	tail []message.Message,
 ) []message.Message {
-	var msgs []message.Message
+	var src boardSource
 	if board != nil {
+		src = liveBoard{board: board}
+	}
+	return extractTurnMessages(src, req, tail)
+}
+
+// extractTurnMessages is the one rule behind [ExtractTurnMessages] and
+// [TurnSnapshot]: everything after the world-state section prefix, with
+// the folded prefix re-joined and the replayed history dropped.
+func extractTurnMessages(
+	src boardSource,
+	req *agent.Request,
+	tail []message.Message,
+) []message.Message {
+	var msgs []message.Message
+	if src != nil {
 		// Both reads go through ChannelView: this function only slices
 		// and filters, and every path that keeps the messages clones
 		// first (filterArchive), so the board's storage is never
 		// mutated through the view.
-		channel := board.ChannelView(agent.MainChannel)
-		if n, ok := sectionCount(board); ok && n >= 0 && n <= len(channel) {
+		channel := src.channel(agent.MainChannel)
+		if n, ok := sectionCount(src); ok && n >= 0 && n <= len(channel) {
 			// The compact node moves the prefix it folds onto a side
 			// channel before shrinking MainChannel for the model. That
 			// channel holds the folded messages in order, so the union
@@ -182,13 +202,13 @@ func ExtractTurnMessages(
 			// (world.compact.turn_start) so a fold that runs later can
 			// leave it behind while newer rounds move to the side
 			// channel: the message is then re-anchored in front.
-			archived := board.ChannelView(config.CompactArchiveChannel)
+			archived := src.channel(config.CompactArchiveChannel)
 			// Full-history replay prepends the persisted conversation
 			// between the world sections and this turn's messages.
 			// Those replayed messages are context, not new
 			// conversation, so they must be dropped before persisting
 			// the turn.
-			h, hasHistory := historyCount(board)
+			h, hasHistory := historyCount(src)
 			if !hasHistory || h < 0 {
 				h = 0
 			}
@@ -207,7 +227,7 @@ func ExtractTurnMessages(
 			// re-renderable on resume.
 			askPos := -1
 			if req != nil {
-				if ts, ok := compactTurnStart(board); ok &&
+				if ts, ok := compactTurnStart(src); ok &&
 					ts >= n && ts < len(channel) &&
 					channel[ts].Role == message.RoleUser {
 					askPos = len(archived) + (ts - n) - h
@@ -270,11 +290,11 @@ func isInjectedContext(m message.Message) bool {
 // script bridge round-trips JS numbers as int64, so integer and float
 // encodings are both accepted. ok reports whether the marker exists at
 // all, so a zero count is honored when it is set.
-func sectionCount(board *agent.Board) (int, bool) {
-	if board == nil {
+func sectionCount(src boardSource) (int, bool) {
+	if src == nil {
 		return 0, false
 	}
-	v, ok := board.GetVar(worldSectionsCountVar)
+	v, ok := src.varValue(worldSectionsCountVar)
 	if !ok {
 		return 0, false
 	}
@@ -294,11 +314,11 @@ func sectionCount(board *agent.Board) (int, bool) {
 // historyCount reads the world node's replayed-history count off the
 // board. The user's turn message sits at world.sections.count +
 // world.history.count on the MainChannel.
-func historyCount(board *agent.Board) (int, bool) {
-	if board == nil {
+func historyCount(src boardSource) (int, bool) {
+	if src == nil {
 		return 0, false
 	}
-	v, ok := board.GetVar("world.history.count")
+	v, ok := src.varValue(worldHistoryCountVar)
 	if !ok {
 		return 0, false
 	}
@@ -320,11 +340,11 @@ func historyCount(board *agent.Board) (int, bool) {
 // out of every fold and moves the index down as folded messages leave
 // the channel, so the archive can re-anchor the turn even when older
 // rounds were folded after it.
-func compactTurnStart(board *agent.Board) (int, bool) {
-	if board == nil {
+func compactTurnStart(src boardSource) (int, bool) {
+	if src == nil {
 		return 0, false
 	}
-	v, ok := board.GetVar("world.compact.turn_start")
+	v, ok := src.varValue("world.compact.turn_start")
 	if !ok {
 		return 0, false
 	}

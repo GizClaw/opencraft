@@ -136,6 +136,12 @@ type Store struct {
 	// instead of reporting a driver error that says nothing actionable.
 	closed atomic.Bool
 
+	// checkpointTrim shrinks each checkpoint before it is encoded. The
+	// host installs it (the store serves as the runtime's checkpoint
+	// store, and only the host knows what its recovery path reads back);
+	// nil persists the checkpoint as handed over.
+	checkpointTrim atomic.Pointer[CheckpointTrimmer]
+
 	mu sync.Mutex
 	// artifactBuf holds the files each *run* has produced so far, keyed
 	// by conversation and then by run id. Attribution is per run because
@@ -202,8 +208,31 @@ func (s *Store) Closed() bool {
 	return s == nil || s.closed.Load()
 }
 
+// CheckpointTrimmer returns the checkpoint to persist in place of cp.
+// It must be free of side effects and safe for concurrent use: every
+// wave of every live run calls it on the run's own goroutine.
+type CheckpointTrimmer func(context.Context, agent.Checkpoint) agent.Checkpoint
+
+// SetCheckpointTrimmer installs fn as the shrinker [Store.Save] applies
+// before encoding. Pass nil to persist checkpoints as handed over. The
+// last installation wins, which is what a shared workspace store needs:
+// every Host assembled over it installs the same function.
+func (s *Store) SetCheckpointTrimmer(fn CheckpointTrimmer) {
+	if s == nil {
+		return
+	}
+	if fn == nil {
+		s.checkpointTrim.Store(nil)
+		return
+	}
+	s.checkpointTrim.Store(&fn)
+}
+
 // Save implements agent.CheckpointStore.
 func (s *Store) Save(ctx context.Context, cp agent.Checkpoint) error {
+	if fn := s.checkpointTrim.Load(); fn != nil {
+		cp = (*fn)(ctx, cp)
+	}
 	return s.db.Save(ctx, cp)
 }
 

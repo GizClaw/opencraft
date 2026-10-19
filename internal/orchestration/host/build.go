@@ -233,6 +233,7 @@ func (m *Manager) buildHost(
 		) (*sessions.Store, error) {
 			store, err := m.acquireStore(ctx, workDir, root, window)
 			if err == nil {
+				applyCheckpointTrim(ctx, store, view)
 				sessionStore = store
 			}
 			return store, err

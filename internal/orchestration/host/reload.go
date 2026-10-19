@@ -58,6 +58,10 @@ func (h *Host) ReloadDocument(ctx context.Context) error {
 		return errors.New(
 			"host: in-place document reload changed the sessions implementation; full rebuild required")
 	}
+	// The reloaded document decides checkpoint trimming too: a generation
+	// that turns sessions.resume on must not persist boards a resume can
+	// no longer seed from.
+	applyCheckpointTrim(ctx, h.store, view)
 	// Rebind the new generation's per-generation resources before the
 	// reload returns so no later turn can run against stale host
 	// bindings. The runtime event router also dispatches this work
