@@ -219,7 +219,11 @@ func schemaProp(typ, description string) map[string]any {
 }
 
 // Metadata implements tool.ToolMetadata.
-func (t *Tool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
+func (t *Tool) Metadata() tool.ToolMeta {
+	// May block on the user's answer (a confirmation prompt);
+	// exempt from the assembly's generic tool timeout.
+	return tool.ToolMeta{SelfTimeout: true}
+}
 
 // Execute implements tool.Tool.
 // Execute implements tool.Tool. The tool result is a single text part;

@@ -3,7 +3,9 @@ package exec
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"sync"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
@@ -81,8 +83,9 @@ func (t *SessionTool) Definition() message.ToolDefinition {
 			"environment. Actions: start (launch a session with argv), "+
 			"read (pull output after an after_seq cursor), write (send "+
 			"stdin bytes), signal (interrupt), resize (pty window), "+
-			"terminate (stop the process), wait (block until exit), "+
-			"close (release the session).",
+			"terminate (stop the process), wait (block until exit; pass "+
+			"timeout_seconds to bound the block), close (release the "+
+			"session).",
 		message.ToolProperty("action", "string",
 			"start|read|write|signal|resize|terminate|wait|close (required)."),
 		message.ToolProperty("process_id", "string",
@@ -102,12 +105,19 @@ func (t *SessionTool) Definition() message.ToolDefinition {
 			"Maximum bytes to return (action=read, default 4096)."),
 		message.ToolProperty("data", "string",
 			"Bytes to write to stdin (action=write)."),
+		message.ToolProperty("timeout_seconds", "number",
+			"Bound on how long wait blocks, in seconds (action=wait); "+
+				"omit to block until the process exits."),
 	).Required("action", "process_id").DisallowAdditionalProperties().Build()
 }
 
-// Metadata implements tool.ToolMetadata.
+// Metadata implements tool.ToolMetadata. The tool bounds itself:
+// wait blocks until the process exits or its timeout_seconds fires,
+// every other action returns promptly, and the run's stop
+// terminates the process. The assembly therefore must not wrap it
+// in the generic tool timeout.
 func (t *SessionTool) Metadata() tool.ToolMeta {
-	return tool.ToolMeta{MutatesState: true}
+	return tool.ToolMeta{MutatesState: true, SelfTimeout: true}
 }
 
 type args struct {
@@ -121,6 +131,26 @@ type args struct {
 	AfterSeq  *int64   `json:"after_seq"`
 	MaxBytes  *int     `json:"max_bytes"`
 	Data      string   `json:"data"`
+	// TimeoutSeconds bounds action=wait: zero or absent blocks until
+	// the process exits.
+	TimeoutSeconds *float64 `json:"timeout_seconds"`
+}
+
+// waitBudget converts action=wait's timeout_seconds into a Duration,
+// clamped at the longest one that fits. Past it the float-to-int
+// conversion is out of range, and Go leaves that to the machine: arm64
+// saturates to MaxInt64, amd64 answers MinInt64. A negative duration is
+// a deadline already in the past, which turns "wait a very long time"
+// into an immediate timed_out.
+func waitBudget(seconds float64) time.Duration {
+	// Integer division, not float: float64(math.MaxInt64)/1e9 rounds
+	// up past the largest value whose nanosecond product still fits,
+	// so the boundary value alone overflows.
+	const maxSeconds = float64(math.MaxInt64 / int64(time.Second))
+	if seconds >= maxSeconds {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(seconds * float64(time.Second))
 }
 
 // Execute implements tool.Tool.
@@ -330,8 +360,24 @@ func (t *SessionTool) wait(ctx context.Context, a args) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	exit, err := proc.Wait(ctx)
+	waitCtx := ctx
+	if a.TimeoutSeconds != nil && *a.TimeoutSeconds > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, waitBudget(*a.TimeoutSeconds))
+		defer cancel()
+	}
+	exit, err := proc.Wait(waitCtx)
 	if err != nil {
+		// A wait that ran out of its own budget — and only its own:
+		// the run's stop still surfaces as the error it is — leaves
+		// the session live and readable, so the caller can wait again
+		// or read what the process has produced so far.
+		if ctx.Err() == nil && waitCtx.Err() != nil {
+			return map[string]any{
+				"process_id": a.ProcessID,
+				"timed_out":  true,
+			}, nil
+		}
 		return nil, err
 	}
 	// The session has ended: drop it so finished processes the model

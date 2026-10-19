@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/workspace"
@@ -165,23 +167,96 @@ func TestFileToolsNameUnknownArguments(t *testing.T) {
 	}
 }
 
-// TestGrepPathMustBeDirectory: grep walks directories; handing it a
-// file used to surface the raw walk error ("workspace: list …").
-func TestGrepPathMustBeDirectory(t *testing.T) {
+// TestGrepSearchesOneNamedFile: naming a file searches that file.
+// Handing grep a file used to be a validation error — "pass the
+// directory that contains it, or read the file instead" — although the
+// caller had already done the narrowing a tree walk exists to do. On
+// the review corpus that error fired 139 times across 37 sessions, and
+// 92 of those calls were the last of their turn.
+func TestGrepSearchesOneNamedFile(t *testing.T) {
 	tool, _ := newTestTool(t)
-	writeTree(t, tool.ws, map[string]string{"src/main.go": "package main\n"})
-	_, err := execute(t, tool.grep(), `{"pattern":"main","path":"src/main.go"}`)
-	if err == nil {
-		t.Fatal("grep on a file path accepted")
+	writeTree(t, tool.ws, map[string]string{
+		"src/main.go":  "package main\n\nfunc main() {}\n",
+		"src/other.go": "package main\nfunc main() {}\n",
+		".hidden/x.go": "package main\n",
+	})
+
+	got, err := execute(t, tool.grep(), `{"pattern":"func main","path":"src/main.go"}`)
+	if err != nil {
+		t.Fatalf("grep on a named file: %v", err)
 	}
-	msg := err.Error()
-	for _, want := range []string{
-		`grep: path "src/main.go" is a file, not a directory`,
-		"read the file instead",
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("error %q missing %q", msg, want)
-		}
+	var result struct {
+		Matches   []grepMatch `json:"matches"`
+		Truncated bool        `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("grep result is not JSON: %v", err)
+	}
+	// other.go holds the same line: only the named file is searched.
+	if len(result.Matches) != 1 {
+		t.Fatalf("grep searched more than the named file: %s", got)
+	}
+	if want := (grepMatch{Path: "src/main.go", LineNumber: 3, Line: "func main() {}"}); result.Matches[0] != want {
+		t.Errorf("grep match = %+v, want %+v", result.Matches[0], want)
+	}
+	if result.Truncated {
+		t.Errorf("grep called a complete result truncated: %s", got)
+	}
+
+	// Naming a file outranks the hidden-entry rule, as it does for
+	// read_file: the caller named the entry it wants searched.
+	hidden, err := execute(t, tool.grep(), `{"pattern":"package","path":".hidden/x.go"}`)
+	if err != nil {
+		t.Fatalf("grep on a named hidden file: %v", err)
+	}
+	if !strings.Contains(hidden, `"path":".hidden/x.go"`) {
+		t.Errorf("grep skipped a file that was named outright: %s", hidden)
+	}
+}
+
+// TestGrepOnOneFileKeepsTheCaps: the size bound, the binary rule and
+// the match cap are properties of a file, so a named file reports them
+// the way a walked one does — same fields, same names.
+func TestGrepOnOneFileKeepsTheCaps(t *testing.T) {
+	old := maxGrepMatches
+	maxGrepMatches = 2
+	t.Cleanup(func() { maxGrepMatches = old })
+
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{
+		"three.txt":   "needle one\nneedle two\nneedle three\n",
+		"bundle.wasm": "\x00\x61\x73\x6dneedle",
+	})
+	if err := tool.ws.Write(context.Background(), "big.txt",
+		[]byte(strings.Repeat("needle ", maxGrepFileBytes))); err != nil {
+		t.Fatal(err)
+	}
+
+	capped, err := execute(t, tool.grep(), `{"pattern":"needle","path":"three.txt"}`)
+	if err != nil {
+		t.Fatalf("grep on a named file: %v", err)
+	}
+	if !strings.Contains(capped, `"truncated":true`) {
+		t.Errorf("grep stopped at the cap without saying so: %s", capped)
+	}
+	if n := strings.Count(capped, `"line_number"`); n != 2 {
+		t.Errorf("grep returned %d matches, want the cap 2: %s", n, capped)
+	}
+
+	binary, err := execute(t, tool.grep(), `{"pattern":"needle","path":"bundle.wasm"}`)
+	if err != nil {
+		t.Fatalf("grep on a named binary file: %v", err)
+	}
+	if !strings.Contains(binary, `"binary_matches":["bundle.wasm"]`) {
+		t.Errorf("grep binary_matches not reported: %s", binary)
+	}
+
+	large, err := execute(t, tool.grep(), `{"pattern":"needle","path":"big.txt"}`)
+	if err != nil {
+		t.Fatalf("grep on a named oversized file: %v", err)
+	}
+	if !strings.Contains(large, `"skipped_large":1`) {
+		t.Errorf("grep skipped_large not reported: %s", large)
 	}
 }
 
@@ -666,3 +741,278 @@ func (t *Tool) write() execTool { return &writeFileTool{t.ws} }
 func (t *Tool) list() execTool  { return &listDirTool{t.ws} }
 func (t *Tool) grep() execTool  { return &grepTool{t.ws} }
 func (t *Tool) glob() execTool  { return &globTool{t.ws} }
+
+// readResult is the decoded read_file payload.
+type readResult struct {
+	Content     string `json:"content"`
+	Offset      int    `json:"offset"`
+	Limit       int    `json:"limit"`
+	TotalLines  int    `json:"total_lines"`
+	IsTruncated bool   `json:"is_truncated"`
+	NextOffset  int    `json:"next_offset"`
+}
+
+func readWindow(t *testing.T, tool *Tool, args string) readResult {
+	t.Helper()
+	out, err := execute(t, tool.read(), args)
+	if err != nil {
+		t.Fatalf("read_file %s: %v", args, err)
+	}
+	var got readResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode read_file result: %v (%s)", err, out)
+	}
+	return got
+}
+
+// longFile builds n lines of a width that makes the character budget,
+// not the line limit, the binding constraint.
+func longFile(n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "line %04d %s\n", i, strings.Repeat("x", 40))
+	}
+	return b.String()
+}
+
+// TestReadFileStopsAtResultBudget: one read returns a whole window below
+// the truncate cap and names where the next one starts. The window has to
+// be contiguous — the model pages from next_offset, so a window that
+// skipped its middle would leave lines nothing points at.
+func TestReadFileStopsAtResultBudget(t *testing.T) {
+	tool, _ := newTestTool(t)
+	content := longFile(1000)
+	writeTree(t, tool.ws, map[string]string{"long.txt": content})
+
+	got := readWindow(t, tool, `{"file_path":"long.txt"}`)
+	if !got.IsTruncated {
+		t.Fatalf("read_file returned the whole %d-byte file, want a window under the budget", len(content))
+	}
+	if len(got.Content) > ReadResultChars+len("line 0001 ")+40 {
+		t.Fatalf("window = %d chars, want at most the budget plus one line", len(got.Content))
+	}
+	lines := strings.Split(strings.TrimSuffix(got.Content, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("window = %d lines, want a usable range", len(lines))
+	}
+	if got.NextOffset != len(lines)+1 {
+		t.Fatalf("next_offset = %d, want %d (one past the %d lines returned)",
+			got.NextOffset, len(lines)+1, len(lines))
+	}
+	if want := strings.Split(strings.TrimSuffix(content, "\n"), "\n")[:len(lines)]; strings.Join(want, "\n") != strings.Join(lines, "\n") {
+		t.Fatal("window is not the file's first lines")
+	}
+}
+
+// TestReadFileWindowsTileTheFile: the windows next_offset chains together
+// cover every line exactly once, which is what lets a caller read a long
+// file without re-reading or skipping.
+func TestReadFileWindowsTileTheFile(t *testing.T) {
+	tool, _ := newTestTool(t)
+	content := longFile(300)
+	writeTree(t, tool.ws, map[string]string{"long.txt": content})
+
+	var got []string
+	offset := 1
+	for reads := 0; ; reads++ {
+		if reads > 10 {
+			t.Fatal("windows did not finish the file")
+		}
+		win := readWindow(t, tool, fmt.Sprintf(`{"file_path":"long.txt","offset":%d}`, offset))
+		got = append(got, strings.Split(strings.TrimSuffix(win.Content, "\n"), "\n")...)
+		if !win.IsTruncated {
+			break
+		}
+		if win.NextOffset <= offset {
+			t.Fatalf("next_offset = %d does not advance past offset %d", win.NextOffset, offset)
+		}
+		offset = win.NextOffset
+	}
+	if want := strings.Split(strings.TrimSuffix(content, "\n"), "\n"); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("windows cover %d lines, want the file's %d", len(got), len(want))
+	}
+}
+
+// TestReadFileKeepsOneOverlongLine: a single line past the budget still
+// comes back. Returning nothing would leave the caller with no range to
+// page from; the truncate middleware is what bounds a line that long.
+func TestReadFileKeepsOneOverlongLine(t *testing.T) {
+	tool, _ := newTestTool(t)
+	line := strings.Repeat("y", ReadResultChars+5000)
+	writeTree(t, tool.ws, map[string]string{"min.js": line + "\n"})
+
+	got := readWindow(t, tool, `{"file_path":"min.js"}`)
+	if got.Content != line+"\n" {
+		t.Fatalf("window = %d chars, want the single %d-char line", len(got.Content), len(line))
+	}
+	if got.IsTruncated {
+		t.Fatal("a one-line file has no next window")
+	}
+}
+
+// TestReadFileLimitBelowBudgetWins: an explicit limit still bounds the
+// window, and the result keeps pointing at the next offset.
+func TestReadFileLimitBelowBudgetWins(t *testing.T) {
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{"long.txt": longFile(50)})
+
+	got := readWindow(t, tool, `{"file_path":"long.txt","limit":10}`)
+	if lines := strings.Count(got.Content, "\n"); lines != 10 {
+		t.Fatalf("window = %d lines, want the requested 10", lines)
+	}
+	if got.NextOffset != 11 {
+		t.Fatalf("next_offset = %d, want 11", got.NextOffset)
+	}
+}
+
+// TestJSONStringLenMatchesMarshal pins the read budget's unit to the
+// encoder it has to agree with: a window is spent in JSON bytes, so every
+// escape the encoder emits has to be counted the same way here. Each case
+// is a byte sequence encoding/json treats differently.
+func TestJSONStringLenMatchesMarshal(t *testing.T) {
+	cases := []string{
+		"",
+		"plain ascii",
+		`quote " in it`,
+		`backslash \ in it`,
+		"tabs\tnewlines\nreturns\rbell\a form\f back\b",
+		"markup <div class=\"a\">&amp;</div>",
+		"del \x7f stays one byte",
+		"unicode 中文 and emoji 😀",
+		"separators \u2028\u2029",
+		string([]byte{0xff, 0xfe, 'a'}),
+	}
+	for _, c := range cases {
+		enc, err := json.Marshal(c)
+		if err != nil {
+			t.Fatalf("marshal %q: %v", c, err)
+		}
+		// A JSON string literal is the quotes around the escaped body.
+		if want, got := len(enc)-2, jsonStringLen([]byte(c)); got != want {
+			t.Errorf("jsonStringLen(%q) = %d, want %d (encoded %s)", c, got, want, enc)
+		}
+	}
+}
+
+// TestReadFileWindowFitsEncodedBudget: a window is bounded by what the
+// result costs once encoded, not by the bytes of the file. Markup and
+// terminal control codes expand to six bytes per character, so a window
+// sized on the file's own bytes runs past the truncate cap — the policy
+// then cuts it a second time and the model holds the two ends of a range
+// it was told was whole.
+func TestReadFileWindowFitsEncodedBudget(t *testing.T) {
+	tool, _ := newTestTool(t)
+	var b strings.Builder
+	for i := 1; b.Len() < 60_000; i++ {
+		fmt.Fprintf(&b, "line %04d <div class=\"a\">&amp;</div> \x1b[31mred\x1b[0m\n", i)
+	}
+	writeTree(t, tool.ws, map[string]string{"noisy.html": b.String()})
+
+	// middlewares.truncate.max_chars: a result at or above the cap is
+	// excerpted, so every window has to stay under it.
+	const truncateCap = 24_000
+	offset := 1
+	for reads := 0; ; reads++ {
+		if reads > 20 {
+			t.Fatal("windows did not finish the file")
+		}
+		args := fmt.Sprintf(`{"file_path":"noisy.html","offset":%d}`, offset)
+		raw, err := execute(t, tool.read(), args)
+		if err != nil {
+			t.Fatalf("read_file %s: %v", args, err)
+		}
+		if runes := utf8.RuneCountInString(raw); runes >= truncateCap {
+			t.Fatalf("window %s encodes to %d runes, want under the %d cap",
+				args, runes, truncateCap)
+		}
+		var got readResult
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatalf("decode read_file result: %v (%s)", err, raw)
+		}
+		if !got.IsTruncated {
+			break
+		}
+		if got.NextOffset <= offset {
+			t.Fatalf("next_offset = %d does not advance past offset %d",
+				got.NextOffset, offset)
+		}
+		offset = got.NextOffset
+	}
+}
+
+// TestJoinLineRangeSpendsTheBudgetOnTheEncodedString: the newline
+// joining two lines is one byte in the file and two once encoded, so a
+// window of short lines that charges it as one keeps a quarter more than
+// the budget allows. On two-character lines that is the difference
+// between a window under the truncate cap and one the policy cuts in
+// half — the case the encoded budget exists to prevent.
+func TestJoinLineRangeSpendsTheBudgetOnTheEncodedString(t *testing.T) {
+	const (
+		budget = 200
+		lines  = 500
+	)
+	var b strings.Builder
+	for i := 0; i < lines; i++ {
+		b.WriteString("ab\n")
+	}
+	out, reached := joinLineRange([]byte(b.String()), 0, lines, budget)
+	if reached >= lines {
+		t.Fatalf("a %d-byte budget held all %d lines", budget, reached)
+	}
+	if got := jsonStringLen([]byte(out)); got > budget {
+		t.Fatalf("window of %d lines encodes to %d bytes, want at most %d",
+			reached, got, budget)
+	}
+}
+
+// TestReadFileKeepsLeadingBlankLines: a window whose first line is empty
+// has written no bytes yet, so a "have I emitted a line" test made of the
+// builder's length drops the joining newline and returns the second line
+// as if it were the first. The whole read of a file has to be the file.
+func TestReadFileKeepsLeadingBlankLines(t *testing.T) {
+	tool, _ := newTestTool(t)
+	for _, content := range []string{"\n\nx\n", "\nfirst\n", "\n\n\n"} {
+		writeTree(t, tool.ws, map[string]string{"blank.txt": content})
+		got := readWindow(t, tool, `{"file_path":"blank.txt"}`)
+		if got.Content != content {
+			t.Fatalf("read of %q = %q, want the file", content, got.Content)
+		}
+	}
+}
+
+// denyReadWorkspace fails every read of one path. It is how this test
+// makes a file unreadable on every platform: chmod 000 denies nothing
+// to root or on Windows, and the lane that runs this file's tests must
+// not be the one where the assertion quietly stops running.
+type denyReadWorkspace struct {
+	workspace.Workspace
+	path string
+}
+
+func (d denyReadWorkspace) Read(ctx context.Context, p string) ([]byte, error) {
+	if p == d.path {
+		return nil, fmt.Errorf("read %s: %w", p, fs.ErrPermission)
+	}
+	return d.Workspace.Read(ctx, p)
+}
+
+// TestGrepNamedFileReportsItsErrors: a walk drops an entry it cannot
+// open and still answers for the tree around it, but a named file is the
+// whole question. Answering with an empty match list would read as "the
+// file does not contain it", which is a different fact.
+func TestGrepNamedFileReportsItsErrors(t *testing.T) {
+	base := newTestWorkspace(t)
+	writeTree(t, base, map[string]string{"locked": "secret\n"})
+	tool, err := New(denyReadWorkspace{Workspace: base, path: "locked"})
+	if err != nil {
+		t.Fatalf("files.New: %v", err)
+	}
+
+	out, err := execute(t, tool.grep(), `{"pattern":"secret","path":"locked"}`)
+	if err == nil {
+		t.Fatalf("grep on an unreadable file = %s, want an error", out)
+	}
+	if !strings.Contains(err.Error(), "locked") {
+		t.Fatalf("grep error = %v, want it to name the file", err)
+	}
+}

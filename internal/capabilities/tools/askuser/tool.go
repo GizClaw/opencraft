@@ -53,7 +53,11 @@ func (t *Tool) Definition() message.ToolDefinition {
 }
 
 // Metadata implements tool.ToolMetadata.
-func (t *Tool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
+func (t *Tool) Metadata() tool.ToolMeta {
+	// Blocks until the user answers; exempt from the assembly's
+	// generic tool timeout.
+	return tool.ToolMeta{SelfTimeout: true}
+}
 
 // Execute implements tool.Tool.
 // Execute implements tool.Tool. The tool result is a single text part;

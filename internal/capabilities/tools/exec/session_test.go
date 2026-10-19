@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/sandbox"
 )
@@ -13,6 +15,9 @@ import (
 type sessSession struct {
 	output sandbox.SessionOutput
 	exit   sandbox.SessionExit
+	// waitBlock makes Wait block until the context is done, so tests
+	// can exercise a bounded wait against a live process.
+	waitBlock bool
 }
 
 func (s *sessSession) ID() string { return "p" }
@@ -34,7 +39,11 @@ func (s *sessSession) Signal(context.Context, sandbox.SessionSignal) error {
 	return nil
 }
 func (s *sessSession) Terminate(context.Context) error { return nil }
-func (s *sessSession) Wait(context.Context) (sandbox.SessionExit, error) {
+func (s *sessSession) Wait(ctx context.Context) (sandbox.SessionExit, error) {
+	if s.waitBlock {
+		<-ctx.Done()
+		return sandbox.SessionExit{}, ctx.Err()
+	}
 	return s.exit, nil
 }
 func (s *sessSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
@@ -175,6 +184,39 @@ func TestWaitRemovesSession(t *testing.T) {
 	}
 }
 
+// TestWaitTimeoutLeavesSessionLive verifies a bounded wait: when the
+// wait budget expires the session survives (readable, waitable again),
+// and a later plain wait still reports the exit.
+func TestWaitTimeoutLeavesSessionLive(t *testing.T) {
+	tool, runner := newSessionTool()
+	runner.proc.waitBlock = true
+	ctx := context.Background()
+
+	if _, err := tool.Execute(ctx,
+		`{"action":"start","process_id":"s1","argv":["sleep","60"]}`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := tool.Execute(ctx,
+		`{"action":"wait","process_id":"s1","timeout_seconds":0.05}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Text(), `"timed_out":true`) {
+		t.Fatalf("wait = %s, want a timed_out marker", out)
+	}
+
+	// The session survived the expired wait: drop the block and the
+	// same id still waits to an exit.
+	runner.proc.waitBlock = false
+	out, err = tool.Execute(ctx, `{"action":"wait","process_id":"s1"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Text(), `"exit_code":0`) {
+		t.Fatalf("wait after timeout = %s, want the exit", out)
+	}
+}
+
 // TestMaxSessions verifies the live-session cap: starting beyond it is
 // rejected with a clear error instead of growing the map without bound.
 func TestMaxSessions(t *testing.T) {
@@ -210,5 +252,31 @@ func TestSessionNamesUnknownArgument(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q missing %q", msg, want)
 		}
+	}
+}
+
+// TestWaitBudgetClampsAtTheNanosecondOverflow pins the conversion
+// action=wait uses. A seconds budget past what int64 nanoseconds hold
+// is out of range for the float-to-int conversion, and what comes back
+// is up to the machine: arm64 saturates to MaxInt64, amd64 answers
+// MinInt64. Either way it must not become a deadline in the past, which
+// reports timed_out without waiting.
+func TestWaitBudgetClampsAtTheNanosecondOverflow(t *testing.T) {
+	if got := waitBudget(30); got != 30*time.Second {
+		t.Fatalf("waitBudget(30) = %s, want 30s", got)
+	}
+	// A budget the nanosecond count holds stays exact; this is the
+	// largest order of magnitude that does (9e18 ns of the 9.2e18).
+	if got := waitBudget(9e9); got != 9e9*time.Second {
+		t.Fatalf("waitBudget(9e9) = %s, want 9e9s", got)
+	}
+	for _, seconds := range []float64{1e10, 1e18, math.MaxFloat64} {
+		if got := waitBudget(seconds); got <= 0 {
+			t.Fatalf("waitBudget(%g) = %s, want a positive budget", seconds, got)
+		}
+	}
+	if got := waitBudget(math.MaxFloat64); got != time.Duration(math.MaxInt64) {
+		t.Fatalf("waitBudget(max float) = %s, want the clamp %s",
+			got, time.Duration(math.MaxInt64))
 	}
 }

@@ -68,7 +68,9 @@ func (t *Tool) Definition() message.ToolDefinition {
 
 // Metadata implements tool.ToolMetadata.
 func (t *Tool) Metadata() tool.ToolMeta {
-	return tool.ToolMeta{MutatesState: true}
+	// May block on the user's answer (a confirmation prompt);
+	// exempt from the assembly's generic tool timeout.
+	return tool.ToolMeta{MutatesState: true, SelfTimeout: true}
 }
 
 // Execute implements tool.Tool.

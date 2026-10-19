@@ -11,7 +11,10 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
+	"time"
 
+	sdkdelegation "github.com/GizClaw/flowcraft/core/delegation"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/hooks"
 	"github.com/GizClaw/flowcraft/core/message"
@@ -107,9 +110,16 @@ func (AssemblyFactory) New(ctx context.Context, in resource.Input) (any, error) 
 			policy = p
 		}
 	}
-	mws, err := buildMiddleware(settings.Middlewares, hookMgr, policy)
+	mws, catTimeout, err := buildMiddleware(settings.Middlewares, hookMgr, policy)
 	if err != nil {
 		return nil, err
+	}
+	if catTimeout != nil {
+		// The timeout middleware resolves every tool's SelfTimeout
+		// claim through the assembly's registry, which tool.NewAssembly
+		// only builds later; this source is how the registry reaches it
+		// (see catalogTimeout).
+		sources = append(sources, timeoutCatalogSource{timeout: catTimeout})
 	}
 	opts := []tool.AssemblyOption{tool.WithMiddleware(mws...)}
 	if settings.Dynamic != nil {
@@ -125,12 +135,18 @@ func buildMiddleware(
 	s *middlewareSettings,
 	hookMgr *hooks.Manager,
 	policy *subagents.Policy,
-) ([]tool.Middleware, error) {
+) ([]tool.Middleware, *catalogTimeout, error) {
 	var mws []tool.Middleware
 	core := toolmiddleware.Settings{}
+	var timeoutSettings *toolmiddleware.TimeoutSettings
 	if s != nil {
 		core.Recover = s.Recover
-		core.Timeout = s.Timeout
+		// The timeout section is not handed to FromSettings: its
+		// middleware needs the assembly's own registry to resolve each
+		// tool's ToolMeta.SelfTimeout claim (see catalogTimeout). It is
+		// added below in the position FromSettings would have used —
+		// after the result policy, just outside the concurrency limiter.
+		timeoutSettings = s.Timeout
 		core.Concurrency = s.Concurrency
 		// Non-text result parts are bounded even when the text limit is
 		// off: a tool result rides every later turn's context, and media
@@ -145,9 +161,27 @@ func buildMiddleware(
 	}
 	built, err := toolmiddleware.FromSettings(core)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	mws = append(mws, built...)
+	var timeout *catalogTimeout
+	if timeoutSettings != nil && timeoutSettings.Default != "" {
+		delay, err := time.ParseDuration(timeoutSettings.Default)
+		if err != nil {
+			return nil, nil, errdefs.Validationf(
+				"tool middleware: timeout.default: %v", err)
+		}
+		timeout = newCatalogTimeout(delay, perToolTimeoutExemptions())
+		mw := timeout.middleware()
+		// FromSettings appends the concurrency limiter last when it is
+		// enabled, so inserting before the tail keeps the canonical
+		// order: the timeout sits outside the semaphore.
+		if s.Concurrency != nil && s.Concurrency.Limit > 0 {
+			mws = append(mws[:len(mws)-1], mw, mws[len(mws)-1])
+		} else {
+			mws = append(mws, mw)
+		}
+	}
 	// The delegation policy sits behind the core middleware: a refused
 	// delegate call still passes recover/timeout/metrics, so one
 	// refusal looks exactly like any other rejected tool call.
@@ -155,7 +189,7 @@ func buildMiddleware(
 		mws = append(mws, mw)
 	}
 	if s == nil {
-		return mws, nil
+		return mws, timeout, nil
 	}
 
 	// Redaction rules are compiled once and shared: they drive both the
@@ -165,7 +199,7 @@ func buildMiddleware(
 	if s.Redact != nil {
 		rules, err = compileRedactRules(s.Redact.Rules)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	// Audit outermost: it records after every inner transform, so the
@@ -173,7 +207,7 @@ func buildMiddleware(
 	if s.Audit != nil && s.Audit.Enabled {
 		mw, err := auditMiddleware(s.Audit, rules)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		mws = append(mws, mw)
 	}
@@ -187,7 +221,7 @@ func buildMiddleware(
 	// [toolmiddleware.FromSettings].
 	if s.ResultLimit != nil {
 		if s.ResultLimit.Max <= 0 {
-			return nil, errdefs.Validationf(
+			return nil, nil, errdefs.Validationf(
 				"tool middleware: result_limit.max must be positive, got %d",
 				s.ResultLimit.Max)
 		}
@@ -204,12 +238,12 @@ func buildMiddleware(
 	}
 	if s.Truncate != nil && s.Truncate.Enabled {
 		if s.Truncate.MaxChars <= 0 {
-			return nil, errdefs.Validationf(
+			return nil, nil, errdefs.Validationf(
 				"tool middleware: truncate.max_chars must be positive, got %d",
 				s.Truncate.MaxChars)
 		}
 		if strings.TrimSpace(s.Truncate.Dir) == "" {
-			return nil, errdefs.Validationf(
+			return nil, nil, errdefs.Validationf(
 				"tool middleware: truncate.dir is required")
 		}
 		if mw := toolmiddleware.Truncate(*s.Truncate); mw != nil {
@@ -224,8 +258,94 @@ func buildMiddleware(
 	if mw := hooksMiddleware(hookMgr); mw != nil {
 		mws = append(mws, mw)
 	}
-	return mws, nil
+	return mws, timeout, nil
 }
+
+// catalogTimeout builds the timeout middleware once the assembly's
+// registry exists. toolmiddleware.TimeoutWithCatalog resolves each
+// tool's ToolMeta.SelfTimeout claim through a Catalog, and a tool that
+// bounds itself (exec_command and exec_session manage their own
+// deadlines; the image, video, search and plugin tools own transport
+// or provider timeouts) must not be wrapped in a competing one. The
+// registry is constructed inside tool.NewAssembly, after this chain is
+// assembled, so the middleware resolves it at composition time and the
+// registry arrives through timeoutCatalogSource.Attach.
+type catalogTimeout struct {
+	delay   time.Duration
+	perTool map[string]time.Duration
+
+	mu      sync.Mutex
+	catalog tool.Catalog
+}
+
+func newCatalogTimeout(
+	delay time.Duration, perTool map[string]time.Duration,
+) *catalogTimeout {
+	return &catalogTimeout{delay: delay, perTool: perTool}
+}
+
+// attach hands over the assembly's registry. The registrar NewAssembly
+// gives to attachers is the registry itself (tool.Registry implements
+// both roles), so the read side is recovered from it here.
+func (c *catalogTimeout) attach(registrar tool.Registrar) {
+	catalog, ok := registrar.(tool.Catalog)
+	if !ok {
+		telemetry.Warn(context.Background(),
+			"tool assembly: registry is not a catalog; SelfTimeout claims are ignored")
+		return
+	}
+	c.mu.Lock()
+	c.catalog = catalog
+	c.mu.Unlock()
+}
+
+// middleware returns the chain entry. NewExecutor composes the chain
+// once, after the attachers ran, so resolution here is synchronous; an
+// assembly composed without the attacher falls back to the catalog-less
+// timeout, which honours perTool but not SelfTimeout claims.
+func (c *catalogTimeout) middleware() tool.Middleware {
+	return func(next tool.Dispatch) tool.Dispatch {
+		c.mu.Lock()
+		catalog := c.catalog
+		c.mu.Unlock()
+		if catalog == nil {
+			return toolmiddleware.Timeout(c.delay, c.perTool)(next)
+		}
+		return toolmiddleware.TimeoutWithCatalog(catalog, c.delay, c.perTool)(next)
+	}
+}
+
+// perToolTimeoutExemptions names tools whose calls may outlive the
+// generic default and whose definitions this repository does not own,
+// so they cannot declare ToolMeta.SelfTimeout themselves. A zero limit
+// exempts the name; a perTool entry wins over the tool's own claim, so
+// host policy stays authoritative.
+//
+// The delegate tool is one call per delegation: sync mode blocks the
+// caller's turn until the delegated worker reaches a terminal state,
+// so the generic default would cut every long delegation short and
+// turn its result into a timeout error. The worker's own execution and
+// the run's stop are the bounds.
+func perToolTimeoutExemptions() map[string]time.Duration {
+	return map[string]time.Duration{sdkdelegation.ToolName: 0}
+}
+
+// timeoutCatalogSource publishes no tools: it exists so NewAssembly's
+// attacher pass can hand the built registry to the timeout middleware.
+type timeoutCatalogSource struct {
+	timeout *catalogTimeout
+}
+
+func (timeoutCatalogSource) Tools() []tool.Tool         { return nil }
+func (timeoutCatalogSource) LazyTools() []tool.LazyTool { return nil }
+
+// Attach implements tool.RegistryAttacher.
+func (s timeoutCatalogSource) Attach(r tool.Registrar) { s.timeout.attach(r) }
+
+var (
+	_ tool.Source           = timeoutCatalogSource{}
+	_ tool.RegistryAttacher = timeoutCatalogSource{}
+)
 
 // hooksMiddleware fires PreToolUse before and PostToolUse after every
 // tool call with a JSON event payload.

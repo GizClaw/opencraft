@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
@@ -38,6 +39,25 @@ const (
 	// GlobName is the canonical glob tool name.
 	GlobName = "glob"
 )
+
+// ReadResultChars is the budget of one read, counted on the encoded
+// result. The assembly's truncate middleware caps a result at
+// middlewares.truncate.max_chars (24000 in tools.yaml) and answers
+// anything longer with a head-and-tail excerpt plus a cache pointer. A
+// window below that cap comes back whole, so a read is a complete range
+// the model can page from, and next_offset says where the next one
+// starts. Without the budget a read of a long file is cut twice — once
+// at the line limit and again by the middleware — which leaves the model
+// holding the two ends of a range whose middle it cannot reach in one
+// call.
+//
+// The budget counts the JSON encoding, not the bytes of the file: the
+// middleware measures the result on the wire, where one character can
+// cost six bytes. A log of terminal control codes and a markup fragment
+// both expand past the headroom under the cap, so a window sized on the
+// file's own bytes would be cut a second time — the case this budget
+// exists to prevent.
+const ReadResultChars = 20_000
 
 const (
 	defaultReadLimit = 1000
@@ -111,11 +131,16 @@ var _ tool.Tool = (*readFileTool)(nil)
 func (t *readFileTool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		ReadFileName,
-		"Read a text file from the workspace and return the requested "+
-			"line range. Paths are relative to the workspace root. "+
-			"Returns JSON: {file_path, content, offset, limit, "+
-			"total_lines, is_truncated}. For large files prefer grep "+
-			"or a narrow offset/limit range.",
+		"Read a text file from the workspace and return one window of "+
+			"it. Paths are relative to the workspace root. Returns JSON: "+
+			"{file_path, content, offset, limit, total_lines, "+
+			"is_truncated, next_offset}. A window carries as much as one "+
+			"result can hold (about 20000 characters, fewer when the "+
+			"text needs escaping, or limit lines if that is smaller); "+
+			"when lines remain, next_offset is where "+
+			"the next read continues. Read a file whole when it fits, and "+
+			"continue from next_offset otherwise: probing in small "+
+			"ranges costs a round per probe.",
 		message.ToolProperty("file_path", "string",
 			"The file to read: relative to the workspace root, or an "+
 				"absolute path under an allowed root (workspace, skill "+
@@ -204,18 +229,29 @@ func (t *readFileTool) execute(ctx context.Context, arguments string) (string, e
 	if end > total {
 		end = total
 	}
-	content := joinLineRange(data, start, end)
-	if end < total || (end == total && total > 0 && endsWithNL) {
+	content, reached := joinLineRange(data, start, end, ReadResultChars)
+	// The trailing newline keeps the windows tileable: it is the break
+	// between the last line returned and the first one that is not. A
+	// window that returned nothing - an offset past the end of the file
+	// - has no such break to describe.
+	if reached > start && (reached < total || (reached == total && endsWithNL)) {
 		content += "\n"
 	}
-	payload, err := json.Marshal(map[string]any{
+	result := map[string]any{
 		"file_path":    args.FilePath,
 		"content":      content,
 		"offset":       offset,
 		"limit":        limit,
 		"total_lines":  total,
-		"is_truncated": end < total,
-	})
+		"is_truncated": reached < total,
+	}
+	// next_offset is where the next read continues: the window can stop
+	// short of limit lines when the character budget fills first, so
+	// offset+limit is not that answer.
+	if reached < total {
+		result["next_offset"] = reached + 1
+	}
+	payload, err := json.Marshal(result)
 	if err != nil {
 		return "", errdefs.Internalf("%s: encode result: %v", ReadFileName, err)
 	}
@@ -223,15 +259,31 @@ func (t *readFileTool) execute(ctx context.Context, arguments string) (string, e
 }
 
 // joinLineRange returns lines [start, end) of data as a single string
-// without allocating the whole file as a line slice. Lines are split
-// on '\n'; a trailing newline is not part of a line.
-func joinLineRange(data []byte, start, end int) string {
+// without allocating the whole file as a line slice, stopping once the
+// window has reached budget characters. The returned end is exclusive
+// and comes up short of end when the budget stopped the window; the
+// caller reports it as where the next read continues.
+//
+// One line always comes back, even when it alone exceeds the budget: a
+// window that returned nothing could not be paged from. A line that
+// long is usually a bundle or generated file, which the truncate
+// middleware then excerpts with a pointer at the full output.
+//
+// Lines are split on '\n'; a trailing newline is not part of a line.
+func joinLineRange(data []byte, start, end, budget int) (string, int) {
 	if start >= end || len(data) == 0 {
-		return ""
+		return "", start
 	}
 	var b strings.Builder
 	line := 0
 	idx := 0
+	reached := start
+	encoded := 0
+	// emitted says a line of the window is already in b, which is not the
+	// same as b holding bytes: a window that opens on a blank line holds
+	// none, and a length test then drops its joining newline and lets the
+	// next line in for free.
+	emitted := false
 	for line < end && idx < len(data) {
 		nl := bytes.IndexByte(data[idx:], '\n')
 		lineEnd := len(data)
@@ -239,10 +291,25 @@ func joinLineRange(data []byte, start, end int) string {
 			lineEnd = idx + nl
 		}
 		if line >= start {
-			if b.Len() > 0 {
+			cost := jsonStringLen(data[idx:lineEnd])
+			if emitted {
+				// The '\n' that joins this line to the previous
+				// one: one byte in the file, two once encoded.
+				// Charging it as one kept a quarter more than the
+				// budget on a file of short lines, which on
+				// two-character lines is past the truncate cap.
+				cost += 2
+			}
+			if emitted && encoded+cost > budget {
+				break
+			}
+			if emitted {
 				b.WriteByte('\n')
 			}
 			b.Write(data[idx:lineEnd])
+			encoded += cost
+			reached = line + 1
+			emitted = true
 		}
 		if nl < 0 {
 			break
@@ -250,7 +317,53 @@ func joinLineRange(data []byte, start, end int) string {
 		idx = lineEnd + 1
 		line++
 	}
-	return b.String()
+	return b.String(), reached
+}
+
+// jsonStringLen returns the bytes a JSON string literal holding b takes,
+// which is what the read budget is measured in. It mirrors encoding/json
+// for a string value: the quote, the backslash and the short escapes
+// cost two bytes, other control characters and the line separators cost
+// six, and so do the HTML set (Marshal escapes it by default) and every
+// byte of invalid UTF-8, which the encoder replaces with \ufffd. The two
+// must agree exactly: a cheaper estimate lets a window grow past the
+// result policy's cap, and a dearer one hands back windows shorter than
+// the result could carry. TestJSONStringLenMatchesMarshal pins them.
+func jsonStringLen(b []byte) int {
+	n := 0
+	for i := 0; i < len(b); {
+		c := b[i]
+		switch {
+		case c == '"' || c == '\\' ||
+			c == '\n' || c == '\r' || c == '\t' || c == '\b' || c == '\f':
+			n += 2
+			i++
+		case c < 0x20:
+			n += 6
+			i++
+		case c < utf8.RuneSelf:
+			if c == '<' || c == '>' || c == '&' {
+				n += 6
+			} else {
+				n++
+			}
+			i++
+		default:
+			r, size := utf8.DecodeRune(b[i:])
+			switch {
+			case r == utf8.RuneError && size == 1:
+				n += 6
+				i++
+			case r == '\u2028' || r == '\u2029':
+				n += 6
+				i += size
+			default:
+				n += size
+				i += size
+			}
+		}
+	}
+	return n
 }
 
 // ---------------------------------------------------------------------------
@@ -463,17 +576,19 @@ func (t *grepTool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		GrepName,
 		"Search workspace files for lines matching a pattern. "+
-			"Returns JSON: {matches:[{path, line_number, line}], "+
-			"truncated, skipped_large, binary_matches}. Hidden "+
+			"path may name a directory (searched recursively) or a "+
+			"single file. Returns JSON: {matches:[{path, line_number, "+
+			"line}], truncated, skipped_large, binary_matches}. Hidden "+
 			"entries and .git are skipped unless include_hidden is "+
-			"true; files larger than 1 MiB are skipped, and a binary "+
-			"file that matches is reported by path in binary_matches "+
-			"instead of by line.",
+			"true, or the entry is the file path itself; files larger "+
+			"than 1 MiB are skipped, and a binary file that matches is "+
+			"reported by path in binary_matches instead of by line.",
 		message.ToolProperty("pattern", "string",
 			"The search pattern: a regular expression unless "+
 				"fixed_strings is true (required)."),
 		message.ToolProperty("path", "string",
-			"Directory to search, relative to the workspace root (default \".\")."),
+			"Directory to search, or one file to search, relative to "+
+				"the workspace root (default \".\")."),
 		message.ToolProperty("case_insensitive", "boolean",
 			"Case-insensitive match (default false)."),
 		message.ToolProperty("fixed_strings", "boolean",
@@ -531,11 +646,6 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 	if err != nil {
 		return "", err
 	}
-	if !info.IsDir() {
-		return "", errdefs.Validationf(
-			"%s: path %q is a file, not a directory; pass the directory "+
-				"that contains it, or read the file instead", GrepName, root)
-	}
 	expr := args.Pattern
 	if args.FixedStrings {
 		expr = regexp.QuoteMeta(expr)
@@ -555,108 +665,191 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 		maxMatches = maxGrepMatches
 	}
 
-	var matches []grepMatch
-	var binaryMatches []string
-	var skippedLarge int
-	scannedFiles := 0
-	truncated := false
-	err = workspace.Walk(ctx, t.ws, root, func(p string, entry fs.DirEntry) error {
-		if entry.IsDir() {
-			name := entry.Name()
-			if name == alwaysSkipDir ||
-				(!args.IncludeHidden && fshidden.Hidden(entry)) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !args.IncludeHidden && fshidden.Hidden(entry) {
-			return nil
-		}
-		if len(matches) > maxMatches {
-			// The list already holds one match over the cap, so the walk
-			// is on a file whose hits cannot be reported: the result is
-			// incomplete by construction.
-			truncated = true
-			return errStopWalk
-		}
-		scannedFiles++
-		if scannedFiles > maxGrepFiles {
-			truncated = true
-			return errStopWalk
-		}
-		// Skip oversized files from the walk's own stat when it has one:
-		// reading a MiB of a binary or a bundle only to discard it was
-		// the bulk of what a grep allocated.
-		if info, err := entry.Info(); err == nil &&
-			info.Size() > maxGrepFileBytes {
-			skippedLarge++
-			return nil
-		}
-		data, oversized, err := readFileBounded(
-			ctx, t.ws, p, maxGrepFileBytes)
-		if err != nil {
-			return nil // unreadable file: skip
-		}
-		if oversized {
-			skippedLarge++
-			return nil
-		}
-		// A NUL byte in the head of the file means binary content: a
-		// matched line would be an unreadable slice of a bundle or an
-		// asset. The fact that it matches is still signal — grep -l
-		// reports exactly this — so search it whole and report the path
-		// without scanning lines or building strings.
-		if bytes.IndexByte(data[:min(len(data), binarySniffBytes)], 0) >= 0 {
-			if re.Match(data) {
-				binaryMatches = append(binaryMatches, p)
-			}
-			return nil
-		}
-		capped := false
-		scanLines(data, func(lineNumber int, line []byte) bool {
-			if !re.Match(line) {
-				return true
-			}
-			matches = append(matches, grepMatch{
-				Path:       p,
-				LineNumber: lineNumber,
-				Line:       string(line),
-			})
-			// One match over the cap is the smallest amount of evidence
-			// that the cap is hiding hits, and it is what separates a
-			// complete answer from an incomplete one: a scan that stops
-			// as soon as the list is full cannot tell whether the last
-			// hit it kept was also the last hit in the tree, so it
-			// reported truncation for exactly-full results too.
-			capped = len(matches) > maxMatches
-			return !capped
-		})
-		if capped {
-			// The scan stopped at a dropped hit rather than at the end
-			// of its input.
-			truncated = true
-			return errStopWalk
-		}
-		return nil
-	})
+	scan := grepScan{re: re, maxMatches: maxMatches}
+	// A path that names a file searches that file: "search inside this
+	// one file" is a request the directory-only rule used to reject,
+	// and the caller has already done the narrowing a tree walk exists
+	// to do. Naming a file also outranks the hidden-entry rule, as it
+	// does for read_file.
+	if info.IsDir() {
+		err = scan.walk(ctx, t.ws, root, args.IncludeHidden)
+	} else {
+		err = scan.oneFile(ctx, t.ws, root, info.Size())
+	}
 	if err != nil && !errors.Is(err, errStopWalk) {
 		return "", err
 	}
-	if len(matches) > maxMatches {
-		matches = matches[:maxMatches]
+	if len(scan.matches) > scan.maxMatches {
+		scan.matches = scan.matches[:scan.maxMatches]
 	}
 	payload, err := json.Marshal(map[string]any{
-		"matches":       matches,
-		"truncated":     truncated,
-		"skipped_large": skippedLarge,
+		"matches":       scan.matches,
+		"truncated":     scan.truncated,
+		"skipped_large": scan.skippedLarge,
 		// Paths of binary files (bundles, wasm, media) whose bytes
 		// matched. Their lines are not returned: they are not text.
-		"binary_matches": binaryMatches,
+		"binary_matches": scan.binaryMatches,
 	})
 	if err != nil {
 		return "", errdefs.Internalf("%s: encode result: %v", GrepName, err)
 	}
 	return string(payload), nil
+}
+
+// grepScan accumulates the hits of one grep call. Both shapes a call
+// can take — a directory walked file by file, and the single file the
+// caller named — go through it, so they report the same fields under
+// the same caps.
+type grepScan struct {
+	re            *regexp.Regexp
+	maxMatches    int
+	matches       []grepMatch
+	binaryMatches []string
+	skippedLarge  int
+	truncated     bool
+}
+
+// walk searches root's tree, skipping hidden entries and .git unless
+// includeHidden is set, and stopping at maxGrepFiles.
+func (s *grepScan) walk(
+	ctx context.Context,
+	ws workspace.Workspace,
+	root string,
+	includeHidden bool,
+) error {
+	scannedFiles := 0
+	return workspace.Walk(ctx, ws, root, func(p string, entry fs.DirEntry) error {
+		if entry.IsDir() {
+			name := entry.Name()
+			if name == alwaysSkipDir ||
+				(!includeHidden && fshidden.Hidden(entry)) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !includeHidden && fshidden.Hidden(entry) {
+			return nil
+		}
+		if len(s.matches) > s.maxMatches {
+			// The list already holds one match over the cap, so the walk
+			// is on a file whose hits cannot be reported: the result is
+			// incomplete by construction.
+			s.truncated = true
+			return errStopWalk
+		}
+		scannedFiles++
+		if scannedFiles > maxGrepFiles {
+			s.truncated = true
+			return errStopWalk
+		}
+		// The walk's own stat spares reading a file it cannot report on.
+		size := int64(-1)
+		if info, err := entry.Info(); err == nil {
+			size = info.Size()
+		}
+		if !s.file(ctx, ws, p, size) {
+			return errStopWalk
+		}
+		return nil
+	})
+}
+
+// file searches one file and reports whether the walk may continue. An
+// unreadable file is skipped: one entry the process cannot open must
+// not fail a search of everything around it. size is the file's size
+// when the caller has already stat'ed it, or -1 to let the read decide.
+func (s *grepScan) file(
+	ctx context.Context,
+	ws workspace.Workspace,
+	p string,
+	size int64,
+) bool {
+	// Skip oversized files from the walk's own stat when it has one:
+	// reading a MiB of a binary or a bundle only to discard it was
+	// the bulk of what a grep allocated.
+	if size > maxGrepFileBytes {
+		s.skippedLarge++
+		return true
+	}
+	data, oversized, err := readFileBounded(ctx, ws, p, maxGrepFileBytes)
+	if err != nil {
+		return true // unreadable file: skip
+	}
+	if oversized {
+		s.skippedLarge++
+		return true
+	}
+	return !s.scanData(p, data)
+}
+
+// oneFile searches the single file the caller named. A walk can drop an
+// entry it cannot open and still answer for the tree around it; a named
+// file is the whole question, so a file it cannot read is an error rather
+// than an empty match list, which would read as "the file does not
+// contain it".
+func (s *grepScan) oneFile(
+	ctx context.Context,
+	ws workspace.Workspace,
+	p string,
+	size int64,
+) error {
+	// The size caps answer the same way a walk does - skipped_large, no
+	// matches - because they name a fact about the file rather than a
+	// failure to read it.
+	if size > maxGrepFileBytes {
+		s.skippedLarge++
+		return nil
+	}
+	data, oversized, err := readFileBounded(ctx, ws, p, maxGrepFileBytes)
+	if err != nil {
+		return err
+	}
+	if oversized {
+		s.skippedLarge++
+		return nil
+	}
+	s.scanData(p, data)
+	return nil
+}
+
+// scanData records the hits of one file's bytes and reports whether the
+// match cap stopped the scan short.
+func (s *grepScan) scanData(p string, data []byte) (capped bool) {
+	// A NUL byte in the head of the file means binary content: a
+	// matched line would be an unreadable slice of a bundle or an
+	// asset. The fact that it matches is still signal — grep -l
+	// reports exactly this — so search it whole and report the path
+	// without scanning lines or building strings.
+	if bytes.IndexByte(data[:min(len(data), binarySniffBytes)], 0) >= 0 {
+		if s.re.Match(data) {
+			s.binaryMatches = append(s.binaryMatches, p)
+		}
+		return false
+	}
+	scanLines(data, func(lineNumber int, line []byte) bool {
+		if !s.re.Match(line) {
+			return true
+		}
+		s.matches = append(s.matches, grepMatch{
+			Path:       p,
+			LineNumber: lineNumber,
+			Line:       string(line),
+		})
+		// One match over the cap is the smallest amount of evidence
+		// that the cap is hiding hits, and it is what separates a
+		// complete answer from an incomplete one: a scan that stops
+		// as soon as the list is full cannot tell whether the last
+		// hit it kept was also the last hit in the tree, so it
+		// reported truncation for exactly-full results too.
+		capped = len(s.matches) > s.maxMatches
+		return !capped
+	})
+	if capped {
+		// The scan stopped at a dropped hit rather than at the end
+		// of its input.
+		s.truncated = true
+	}
+	return capped
 }
 
 // scanLines calls emit once per line of data with the line's 1-based
