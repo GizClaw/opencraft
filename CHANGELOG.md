@@ -25,10 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the turn opened with, the fold then moved the older rounds out, and the
   clamp left the slices summing past the measurement — so a long
   conversation drew a prompt bigger than the window that served it
-  (582.6k of estimates against an 89.8k measurement). The estimates are
-  scaled onto the measurement now, keeping their shares, and the popover
-  says the split is a proportion; snapshots already stored are repaired on
-  read. (#250)
+  (582.6k of estimates against an 89.8k measurement). The conversation row
+  is now what the provider's own count left once the rows the harness
+  rendered are subtracted — which is exactly where a fold lands — and
+  those rows keep their own numbers: scaling every slice proportionally,
+  as this first did, drew a 2.4k instruction layer that was 22% of the
+  prompt as six tokens. The popover says the conversation row is a
+  remainder, and snapshots already stored are repaired on read. (#250,
+  #252)
 - The context meter's header no longer rounds a prompt that ran past the
   model window down to "100%". That line divides the prompt by the window
   — the one ratio in the meter that can pass its whole, which an

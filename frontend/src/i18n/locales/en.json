@@ -870,7 +870,7 @@
     "contextOfWindow": "{{percent}} of {{limit}}",
     "contextNoWindow": "used so far",
     "contextEstimated": "Estimated from this turn's prompt: the provider reported no usage for it.",
-    "contextScaled": "Scaled to the provider's count: the estimates for this prompt ran past it, which is what a turn that folds the conversation does.",
+    "contextConversationCapped": "Conversation is what the provider's count left after the rows above it: this prompt carried less of the conversation than the estimate for it, which is what a fold does. Those rows are their own estimates.",
     "contextToolsHint": "Tool JSON schemas, provider framing, and the error of the estimates above.",
     "contextInstructions": "System prompt",
     "contextEnvironment": "Environment and permissions",

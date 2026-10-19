@@ -694,21 +694,23 @@ export interface ContextCategoryUsage {
 // the turn's final model call carried, split by what filled it.
 //
 // measured_tokens is the provider's own inclusive count; categories always
-// sum to it (the residual category absorbs the difference between the
-// harness's estimates and the provider's count), so a bar drawn from the
-// categories fills exactly as far as the prompt reached. A turn that
-// produced no usage report leaves measured_tokens at zero and the
-// categories are estimates only. limit_tokens is the input window of the
-// model that served the call, zero when the deployment declares none.
+// sum to it (the conversation row takes what the count left after the rows
+// the harness rendered, and the residual absorbs what is left after that),
+// so a bar drawn from the categories fills exactly as far as the prompt
+// reached. A turn that produced no usage report leaves measured_tokens at
+// zero and the categories are estimates only. limit_tokens is the input
+// window of the model that served the call, zero when the deployment
+// declares none.
 //
-// scaled says the split was shrunk onto the measurement (the estimates ran
-// past it, as they do on a turn that folds the conversation mid-way): the
-// total is still the provider's count, and the popover says the slices are
-// proportions rather than an account of the request.
+// conversation_capped says the conversation row is the remainder of the
+// measurement rather than a size of its own - the estimate ran past what
+// the prompt could carry, as it does on a turn that folds the conversation
+// mid-way. The total is still the provider's count, every other row is its
+// own estimate, and the popover says so.
 export interface ContextUsageDTO {
   measured_tokens: number;
   categories: ContextCategoryUsage[];
-  scaled?: boolean;
+  conversation_capped?: boolean;
   model?: string;
   limit_tokens?: number;
   at?: string;

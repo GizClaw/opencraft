@@ -43,7 +43,10 @@ const (
 	ContextCategoryMemorySummary = "memory_summary"
 	// ContextCategoryConversation is the conversation itself: the raw
 	// window in bounded mode, the replayed transcript in full-history
-	// mode, or both plus the turn's own request text.
+	// mode, or both plus the turn's own request text. Its estimate
+	// describes the prompt the turn opened with, which compaction can
+	// rewrite before the call goes out, so the measurement settles this
+	// row rather than trusting the estimate (see Normalize).
 	ContextCategoryConversation = "conversation"
 	// ContextCategoryTurnContext is the per-turn tail block: the active
 	// plan, the skills list and the skills the model activated.
@@ -73,11 +76,13 @@ var ContextCategories = []string{
 
 // ContextCategory is one slice of the prompt.
 //
-// Tokens is an estimate for every category but ContextCategoryTools,
-// which is the measured total minus the estimates, scaled down when the
-// estimates ran past it (see Normalize). The total they add up to is the
-// measurement either way, so the bar always fills exactly as far as the
-// provider said the prompt reached.
+// Tokens is an estimate for the rows the harness rendered, and comes out
+// of the measurement for the two that cannot be estimated: the
+// conversation row is what the provider's count left after those rows,
+// and the tools row is what the same subtraction left after that (see
+// Normalize). The total they add up to is the measurement either way, so
+// the bar always fills exactly as far as the provider said the prompt
+// reached.
 type ContextCategory struct {
 	ID     string `json:"id"`
 	Tokens int    `json:"tokens"`
@@ -91,18 +96,20 @@ type ContextCategory struct {
 // the model that served the measured call, kept because the window it
 // implies is the one the number must be read against.
 //
-// Scaled marks a snapshot whose estimates ran past the measurement and
-// were shrunk to it (see Normalize). The total is still the provider's
-// count; what is approximate is the split, which holds the estimates'
-// proportions of a prompt that was rewritten before it was sent. The UI
-// says so instead of drawing those proportions as an account of the
-// request.
+// ConversationCapped marks a snapshot whose conversation estimate ran
+// past what the measurement left for it (see Normalize): the turn that
+// folds the conversation is the common case, because prepare estimated
+// the transcript it opened with and the call carried a fraction of it.
+// The total is still the provider's count, and every other row is its own
+// estimate; what the flag qualifies is the conversation row, which is
+// then a remainder rather than a size. The UI says so instead of drawing
+// that row as an account of what the conversation cost.
 type ContextUsage struct {
-	MeasuredTokens int64             `json:"measured_tokens"`
-	Categories     []ContextCategory `json:"categories"`
-	Scaled         bool              `json:"scaled,omitempty"`
-	Model          string            `json:"model,omitempty"`
-	At             time.Time         `json:"at"`
+	MeasuredTokens     int64             `json:"measured_tokens"`
+	Categories         []ContextCategory `json:"categories"`
+	ConversationCapped bool              `json:"conversation_capped,omitempty"`
+	Model              string            `json:"model,omitempty"`
+	At                 time.Time         `json:"at"`
 }
 
 // Token returns one category's size, zero when it is absent.
@@ -126,51 +133,49 @@ func (u ContextUsage) TotalTokens() int {
 	return total
 }
 
-// EstimatedTokens is the part of the total the harness estimated by
-// itself: everything but the residual category. On a scaled snapshot it is
-// the whole total, because the estimate that ran past the measurement was
-// shrunk onto it.
-func (u ContextUsage) EstimatedTokens() int {
-	total := 0
-	for _, c := range u.Categories {
-		if c.ID == ContextCategoryTools {
-			continue
-		}
-		total += c.Tokens
-	}
-	return total
-}
-
-// Normalize recomputes the residual category, scales an estimate that ran
-// past the measurement back to it, and puts the list in canonical order,
-// dropping the categories that hold nothing.
+// Normalize reconciles the estimates with the measurement, puts the list in
+// canonical order and drops the categories that hold nothing.
 //
-// The residual is the whole reason the meter can be honest about what it
-// does not know: tool schemas never reach a board var, provider framing
-// is invisible, and every estimate above is a character heuristic. What
-// the provider counted is exact, so the leftover goes in one bucket
-// rather than being spread over slices that would then read as fact.
+// Two rows do not come out of an estimate. The residual is the whole reason
+// the meter can be honest about what it does not know: tool schemas never
+// reach a board var, provider framing is invisible, and every estimate
+// above is a character heuristic. What the provider counted is exact, so
+// the leftover goes in one bucket rather than being spread over slices
+// that would then read as fact.
 //
-// An estimate can also come out ahead of the measurement that settles it,
-// and the turn that folds the conversation mid-way is the common case:
-// prepare estimated the transcript it opened with, then the fold moved the
-// older rounds out of the prompt and the call carried a fraction of it. A
-// provider that counts differently does the same on a smaller scale. A
-// residual cannot carry that surplus — clamped at zero it would leave the
-// slices summing past the measurement, and the meter divides its bar by
-// that sum, so the user would be shown a prompt larger than the window
-// that served it. So the estimates are scaled down to the measurement,
-// keeping each category's share, and Scaled records that the split is
-// those proportions rather than an account of the request.
+// The conversation row is the other one, and the reason it is derived is
+// the fold. Prepare estimates the transcript the turn opens with, then
+// compaction rewrites that prefix and the call carries a summary plus a
+// recent window — routinely an order of magnitude less. Shrinking every
+// slice proportionally to fit, which is what this did first, therefore cut
+// the harness rows too: a 2.4k instruction layer that was 22% of the
+// prompt was drawn as six tokens, because a multi-million-token transcript
+// estimate had to be absorbed somewhere. So the rows the harness rendered
+// keep their own numbers, the conversation gets what the measurement left
+// after them, and the leftover after that is the residual. Nothing is
+// inflated to fill the total and nothing is shrunk to hide it.
+//
+// Only a harness estimate that alone claims the whole prompt still scales
+// the lot, conversation included: there the miss is the harness's own, a
+// short turn over a large instruction layer makes it a few percent wide,
+// and proportions are the least wrong thing to draw.
 func (u *ContextUsage) Normalize() {
 	values := make(map[string]int, len(u.Categories))
-	estimated := 0
+	conversation := 0
+	attributed := 0
 	for _, c := range u.Categories {
-		if c.ID == ContextCategoryTools {
+		switch c.ID {
+		case ContextCategoryTools:
+			// Derived, never estimated: recomputed below from whatever
+			// the measurement leaves, so a stored one is dropped instead
+			// of being treated as an estimate.
+			continue
+		case ContextCategoryConversation:
+			conversation += c.Tokens
 			continue
 		}
 		values[c.ID] += c.Tokens
-		estimated += c.Tokens
+		attributed += c.Tokens
 	}
 	measured := int(u.MeasuredTokens)
 	residual := 0
@@ -179,11 +184,34 @@ func (u *ContextUsage) Normalize() {
 		// Nothing was measured, so there is nothing to reconcile the
 		// estimates against and nothing left over to bucket: the sum is
 		// the total.
-	case estimated > measured:
+		if conversation > 0 {
+			values[ContextCategoryConversation] = conversation
+		}
+	case attributed >= measured:
+		// The rows the harness rendered alone claim the whole prompt, so
+		// they are the ones that are wrong. Scale them, conversation
+		// included: this is the short turn over a large instruction
+		// layer, where every estimate is within a few percent of the
+		// measurement and their proportions still describe it.
+		if conversation > 0 {
+			values[ContextCategoryConversation] = conversation
+		}
 		scaleTo(values, measured)
-		u.Scaled = true
-	case estimated < measured:
-		residual = measured - estimated
+	default:
+		room := measured - attributed
+		if conversation >= room {
+			// The estimate described a prompt that was rewritten before
+			// it was sent. The conversation gets what the measurement
+			// left for it, which is what it actually cost, and the rows
+			// above it keep their own numbers.
+			u.ConversationCapped = true
+			if room > 0 {
+				values[ContextCategoryConversation] = room
+			}
+		} else {
+			values[ContextCategoryConversation] = conversation
+			residual = room - conversation
+		}
 	}
 	if residual > 0 {
 		values[ContextCategoryTools] = residual
@@ -283,12 +311,13 @@ func (s *Store) WriteContextUsage(id string, usage ContextUsage) error {
 // the meter silently falling back to "nothing measured" is exactly the
 // kind of quiet feature death that rule exists for.
 //
-// The snapshot is normalized on the way out. A document written before
-// the scaling rule (an estimate that ran past its own measurement, which a
-// folding turn produces) would otherwise draw a prompt larger than the
-// window that served it for as long as nobody ran another turn on that
-// conversation. Normalize is idempotent on a well-formed document, so this
-// costs nothing on the common path and repairs the ones already stored.
+// The snapshot is normalized on the way out. A document written before the
+// conversation row was derived (an estimate that ran past its own
+// measurement, which a folding turn produces) would otherwise draw a
+// prompt larger than the window that served it for as long as nobody ran
+// another turn on that conversation. Normalize is idempotent on a
+// well-formed document, so this costs nothing on the common path and
+// repairs the ones already stored.
 func (s *Store) ReadContextUsage(id string) (ContextUsage, error) {
 	var usage ContextUsage
 	if s == nil {

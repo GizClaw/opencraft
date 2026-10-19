@@ -186,10 +186,12 @@ export function ContextMeter({ usage }: { usage: ContextUsageDTO }) {
         ? 'var(--color-warn)'
         : 'var(--color-accent)';
   const estimated = (usage.measured_tokens ?? 0) <= 0;
-  // A measured prompt whose estimates ran past the measurement is scaled
-  // onto it: the total is exact, the split is a proportion. Saying so is
-  // the difference between a meter and a guess that looks like a meter.
-  const scaled = !estimated && usage.scaled === true;
+  // The conversation row is what the provider's count left once the rows
+  // the harness rendered are subtracted, so it reads as a remainder rather
+  // than as a size whenever the prompt carried less of the conversation
+  // than prepare estimated - which is what folding does. Saying so is the
+  // difference between a meter and a guess that looks like a meter.
+  const capped = !estimated && usage.conversation_capped === true;
 
   if (total <= 0) return null;
 
@@ -309,9 +311,9 @@ export function ContextMeter({ usage }: { usage: ContextUsageDTO }) {
               {t('chat.contextEstimated')}
             </p>
           )}
-          {scaled && (
+          {capped && (
             <p className="mt-2 border-t border-edge pt-2 text-micro leading-snug text-faint">
-              {t('chat.contextScaled')}
+              {t('chat.contextConversationCapped')}
             </p>
           )}
         </Popover>

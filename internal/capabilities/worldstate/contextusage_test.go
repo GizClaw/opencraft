@@ -132,11 +132,20 @@ func TestContextUsageFromBoardPairsEstimateWithMeasurement(t *testing.T) {
 	if got := usage.TotalTokens(); got != 40000 {
 		t.Fatalf("total = %d, want the measurement (the bar must fill exactly)", got)
 	}
-	if got := usage.Token(ocsessions.ContextCategoryTools); got != 40000-usage.EstimatedTokens() {
+	estimateOnly := 0
+	for _, c := range usage.Categories {
+		if c.ID != ocsessions.ContextCategoryTools {
+			estimateOnly += c.Tokens
+		}
+	}
+	if got := usage.Token(ocsessions.ContextCategoryTools); got != 40000-estimateOnly {
 		t.Fatalf("residual = %d, want measured minus estimates", got)
 	}
 	if got := usage.Token(ocsessions.ContextCategoryEnvironment); got == 0 {
 		t.Fatal("the environment estimate vanished when it was paired with usage")
+	}
+	if usage.ConversationCapped {
+		t.Fatal("a turn with no conversation estimate capped the conversation row")
 	}
 }
 
@@ -164,20 +173,23 @@ func TestContextUsageFromBoardWithoutUsage(t *testing.T) {
 	}
 }
 
-// TestContextUsageFromBoardScalesAFoldedPrompt pins the fold: full-history
+// TestContextUsageFromBoardCapsAFoldedConversation pins the fold: full-history
 // replay estimates the transcript the turn opened with, then the fold moves
-// the older rounds out of the prompt, so the call the usage report belongs
-// to carried a fraction of it. The snapshot must total the measurement (the
-// composer draws its bar against that sum) and say that the split is a
-// proportion.
-func TestContextUsageFromBoardScalesAFoldedPrompt(t *testing.T) {
+// the older rounds out of the prompt, so the call the usage report belongs to
+// carried a fraction of it. The snapshot must total the measurement (the
+// composer draws its bar against that sum), the rows the harness rendered
+// must keep the numbers the harness estimated, and the conversation row must
+// be marked as the remainder it now is.
+func TestContextUsageFromBoardCapsAFoldedConversation(t *testing.T) {
 	board := agent.NewBoard()
-	estimateContextUsage(
-		[]Section{newTextSection("environment", message.RoleUser, "workspace: /tmp/w")},
+	env := newTextSection("environment", message.RoleUser, "workspace: /tmp/w")
+	est := estimateContextUsage(
+		[]Section{env},
 		"",
 		400000,
 		50,
-	).writeTo(board)
+	)
+	est.writeTo(board)
 	board.SetVar(config.BoardVarLLMUsage, inference.Usage{
 		InputTokens: 90000,
 		Model: model.ModelRef{ID: model.ModelID{
@@ -195,11 +207,21 @@ func TestContextUsageFromBoardScalesAFoldedPrompt(t *testing.T) {
 	if got := usage.TotalTokens(); got != 90000 {
 		t.Fatalf("total = %d, want the measurement, not the pre-fold estimate", got)
 	}
-	if !usage.Scaled {
-		t.Fatal("a split scaled back to the measurement was not marked")
+	if !usage.ConversationCapped {
+		t.Fatal("a conversation cut down to the measurement was not marked")
+	}
+	// The row this hook rendered is not the one the fold rewrote: it keeps
+	// the estimate it was given, token for token.
+	if got, want := usage.Token(ocsessions.ContextCategoryEnvironment),
+		est.Categories[ocsessions.ContextCategoryEnvironment]; got != want {
+		t.Fatalf("environment = %d, want its own estimate %d", got, want)
+	}
+	if got, want := usage.Token(ocsessions.ContextCategoryConversation),
+		90000-est.Categories[ocsessions.ContextCategoryEnvironment]; got != want {
+		t.Fatalf("conversation = %d, want the %d the measurement left", got, want)
 	}
 	if got := usage.Token(ocsessions.ContextCategoryTools); got != 0 {
-		t.Fatalf("residual = %d, want 0 when the estimates overshoot", got)
+		t.Fatalf("residual = %d, want 0 when the conversation filled the room", got)
 	}
 }
 
