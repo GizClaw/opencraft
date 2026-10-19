@@ -29,25 +29,24 @@ const BLOCK_FOLD_CHARS = 2 << 10;
 // the block that followed it.
 //
 // A settled block longer than BLOCK_FOLD_CHARS renders its first section
-// and a control instead of the whole answer, unless the reader is still
-// on it: a block whose text arrived through this window's live stream
-// (TextItemFields.streamed) and which is the newest answer. That block
-// the reader watched grow, and folding it under them the moment the turn
-// ends would take away what they were reading. The exemption is the
-// position, not the turn: a steer row below it does not move it (an
-// interjection goes into the live turn rather than opening a new one),
-// while the answer the stream opens below it does - the next delta of
-// that turn - and it folds like the ones above it. That is the scene the
-// fold exists for: a reader scrolling back through a long session.
+// and a control instead of the whole answer, unless it is the answer the
+// reader is on: the transcript's newest reply. That block is whole
+// whether its deltas arrived in this window, came back from the archive
+// on a reload, or landed while another conversation was on screen -
+// folding it would hide the answer to the question just asked, and the
+// history of what this window happened to watch is not something the
+// reader can see. Everything a newer answer has pushed above is history,
+// and history folds: the reader reaches it by scrolling back, and one
+// click opens it. The boundary is the position, not the turn - a steer
+// row below the answer does not move it (an interjection goes into the
+// live turn rather than opening a new one), while the next answer does.
 const AssistantText = memo(function AssistantText({
   text,
   streaming,
-  streamed,
   atTail,
 }: {
   text: string;
   streaming: boolean;
-  streamed: boolean;
   // atTail says the block is still the reader's position: the transcript's
   // last row, or the newest answer (an interjection below it does not end
   // it).
@@ -67,9 +66,7 @@ const AssistantText = memo(function AssistantText({
   // null means "show everything": either the block is short, or the reader
   // asked for it.
   const preview =
-    (streamed && atTail) || expanded
-      ? null
-      : markdownPreview(text, BLOCK_FOLD_CHARS);
+    atTail || expanded ? null : markdownPreview(text, BLOCK_FOLD_CHARS);
   return (
     <div className="prose-chat text-sm">
       <Markdown
@@ -132,7 +129,6 @@ export const StreamItemView = memo(function StreamItemView({
         <AssistantText
           text={itemText(item)}
           streaming={streaming}
-          streamed={item.streamed === true}
           atTail={atTail}
         />
       );
