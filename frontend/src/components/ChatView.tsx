@@ -816,8 +816,8 @@ const MessageRow = memo(function MessageRow({
   // atTail says the block is still the reader's position: the transcript's
   // last row, or the newest answer, which an interjection below it does not
   // stop being (see ChatView's renderTranscriptItem). It is a position, not
-  // a run's state: the reader has not moved past it, which is what keeps a
-  // watched answer unfolded.
+  // a run's state: the reader has not moved past it, which is what keeps the
+  // newest answer unfolded.
   atTail: boolean;
   msgIndex: number;
   turnIndex: number;

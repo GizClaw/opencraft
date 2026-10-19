@@ -19,10 +19,9 @@ vi.mock(
 beforeEach(primeStoreTest);
 
 describe('stream deltas and caps', () => {
-  it('marks the text block it appends as streamed', () => {
-    // The transcript keeps a block whole when its deltas arrived here (see
-    // StreamItemView): only the live path stamps the marker, so a block
-    // replayed from history cannot claim the reader watched it.
+  it('appends a delta to the block it belongs to', () => {
+    // A turn's deltas grow one block; the fold at the block's end joins the
+    // chunks back into text.
     const msg: MessageView = {
       id: 'm-1',
       role: 'assistant',
@@ -31,22 +30,18 @@ describe('stream deltas and caps', () => {
       attachments: [],
     };
     mergeAppend(msg, 'text', 'hello');
-    expect(msg.items[0]).toMatchObject({ kind: 'text', streamed: true });
-    // Appending to the same block keeps the marker.
     mergeAppend(msg, 'text', ' again');
-    expect(msg.items[0]).toMatchObject({ streamed: true });
+    expect(msg.items).toHaveLength(1);
     foldLastTextItem(msg);
     const folded = msg.items[0];
     if (folded.kind !== 'text') throw new Error('expected a text item');
     expect(itemText(folded)).toBe('hello again');
-    expect(folded.streamed).toBe(true);
   });
 
-  it('stamps a block hydrated from the archive when a delta lands in it', () => {
-    // resume merges the archive with a live shell: the block was built from
-    // history without the marker, and the delta that follows is proof this
-    // window watched it grow. Without the stamp paging drops the fold
-    // guard and the answer collapses under the reader at the turn end.
+  it('appends a delta to a block hydrated from the archive', () => {
+    // resume merges the archive with a live shell: the trailing block is
+    // the archive's, and the delta that follows belongs to it rather than
+    // to a block of its own.
     const msg: MessageView = {
       id: 'm-1',
       role: 'assistant',
@@ -57,7 +52,7 @@ describe('stream deltas and caps', () => {
 
     mergeAppend(msg, 'text', ' more');
 
-    expect(msg.items[0]).toMatchObject({ kind: 'text', streamed: true });
+    expect(msg.items).toHaveLength(1);
     const item = msg.items[0];
     if (item.kind !== 'text') throw new Error('expected a text item');
     expect(itemText(item)).toBe('partial more');
