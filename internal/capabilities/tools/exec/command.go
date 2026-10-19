@@ -7,7 +7,6 @@ package exec
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	goruntime "runtime"
 	"strings"
@@ -21,6 +20,7 @@ import (
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/shelldetect"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/jsonout"
 )
 
 // CommandName is the canonical exec_command tool name.
@@ -116,7 +116,14 @@ func (t *CommandTool) Definition() message.ToolDefinition {
 			"split on whitespace. The call blocks until the command "+
 			"exits — a long job (a build, a test, a sweep) belongs in "+
 			"one call; bound it with timeout_seconds when it might "+
-			"hang, and never sleep-poll for a job to finish. Use "+
+			"hang, and never sleep-poll for a job to finish. This is "+
+			"not a terminal: a command that reads stdin gets an empty "+
+			"one, so give every search a path — \"rg PATTERN\" with no "+
+			"path reads stdin, not the tree, and reports no matches "+
+			"while the tree is full of them. The two regex tools also "+
+			"disagree on -r: grep -r recurses, rg -r is --replace and "+
+			"prints the text rewritten, so \"rg -rn PATTERN\" rewrites "+
+			"every match to \"n\" instead of searching. Use "+
 			"exec_session for interactive or background processes.",
 		message.ToolProperty("command", "string",
 			"The shell command line to run (required), e.g. "+
@@ -204,7 +211,7 @@ func (t *CommandTool) execute(ctx context.Context, arguments string) (string, er
 	if note != "" {
 		body["note"] = note
 	}
-	payload, err := json.Marshal(body)
+	payload, err := jsonout.Marshal(body)
 	if err != nil {
 		return "", errdefs.Internalf("exec_command: encode result: %v", err)
 	}

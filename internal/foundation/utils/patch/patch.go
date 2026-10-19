@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/workspace"
@@ -304,7 +305,7 @@ func applyUpdate(ctx context.Context, ws workspace.Workspace, op *op) error {
 		if !found {
 			return errdefs.Validationf(
 				"apply_patch: hunk %d in %q did not match: %s",
-				i+1, op.path, hunkProblem(h))
+				i+1, op.path, hunkProblem(h, lines))
 		}
 		lines = next
 	}
@@ -316,7 +317,24 @@ func applyUpdate(ctx context.Context, ws workspace.Workspace, op *op) error {
 // failure — the context lines the model guessed from memory do not
 // match the file any more — and it says nothing at all for an
 // insertion hunk that carries no anchor.
-func hunkProblem(h hunk) string {
+//
+// The second half is what saves the round: the hunk's own lines are
+// looked up in the file and the file is quoted around them, so the
+// retry can be written from text the model has just seen instead of
+// from another guess. When no line of the hunk resembles the file at
+// all, the error asks for a re-read instead of pretending to help.
+func hunkProblem(h hunk, lines []string) string {
+	head := hunkDiagnosis(h)
+	if tail := hunkLocator(h, lines); tail != "" {
+		return head + "\n" + tail
+	}
+	return head + "\n  re-read the file and copy the exact lines."
+}
+
+// hunkDiagnosis names the reason the hunk could not be located.
+// hunkProblem appends the retry instruction, which depends on what the
+// locator found.
+func hunkDiagnosis(h hunk) string {
 	switch {
 	case h.unified && len(h.removed) == 0 && h.atLine > 0:
 		return fmt.Sprintf(
@@ -328,13 +346,186 @@ func hunkProblem(h hunk) string {
 			"\"@@\" anchor"
 	case len(h.removed) == 0:
 		return fmt.Sprintf(
-			"no line contains the \"@@\" anchor %q; copy an exact line "+
-				"from the file", h.anchor)
+			"no line contains the \"@@\" anchor %q", h.anchor)
 	default:
 		return fmt.Sprintf(
-			"no match for the first context line %q; re-read the file "+
-				"and copy the exact lines", h.removed[0])
+			"no match for the first context line %q", h.removed[0])
 	}
+}
+
+// hunkWindowRadius is how many file lines the locator quotes on each
+// side of the line it found. Three matches what a hunk usually carries
+// as context, so the window holds the lines a retry needs.
+const hunkWindowRadius = 3
+
+// hunkLocator renders where the hunk's own lines do appear in the
+// file, and what the file has no line for. It returns "" when none of
+// them resembles the file - a region rewritten past recognition - which
+// leaves the caller to ask for a re-read.
+func hunkLocator(h hunk, lines []string) string {
+	if len(lines) == 0 || len(h.removed) == 0 {
+		// Nothing of the hunk is text the file must contain: an
+		// insertion hunk locates itself by anchor or by header, and an
+		// empty file has no place to quote.
+		return ""
+	}
+	at, hunkAt, agree := locateHunk(lines, h)
+	if at < 0 {
+		return ""
+	}
+	var b strings.Builder
+	if agree == len(h.removed) {
+		fmt.Fprintf(&b,
+			"  all %d hunk lines are at line %d, differing only in "+
+				"leading or trailing space:\n", agree, at+1)
+	} else {
+		fmt.Fprintf(&b,
+			"  hunk line %d is at line %d of %d, and %d of %d hunk "+
+				"lines match there:\n", hunkAt+1, at+1, len(lines),
+			agree, len(h.removed))
+	}
+	b.WriteString(renderWindow(lines, at))
+	if missing := missingHunkLines(h, lines); len(missing) > 0 {
+		fmt.Fprintf(&b, "  the file has no line for: %s\n",
+			strings.Join(missing, ", "))
+	}
+	if agree == len(h.removed) {
+		b.WriteString("  re-send the hunk with the file's own whitespace.")
+	} else {
+		b.WriteString("  re-send the hunk with the lines above.")
+	}
+	return b.String()
+}
+
+// locateHunk finds where the hunk's lines do appear: the position that
+// lines up the most of them, compared whitespace-insensitively because
+// indentation that moved is the common failure. It reports the file
+// index, the hunk line index that anchors it, and how many of the
+// hunk's lines agree at that position.
+func locateHunk(lines []string, h hunk) (at, hunkAt, agree int) {
+	at, hunkAt, agree = -1, -1, 0
+	bestLen, bestExact := 0, false
+	for k, want := range h.removed {
+		i, exact := indexLine(lines, want)
+		if i < 0 {
+			continue
+		}
+		n := countAgree(lines, h, i, k)
+		key := len(strings.TrimSpace(want))
+		// Rank by agreement, then by how specific the anchoring line
+		// is, then by an exact match: a lone "}" is a poor locator.
+		if !better(n, key, exact, agree, bestLen, bestExact) {
+			continue
+		}
+		at, hunkAt, agree, bestLen, bestExact = i, k, n, key, exact
+	}
+	return at, hunkAt, agree
+}
+
+// better reports whether one locator candidate outranks another.
+func better(n, key int, exact bool, bestN, bestKey int, bestExact bool) bool {
+	if n != bestN {
+		return n > bestN
+	}
+	if key != bestKey {
+		return key > bestKey
+	}
+	return exact && !bestExact
+}
+
+// countAgree counts the hunk lines that line up around at, with hunk
+// line hunkAt sitting on it.
+func countAgree(lines []string, h hunk, at, hunkAt int) int {
+	n := 0
+	for j, want := range h.removed {
+		i := at + (j - hunkAt)
+		if i < 0 || i >= len(lines) {
+			continue
+		}
+		if strings.TrimSpace(lines[i]) == strings.TrimSpace(want) {
+			n++
+		}
+	}
+	return n
+}
+
+// indexLine returns the position of want in lines, preferring a byte
+// for byte match over one that only differs in surrounding space.
+func indexLine(lines []string, want string) (int, bool) {
+	for i, line := range lines {
+		if line == want {
+			return i, true
+		}
+	}
+	key := strings.TrimSpace(want)
+	if key == "" {
+		return -1, false
+	}
+	for i, line := range lines {
+		if strings.TrimSpace(line) == key {
+			return i, false
+		}
+	}
+	return -1, false
+}
+
+// missingHunkLines quotes the hunk lines the file has nowhere, up to
+// three of them: a hunk that was written against an older version of
+// the file fails on exactly these.
+func missingHunkLines(h hunk, lines []string) []string {
+	have := make(map[string]struct{}, len(lines))
+	for _, line := range lines {
+		have[strings.TrimSpace(line)] = struct{}{}
+	}
+	var out []string
+	for _, want := range h.removed {
+		if _, ok := have[strings.TrimSpace(want)]; ok {
+			continue
+		}
+		if len(out) == 3 {
+			return append(out, "...")
+		}
+		out = append(out, fmt.Sprintf("%q", clipLine(want)))
+	}
+	return out
+}
+
+// renderWindow quotes the file around at, numbered and with the located
+// line marked, so a hunk can be re-issued from what is shown here.
+func renderWindow(lines []string, at int) string {
+	if at < 0 || at >= len(lines) {
+		return ""
+	}
+	lo, hi := at-hunkWindowRadius, at+hunkWindowRadius
+	if lo < 0 {
+		lo = 0
+	}
+	if hi > len(lines)-1 {
+		hi = len(lines) - 1
+	}
+	var b strings.Builder
+	for i := lo; i <= hi; i++ {
+		marker := "  "
+		if i == at {
+			marker = "> "
+		}
+		fmt.Fprintf(&b, "  %s%5d | %s\n", marker, i+1, clipLine(lines[i]))
+	}
+	return b.String()
+}
+
+// clipLine bounds one quoted line so a minified bundle cannot turn the
+// error into a second problem.
+func clipLine(line string) string {
+	const max = 200
+	if len(line) <= max {
+		return line
+	}
+	cut := max
+	for cut > 0 && !utf8.RuneStart(line[cut]) {
+		cut--
+	}
+	return line[:cut] + "..."
 }
 
 // applyHunk replaces the first match of removed lines with added lines.
