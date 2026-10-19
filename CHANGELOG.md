@@ -108,6 +108,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leave `bcd` in the telemetry copy while `bearer abcdef` went out whole.
   The word after a scheme is kept only when it is prose the closed list
   knows; everything else is the credential.
+- A whole-file read comes back as one window it can page from. The read
+  tool answered up to 1000 lines and the result policy then cut that at
+  the cap, so a longer file arrived as the two ends of a range whose
+  middle nothing named — and the model, unable to continue from it,
+  probed in 40-130 line windows instead (66% of reads carry an
+  offset/limit, and 19% of read results sat exactly on the cap). The
+  window is now what one result holds (about 20000 characters, or the
+  requested limit if smaller), `is_truncated` says whether lines remain,
+  and `next_offset` names where the next read starts; consecutive
+  windows tile the file, so a caller never derives an offset. A single
+  line past the budget still comes back whole, because a window of
+  nothing cannot be paged from.
 - A finished turn folds even while its conversation runs. A session
   resumed with a run still going has no archived turn for that run, so
   the newest archive strip was the turn above it, and the conversation's
