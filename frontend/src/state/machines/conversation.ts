@@ -175,6 +175,10 @@ export type ConversationEvent =
   | { type: 'HYDRATE_OK'; request: number; generation: number; empty: boolean }
   | { type: 'HYDRATE_FAIL'; request: number; generation: number; error: string }
   | { type: 'NEW_CHAT_READY' }
+  // BIND_WORKSPACE is the backend naming the workspace that owns this
+  // conversation, which is not a turn event: the root `on` below accepts
+  // it in every phase.
+  | { type: 'BIND_WORKSPACE'; workspace: string }
   // SUBMIT carries a submission into the turn region; the table above
   // says what it does in the phase the turn is in.
   | { type: 'SUBMIT'; kind: SubmitKind }

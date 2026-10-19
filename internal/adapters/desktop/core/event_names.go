@@ -37,6 +37,9 @@ const (
 	EventAutomationRunStarted = "automation_run_started"
 	EventManagedRestored      = "managed_restored"
 
+	// Window intent: a banner asked for a conversation.
+	EventOpenConversation = "open_conversation"
+
 	// Workspace and configuration.
 	EventGitChanged       = "git_changed"
 	EventInferenceChanged = "inference_changed"

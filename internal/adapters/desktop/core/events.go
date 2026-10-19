@@ -98,6 +98,20 @@ type SteerPendingEvent struct {
 	SteerPending int `json:"steer_pending"`
 }
 
+// OpenConversationEvent asks the window to show one conversation. It is
+// an intent, not a change of state: the only producer is the desktop
+// shell, when the user activates a system notification, and the window
+// answers by switching to the conversation the way a click in the
+// sidebar would.
+type OpenConversationEvent struct {
+	ConversationID string `json:"conversation_id"`
+	// Workspace is the workspace whose Host ran the conversation. The
+	// window switches to it when it differs from the current one; an
+	// empty value means the producer could not name it, and the window
+	// stays where it is.
+	Workspace string `json:"workspace,omitempty"`
+}
+
 // CompactionEvent mirrors worldstate.CompactionReport onto the wire.
 type CompactionEvent struct {
 	// Folds is the number of successful folds in the turn.

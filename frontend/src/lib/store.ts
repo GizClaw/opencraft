@@ -239,6 +239,10 @@ export interface StoreState {
     sessionID: string,
     workspacePath: string,
   ) => Promise<void>;
+  openFromNotification: (
+    sessionID: string,
+    workspacePath?: string,
+  ) => Promise<void>;
   sendFirstMessage: (
     workspacePath: string,
     text: string,

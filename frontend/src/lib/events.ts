@@ -44,6 +44,9 @@ export const UIEventType = {
   automationRunStarted: 'automation_run_started',
   managedRestored: 'managed_restored',
 
+  // Window intent: a banner asked for a conversation.
+  openConversation: 'open_conversation',
+
   // Workspace and configuration.
   gitChanged: 'git_changed',
   inferenceChanged: 'inference_changed',

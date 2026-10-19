@@ -14,6 +14,7 @@ function fakeSink() {
     writeGlobalData: () => calls.push('global-data'),
     refreshSessionList: vi.fn(),
     sessionUpdated: vi.fn(),
+    openConversation: vi.fn(),
     refreshAutomations: vi.fn(),
     refreshAutomationRuns: vi.fn(),
     conversationForRunID: () => undefined,
@@ -296,6 +297,39 @@ describe('event router', () => {
     );
 
     expect(sink.sessionUpdated).not.toHaveBeenCalled();
+  });
+
+  // The banner click is an intent, not a turn: it names a conversation
+  // and the workspace that owns it, and the data layer does the
+  // switching. No actor is created here — the conversation may not even
+  // be loaded in this window.
+  it('hands a banner click to the data layer with its workspace', () => {
+    const root = new StateRoot();
+    const { sink } = fakeSink();
+    routeBackendEvent(
+      {
+        type: 'open_conversation',
+        data: { conversation_id: 's-9', workspace: '/tmp/background' },
+      },
+      { root, data: sink },
+    );
+
+    expect(sink.openConversation).toHaveBeenCalledWith(
+      's-9',
+      '/tmp/background',
+    );
+    expect(root.registry.get('s-9')).toBeUndefined();
+  });
+
+  it('ignores a banner click without a conversation id', () => {
+    const root = new StateRoot();
+    const { sink } = fakeSink();
+    routeBackendEvent(
+      { type: 'open_conversation', data: { workspace: '/tmp/background' } },
+      { root, data: sink },
+    );
+
+    expect(sink.openConversation).not.toHaveBeenCalled();
   });
 
   // The gate between the backend and both state and data is "does this

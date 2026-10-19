@@ -512,6 +512,60 @@ describe('cross-workspace session clicks', () => {
   });
 });
 
+// A system banner is a click from outside the app: the window may be on
+// another workspace and covered by a tool page, and the conversation the
+// banner is about is the one the reader asked for.
+
+describe('notification click', () => {
+  it('opens the conversation in the workspace the banner named', async () => {
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    apiMock.workspace.mockResolvedValue('/tmp/b');
+    apiMock.currentSession.mockResolvedValue('');
+    apiMock.resumeSession.mockResolvedValue({
+      conversation_id: 's-b',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    useStore.setState({
+      workspace: '/tmp/a',
+      toolsView: 'plugins',
+      configOpen: true,
+    });
+
+    await useStore.getState().openFromNotification('s-b', '/tmp/b');
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/b');
+    expect(useStore.getState().workspace).toBe('/tmp/b');
+    expect(apiMock.resumeSession).toHaveBeenCalledWith('s-b');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-b');
+    // The click lands on the conversation, not on whatever page covered
+    // it when the window lost focus.
+    expect(useStore.getState().toolsView).toBeNull();
+    expect(useStore.getState().configOpen).toBe(false);
+  });
+
+  it('opens a banner that lost its workspace where the window is', async () => {
+    await useStore.getState().openFromNotification('s-2', '');
+
+    expect(apiMock.openWorkspace).not.toHaveBeenCalled();
+    expect(apiMock.resumeSession).toHaveBeenCalledWith('s-2');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-2');
+  });
+
+  it('says so when the workspace would not open', async () => {
+    apiMock.openWorkspace.mockRejectedValue(new Error('no such workspace'));
+
+    await useStore.getState().openFromNotification('s-b', '/tmp/b');
+
+    expect(apiMock.resumeSession).not.toHaveBeenCalled();
+    expect(useStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'warning',
+      text: i18n.t('chat.switchFailed'),
+    });
+  });
+});
+
 describe('init session bootstrap', () => {
   const status = {
     needed: false,

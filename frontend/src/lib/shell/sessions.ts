@@ -39,6 +39,7 @@ export function createShellSessions(
   | 'deleteSession'
   | 'loadSessions'
   | 'openSessionInWorkspace'
+  | 'openFromNotification'
 > {
   const set = store.setState;
   const get = store.getState;
@@ -388,6 +389,30 @@ export function createShellSessions(
         }
       }
       await get().resume(sessionID);
+    },
+
+    /**
+     * openFromNotification reopens the conversation a system banner
+     * belongs to. The click arrives from outside the app: the window may
+     * be on another workspace, and it may be covered by a tool page or
+     * the config panel, so both are closed first. The hop itself is
+     * openSessionInWorkspace's — a switch a newer click took still wins,
+     * and a workspace that never landed still throws.
+     */
+    openFromNotification: async (sessionID, workspacePath) => {
+      set({ toolsView: null, configOpen: false });
+      try {
+        if (workspacePath) {
+          await get().openSessionInWorkspace(sessionID, workspacePath);
+          return;
+        }
+        // A banner from a producer that could not name its workspace
+        // still names the conversation, which is the one thing the
+        // click promised: open it where the window already is.
+        await get().resume(sessionID);
+      } catch {
+        get().toast(i18n.t('chat.switchFailed'), 'warning');
+      }
     },
   };
 }

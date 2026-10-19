@@ -47,6 +47,12 @@ export interface EventDataSink {
    * data layer decides whether the transcript needs it.
    */
   sessionUpdated?(id: string): void;
+  /**
+   * openConversation asks the window to show one conversation: the user
+   * activated a system notification about it. The workspace is the one
+   * the backend said owns the run, and the window may not be on it.
+   */
+  openConversation?(id: string, workspace?: string): void;
   refreshAutomations(): void;
   refreshAutomationRuns(ev: UIEvent): void;
   conversationForRunID(runID: string): string | undefined;
@@ -272,6 +278,14 @@ export function routeBackendEvent(ev: UIEvent, deps: EventRouterDeps) {
       deps.data.refreshSessionList();
       const data = ev.data as { id?: string };
       if (data.id) deps.data.sessionUpdated?.(data.id);
+      return;
+    }
+
+    case UIEventType.openConversation: {
+      const data = ev.data as { conversation_id?: string; workspace?: string };
+      if (data.conversation_id) {
+        deps.data.openConversation?.(data.conversation_id, data.workspace);
+      }
       return;
     }
 
