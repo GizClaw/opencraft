@@ -29,6 +29,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scaled onto the measurement now, keeping their shares, and the popover
   says the split is a proportion; snapshots already stored are repaired on
   read. (#250)
+- A tool answer now carries the text the tool already had. `apply_patch`
+  failed one hunk in twenty on "no match for the first context line" and
+  nothing else, so the retry was another guess from memory; the error looks
+  the hunk's own lines up in the file and quotes it - the line they do
+  appear at, seven numbered lines around it, the hunk lines the file has
+  nowhere, and, when every line is there and only the indentation moved,
+  that whitespace is the whole difference. `read_file` and `exec_command`
+  sent results through `encoding/json`, whose HTML escaping turned the
+  file's own `<`, `>` and `&` into `\u003c`, `\u0026` and `\u003e` in 22%
+  of reads - and a hunk copied out of one of those wrote the escape, which
+  can never match the file; results go through an encoder that escapes only
+  what JSON syntax needs. The `read_file` description names both ways to
+  read (a known region is `offset` + `limit`, an unknown one follows
+  `next_offset`) instead of pushing every read towards whole files, which
+  is how 9,680 `sed -n` peeks stacked up beside 7,755 reads. `update_plan`
+  says where an item-level explanation goes, and `exec_command` says the
+  shell is not a terminal and that `rg -r` is `--replace` while `grep -r`
+  recurses. (#255)
 
 ## [0.7.0] - 2026-10-19
 
