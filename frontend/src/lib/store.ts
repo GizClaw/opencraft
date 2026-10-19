@@ -517,12 +517,20 @@ export const useStore = create<StoreState>((set, get, store) => {
         (turnEndData?.run_id
           ? stateRoot.registry.conversationForRun(turnEndData.run_id)
           : undefined);
-      if (turnEndData && turnEndConversationID) {
+      if (
+        turnEndData &&
+        turnEndConversationID &&
+        !stateRoot.registry.isDeleted(turnEndConversationID)
+      ) {
         // The sidebar's ❌ is about the conversation, not about this
         // window's actor for it: the turn may have run in another
         // workspace, or ended before this conversation was ever opened.
         // Recording it here, before routing, keeps the row and the
-        // transcript from disagreeing about the same event.
+        // transcript from disagreeing about the same event. A deleted
+        // conversation is the one row that can never come back, so it
+        // is also the one mark nothing would ever clear: routing below
+        // drops it, the listing filters it out, and only the delete
+        // path - which already ran - clears the map.
         const needsAttention = turnNeedsAttention(
           turnEndData.status,
           turnEndData.error_kind,

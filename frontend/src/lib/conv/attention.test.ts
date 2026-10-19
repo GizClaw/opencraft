@@ -7,6 +7,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../store';
+import { stateRoot } from '../../state/app';
 import { bindRun, primeStoreTest } from '../../test/storeHarness';
 
 vi.mock('../api', async () => ({
@@ -121,6 +122,21 @@ describe('turn attention', () => {
 
     // Without a conversation or a run there is no row to mark; inventing
     // one would put the ❌ on whatever conversation happened to be open.
+    expect(useStore.getState().turnAttention).toEqual({});
+  });
+
+  it('leaves a conversation deleted in this process unmarked', async () => {
+    stateRoot.registry.markDeleted('s-1');
+
+    await settleTurnEnd({
+      run_id: 'r-1',
+      conversation_id: 's-1',
+      status: 'failed',
+    });
+
+    // The row is gone and its id is retired, so nothing would ever draw
+    // this mark or clear it: a late ending for a deleted chat is the one
+    // write that has no reader.
     expect(useStore.getState().turnAttention).toEqual({});
   });
 });
