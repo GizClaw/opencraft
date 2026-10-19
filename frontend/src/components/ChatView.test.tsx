@@ -1187,6 +1187,30 @@ describe('ChatView transcript windowing', () => {
     ).toBeNull();
   });
 
+  it('folds a watched answer once a later turn lands below it', () => {
+    // The exemption is positional, not permanent: while the block was the
+    // transcript's last row the reader was still on it, and a question
+    // under it makes it history - the scene the fold exists for.
+    const watched = longAnswer(6000, 'Watched');
+    setConversation([
+      { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+      {
+        id: 'm-a1',
+        role: 'assistant',
+        text: '',
+        items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+        attachments: [],
+      },
+      { id: 'm-u2', role: 'user', text: 'second', items: [], attachments: [] },
+    ]);
+    render(<ChatView />);
+
+    expect(screen.queryByRole('heading', { name: 'Watched 50' })).toBeNull();
+    expect(
+      screen.getByRole('button', { name: /Show full answer/ }),
+    ).toBeInTheDocument();
+  });
+
   it('shows worked duration at the top of an artifact turn', () => {
     setConversation(
       [

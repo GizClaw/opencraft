@@ -29,21 +29,34 @@ const BLOCK_FOLD_CHARS = 2 << 10;
 // the block that followed it.
 //
 // A settled block longer than BLOCK_FOLD_CHARS renders its first section
-// and a control instead of the whole answer, unless its text arrived
-// through this window's live stream (TextItemFields.streamed): that block
-// the reader watched grow, and folding it under them the moment the turn
-// ends would take away what they were reading.
+// and a control instead of the whole answer, unless the reader is still
+// on it: a block whose text arrived through this window's live stream
+// (TextItemFields.streamed) and which is still the transcript's last row.
+// That block the reader watched grow, and folding it under them the moment
+// the turn ends would take away what they were reading. The exemption ends
+// with the position: once a later turn lands below it, the block is
+// history like the ones above it, and the scene the fold exists for - a
+// reader scrolling back through a long session - is exactly where it
+// applies.
 const AssistantText = memo(function AssistantText({
   text,
   streaming,
   streamed,
+  atTail,
 }: {
   text: string;
   streaming: boolean;
   streamed: boolean;
+  // atTail says the block is in the transcript's last row.
+  atTail: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const openFileTarget = useStore((s) => s.openFileTarget);
+  // Expanded is one-shot, on purpose: the row unmounts when the reader
+  // scrolls far enough for the transcript's windowing to drop it, and
+  // remembering which blocks were opened would take a set of item ids that
+  // grows for the life of the document - the state this window is trying
+  // to bound - to save one click.
   const [expanded, setExpanded] = useState(false);
   if (streaming) {
     return <div className="prose-chat whitespace-pre-wrap text-sm">{text}</div>;
@@ -51,7 +64,9 @@ const AssistantText = memo(function AssistantText({
   // null means "show everything": either the block is short, or the reader
   // asked for it.
   const preview =
-    streamed || expanded ? null : markdownPreview(text, BLOCK_FOLD_CHARS);
+    (streamed && atTail) || expanded
+      ? null
+      : markdownPreview(text, BLOCK_FOLD_CHARS);
   return (
     <div className="prose-chat text-sm">
       <Markdown
@@ -61,13 +76,15 @@ const AssistantText = memo(function AssistantText({
       {preview ? (
         <button
           type="button"
-          aria-expanded={false}
+          aria-expanded={expanded}
           onClick={() => setExpanded(true)}
           className="mt-1.5 flex items-center gap-1 rounded-tight text-xs text-dim transition-colors hover:text-accent"
         >
           <ChevronDown size={ICON.xs} className="shrink-0" />
           {t('chat.foldAnswerShow', {
-            chars: text.length.toLocaleString(),
+            // Formatted for the UI language, not the system locale, and
+            // handed over as the count it is.
+            chars: new Intl.NumberFormat(i18n.language).format(text.length),
           })}
         </button>
       ) : expanded ? (
@@ -94,9 +111,11 @@ const AssistantText = memo(function AssistantText({
 export const StreamItemView = memo(function StreamItemView({
   item,
   streaming = false,
+  atTail = true,
 }: {
   item: AssistantItem;
   streaming?: boolean;
+  atTail?: boolean;
 }) {
   switch (item.kind) {
     case 'reasoning':
@@ -107,6 +126,7 @@ export const StreamItemView = memo(function StreamItemView({
           text={itemText(item)}
           streaming={streaming}
           streamed={item.streamed === true}
+          atTail={atTail}
         />
       );
     case 'tool_call':

@@ -108,6 +108,7 @@ import { useToolElapsedLabel, workedForLabel } from '../lib/toolTiming';
 import { ICON } from './ui/icon';
 import { Overlay } from './ui/Overlay';
 import { attachmentPreviews } from '../lib/attachmentPreviews';
+import { setUnsentDraft } from '../lib/unsentDraft';
 import { Popover } from './ui/Popover';
 import { IconButton } from './ui/Button';
 
@@ -797,6 +798,7 @@ const MessageRow = memo(function MessageRow({
   busy,
   streaming,
   isTurnLast,
+  atTail,
   msgIndex,
   turnIndex,
   turnStart,
@@ -810,6 +812,9 @@ const MessageRow = memo(function MessageRow({
   busy: boolean;
   streaming: boolean;
   isTurnLast: boolean;
+  // atTail says this row is the transcript's last: the reader has not
+  // moved past it, which is what keeps a watched answer unfolded.
+  atTail: boolean;
   msgIndex: number;
   turnIndex: number;
   turnStart: boolean;
@@ -992,7 +997,7 @@ const MessageRow = memo(function MessageRow({
       {groups.map((group, gi) => {
         if (Array.isArray(group)) {
           return group.length === 1 ? (
-            <StreamItemView key={group[0].id} item={group[0]} />
+            <StreamItemView key={group[0].id} item={group[0]} atTail={atTail} />
           ) : (
             <ToolGroupView key={`group-${gi}`} tools={group} />
           );
@@ -1002,6 +1007,7 @@ const MessageRow = memo(function MessageRow({
             key={group.id}
             item={group}
             streaming={group === liveTail}
+            atTail={atTail}
           />
         );
       })}
@@ -2141,6 +2147,15 @@ export function ChatView() {
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
+  // The memory boundary asks whether the composer holds work that only
+  // exists in this document - unsent text, or an attachment whose bytes
+  // are the staged data URL - and keeps the page when it does (see
+  // lib/unsentDraft and shell/workspaces.ts). Publishing it here is the
+  // only place that knows: the draft is this component's state.
+  useEffect(() => {
+    setUnsentDraft(input.trim() !== '' || attachments.length > 0);
+    return () => setUnsentDraft(false);
+  }, [input, attachments]);
   // New-chat workspace bookmark: an empty chat shows the workspace the
   // first message will be created in. '' means the current workspace.
   const [draftWorkspace, setDraftWorkspace] = useState('');
@@ -3507,6 +3522,7 @@ export function ChatView() {
         msg={msg}
         busy={busy}
         isTurnLast={isAssistantTurnLast}
+        atTail={i === messages.length - 1}
         msgIndex={i}
         turnIndex={item.turnIdx}
         turnStart={item.turnStart}

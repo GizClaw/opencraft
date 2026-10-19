@@ -89,13 +89,16 @@ export class MarkdownCache {
     this.evict();
   }
 
-  // clear drops every tree. A workspace switch calls it: the transcript of
-  // the workspace being left is gone, and its parsed blocks with it (the
-  // switch also reloads the page, which is what actually hands the memory
-  // back — see applyWorkspaceSwitch).
+  // clear drops every tree and restarts the counters. Nothing on a
+  // workspace switch calls it: a tree is keyed by its own source text, so
+  // it stays valid for as long as the document that parsed it runs, and
+  // the switch's actual memory boundary is the reload the shell asks for
+  // (see shell/workspaces.ts). Tests use it to start from a known window.
   clear() {
     this.entries.clear();
     this.chars = 0;
+    this.hitCount = 0;
+    this.missCount = 0;
   }
 
   // charCount, size, hits and misses are the cache's own accounting, for the

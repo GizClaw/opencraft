@@ -202,4 +202,33 @@ describe('Markdown', () => {
       nowSpy.mockRestore();
     }
   });
+
+  it('measures the parse, not the cache hit that replaces it', () => {
+    // flush_md_p95 is the number the cache's argument is written in, so a
+    // hit must not add a sample: it would pull the series towards zero as
+    // the cache warms, and the parse it saves would stop showing up in the
+    // one place it is measured.
+    let tick = 0;
+    const nowSpy = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => (tick += 10));
+    setPerfMetricsEnabled(true);
+    const text = '# measured once\n\nsome **body** text';
+    try {
+      const first = render(<Markdown text={text} />);
+      first.unmount();
+      const parsed = markdownStats();
+      expect(parsed.max).toBeGreaterThan(0);
+
+      // A read taken on the hit path would be a hundred times the sample
+      // above, which is what this makes visible.
+      nowSpy.mockImplementation(() => (tick += 100_000));
+      render(<Markdown text={text} />);
+
+      expect(markdownStats()).toEqual(parsed);
+    } finally {
+      setPerfMetricsEnabled(false);
+      nowSpy.mockRestore();
+    }
+  });
 });

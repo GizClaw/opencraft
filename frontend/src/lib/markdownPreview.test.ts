@@ -18,15 +18,12 @@ describe('markdownPreview', () => {
     const text = Array.from({ length: 6 }, (_, i) => section(i)).join('\n');
     const preview = markdownPreview(text, 400);
     expect(preview).not.toBeNull();
-    const { shown, hidden } = preview!;
+    const { shown } = preview!;
     // The cut backs up to a blank line, so the preview ends where a
     // section does instead of half way through a sentence.
     expect(shown.endsWith('section, still prose.')).toBe(true);
     expect(shown.startsWith('## Section 0')).toBe(true);
     expect(text.startsWith(shown)).toBe(true);
-    // hidden counts what the cut left behind, so the two agree up to the
-    // trailing whitespace the preview drops.
-    expect(hidden).toBeGreaterThanOrEqual(text.length - shown.length - 2);
     expect(shown.length).toBeLessThanOrEqual(400);
   });
 
@@ -93,7 +90,6 @@ describe('markdownPreview', () => {
     const preview = markdownPreview(text, 100);
     expect(preview).not.toBeNull();
     expect(preview!.shown).toBe('x'.repeat(100));
-    expect(preview!.hidden).toBe(400);
   });
 
   it('cuts a long list at a line boundary', () => {
@@ -131,9 +127,79 @@ describe('markdownPreview', () => {
     );
     const preview = markdownPreview(text, 24);
     expect(preview).not.toBeNull();
-    // The last blank line inside the budget is the one under the title;
-    // the paragraph's own boundary is past it.
-    expect(preview!.shown).toBe('# Title');
-    expect(preview!.hidden).toBe(text.length - 11);
+    // The blank line under the title is inside the budget and follows a
+    // heading, and there is no earlier section to back up to: the cut
+    // moves forward to the next line boundary instead of showing the
+    // title with nothing under it. The CRLFs inside the preview stay.
+    expect(preview!.shown).toBe('# Title\r\n\r\na paragraph');
+  });
+
+  it('does not answer a long paragraph with its first line', () => {
+    // The nearest blank line is 8 characters in, 3000 from the fold: a
+    // preview of "Intro." is not a preview. The limit cut wins.
+    const text = `Intro.\n\n${'x'.repeat(3000)}`;
+    const preview = markdownPreview(text, 2048);
+    expect(preview).not.toBeNull();
+    expect(preview!.shown.startsWith('Intro.')).toBe(true);
+    expect(preview!.shown.length).toBeGreaterThan(2048 / 2);
+  });
+
+  it('does not answer a setext title plus a long body with the title', () => {
+    const text = `Title\n=====\n\n${'y'.repeat(3000)}`;
+    const preview = markdownPreview(text, 2048);
+    expect(preview).not.toBeNull();
+    expect(preview!.shown.length).toBeGreaterThan(2048 / 2);
+  });
+
+  it('recognizes a setext heading the cut would leave alone', () => {
+    // The blank line under the underline is inside the budget and follows
+    // a heading, body included: the cut backs up to the section above it.
+    const text = `${'a'.repeat(1000)}\n\nTitle\n=====\n\n${'b'.repeat(1000)}`;
+    const preview = markdownPreview(text, 1500);
+    expect(preview).not.toBeNull();
+    expect(preview!.shown.endsWith('a')).toBe(true);
+  });
+
+  it('recognizes a heading inside a quote or a list item', () => {
+    const text = `${'a'.repeat(1000)}\n\n> ## Quoted\n\n${'b'.repeat(1000)}`;
+    const preview = markdownPreview(text, 1500);
+    expect(preview).not.toBeNull();
+    expect(preview!.shown.endsWith('a')).toBe(true);
+  });
+
+  it('carries the reference definitions the fold hides', () => {
+    // Without the definition the preview renders `[guide]` as literal
+    // text: the one thing a fold must not change is what the shown part
+    // means.
+    const text = [
+      'Read the [guide] first.',
+      '',
+      'x'.repeat(3000),
+      '',
+      '[guide]: ./refs/guide.md',
+      '[^1]: the note',
+      '',
+    ].join('\n');
+    const preview = markdownPreview(text, 2048);
+    expect(preview).not.toBeNull();
+    expect(preview!.shown).toContain('[guide]: ./refs/guide.md');
+    expect(preview!.shown).toContain('[^1]: the note');
+    expect(preview!.shown.startsWith('Read the [guide] first.')).toBe(true);
+  });
+
+  it('leaves a definition inside a fenced block alone', () => {
+    const text = [
+      'Read the [guide] first.',
+      '',
+      'x'.repeat(3000),
+      '',
+      '```md',
+      '[guide]: ./refs/guide.md',
+      '```',
+      '',
+    ].join('\n');
+    const preview = markdownPreview(text, 2048);
+    expect(preview).not.toBeNull();
+    expect(preview!.shown).not.toContain('[guide]:');
   });
 });

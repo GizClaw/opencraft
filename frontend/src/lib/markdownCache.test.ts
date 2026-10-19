@@ -80,11 +80,17 @@ describe('MarkdownCache', () => {
     const cache = new MarkdownCache();
     cache.set('# one', 'one' as never);
     cache.set('# two', 'two' as never);
+    cache.get('# one');
+    cache.get('# missing');
 
     cache.clear();
 
     expect(cache.size).toBe(0);
     expect(cache.charCount).toBe(0);
+    // The counters restart with the window they describe: a report after a
+    // clear must not carry hits from before it.
+    expect(cache.hits).toBe(0);
+    expect(cache.misses).toBe(0);
     expect(cache.get('# one')).toBeUndefined();
   });
 });

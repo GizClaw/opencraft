@@ -4,9 +4,12 @@
 // The block is a ~2KB answer with a list and a fenced code block, which is
 // what a settled block looks like after the transcript folds the long ones
 // (BLOCK_FOLD_CHARS in StreamItemView). The parse is react-markdown's
-// pipeline as Markdown.tsx runs it — the same two plugins, the same
-// component map left out of the measurement because it only names elements,
-// not work.
+// pipeline as Markdown.tsx runs it — the same two plugins. The component
+// map is left out of both halves: its elements do real work when the tree
+// is built (CodeBlock pulls the fence's text out for the copy button,
+// InlineCode resolves a path target), and that work belongs to the parse
+// the cache is meant to save. Leaving it out of both keeps the ratio about
+// the pipeline itself rather than about a component map neither half runs.
 //
 // Read the ratio as the parse a second mount no longer pays, not as the
 // mount itself being free: React still builds the DOM from the elements the

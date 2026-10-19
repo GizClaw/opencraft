@@ -42,6 +42,27 @@ describe('stream deltas and caps', () => {
     expect(folded.streamed).toBe(true);
   });
 
+  it('stamps a block hydrated from the archive when a delta lands in it', () => {
+    // resume merges the archive with a live shell: the block was built from
+    // history without the marker, and the delta that follows is proof this
+    // window watched it grow. Without the stamp paging drops the fold
+    // guard and the answer collapses under the reader at the turn end.
+    const msg: MessageView = {
+      id: 'm-1',
+      role: 'assistant',
+      text: '',
+      items: [{ kind: 'text', id: 'p-1', text: 'partial' }],
+      attachments: [],
+    };
+
+    mergeAppend(msg, 'text', ' more');
+
+    expect(msg.items[0]).toMatchObject({ kind: 'text', streamed: true });
+    const item = msg.items[0];
+    if (item.kind !== 'text') throw new Error('expected a text item');
+    expect(itemText(item)).toBe('partial more');
+  });
+
   it('folds stream deltas into one assistant message', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     bindRun('r-1');

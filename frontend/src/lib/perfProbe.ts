@@ -194,7 +194,7 @@ async function report() {
     {
       name: 'md_cache_chars',
       value: markdownTrees.charCount,
-      unit: 'B',
+      unit: '1',
       labels,
     },
   ];
