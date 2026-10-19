@@ -9,7 +9,7 @@ import {
   historyTurnsToState,
   newestArchivedSeq,
 } from './history';
-import { carryUndeliveredSteers, settleConversation } from './model';
+import { carryUnarchivedSteers, settleConversation } from './model';
 
 // Archive reconciliation and the tail sync that follows it: a finished
 // turn is replaced by its archived copy, and a tail that could not be
@@ -67,14 +67,16 @@ export function createConvPaging(
         const rebuilt = historyTurnsToState([turn]);
         const archived = rebuilt.turnArtifacts[0];
         if (!archived) return stateNow;
-        // The archive never saw a steer the turn ended without
-        // delivering, so the rows carrying that text travel with the
-        // rebuild: they are the only copy. The archived copy of the
-        // delivered ones comes back tagged by historyToMessages.
-        const carried = carryUndeliveredSteers(
-          conv.messages.slice(start),
+        // The archive never saw the steers this turn ended without
+        // delivering, nor the ones still queued, so the rows carrying
+        // that text travel with the rebuild: they are the only copy. The
+        // archived copy of the delivered ones comes back tagged by
+        // historyToMessages, and the registrations above this turn are
+        // untouched by it.
+        const carried = carryUnarchivedSteers(
+          { ...conv, messages: conv.messages.slice(start) },
           rebuilt.messages,
-        );
+        ).messages;
         return {
           conversations: {
             ...stateNow.conversations,

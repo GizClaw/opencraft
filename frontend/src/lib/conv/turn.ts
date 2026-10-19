@@ -393,24 +393,33 @@ export function createConvTurn(
               (s) => s.messageID !== row.id,
             ),
           };
-          // Only the row still waiting for a boundary is pulled back out. A
-          // row turn_end settled belongs to the conversation (the archive
-          // has the text, or the row keeps it as undelivered), and one a
-          // transcript rebuild replaced is archived text too: neither is
-          // this submission's to take back.
+          // Only the row still waiting for a boundary is pulled back out:
+          // a row turn_end settled belongs to the conversation (the archive
+          // has the text, or the row keeps it as undelivered), and a row a
+          // rebuild replaced is not this submission's to remove.
           const waiting = drawn?.steer === 'pending';
           if (waiting) {
             patch.messages = (convNow?.messages ?? []).filter(
               (m) => m.id !== row.id,
             );
           }
-          // Whether the text landed somewhere: turn_end settles a steer by
-          // stamping the row and dropping its registration, so a
-          // registration still standing means nothing took this text — a
-          // row a rebuild replaced is not evidence of an archived copy.
-          const settled = !(convNow?.steerSent ?? []).some(
-            (s) => s.messageID === row.id,
-          );
+          // Whether the text landed somewhere is a question about the
+          // text, not about the registration. turn_end settles a steer by
+          // stamping the row and dropping its registration, but a rebuild
+          // (retryTranscript, a hydrate) drops the registrations along
+          // with the shell it replaced, so a missing one proves nothing.
+          // A row still pending is proof that nothing took the text; a
+          // row the turn stamped proves the conversation owns it; and a
+          // row a rebuild replaced is archived text only when the rebuilt
+          // transcript holds it as a settled steer.
+          const settled = drawn
+            ? drawn.steer !== 'pending'
+            : (convNow?.messages ?? []).some(
+                (m) =>
+                  m.role === 'user' &&
+                  m.text === trimmed &&
+                  (m.steer === 'delivered' || m.steer === 'undelivered'),
+              );
           updateConv(convID, patch);
           if (settled) {
             // The run's turn_end settled while this submission was in

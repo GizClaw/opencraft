@@ -4,7 +4,7 @@ import { INITIAL_HISTORY_TURNS, historyPage } from '../conv/history';
 import { activeConversationID } from '../conv/core';
 import { api } from '../api';
 import {
-  carryUndeliveredSteers,
+  carryUnarchivedSteers,
   emptyConv,
   errorMessage,
   settleConversation,
@@ -214,15 +214,26 @@ export function createShellSessions(
           const keepLive =
             Boolean(existing) &&
             (actorValue?.turn === 'running' || actorValue?.turn === 'starting');
+          // The steers the archive never saw travel across the rebuild
+          // with the registrations that still owe them a boundary; they
+          // are the only copy of their text (see
+          // carryUnarchivedSteers).
+          const carried = carryUnarchivedSteers(existing, archivedMessages);
           const mergedMessages = keepLive
             ? [...archivedMessages, ...existing.messages]
-            : [
-                // Undelivered steer rows are not in the archive, so they
-                // travel across the rebuild explicitly (see
-                // carryUndeliveredSteers).
-                ...archivedMessages,
-                ...carryUndeliveredSteers(existing?.messages, archivedMessages),
-              ];
+            : [...archivedMessages, ...carried.messages];
+          // A pending steer row travels with the live run above, so the
+          // registration naming its run has to travel too: turn_end
+          // settles rows by registration, and a rebuilt shell that kept
+          // the row but dropped the registration would leave it waiting
+          // for a boundary that already came.
+          const liveSteerSent = keepLive
+            ? (existing?.steerSent ?? []).filter((s) =>
+                mergedMessages.some(
+                  (m) => m.id === s.messageID && m.steer === 'pending',
+                ),
+              )
+            : carried.steerSent;
           // The live run owns every row past the seam the archive ends
           // at, so it gets the strip that owns them. Without one those
           // rows read as the last archived turn's: that turn's fold
@@ -260,6 +271,9 @@ export function createShellSessions(
                 historySeq: page.historySeq,
                 historyHasMore: page.historyHasMore,
                 pendingInteracts: existing?.pendingInteracts ?? [],
+                ...(liveSteerSent.length > 0
+                  ? { steerSent: liveSteerSent }
+                  : {}),
               }),
             },
           }));
