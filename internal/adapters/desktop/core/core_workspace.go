@@ -51,9 +51,15 @@ func (c *Core) ActiveHost() *host.Host {
 
 // BusyWorkspaces lists the workspaces with a live run, the window's own
 // and every other one: the git panel is repository-wide, and a run in a
-// sibling workspace of the same repository edits the same files.
+// sibling workspace of the same repository edits the same files. The
+// memory boundary reads the same list for a different reason (see
+// ReloadWindow): the window's event channel is process-wide, so any live
+// run has deltas in flight towards it.
 func (c *Core) BusyWorkspaces() []string {
-	return c.Runtime.BusyWorkspaces()
+	if c.busyWorkspaces == nil {
+		return nil
+	}
+	return c.busyWorkspaces()
 }
 
 // RecordWorkspace persists one workspace open. Failures are best-effort.

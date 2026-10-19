@@ -255,29 +255,31 @@ func (b *Diagnostics) SetPerfProbe(enabled bool) error {
 	return b.core.Shell.SetPerfProbe(enabled)
 }
 
-// ReloadWindow drops the window's document and loads the page again. It is
-// the memory boundary a long session has no other way to reach: bounding
-// what the DOM holds (row windowing, folded answers, an LRU for previews)
-// stops the next allocation, it does not hand back what WebKit already
-// holds, and only a fresh document gives the process its high-water mark
-// back.
+// ReloadWindow drops the window's document and loads the page again, which
+// is the memory boundary a long session has no other way to reach. The
+// decision - and the reason when it says no - belongs to Core.ReloadWindow
+// (see reload_window.go); this only forwards it and records which answer
+// the session got, because the frontend drops the boolean and a support
+// log is then the only place the outcome survives.
 //
-// It refuses while any workspace has a live run: that run's text arrives as
-// deltas into this window, and a reload would land the new page after the
-// deltas it never saw - a turn that stays empty until it ends. It answers
-// whether it reloaded; false is the window keeping the page it has.
+// It answers whether the reload was requested. A true answer does not
+// promise that this page saw it: the reply travels back through the same
+// IPC bridge the navigation is tearing down.
 func (b *Diagnostics) ReloadWindow() bool {
 	ctx := b.core.Shell.Context()
-	if busy := b.core.BusyWorkspaces(); len(busy) > 0 {
+	out := b.core.ReloadWindow()
+	switch out.Reason {
+	case core.ReloadBusy:
 		flowtelemetry.Info(ctx, "diagnostics: window reload deferred, a run is live",
-			attribute.String("workspaces", strings.Join(busy, ", ")))
-		return false
+			attribute.String("workspaces", strings.Join(out.Busy, ", ")))
+	case core.ReloadNoWindow:
+		flowtelemetry.Info(ctx, "diagnostics: window reload skipped, no window attached")
+	default:
+		// "" is the reloaded path: the window was told to drop its
+		// document.
+		flowtelemetry.Info(ctx, "diagnostics: window reload requested")
 	}
-	if !b.core.Shell.ReloadMain() {
-		return false
-	}
-	flowtelemetry.Info(ctx, "diagnostics: window reloaded")
-	return true
+	return out.Reloaded
 }
 
 // HTTPProbeDTO is the diagnostics view of the provider round-trip

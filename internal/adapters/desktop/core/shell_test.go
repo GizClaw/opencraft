@@ -245,14 +245,14 @@ func TestShellConfirmQuitRequired(t *testing.T) {
 	}
 }
 
-// TestShellReloadMainWithoutWindow pins the nil-safe answer the reload
-// binding depends on: headless never attaches a window, and the desktop
+// TestShellReloadMainWithoutWindow pins the nil-safe answer the memory
+// boundary depends on: headless never attaches a window, and the desktop
 // shell answers false before the entry point hands it one, so the caller
 // learns that no page went away.
 func TestShellReloadMainWithoutWindow(t *testing.T) {
 	s := NewShell(t.TempDir())
-	if s.ReloadMain() {
-		t.Fatal("ReloadMain reported a reload with no window attached")
+	if s.reloadMain() {
+		t.Fatal("reloadMain reported a reload with no window attached")
 	}
 }
 

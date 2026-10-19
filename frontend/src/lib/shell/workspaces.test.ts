@@ -9,6 +9,7 @@ import { useStore } from '../store';
 import { apiMock } from '../../test/apiMock';
 import { attachmentPreviews } from '../attachmentPreviews';
 import { markdownTrees } from '../markdownCache';
+import { setUnsentDraft } from '../unsentDraft';
 import {
   actorValue,
   assistantTexts,
@@ -282,6 +283,31 @@ describe('workspace switch session restore', () => {
     expect(apiMock.reloadWindow).toHaveBeenCalledTimes(1);
   });
 
+  it('a switch to the workspace already open is not a switch', async () => {
+    // Choosing the current folder in the picker used to rebuild the
+    // runtime and hand the page back for nothing.
+    await useStore.getState().openWorkspace('/tmp/w');
+
+    expect(apiMock.openWorkspace).not.toHaveBeenCalled();
+    expect(apiMock.reloadWindow).not.toHaveBeenCalled();
+  });
+
+  it('a composer with unsent work keeps the page', async () => {
+    // The draft and the attachments staged beside it live in the view's
+    // own state: a reload would drop them with nothing to restore from,
+    // so the switch skips its memory boundary instead.
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    setUnsentDraft(true);
+    try {
+      await useStore.getState().openWorkspace('/tmp/b');
+    } finally {
+      setUnsentDraft(false);
+    }
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/b');
+    expect(apiMock.reloadWindow).not.toHaveBeenCalled();
+  });
+
   it('a switch a flow keeps working through does not reload', async () => {
     // openSessionInWorkspace and sendFirstMessage switch the backend and
     // then keep going through it (resume the session, send the first
@@ -301,13 +327,14 @@ describe('workspace switch session restore', () => {
     expect(apiMock.reloadWindow).not.toHaveBeenCalled();
   });
 
-  it('a workspace switch drops the window caches', async () => {
+  it('a workspace switch drops the previews but keeps the parsed blocks', async () => {
     // The previews belong to the workspace the window is leaving: those
     // paths name files it is no longer looking at, and a cache that
-    // outlived every switch was the window's largest unbounded map. The
-    // parsed markdown blocks go with them: the transcript that asked for
-    // them is gone, and a tree is not addressed by anything the new
-    // workspace would ask for again.
+    // outlived every switch was the window's largest unbounded map. A
+    // parsed markdown block is keyed by its own text, so it stays valid
+    // for the next workspace - and the transcripts stay alive across a
+    // switch, so dropping the trees would only make the reader pay for
+    // the parse twice.
     await attachmentPreviews.load('/tmp/left-behind.png', async () => 'x');
     expect(attachmentPreviews.size).toBe(1);
     markdownTrees.set('# left behind', 'tree' as never);
@@ -333,7 +360,7 @@ describe('workspace switch session restore', () => {
       expect(useStore.getState().workspace).toBe('/tmp/a');
     });
     expect(attachmentPreviews.size).toBe(0);
-    expect(markdownTrees.size).toBe(0);
+    expect(markdownTrees.size).toBe(1);
   });
 
   it('ready after a workspace change restores the saved session', async () => {

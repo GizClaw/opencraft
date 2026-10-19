@@ -34,10 +34,13 @@ export const MAX_PREVIEW_ENTRIES = 512;
 // PreviewEntry is one path's state: either the preview that landed, or
 // the request still on its way. A fetch in flight is cached as well, so
 // two rows naming one file (a re-sent attachment, a remount racing the
-// first response) share one request.
+// first response) share one request. token identifies the request that
+// owns the slot: an evicted entry makes the next mount ask again, and the
+// older answer must not overwrite the newer one when it lands late.
 interface PreviewEntry {
   url?: string;
   request?: Promise<string>;
+  token?: number;
 }
 
 // PreviewCache is a least-recently-used map from attachment path to the
@@ -47,6 +50,9 @@ interface PreviewEntry {
 export class PreviewCache {
   private readonly entries = new Map<string, PreviewEntry>();
   private chars = 0;
+  // requestSeq stamps every request, so land and drop only touch the entry
+  // still owned by the request that called them.
+  private requestSeq = 0;
   // generation makes clear() total: a request that was already in flight
   // when the cache was dropped must not land in the new one, or a switch
   // would re-seed the cache with the workspace it just left.
@@ -78,20 +84,21 @@ export class PreviewCache {
       if (cached.request) return cached.request;
     }
     const generation = this.generation;
+    const token = (this.requestSeq += 1);
     const request = read().then(
       (url) => {
         if (generation === this.generation) {
-          if (url) this.land(path, url);
-          else this.drop(path);
+          if (url) this.land(path, url, token);
+          else this.drop(path, token);
         }
         return url;
       },
       (err: unknown) => {
-        if (generation === this.generation) this.drop(path);
+        if (generation === this.generation) this.drop(path, token);
         throw err;
       },
     );
-    this.entries.set(path, { request });
+    this.entries.set(path, { request, token });
     this.evict();
     return request;
   }
@@ -115,8 +122,13 @@ export class PreviewCache {
     return this.entries.size;
   }
 
-  private land(path: string, url: string) {
+  // land keeps one answered preview. A newer request for the same path has
+  // already replaced this one when the entry was evicted and the row asked
+  // again; that answer is the one a row is waiting for, so a late arrival
+  // leaves it alone.
+  private land(path: string, url: string, token: number) {
     const previous = this.entries.get(path);
+    if (previous !== undefined && previous.token !== token) return;
     if (previous?.url) this.chars -= previous.url.length;
     this.entries.delete(path);
     this.entries.set(path, { url });
@@ -124,9 +136,14 @@ export class PreviewCache {
     this.evict();
   }
 
-  private drop(path: string) {
+  // drop forgets one path. A request calls it with its own token (a failed
+  // read, an empty payload) and only clears the entry it still owns; evict
+  // calls it with none, because a bound that has to be met drops whatever
+  // is oldest, owner or not.
+  private drop(path: string, token?: number) {
     const entry = this.entries.get(path);
     if (!entry) return;
+    if (token !== undefined && entry.token !== token) return;
     this.entries.delete(path);
     if (entry.url) this.chars -= entry.url.length;
   }

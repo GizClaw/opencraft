@@ -47,8 +47,9 @@ func TestReportFrontendErrorEscapesNewlines(t *testing.T) {
 
 // TestReloadWindowWithoutWindow pins the answer the frontend branches on:
 // a shell with no main window (headless, or before the entry point attaches
-// one) reports that nothing was reloaded, so the caller keeps whatever state
-// it was about to hand back instead of assuming the page restarted.
+// one) reports that nothing was reloaded, so the caller keeps the page it
+// has instead of assuming it restarted. The busy half of the decision is
+// pinned in core (reload_window_test.go); this only checks the forwarding.
 func TestReloadWindowWithoutWindow(t *testing.T) {
 	dir := t.TempDir()
 	c := core.NewCore(dir, dir, "")

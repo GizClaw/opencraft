@@ -1,6 +1,8 @@
 import type { StoreApi } from 'zustand';
 import { api } from '../api';
 import { createWorkspaceGlue } from '../conv/workspace';
+import { reportFrontendError } from '../frontendErrors';
+import { hasUnsentDraft } from '../unsentDraft';
 import { sameWorkspacePath } from '../workspacePath';
 import { stateRoot } from '../../state/app';
 import type { StoreState } from '../store';
@@ -107,6 +109,10 @@ export function createShellWorkspaces(
     },
 
     openWorkspace: async (path) => {
+      // A switch to the workspace the window is already on is not a
+      // switch: it would rebuild the runtime behind the reader and, if it
+      // reached the reload below, throw the page away for nothing.
+      if (sameWorkspacePath(path, get().workspace)) return;
       try {
         await api.openWorkspace(path);
         // The runtime rebuild emits "ready"; the ready handler
@@ -118,13 +124,31 @@ export function createShellWorkspaces(
         // The switch is also the window's memory boundary. The page this
         // one replaces was holding a transcript the reader has left: its
         // decoded images, its WebKit text objects, and a high-water mark
-        // the window only gives back by going away. Here, and nowhere
-        // later: the binding has returned, so the backend is on the new
-        // workspace and a fresh page boots straight onto it, and nothing
-        // of the switch has been painted yet, so nothing on screen is
-        // lost. A live run keeps the page (the binding answers false) and
-        // the switch stays the ordinary one the ready handler applies.
-        void api.reloadWindow();
+        // the window only gives back by going away. The binding has
+        // returned, so the backend is on the new workspace and a fresh
+        // page boots straight onto it, and none of the switch has been
+        // painted yet.
+        //
+        // This is the only path that reloads, and deliberately so: the
+        // two switches that carry state with them - a draft sent to
+        // another workspace (sendFirstMessage) and a session opened in
+        // one (openSessionInWorkspace) - would lose the operation a
+        // reload restarts the page out from under. A workspace the
+        // backend leaves on its own (the reader deleted the one they were
+        // in) lands through applyWorkspaceSwitch without a reload either.
+        // So the boundary is reached on the ordinary switch, not on all
+        // of them.
+        //
+        // Two things keep the page, both expected rather than rare: a
+        // live run anywhere in the process (its deltas are addressed to
+        // this window; the Go side logs the refusal with the workspace
+        // list), and a composer with something in it (see unsentDraft).
+        // Neither is retried here - the next switch asks again.
+        if (!hasUnsentDraft()) {
+          void api
+            .reloadWindow()
+            .catch((err) => reportFrontendError('reload-window', err));
+        }
       } catch (err) {
         set({ statusText: String(err) });
       }

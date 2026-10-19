@@ -3,7 +3,6 @@ import type { StoreState } from '../store';
 import { stateRoot } from '../../state/app';
 import { api } from '../api';
 import { attachmentPreviews } from '../attachmentPreviews';
-import { markdownTrees } from '../markdownCache';
 import { reportFrontendError } from '../frontendErrors';
 import { sameWorkspacePath, workspaceLabel } from '../workspacePath';
 
@@ -57,10 +56,12 @@ export function createWorkspaceGlue(store: StoreApi<StoreState>) {
     // Dropping it here also gives back the bytes a switch is the natural
     // boundary for.
     attachmentPreviews.clear();
-    // The parsed markdown blocks go with them. A tree is not addressed by
-    // anything the new workspace would ask for again, and the transcript
-    // that asked for these is gone (markdownCache.ts).
-    markdownTrees.clear();
+    // The parsed markdown blocks stay: a tree is keyed by the text it was
+    // parsed from, so it answers the same block in any workspace, and the
+    // conversations below keep running across the switch - dropping them
+    // would only make the reader pay for the parse a second time (see
+    // markdownCache.ts). What hands the memory back is the document swap,
+    // which the shell asks for on the switch that can afford it.
     set({
       workspace: workDir,
       toolsView: null,

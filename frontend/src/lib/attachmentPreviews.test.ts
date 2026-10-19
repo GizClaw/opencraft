@@ -6,6 +6,33 @@ import { PreviewCache } from './attachmentPreviews';
 const preview = (size: number) => 'd'.repeat(size);
 
 describe('PreviewCache', () => {
+  it('keeps the newer answer when an older request for the path lands late', async () => {
+    // An evicted entry makes the next mount ask again. The first request
+    // is still on its way, and its answer is the older one: landing it
+    // would put a preview back that the row has already replaced, and the
+    // cache would read the file twice for nothing.
+    const cache = new PreviewCache(1000, 2);
+    let landFirst: (url: string) => void = () => {};
+    const first = cache.load(
+      '/tmp/a.png',
+      () =>
+        new Promise((resolve) => {
+          landFirst = resolve;
+        }),
+    );
+    // Fill the two slots, then ask for /tmp/a.png again: the entry that
+    // held the first request is evicted, so this is a second request.
+    await cache.load('/tmp/b.png', async () => preview(10));
+    await cache.load('/tmp/c.png', async () => preview(10));
+    expect(cache.size).toBe(2);
+    await cache.load('/tmp/a.png', async () => 'new');
+
+    landFirst('old');
+    await first;
+
+    expect(cache.landed('/tmp/a.png')).toBe('new');
+  });
+
   it('answers a landed preview without reading again', async () => {
     const cache = new PreviewCache();
     const read = async () => 'data:image/png;base64,AAAA';

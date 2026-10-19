@@ -558,9 +558,11 @@ export const api = {
   // boundary a workspace switch reaches and a long session has no other way
   // to. Bounding what the DOM holds (row windowing, folded answers, the
   // preview LRU) stops the next allocation; it does not give back what WebKit
-  // already keeps, and only a fresh document does. The answer says whether
-  // the page is going away; false is a live run (its stream lives in this
-  // window) or a backend without a window.
+  // already keeps, and only a fresh document does. The answer says the
+  // reload was requested, not that this page lived to see it - the reply
+  // travels back through the same bridge the navigation tears down. False
+  // means the Go side declined and logged why: a live run anywhere in the
+  // process (its deltas are addressed to this window) or no window at all.
   reloadWindow: () => Diagnostics.ReloadWindow() as unknown as Promise<boolean>,
   // httpProbe is the DEV switch for the provider round-trip probe: it
   // records when a provider request leaves the process and when the
