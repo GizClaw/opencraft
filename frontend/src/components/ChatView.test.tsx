@@ -1106,7 +1106,9 @@ describe('ChatView transcript windowing', () => {
   // A settled answer long enough to be worth folding renders its first
   // section and a control; the rest is one click away (StreamItemView).
   // The node count is what the fold is for: every character costs the
-  // renderer an element or a text node, and they outlive the row.
+  // renderer an element or a text node, and they outlive the row. Only a
+  // block a newer answer pushed into history folds - the newest answer is
+  // the one the reader is on.
   function longAnswer(chars: number, label = 'Part'): string {
     const section = (i: number) =>
       `## ${label} ${i}\n\nParagraph ${i} explains what happened, with \`code\` inline.\n\n`;
@@ -1116,7 +1118,7 @@ describe('ChatView transcript windowing', () => {
     ).join('');
   }
 
-  it('folds a long settled answer and expands it on request', async () => {
+  it('folds a long answer a newer one pushed into history', async () => {
     const text = longAnswer(6000);
     setConversation([
       {
@@ -1131,6 +1133,20 @@ describe('ChatView transcript windowing', () => {
         role: 'assistant',
         text: '',
         items: [{ kind: 'text', id: 'p-1', text }],
+        attachments: [],
+      },
+      {
+        id: 'm-user-2',
+        role: 'user',
+        text: 'and then?',
+        items: [],
+        attachments: [],
+      },
+      {
+        id: 'm-answer-2',
+        role: 'assistant',
+        text: 'done',
+        items: [{ kind: 'text', id: 'p-2', text: 'done' }],
         attachments: [],
       },
     ]);
@@ -1155,51 +1171,40 @@ describe('ChatView transcript windowing', () => {
     expect(screen.queryByRole('heading', { name: 'Part 50' })).toBeNull();
   });
 
-  it('keeps a short answer, and one the reader watched arrive, whole', () => {
-    const short = longAnswer(600, 'Short');
-    const watched = longAnswer(6000, 'Watched');
+  it('keeps the newest answer whole however long it is', () => {
+    // The fold is a position, not a history of what this window watched:
+    // an answer replayed from the archive (no live deltas here) is still
+    // the reader's position, so it renders whole.
+    const newest = longAnswer(6000, 'Newest');
     setConversation([
+      { id: 'm-u1', role: 'user', text: 'explain', items: [], attachments: [] },
       {
-        id: 'm-answer',
+        id: 'm-a1',
         role: 'assistant',
         text: '',
-        items: [
-          { kind: 'text', id: 'p-1', text: short },
-          // streamed is what mergeAppend stamps on a block whose deltas
-          // this window folded in: the reader saw it grow, so it is not
-          // folded away at the turn end.
-          { kind: 'text', id: 'p-2', text: watched, streamed: true },
-        ],
+        items: [{ kind: 'text', id: 'p-1', text: newest }],
         attachments: [],
       },
     ]);
     render(<ChatView />);
 
-    // Both blocks are rendered whole: the short one fits, and the long one
-    // is not folded because its deltas arrived here.
     expect(
-      screen.getByRole('heading', { name: 'Short 7' }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('heading', { name: 'Watched 50' }),
+      screen.getByRole('heading', { name: 'Newest 50' }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /Show full answer/ }),
     ).toBeNull();
   });
 
-  it('folds a watched answer once a newer answer lands below it', () => {
-    // The exemption is positional, not permanent: while the block was the
-    // newest answer the reader was still on it, and the next answer makes
-    // it history - the scene the fold exists for.
-    const watched = longAnswer(6000, 'Watched');
+  it('keeps a short answer whole above a newer one', () => {
+    const short = longAnswer(600, 'Short');
     setConversation([
       { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
       {
         id: 'm-a1',
         role: 'assistant',
         text: '',
-        items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+        items: [{ kind: 'text', id: 'p-1', text: short }],
         attachments: [],
       },
       { id: 'm-u2', role: 'user', text: 'second', items: [], attachments: [] },
@@ -1213,7 +1218,42 @@ describe('ChatView transcript windowing', () => {
     ]);
     render(<ChatView />);
 
-    expect(screen.queryByRole('heading', { name: 'Watched 50' })).toBeNull();
+    // Short history is rendered whole: the fold is only for what would cost
+    // the renderer more than a screen.
+    expect(
+      screen.getByRole('heading', { name: 'Short 7' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+  });
+
+  it('folds an answer once a newer one lands below it', () => {
+    // The exemption is positional, not permanent: while the block was the
+    // newest answer the reader was still on it, and the next answer makes
+    // it history - the scene the fold exists for.
+    const older = longAnswer(6000, 'Older');
+    setConversation([
+      { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+      {
+        id: 'm-a1',
+        role: 'assistant',
+        text: '',
+        items: [{ kind: 'text', id: 'p-1', text: older }],
+        attachments: [],
+      },
+      { id: 'm-u2', role: 'user', text: 'second', items: [], attachments: [] },
+      {
+        id: 'm-a2',
+        role: 'assistant',
+        text: 'done',
+        items: [{ kind: 'text', id: 'p-2', text: 'done' }],
+        attachments: [],
+      },
+    ]);
+    render(<ChatView />);
+
+    expect(screen.queryByRole('heading', { name: 'Older 50' })).toBeNull();
     expect(
       screen.getByRole('button', { name: /Show full answer/ }),
     ).toBeInTheDocument();
@@ -1226,7 +1266,7 @@ describe('ChatView transcript windowing', () => {
     // is the previous turn's: it is still what the reader is looking at,
     // so it keeps its markdown and its actions instead of turning into the
     // plain text a growing block is drawn as.
-    const watched = longAnswer(6000, 'Watched');
+    const previous = longAnswer(6000, 'Previous');
     setConversation(
       [
         { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
@@ -1234,7 +1274,7 @@ describe('ChatView transcript windowing', () => {
           id: 'm-a1',
           role: 'assistant',
           text: '',
-          items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+          items: [{ kind: 'text', id: 'p-1', text: previous }],
           attachments: [],
         },
         {
@@ -1253,7 +1293,7 @@ describe('ChatView transcript windowing', () => {
     // Parsed as markdown and left whole: the block is still the newest
     // answer, which is what both the parse and the fold read.
     expect(
-      screen.getByRole('heading', { name: 'Watched 50' }),
+      screen.getByRole('heading', { name: 'Previous 50' }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /Show full answer/ }),
@@ -1273,7 +1313,7 @@ describe('ChatView transcript windowing', () => {
     // The newest answer is still the reader's position, so the exemption
     // follows the position and not the run: the block stays whole, and the
     // fold control arrives with the answer that supersedes it.
-    const watched = longAnswer(6000, 'Watched');
+    const newest = longAnswer(6000, 'Newest');
     setConversation(
       [
         { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
@@ -1281,7 +1321,7 @@ describe('ChatView transcript windowing', () => {
           id: 'm-a1',
           role: 'assistant',
           text: '',
-          items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+          items: [{ kind: 'text', id: 'p-1', text: newest }],
           attachments: [],
         },
         {
@@ -1297,7 +1337,7 @@ describe('ChatView transcript windowing', () => {
     render(<ChatView />);
 
     expect(
-      screen.getByRole('heading', { name: 'Watched 50' }),
+      screen.getByRole('heading', { name: 'Newest 50' }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /Show full answer/ }),
@@ -1307,19 +1347,19 @@ describe('ChatView transcript windowing', () => {
     expect(screen.getByRole('button', { name: 'Fork' })).toBeInTheDocument();
   });
 
-  it('keeps a watched answer whole while a steer row sits below it', () => {
+  it('keeps the newest answer whole while a steer row sits below it', () => {
     // A steer is not a new turn: turn.ts appends the row into the live
     // one, so the answer above it is still the row the deltas belong to.
     // Reading the exemption as "the transcript's last row" folded the
     // answer under the reader the moment they interjected.
-    const watched = longAnswer(6000, 'Watched');
+    const newest = longAnswer(6000, 'Newest');
     setConversation([
       { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
       {
         id: 'm-a1',
         role: 'assistant',
         text: '',
-        items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+        items: [{ kind: 'text', id: 'p-1', text: newest }],
         attachments: [],
       },
       {
@@ -1337,7 +1377,7 @@ describe('ChatView transcript windowing', () => {
     expect(
       screen.queryByRole('button', { name: /Show full answer/ }),
     ).toBeNull();
-    expect(screen.getByText(/Watched 50/)).toBeInTheDocument();
+    expect(screen.getByText(/Newest 50/)).toBeInTheDocument();
   });
 
   it('keeps the answer live under a note the app wrote below it', () => {
@@ -1345,14 +1385,14 @@ describe('ChatView transcript windowing', () => {
     // not something the reader said: it does not open a turn, so the
     // answer above it is still the one the stream is writing into - and
     // reads as the plain text a growing block is drawn as until it stops.
-    const watched = longAnswer(6000, 'Watched');
+    const newest = longAnswer(6000, 'Newest');
     setConversation([
       { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
       {
         id: 'm-a1',
         role: 'assistant',
         text: '',
-        items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+        items: [{ kind: 'text', id: 'p-1', text: newest }],
         attachments: [],
       },
       {
@@ -1367,8 +1407,8 @@ describe('ChatView transcript windowing', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     render(<ChatView />);
 
-    expect(screen.getByText(/Watched 50/)).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Watched 50' })).toBeNull();
+    expect(screen.getByText(/Newest 50/)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Newest 50' })).toBeNull();
     expect(
       screen.queryByRole('button', { name: /Show full answer/ }),
     ).toBeNull();

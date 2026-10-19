@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The newest answer in the transcript never folds. A settled markdown block
+  past 2k characters still renders its first section and puts the rest
+  behind one control, but the fold reads the block's position and nothing
+  else: the transcript's newest reply is whole whether its deltas arrived in
+  this window, came back from the archive on a reload, or landed while
+  another conversation was on screen. An answer a newer one has pushed above
+  is history, and history folds. The `streamed` marker that used to record
+  "this window watched it grow" - and the paging pass that carried it across
+  the archive handoff - went with the old rule. (#251)
+
+### Fixed
+
+- The composer's context meter reads the prompt that was actually sent on
+  the turn that folds the conversation. Prepare estimated the transcript
+  the turn opened with, the fold then moved the older rounds out, and the
+  clamp left the slices summing past the measurement — so a long
+  conversation drew a prompt bigger than the window that served it
+  (582.6k of estimates against an 89.8k measurement). The estimates are
+  scaled onto the measurement now, keeping their shares, and the popover
+  says the split is a proportion; snapshots already stored are repaired on
+  read. (#250)
+
 ## [0.7.0] - 2026-10-19
 
 ### Upgrade notes

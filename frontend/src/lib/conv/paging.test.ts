@@ -136,13 +136,11 @@ describe('transcript tail sync', () => {
     expect(useStore.getState().conversations['s-1']).toBe(before);
   });
 
-  it('keeps a watched turn whole when the archive replaces it', async () => {
+  it('replaces a live turn with its archived copy at the turn end', async () => {
     hydratedConversation();
-    // The live row carries the marker mergeAppend stamped: this window saw
-    // the text arrive. The archived copy that lands at turn_end is written
-    // after the fact and carries nothing, so the reconciliation has to keep
-    // the marker - otherwise a long answer folds the moment the turn ends,
-    // taking the text away from the reader still in it.
+    // The live rows are what the stream built; the archive is the record
+    // the turn is replaced by. The rebuilt row is the archive's, whatever
+    // the live one happened to hold.
     const held = useStore.getState().conversations['s-1'];
     useStore.setState({
       conversations: {
@@ -161,7 +159,6 @@ describe('transcript tail sync', () => {
                   id: 'p-1',
                   text: 'streamed answer',
                   chars: 15,
-                  streamed: true,
                 },
               ],
               attachments: [],
@@ -206,7 +203,6 @@ describe('transcript tail sync', () => {
     const answer = conv.messages[conv.messages.length - 1];
     const texts = answer.items.filter((it) => it.kind === 'text');
     expect(texts).toHaveLength(1);
-    for (const block of texts) expect(block.streamed).toBe(true);
     expect(texts.map((it) => it.text).join('')).toContain('streamed answer');
   });
 

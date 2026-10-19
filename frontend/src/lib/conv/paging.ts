@@ -9,7 +9,6 @@ import {
   historyTurnsToState,
   newestArchivedSeq,
 } from './history';
-import type { MessageView } from './model';
 import { carryUnarchivedSteers, settleConversation } from './model';
 
 // Archive reconciliation and the tail sync that follows it: a finished
@@ -68,16 +67,6 @@ export function createConvPaging(
         const rebuilt = historyTurnsToState([turn]);
         const archived = rebuilt.turnArtifacts[0];
         if (!archived) return stateNow;
-        // The archive is written after the fact, so its rows carry no
-        // marker. A turn this window watched stream keeps the one the live
-        // rows earned: without it the transcript would fold the tail of a
-        // long answer the moment the turn ended, under the reader who was
-        // reading it (see StreamItemView).
-        const rebuiltMessages = conv.messages
-          .slice(start)
-          .some((m) => m.items.some((it) => it.kind === 'text' && it.streamed))
-          ? rebuilt.messages.map(watchedText)
-          : rebuilt.messages;
         // The archive never saw the steers this turn ended without
         // delivering, nor the ones still queued, so the rows carrying
         // that text travel with the rebuild: they are the only copy. The
@@ -86,7 +75,7 @@ export function createConvPaging(
         // untouched by it.
         const carried = carryUnarchivedSteers(
           { ...conv, messages: conv.messages.slice(start) },
-          rebuiltMessages,
+          rebuilt.messages,
         ).messages;
         return {
           conversations: {
@@ -95,7 +84,7 @@ export function createConvPaging(
               ...conv,
               messages: [
                 ...conv.messages.slice(0, start),
-                ...rebuiltMessages,
+                ...rebuilt.messages,
                 ...carried,
               ],
               turnArtifacts: [
@@ -113,19 +102,6 @@ export function createConvPaging(
       // not leave the UI in a worse state or block the next turn.
     }
   };
-
-  // watchedText marks a rebuilt message's text blocks as text this window
-  // saw arrive. Everything else about the archived copy is kept: the
-  // marker says what the reader witnessed, not what the row is.
-  function watchedText(m: MessageView): MessageView {
-    if (!m.items.some((it) => it.kind === 'text')) return m;
-    return {
-      ...m,
-      items: m.items.map((it) =>
-        it.kind === 'text' ? { ...it, streamed: true as const } : it,
-      ),
-    };
-  }
 
   // deferredTailSyncs holds conversations whose tail sync had to wait
   // for a running turn, each with the anchor captured at that moment.
