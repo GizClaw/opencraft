@@ -64,12 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mark away, and clicking the row (either branch of `resume`) or
   deleting it clears it.
 - A notification banner opens the conversation that raised it. The
-  `turn_end` and `interact` stream events name the workspace that owns
-  the run (`BIND_WORKSPACE` on the Go side), so a banner raised by a
-  background workspace lands on that conversation instead of the one on
-  screen. Banners replace one another per conversation
-  (`turn-end:<id>`, `interact:<id>`, `automation:<task>`), so a burst of
-  turns cannot stack a queue of notifications over the chat.
+  `turn_end` and `interact` stream events carry the workspace whose Host
+  owns the run, so a banner raised by a background workspace lands on
+  that conversation instead of the one on screen; the chat actor takes
+  the field in through the conversation machine's `BIND_WORKSPACE`
+  event, which pins the actor's workspace and changes no turn state. A
+  click whose conversation the shown workspace does not own is refused
+  by the resume binding instead of opening an empty chat. Banners
+  replace one another per conversation (`turn-end:<id>`, `interact:<id>`,
+  `automation:<task>`), so a burst of turns cannot stack a queue of
+  notifications over the chat.
 - A path written in backticks in the transcript opens the file. One
   inline code span is classified as a path or a URL (`linkTarget.ts`):
   a chip renders where plain code would, a click resolves it the way a
