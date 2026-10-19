@@ -140,7 +140,6 @@ func New(opts Options) (*Desktop, error) {
 		WorkDir: opts.WorkDir,
 	})
 	c.Prompt.SetNotifier(c.Shell.Emit)
-	c.Prompt.SetRunConvResolver(c.Conversation.ConversationForRun)
 	c.Runtime.Manager().SetUsageObserver(func(_ context.Context, usage inference.Usage) {
 		c.Shell.Emit(core.EventUsage, core.NewUsageEvent(usage))
 	})

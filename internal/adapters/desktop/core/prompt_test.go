@@ -120,6 +120,56 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 	}
 }
 
+// TestCorePromptNamesTheRunsWorkspace pins the assembly rather than the
+// resolver: NewCoreWithPaths installs the run → workspace lookup, so an
+// interact event emitted by a Prompt nobody wired by hand still names
+// the workspace whose Host is asking. Without the wiring the field is
+// silently absent, and the frontend then attributes the row - and the
+// banner click - to whatever workspace happens to be on screen.
+func TestCorePromptNamesTheRunsWorkspace(t *testing.T) {
+	home := t.TempDir()
+	other := t.TempDir()
+	c := NewCore(t.TempDir(), t.TempDir(), home)
+	sessionID := c.Conversation.New(home)
+	c.Conversation.TrackRun(home, sessionID, "r-1")
+	// The window moves on before the prompt lands: the answer belongs to
+	// the workspace the run was started from.
+	c.SetWorkDir(other)
+
+	events := make(chan map[string]any, 1)
+	c.Prompt.SetNotifier(func(_ string, data any) {
+		events <- data.(map[string]any)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_, _ = c.Prompt.Ask(ctx, interact.Spec{
+			ID:    "p-1",
+			RunID: "r-1",
+			Kind:  interact.KindText,
+			Title: "Question",
+		})
+	}()
+
+	select {
+	case data := <-events:
+		if data["workspace"] != home {
+			t.Fatalf("workspace = %v, want the run's workspace %q",
+				data["workspace"], home)
+		}
+		if data["conversation_id"] != sessionID {
+			t.Fatalf("conversation_id = %v, want %q",
+				data["conversation_id"], sessionID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("interact event was not emitted")
+	}
+	if !c.Prompt.Answer("p-1", "", "", nil, true) {
+		t.Fatal("Answer did not resolve pending prompt")
+	}
+}
+
 // TestPromptAskOmitsUnknownWorkspace covers the other half of the
 // workspace field: a run the desktop never tracked has no workspace to
 // name, and the event must then carry no key at all rather than an empty
