@@ -14,6 +14,7 @@ import { createConvCore } from '../conv/core';
 import { createConvPaging } from '../conv/paging';
 import { createWorkspaceGlue } from '../conv/workspace';
 import { liveTurnEntry } from '../conv/artifacts';
+import { readContextUsage } from './history';
 import { measureInteraction } from '../perfMetrics';
 import { sameWorkspacePath } from '../workspacePath';
 import { stateRoot } from '../../state/app';
@@ -39,6 +40,7 @@ export function createShellSessions(
   | 'deleteSession'
   | 'loadSessions'
   | 'openSessionInWorkspace'
+  | 'openFromNotification'
 > {
   const set = store.setState;
   const get = store.getState;
@@ -52,6 +54,18 @@ export function createShellSessions(
   } = core;
   const { switchWorkspace } = ws;
   const { waitForWorkspaceRestore } = ws;
+
+  // clearTurnAttention drops the sidebar's failure marker for one
+  // conversation: opening the row is the reader answering it, and a
+  // delete takes the row away for good.
+  const clearTurnAttention = (id: string) => {
+    if (!get().turnAttention[id]) return;
+    set((state) => {
+      const next = { ...state.turnAttention };
+      delete next[id];
+      return { turnAttention: next };
+    });
+  };
 
   return {
     newEmptyTab: () => {
@@ -113,6 +127,7 @@ export function createShellSessions(
 
     resume: (id) =>
       measureInteraction('resume', async () => {
+        clearTurnAttention(id);
         if (activeConversationID() === id) {
           // Returning to the already-active conversation means closing
           // whatever overlay/tool page currently covers the chat.
@@ -146,6 +161,12 @@ export function createShellSessions(
             return;
           }
           const resolvedID = snapshot.conversation_id;
+          // The meter's snapshot is read alongside the transcript: it is
+          // a property of the conversation, so a chat that comes back
+          // after a restart shows where its context went before the user
+          // pays for another turn. It never rejects (see
+          // readContextUsage), so it cannot fail the open.
+          const usageRead = readContextUsage(resolvedID);
           const actor = stateRoot.registry.ensure(resolvedID, {
             workspaceGeneration: stateRoot.generation(),
             workspace: get().workspace,
@@ -161,15 +182,18 @@ export function createShellSessions(
           const actorValue = actor?.getSnapshot().value as
             { transcript: string; turn: string } | undefined;
           if (existing && actorValue?.transcript === 'ready') {
+            const usage = await usageRead;
+            const held = get().conversations[resolvedID];
             set({
               toolsView: null,
               conversations: {
                 ...get().conversations,
                 [resolvedID]: {
-                  ...get().conversations[resolvedID],
+                  ...held,
                   mode: snapshot.mode,
                   think: snapshot.think,
                   model: snapshot.model,
+                  contextUsage: usage ?? held?.contextUsage,
                 },
               },
             });
@@ -183,12 +207,12 @@ export function createShellSessions(
             return;
           }
           let turns: Awaited<ReturnType<typeof api.sessionTurns>>;
+          let usage: Awaited<typeof usageRead>;
           try {
-            turns = await api.sessionTurns(
-              resolvedID,
-              INITIAL_HISTORY_TURNS + 1,
-              0,
-            );
+            [turns, usage] = await Promise.all([
+              api.sessionTurns(resolvedID, INITIAL_HISTORY_TURNS + 1, 0),
+              usageRead,
+            ]);
           } catch (err) {
             actor?.send({
               type: 'HYDRATE_FAIL',
@@ -270,6 +294,11 @@ export function createShellSessions(
                 turnArtifacts,
                 historySeq: page.historySeq,
                 historyHasMore: page.historyHasMore,
+                // A read that found nothing keeps what the shell
+                // already had: the live turn's terminal event writes
+                // the same document, and a rebuild is not a reason to
+                // forget a number the user just watched.
+                contextUsage: usage ?? existing?.contextUsage,
                 pendingInteracts: existing?.pendingInteracts ?? [],
                 ...(liveSteerSent.length > 0
                   ? { steerSent: liveSteerSent }
@@ -321,6 +350,7 @@ export function createShellSessions(
           return { conversations, viewers };
         });
         clearPendingIndex(id);
+        clearTurnAttention(id);
         // A tail sync waiting on this conversation holds its id until
         // that conversation's next turn_end; there will not be one.
         paging.forgetDeferredTailSync(id);
@@ -388,6 +418,36 @@ export function createShellSessions(
         }
       }
       await get().resume(sessionID);
+    },
+
+    /**
+     * openFromNotification reopens the conversation a system banner
+     * belongs to. The click arrives from outside the app: the window may
+     * be on another workspace, and it may be covered by a tool page or
+     * the config panel. Both are closed before the hop rather than after
+     * it: the click's answer is either the conversation or the failure
+     * that says it could not open, and both are drawn on the chat the
+     * page was covering. The hop itself is openSessionInWorkspace's — a
+     * switch a newer click took still wins, and a workspace that never
+     * landed still throws.
+     */
+    openFromNotification: async (sessionID, workspacePath) => {
+      set({ toolsView: null, configOpen: false });
+      try {
+        if (workspacePath) {
+          await get().openSessionInWorkspace(sessionID, workspacePath);
+          return;
+        }
+        // A banner from a producer that could not name its workspace
+        // still names the conversation, which is the one thing the
+        // click promised: open it where the window already is. The
+        // backend refuses an id this workspace's store does not own, so
+        // the fallback lands on that refusal instead of adopting
+        // another workspace's conversation as this one's.
+        await get().resume(sessionID);
+      } catch {
+        get().toast(i18n.t('chat.switchFailed'), 'warning');
+      }
     },
   };
 }

@@ -26,6 +26,11 @@ type Prompt struct {
 	pending map[string]pendingPrompt
 	notify  func(typ string, data any)
 	runConv func(runID string) string
+	// runWorkspace resolves the workspace whose Host is asking. It is a
+	// second lookup rather than a fancier runConv because the two
+	// answers come from different tables, and an event may carry one
+	// without the other (a run the window never saw).
+	runWorkspace func(runID string) string
 	// autoApprove, when set, answers a spec before it reaches the UI:
 	// a non-empty option value short-circuits Ask (no pending entry,
 	// no interact event) and becomes the reply, so the asking turn
@@ -54,6 +59,17 @@ func (p *Prompt) SetRunConvResolver(fn func(runID string) string) {
 	p.mu.Unlock()
 }
 
+// SetRunWorkspaceResolver installs a run-id → workspace resolver so the
+// interact event names the workspace whose Host is asking. The window may
+// be looking at another workspace when a background turn stops for a
+// prompt, and the row that starts blinking has to be the one under the
+// asking workspace rather than the one on screen.
+func (p *Prompt) SetRunWorkspaceResolver(fn func(runID string) string) {
+	p.mu.Lock()
+	p.runWorkspace = fn
+	p.mu.Unlock()
+}
+
 // SetAutoApprover installs the predicate that answers a spec without
 // presenting it. It runs before the prompt is registered or emitted;
 // returning an option value with true means the caller of Ask gets an
@@ -75,6 +91,10 @@ func (p *Prompt) Ask(ctx context.Context, spec interact.Spec) (interact.Reply, e
 	conversationID := ""
 	if p.runConv != nil {
 		conversationID = p.runConv(spec.RunID)
+	}
+	workspace := ""
+	if p.runWorkspace != nil {
+		workspace = p.runWorkspace(spec.RunID)
 	}
 	approve := p.autoApprove
 	p.mu.Unlock()
@@ -124,6 +144,9 @@ func (p *Prompt) Ask(ctx context.Context, spec interact.Spec) (interact.Reply, e
 		}
 		if conversationID != "" {
 			payload["conversation_id"] = conversationID
+		}
+		if workspace != "" {
+			payload["workspace"] = workspace
 		}
 		notify(EventInteract, payload)
 	}

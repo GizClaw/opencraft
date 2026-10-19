@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
+
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
 
 func TestNotifyStatusUsesTexts(t *testing.T) {
@@ -98,5 +100,88 @@ func TestAutomationNotificationTruncatesLongSnippet(t *testing.T) {
 	}
 	if len([]rune(body)) > notifySnippetLimit+len("Task finished")+2 {
 		t.Fatalf("body longer than the banner allows: %d runes", len([]rune(body)))
+	}
+}
+
+// A banner id is the replacement key the notification center uses, so it
+// has to be the same for the same conversation and kind and different
+// for everything else.
+func TestBannerIDReplacesPerConversation(t *testing.T) {
+	if got := bannerID(bannerTurnEnd, "conv-1"); got != "turn-end:conv-1" {
+		t.Fatalf("bannerID = %q, want kind:conversation", got)
+	}
+	if got := bannerID(bannerTurnEnd, ""); got != bannerTurnEnd {
+		t.Fatalf("bannerID without a conversation = %q, want %q",
+			got, bannerTurnEnd)
+	}
+	// Two kinds for one conversation must not collide: the second result
+	// of a turn would otherwise replace the banner still asking for
+	// input.
+	if bannerID(bannerInteract, "conv-1") == bannerID(bannerTurnEnd, "conv-1") {
+		t.Fatal("kinds share one banner id")
+	}
+}
+
+// notificationOpenTarget decides what activating a banner means. Only the
+// default action opens a conversation, and only a banner that named one
+// gives it somewhere to go.
+func TestNotificationOpenTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		action string
+		data   map[string]any
+		want   core.OpenConversationEvent
+		ok     bool
+	}{
+		{
+			name:   "default action on a conversation",
+			action: notifications.DefaultActionIdentifier,
+			data: map[string]any{
+				"conversation_id": "conv-1",
+				"workspace":       "/w/one",
+			},
+			want: core.OpenConversationEvent{
+				ConversationID: "conv-1",
+				Workspace:      "/w/one",
+			},
+			ok: true,
+		},
+		{
+			name:   "a banner that lost its workspace still opens",
+			action: notifications.DefaultActionIdentifier,
+			data:   map[string]any{"conversation_id": "conv-1"},
+			want:   core.OpenConversationEvent{ConversationID: "conv-1"},
+			ok:     true,
+		},
+		{
+			name:   "another action is not an open",
+			action: "reply",
+			data:   map[string]any{"conversation_id": "conv-1"},
+		},
+		{
+			name:   "a banner without a conversation has nowhere to go",
+			action: notifications.DefaultActionIdentifier,
+			data:   map[string]any{"workspace": "/w/one"},
+		},
+		{
+			name:   "an empty conversation id is not a target",
+			action: notifications.DefaultActionIdentifier,
+			data:   map[string]any{"conversation_id": ""},
+		},
+		{
+			name:   "a non-string id is not trusted",
+			action: notifications.DefaultActionIdentifier,
+			data:   map[string]any{"conversation_id": 7},
+		},
+		{
+			name:   "a response without data has nowhere to go",
+			action: notifications.DefaultActionIdentifier,
+		},
+	} {
+		got, ok := notificationOpenTarget(tc.action, tc.data)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("%s: openTarget = %+v / %v, want %+v / %v",
+				tc.name, got, ok, tc.want, tc.ok)
+		}
 	}
 }

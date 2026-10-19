@@ -46,12 +46,17 @@
   /* Chart / metric series. The one palette for usage, runtime metrics
      and graph accents, so a chart blue is the same blue everywhere and
      the light theme gets a darker set instead of the dark one washed
-     out on white. */
+     out on white. Eight stops, because a stacked bar can put that many
+     slices side by side and adjacent slices are what has to differ:
+     1-5 are the hues the line charts cycle, 6-8 fill in between them. */
   --color-series-1: #3b82f6;
   --color-series-2: #22c55e;
   --color-series-3: #f97316;
   --color-series-4: #a855f7;
   --color-series-5: #10b981;
+  --color-series-6: #22d3ee;
+  --color-series-7: #f472b6;
+  --color-series-8: #65a30d;
   --color-chart-grid: rgb(148 163 184 / 0.15);
   --color-chart-axis: #94a3b8;
   /* The graph canvas dot grid: a chart-grid cousin that has to stay
@@ -228,6 +233,11 @@
   color-scheme: dark;
   --oc-shadow-key: rgb(0 0 0 / 0.5);
   --oc-shadow-ambient: rgb(0 0 0 / 0.6);
+  /* The row pulse behind a session that is waiting on the reader. One
+     value per theme: --color-warn differs between dark and light, and
+     this is the same tint at banner strength rather than a call-site
+     color-mix. */
+  --oc-row-attention: rgb(251 191 36 / 0.18);
   /* Layer ladder. Every floating surface names the rung it belongs to
      instead of a literal z-index, so a menu opened from inside a dialog
      cannot end up under it by accident. */
@@ -267,6 +277,7 @@
   color-scheme: light;
   --oc-shadow-key: rgb(15 23 42 / 0.14);
   --oc-shadow-ambient: rgb(15 23 42 / 0.2);
+  --oc-row-attention: rgb(180 125 0 / 0.16);
   --color-bg: #f5f7fa;
   --color-panel: #ffffff;
   --color-panel2: #edf1f6;
@@ -294,6 +305,9 @@
   --color-series-3: #c2410c;
   --color-series-4: #7c3aed;
   --color-series-5: #047857;
+  --color-series-6: #0e7490;
+  --color-series-7: #be185d;
+  --color-series-8: #4d7c0f;
   --color-chart-grid: rgb(15 23 42 / 0.1);
   --color-chart-axis: #5c6777;
   --color-graph-dot: rgb(100 116 139 / 0.3);
@@ -1137,6 +1151,34 @@ body.oc-resizing * {
   animation: sidebar-title-scroll-once var(--sidebar-title-scroll-duration, 8s)
     linear forwards;
   will-change: transform;
+}
+
+/* A session whose run is blocked on a prompt pulses: the row is asking
+   for a decision, and a spinner alone reads as "still working". Only the
+   midpoint is written, so the two ends fall back to whatever background
+   the row already has (its selection tint, its hover) and the pulse
+   reads as a flash over that state rather than replacing it. */
+@keyframes sidebar-row-attention {
+  50% {
+    background-color: var(--oc-row-attention);
+  }
+}
+
+.sidebar-row-attention {
+  animation: sidebar-row-attention 1.6s ease-in-out infinite;
+}
+
+/* Reduced motion keeps the tint and drops only the pulse. The global rule
+   above squashes every animation to a single ~0s iteration, and a
+   keyframe that writes only its midpoint leaves no background behind
+   once it is over - the row would read as idle except for the question
+   mark. Painting the midpoint as a plain declaration is what "static
+   tint" means; the mark still says what the row wants. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-row-attention {
+    animation: none !important;
+    background-color: var(--oc-row-attention);
+  }
 }
 
 /* Diff viewports that hide lines below the fold fade into the surface

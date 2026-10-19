@@ -31,6 +31,7 @@ import type {
   ConfigCompatRepair,
   ConfigState,
   ConfigStatus,
+  ContextUsageDTO,
   DelegationSettingsRequest,
   DelegationState,
   DiagnosticsReport,
@@ -280,6 +281,12 @@ export const api = {
   },
   sessionHistory: (id: string) =>
     Session.History(id, -1) as unknown as Promise<HistoryMessage[]>,
+  // sessionContextUsage reads the conversation's last measured context
+  // snapshot (what the composer's meter draws). A conversation that was
+  // never metered returns the zero snapshot, which the UI reads as
+  // "nothing measured yet".
+  sessionContextUsage: (id: string) =>
+    Session.ContextUsage(id) as unknown as Promise<ContextUsageDTO>,
   // sessionTurns returns archived turns oldest first. limit <= 0 reads
   // every turn; beforeSeq pages backwards from a cursor. Startup
   // hydration only asks for the newest turns so a long session does not

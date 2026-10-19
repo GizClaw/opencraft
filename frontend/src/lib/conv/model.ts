@@ -1,6 +1,7 @@
 import { type ToolImage } from '../toolresult';
 import type {
   AttachmentView,
+  ContextUsageDTO,
   DelegationNote,
   FileTab,
   InteractDTO,
@@ -294,6 +295,13 @@ export interface ConversationState {
   mode: string;
   think: string;
   model: string;
+  // contextUsage is the last context snapshot the backend measured for
+  // this conversation: the prompt the last model call carried, split by
+  // what filled it. The live turn sets it from its terminal event, a
+  // re-opened conversation from the persisted document, and it stays put
+  // until a newer measurement replaces it — there is no other source, and
+  // the composer's meter draws nothing without it.
+  contextUsage?: ContextUsageDTO;
   pendingInteracts: InteractDTO[];
   queued?: QueuedInput;
   // historySeq is the smallest archived turn seq currently loaded and

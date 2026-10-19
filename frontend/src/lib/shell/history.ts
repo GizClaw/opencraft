@@ -5,6 +5,7 @@ import {
   historyPage,
 } from '../conv/history';
 import { api } from '../api';
+import type { ContextUsageDTO } from '../types';
 import {
   carryUnarchivedSteers,
   emptyConv,
@@ -18,6 +19,29 @@ import type { StoreState } from '../store';
 // The transcript's own history actions: load an earlier page, and try
 // the tail again after it failed. S4 moved these out of store.ts
 // (move only).
+
+// readContextUsage reads the conversation's last measured prompt — the
+// numbers the composer's context meter draws — and never rejects: a
+// conversation that was never metered and a read that fails both mean
+// the same thing to the composer, which is that there is no meter to
+// draw. The meter is an annotation on a transcript that loads with or
+// without it, so it must not be able to fail a conversation open.
+export async function readContextUsage(
+  id: string,
+): Promise<ContextUsageDTO | undefined> {
+  if (!id) return undefined;
+  try {
+    const usage = await api.sessionContextUsage(id);
+    // The zero event is the backend's "never metered": no categories,
+    // nothing to draw. Treating it as a value would leave the meter
+    // stuck on an empty bar.
+    return usage && usage.categories && usage.categories.length > 0
+      ? usage
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export function createShellHistory(
   store: StoreApi<StoreState>,
@@ -89,7 +113,13 @@ export function createShellHistory(
       const generation = stateRoot.generation();
       actor?.send({ type: 'HYDRATE_REQUESTED', request, generation });
       try {
-        const turns = await api.sessionTurns(id, INITIAL_HISTORY_TURNS + 1, 0);
+        // The rebuild replaces the conversation wholesale, so the
+        // meter's snapshot is read again with it: the numbers belong to
+        // the conversation, not to the shell that happened to hold them.
+        const [turns, usage] = await Promise.all([
+          api.sessionTurns(id, INITIAL_HISTORY_TURNS + 1, 0),
+          readContextUsage(id),
+        ]);
         const page = historyPage(turns, INITIAL_HISTORY_TURNS);
         // The steers the archive never saw travel across the rebuild with
         // the registrations that still owe them a boundary: the rows are
@@ -110,6 +140,10 @@ export function createShellHistory(
               turnArtifacts: page.turnArtifacts,
               historySeq: page.historySeq,
               historyHasMore: page.historyHasMore,
+              // A read that found nothing (never metered, or the
+              // conversation predates the document) must not erase what
+              // this shell already shows for it.
+              contextUsage: usage ?? before?.contextUsage,
             }),
           },
         }));

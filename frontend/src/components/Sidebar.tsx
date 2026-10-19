@@ -1,6 +1,8 @@
 import {
   Bot,
   ChevronDown,
+  CircleHelp,
+  CircleX,
   Clock,
   Download,
   FolderClosed,
@@ -27,7 +29,11 @@ import { formatCombo } from '../lib/keys';
 import { useModifierHeld } from '../lib/modifierHeld';
 import { runningIDsByWorkspace, sessionSlotIDs } from '../lib/sessionSlots';
 import { useShallow } from 'zustand/react/shallow';
-import { firstMessageTitle, useStore } from '../lib/store';
+import {
+  firstMessageTitle,
+  pendingConversationIDs,
+  useStore,
+} from '../lib/store';
 import { useFocusState, useRunningConversations } from '../state/react';
 import type { ComponentType } from 'react';
 import type { SessionMeta, WorkspaceMeta } from '../lib/types';
@@ -101,6 +107,10 @@ interface SessionRow {
   id: string;
   title: string;
   running: boolean;
+  /** waiting: the run is blocked on a prompt the reader has to answer. */
+  waiting?: boolean;
+  /** failed: the last turn that ended needs the reader (see turnNeedsAttention). */
+  failed?: boolean;
   tokens?: string;
   time?: string;
   turns?: number;
@@ -183,6 +193,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const closeTools = useStore((s) => s.closeTools);
   const deleteSession = useStore((s) => s.deleteSession);
   const pendingPromptConvs = useStore((s) => s.pendingPromptConvs);
+  const turnAttention = useStore((s) => s.turnAttention);
   const flash = useStore((s) => s.flash);
   const loadSessions = useStore((s) => s.loadSessions);
   const loadWorkspaces = useStore((s) => s.loadWorkspaces);
@@ -405,6 +416,14 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       ),
     [runningActors, pendingPromptConvs],
   );
+  // The waiting rows are a subset of the running ones (a prompt is only
+  // pending while its run is live), and they are the only rows that
+  // pulse: the pulse is about the reader's decision, not about work
+  // happening.
+  const waitingIDs = useMemo(
+    () => new Set(pendingConversationIDs(pendingPromptConvs)),
+    [pendingPromptConvs],
+  );
 
   // A running row is retitled by the first user message of its live
   // conversation until the archive names the session. That title is the
@@ -546,6 +565,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             ? meta.title
             : liveTitle || t('sidebar.newSession'),
         running: true,
+        waiting: waitingIDs.has(id),
+        failed: Boolean(turnAttention[id]),
         tokens: meta ? fmtTokens(meta.total_tokens) : '',
         time: meta ? fmtTime(meta.updated_at) : '',
         turns: meta?.turns,
@@ -559,6 +580,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         id: s.id,
         title: s.title,
         running: false,
+        waiting: waitingIDs.has(s.id),
+        failed: Boolean(turnAttention[s.id]),
         tokens: fmtTokens(s.total_tokens),
         time: fmtTime(s.updated_at),
         turns: s.turns,
@@ -620,10 +643,34 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     slot?: number,
   ) => {
     const isActive = row.id === currentSession;
+    // One icon per row, saying the most pressing thing it has to say: a
+    // prompt outranks work in progress, because the run cannot go on
+    // without the reader; work in progress outranks the mark a previous
+    // turn left, because that failure is the thing being retried.
+    const mark = row.waiting
+      ? 'waiting'
+      : row.running
+        ? 'running'
+        : row.failed
+          ? 'failed'
+          : undefined;
+    const markTip =
+      mark === 'waiting'
+        ? t('sidebar.waiting')
+        : mark === 'failed'
+          ? t('sidebar.turnFailed')
+          : undefined;
+    // The mark is drawn, not read: the button's aria-label is the row's
+    // accessible name, so an aria-label on the icon inside it would be
+    // swallowed there. The copy rides on the row's description instead,
+    // which a screen reader reads right after the title.
+    const markDescID = markTip ? `session-mark-${row.id}` : undefined;
     return (
       <div key={row.id}>
         <div
           className={`group relative rounded-control text-left ${
+            row.waiting ? 'sidebar-row-attention ' : ''
+          }${
             isActive
               ? 'bg-accent/15 border border-accent/40'
               : 'border border-transparent hover:bg-panel2'
@@ -655,6 +702,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                 onClick={() => openSession(row)}
                 className="flex w-full min-w-0 items-center text-left px-2 py-1.5"
                 aria-label={row.title}
+                aria-current={isActive ? 'true' : undefined}
+                aria-describedby={markDescID}
               >
                 <SessionTitle title={row.title} />
                 {slot !== undefined && (
@@ -679,8 +728,11 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                     {formatCombo(`Mod+${slot}`, isMac)}
                   </kbd>
                 )}
-                {row.running && (
+                {mark && (
                   <span
+                    // The icons are ambience: the status travels in the
+                    // row's description (below), so a reader hears the
+                    // title and then what the row wants.
                     aria-hidden="true"
                     className={`shrink-0 transition-opacity ${
                       actionsAllowed && menuOpen?.id === row.id
@@ -689,11 +741,23 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                           ? 'group-hover:opacity-0'
                           : ''
                     }`}
+                    data-tip={markTip}
                   >
-                    <Loader2
-                      size={ICON.sm}
-                      className="animate-spin text-accent"
-                    />
+                    {mark === 'waiting' ? (
+                      <CircleHelp size={ICON.sm} className="text-warn" />
+                    ) : mark === 'running' ? (
+                      <Loader2
+                        size={ICON.sm}
+                        className="animate-spin text-accent"
+                      />
+                    ) : (
+                      <CircleX size={ICON.sm} className="text-err" />
+                    )}
+                  </span>
+                )}
+                {markTip && (
+                  <span id={markDescID} className="sr-only">
+                    {markTip}
                   </span>
                 )}
               </button>

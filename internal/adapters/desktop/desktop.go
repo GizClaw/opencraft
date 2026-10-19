@@ -140,7 +140,6 @@ func New(opts Options) (*Desktop, error) {
 		WorkDir: opts.WorkDir,
 	})
 	c.Prompt.SetNotifier(c.Shell.Emit)
-	c.Prompt.SetRunConvResolver(c.Conversation.ConversationForRun)
 	c.Runtime.Manager().SetUsageObserver(func(_ context.Context, usage inference.Usage) {
 		c.Shell.Emit(core.EventUsage, core.NewUsageEvent(usage))
 	})
@@ -210,6 +209,11 @@ func New(opts Options) (*Desktop, error) {
 	execd.SetDefaultPool(execPool)
 	d.execPool = execPool
 	c.Shell.SetNotificationSink(d.handleDesktopNotification)
+	// A banner outlives the window's attention, so activating one is
+	// how a user comes back to the conversation it is about instead of
+	// only raising the app. The callback is //wails:ignore'd in the
+	// service, so it never reaches bindings.
+	d.notifications.OnNotificationResponse(d.handleNotificationResponse)
 	// Media playback needs http(s): the webview loads the frontend over
 	// wails:// (or the Vite dev server), which WebKit/AVFoundation
 	// cannot play. Streaming is an enhancement, so a failure logs and
@@ -541,6 +545,10 @@ func (d *Desktop) runAutomation(
 		end.InterruptCause = class.InterruptCause
 		end.ErrorKind = class.ErrorKind
 		end.AgentID = core.AssistantAgentID
+		// A run the window watched had this workspace current; naming it
+		// keeps the turn_end shape the same as a turn started from the
+		// composer (bindings.Conversation.waitTurn).
+		end.Workspace = task.Workspace
 		end.Notify = &notify
 		d.core.Shell.Emit(core.EventTurnEnd, end)
 	} else if notify {
@@ -553,6 +561,13 @@ func (d *Desktop) runAutomation(
 			"status":  string(result.Status),
 			"error":   result.Error,
 			"output":  output,
+			// The banner's click reopens the run's conversation, so
+			// the payload names it. It reads the run because the Host
+			// mints an id when the task has none, and the workspace
+			// because a task runs in its own, which is not necessarily
+			// the one on screen.
+			"conversation_id": contextID,
+			"workspace":       task.Workspace,
 		})
 	}
 	if waitErr != nil {

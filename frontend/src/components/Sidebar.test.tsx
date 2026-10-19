@@ -157,6 +157,7 @@ describe('Sidebar workspace history', () => {
       workspaces: [workspaceA, workspaceB],
       conversations: {},
       viewers: {},
+      turnAttention: {},
       configured: true,
     });
   });
@@ -235,6 +236,104 @@ describe('Sidebar workspace history', () => {
     expect(rowButton.querySelector('svg.animate-spin')).not.toBeNull();
     // The spinner is the only row icon; there is no leading icon.
     expect(rowButton.querySelectorAll('svg')).toHaveLength(1);
+    // Work in progress is ambience: there is nothing for a screen
+    // reader to act on, so the row has no description to add.
+    expect(rowButton).not.toHaveAccessibleDescription();
+  });
+
+  it('blinks the row of a run that is waiting on the reader', () => {
+    switchWorkspace(workspaceB.path, [meta('s-wait', 'waits on you')]);
+    startRuns(workspaceB.path, ['s-wait']);
+    useStore.setState({ pendingPromptConvs: { 'p-1': 's-wait' } });
+    render(<Sidebar isMac={false} />);
+
+    const row = screen
+      .getByRole('button', { name: 'waits on you' })
+      .closest('[data-session-id]')!;
+    // The pulse is a class: jsdom does not resolve the stylesheet, and
+    // the browser's own verdict on the animation lives in
+    // e2e/sidebar-attention.spec.ts.
+    expect(row.className).toContain('sidebar-row-attention');
+    // The question mark replaces the spinner instead of sitting beside
+    // it: blocked on the reader is not the same story as still working,
+    // and the row can only tell one.
+    const rowButton = screen.getByRole('button', { name: 'waits on you' });
+    expect(rowButton.querySelector('svg.animate-spin')).toBeNull();
+    expect(
+      rowButton.querySelector('[data-tip="Waiting for you"]'),
+    ).not.toBeNull();
+    // The icon is drawn; the words ride on the row's description, which
+    // is what a screen reader reads after the title.
+    expect(rowButton).toHaveAccessibleDescription('Waiting for you');
+  });
+
+  it('stops blinking once the prompt is answered', () => {
+    switchWorkspace(workspaceB.path, [meta('s-wait', 'waits on you')]);
+    startRuns(workspaceB.path, ['s-wait']);
+    useStore.setState({ pendingPromptConvs: { 'p-1': 's-wait' } });
+    const { rerender } = render(<Sidebar isMac={false} />);
+    const row = () =>
+      screen
+        .getByRole('button', { name: 'waits on you' })
+        .closest('[data-session-id]')!;
+    expect(row().className).toContain('sidebar-row-attention');
+
+    act(() => useStore.setState({ pendingPromptConvs: {} }));
+    rerender(<Sidebar isMac={false} />);
+
+    // The turn is still in flight, so the row goes back to what it was
+    // before the prompt: a spinner, no pulse.
+    expect(row().className).not.toContain('sidebar-row-attention');
+    expect(
+      screen
+        .getByRole('button', { name: 'waits on you' })
+        .querySelector('svg.animate-spin'),
+    ).not.toBeNull();
+  });
+
+  it('marks the row of a conversation whose last turn failed', () => {
+    switchWorkspace(workspaceB.path, [meta('s-bad', 'broke on me')]);
+    useStore.setState({ turnAttention: { 's-bad': 'r-bad' } });
+    render(<Sidebar isMac={false} />);
+
+    const rowButton = screen.getByRole('button', { name: 'broke on me' });
+    expect(rowButton.querySelector('svg.animate-spin')).toBeNull();
+    expect(rowButton.querySelector('[data-tip="Turn failed"]')).not.toBeNull();
+    expect(rowButton).toHaveAccessibleDescription('Turn failed');
+  });
+
+  it('shows a new run instead of the mark its predecessor left', () => {
+    // The mark is about the last turn that *ended*. While the next one
+    // runs, the row's job is to say the work is happening.
+    switchWorkspace(workspaceB.path, [meta('s-1', 'retrying')]);
+    startRuns(workspaceB.path, ['s-1']);
+    useStore.setState({ turnAttention: { 's-1': 'r-bad' } });
+    render(<Sidebar isMac={false} />);
+
+    const rowButton = screen.getByRole('button', { name: 'retrying' });
+    expect(rowButton.querySelector('svg.animate-spin')).not.toBeNull();
+    expect(rowButton.querySelector('[data-tip="Turn failed"]')).toBeNull();
+  });
+
+  it('folds a failed row like any other, and draws it once unfolded', async () => {
+    // D2: a failure does not push its row to the top of the list or make
+    // it survive the fold. The failure marks a row; it does not reorder
+    // the workspace.
+    const rows = [1, 2, 3, 4, 5, 6].map((n) => meta(`s-${n}`, `session ${n}`));
+    apiMock.listSessionsInWorkspace.mockResolvedValue(rows);
+    useStore.setState({ turnAttention: { 's-6': 'r-6' } });
+    render(<Sidebar isMac={false} />);
+
+    await screen.findByTestId('more-sessions');
+    // session 6 is the oldest, so it sits behind "More sessions" with
+    // session 5: the failure did not buy it a place in the preview.
+    expect(screen.getByText('session 4')).toBeInTheDocument();
+    expect(screen.queryByText('session 5')).not.toBeInTheDocument();
+    expect(screen.queryByText('session 6')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('more-sessions'));
+    const rowButton = await screen.findByRole('button', { name: 'session 6' });
+    expect(rowButton.querySelector('[data-tip="Turn failed"]')).not.toBeNull();
   });
 
   it('numbers the visible rows the session slots name', () => {

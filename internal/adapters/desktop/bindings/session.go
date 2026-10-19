@@ -286,6 +286,38 @@ func (b *Session) History(
 	return h.Sessions().History(ctx, id, n)
 }
 
+// ContextUsage returns the last measured context snapshot of one
+// conversation: the prompt the turn's final model call carried, split by
+// what filled it.
+//
+// This is the read a re-opened conversation makes. The live meter does not
+// need it — the terminal turn event carries its own snapshot — but the
+// number belongs to the conversation, not to the process: after a restart
+// or a switch away and back, the last turn's prompt is still the best
+// estimate of what the next one will carry, and going blank until the user
+// pays for another turn would make the meter look broken.
+//
+// A conversation that was never metered returns the zero event, which the
+// composer reads as "nothing measured" and draws no meter for.
+func (b *Session) ContextUsage(id string) (core.ContextUsageEvent, error) {
+	if id == "" {
+		return core.ContextUsageEvent{}, nil
+	}
+	h := b.core.ActiveHost()
+	if h == nil || h.Sessions() == nil {
+		return core.ContextUsageEvent{}, nil
+	}
+	usage, err := h.Sessions().ReadContextUsage(id)
+	if errors.Is(err, os.ErrNotExist) {
+		return core.ContextUsageEvent{}, nil
+	}
+	if err != nil {
+		return core.ContextUsageEvent{}, err
+	}
+	return core.NewContextUsageEvent(usage,
+		modelInputWindow(b.core.UserDir, usage.Model)), nil
+}
+
 // Exists reports whether a conversation exists.
 func (b *Session) Exists(id string) bool {
 	h := b.core.ActiveHost()

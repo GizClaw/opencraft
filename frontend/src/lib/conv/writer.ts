@@ -13,6 +13,7 @@ import { UIEventType } from '../events';
 import type {
   AutomationRun,
   ConfigStatus,
+  ContextUsageDTO,
   InteractDTO,
   StreamDelta,
   UsageDTO,
@@ -197,6 +198,11 @@ export function createEventSink(
               failures?: number;
               notified?: boolean;
             };
+            // context is what the turn's last model call carried, split
+            // by category: the composer's context meter. It rides the
+            // terminal event because the numbers come off the turn's own
+            // board, which no other event can reach.
+            context?: ContextUsageDTO;
             // steer_pending counts the steered messages this turn ended
             // without delivering. A zero is a real zero (everything made
             // it); null — or the field missing entirely, which a producer
@@ -291,6 +297,7 @@ export function createEventSink(
                   ...conv,
                   messages,
                   turnArtifacts,
+                  contextUsage: data.context ?? conv.contextUsage,
                   steerSent: (conv.steerSent ?? []).filter(
                     (s) => !states.has(s.messageID),
                   ),
@@ -453,6 +460,8 @@ export function createEventSink(
 
     refreshSessionList: () => void get().loadSessions(),
     sessionUpdated: (id) => void syncTranscriptTail(id),
+    openConversation: (id, workspace) =>
+      void get().openFromNotification(id, workspace),
     refreshAutomations: () => void get().loadAutomations(),
     refreshAutomationRuns: (ev) => {
       const data = ev.data as AutomationRun;

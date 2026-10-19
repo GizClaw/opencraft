@@ -98,6 +98,7 @@ import {
 } from './MarkdownComposer';
 import { Markdown } from './Markdown';
 import { ActivityCard } from './ActivityCard';
+import { ContextMeter } from './ContextMeter';
 import { ToolCard, toolActivityDetail } from './ToolCard';
 import { StreamItemView } from './StreamItemView';
 import { latestPlan, planNeedsRefresh } from '../lib/plan';
@@ -1948,6 +1949,7 @@ export function ChatView() {
   const openFiles = useStore((s) => s.openFiles);
   const closeFiles = useStore((s) => s.closeFiles);
   const messages = conv?.messages ?? [];
+  const contextUsage = conv?.contextUsage;
   const hasMoreHistory = conv?.historyHasMore ?? false;
   const loadEarlierHistory = useStore((s) => s.loadEarlierHistory);
   const turnState = conversationState?.turn;
@@ -4052,20 +4054,20 @@ export function ChatView() {
                   {t('chat.busyKeyHint')}
                 </div>
               )}
-              <div className="mt-3 flex items-center justify-between px-3 pb-2.5">
-                <div className="flex items-center gap-3">
+              <div className="@container mt-3 flex items-center justify-between gap-2 px-3 pb-2.5">
+                <div className="flex shrink-0 items-center gap-3 whitespace-nowrap">
                   <button
                     onClick={() => void pickAttachment()}
                     disabled={!configured || busy}
                     data-tip={t('chat.attach')}
                     aria-label={t('chat.attach')}
-                    className="flex items-center gap-1 rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg disabled:opacity-50"
+                    className="flex shrink-0 items-center gap-1 rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg disabled:opacity-50"
                   >
                     <Paperclip size={ICON.sm} />
                   </button>
                   {yoloOnly ? (
                     <div
-                      className="flex items-center gap-1.5 rounded-control border border-yolo/50 bg-yolo/15 px-2.5 py-1 text-xs text-yolo"
+                      className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-control border border-yolo/50 bg-yolo/15 px-2.5 py-1 text-xs text-yolo"
                       data-tip={t('chat.sandboxMode')}
                     >
                       <Flame size={ICON.sm} />
@@ -4076,7 +4078,7 @@ export function ChatView() {
                       <button
                         ref={modeTriggerRef}
                         onClick={() => setModeMenuOpen((v) => !v)}
-                        className={`flex items-center gap-1.5 rounded-control border px-2.5 py-1 text-xs transition-colors ${
+                        className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-control border px-2.5 py-1 text-xs transition-colors ${
                           yolo
                             ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
                             : readOnly
@@ -4143,23 +4145,33 @@ export function ChatView() {
                       )}
                     </div>
                   )}
+                  {contextUsage && <ContextMeter usage={contextUsage} />}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center gap-2">
                   {(thinkSupported || modelOptions.length > 0) && (
-                    <div className="relative">
+                    <div className="relative min-w-0">
                       <button
                         ref={modelTriggerRef}
                         onClick={() => setModelMenuOpen((v) => !v)}
                         data-tip={t('chat.modelLabel')}
-                        className="flex items-center gap-1.5 rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
+                        className="flex min-w-0 items-center gap-1.5 rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
                       >
-                        <Sparkles size={ICON.xs} className="text-accent" />
+                        <Sparkles
+                          size={ICON.xs}
+                          className="shrink-0 text-accent"
+                        />
                         <span className="max-w-32 truncate">{modelLabel}</span>
                         {thinkSupported && (
-                          <>
+                          // The thinking level is the first thing to go:
+                          // the model name identifies who is serving, and
+                          // the level is still one click away in this
+                          // menu. The query is the footer's width, so a
+                          // resized window and a split pane both land
+                          // here.
+                          <span className="hidden items-center gap-1.5 whitespace-nowrap @min-[34rem]:flex">
                             <span className="text-edge">·</span>
                             <span>{thinkLabel}</span>
-                          </>
+                          </span>
                         )}
                         <ChevronUp size={ICON.xs} />
                       </button>
@@ -4238,55 +4250,57 @@ export function ChatView() {
                       )}
                     </div>
                   )}
-                  {switchingWs ? (
-                    <IconButton
-                      label={t('chat.send')}
-                      tone="primary"
-                      size="lg"
-                      disabled
-                      className="opacity-60"
-                    >
-                      <Loader2 size={ICON.sm} className="animate-spin" />
-                    </IconButton>
-                  ) : busy && composerEmpty && !bargeWaiting ? (
-                    <IconButton
-                      label={t('chat.stop')}
-                      shortcut="turn.stop"
-                      tone="danger"
-                      size="lg"
-                      onClick={() => void cancelRun()}
-                    >
-                      <Square size={ICON.sm} fill="currentColor" />
-                    </IconButton>
-                  ) : (
-                    <div className="flex items-center gap-1.5">
-                      {busy && !bargeWaiting && (
-                        // A draft keeps the primary action on send/steer
-                        // (matching Enter), so Stop sits next to it:
-                        // interrupting a reply must not require emptying
-                        // the composer first. bargeWaiting owns its Stop
-                        // in the staged banner.
-                        <IconButton
-                          label={t('chat.stop')}
-                          shortcut="turn.stop"
-                          tone="danger"
-                          size="md"
-                          onClick={() => void cancelRun()}
-                        >
-                          <Square size={ICON.xs} fill="currentColor" />
-                        </IconButton>
-                      )}
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {switchingWs ? (
                       <IconButton
                         label={t('chat.send')}
                         tone="primary"
                         size="lg"
-                        onClick={() => void submitDraft()}
-                        disabled={composerEmpty && (!busy || bargeWaiting)}
+                        disabled
+                        className="opacity-60"
                       >
-                        <ArrowUp size={ICON.md} />
+                        <Loader2 size={ICON.sm} className="animate-spin" />
                       </IconButton>
-                    </div>
-                  )}
+                    ) : busy && composerEmpty && !bargeWaiting ? (
+                      <IconButton
+                        label={t('chat.stop')}
+                        shortcut="turn.stop"
+                        tone="danger"
+                        size="lg"
+                        onClick={() => void cancelRun()}
+                      >
+                        <Square size={ICON.sm} fill="currentColor" />
+                      </IconButton>
+                    ) : (
+                      <>
+                        {busy && !bargeWaiting && (
+                          // A draft keeps the primary action on send/steer
+                          // (matching Enter), so Stop sits next to it:
+                          // interrupting a reply must not require emptying
+                          // the composer first. bargeWaiting owns its Stop
+                          // in the staged banner.
+                          <IconButton
+                            label={t('chat.stop')}
+                            shortcut="turn.stop"
+                            tone="danger"
+                            size="md"
+                            onClick={() => void cancelRun()}
+                          >
+                            <Square size={ICON.xs} fill="currentColor" />
+                          </IconButton>
+                        )}
+                        <IconButton
+                          label={t('chat.send')}
+                          tone="primary"
+                          size="lg"
+                          onClick={() => void submitDraft()}
+                          disabled={composerEmpty && (!busy || bargeWaiting)}
+                        >
+                          <ArrowUp size={ICON.md} />
+                        </IconButton>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

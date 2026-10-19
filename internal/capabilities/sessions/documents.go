@@ -34,6 +34,11 @@ const (
 	// DocumentCompact is the most recent compaction artifact
 	// (tools/compact): the summary and the messages it already covers.
 	DocumentCompact = "compact"
+	// DocumentContextUsage is the last measurement of the prompt one
+	// turn sent, split by what filled it (contextusage.go). It is what
+	// lets the chat meter describe a conversation this process has not
+	// run a turn in.
+	DocumentContextUsage = "context_usage"
 )
 
 // StateDocument is one conversation_state document: the key it is
@@ -88,6 +93,11 @@ var Documents = []StateDocument{
 	{
 		Name:       DocumentCompact,
 		Owner:      "capabilities/tools/compact",
+		Generation: 1,
+	},
+	{
+		Name:       DocumentContextUsage,
+		Owner:      "capabilities/worldstate (contextusage.go)",
 		Generation: 1,
 	},
 }

@@ -41,10 +41,11 @@ import { createWorkspaceGlue } from './conv/workspace';
 import { createConvPaging } from './conv/paging';
 import { createConvTurn } from './conv/turn';
 import { createEventSink } from './conv/writer';
+import { turnNeedsAttention } from './conv/failure';
 import { createShellViewers } from './shell/viewers';
 import { createShellSettings } from './shell/settings';
 import { createShellSessions } from './shell/sessions';
-import { createShellHistory } from './shell/history';
+import { createShellHistory, readContextUsage } from './shell/history';
 import { createShellWorkspaces } from './shell/workspaces';
 import { createShellAutomations } from './shell/automations';
 import { createShellToasts } from './shell/toasts';
@@ -128,6 +129,13 @@ export interface StoreState {
   // conversation that owns it, so routing and the sidebar never scan
   // every conversation on each store update.
   pendingPromptConvs: Record<string, string>;
+  // turnAttention maps a conversation to the run of its last turn that
+  // needs the reader: failed, aborted, or cut off by a deadline. It is
+  // the sidebar's own memory, not the actor's — an actor only exists
+  // once this window has opened the conversation, and a turn that failed
+  // in a background workspace has none. Storing the run id keeps the
+  // reason next to the marker for whoever says which turn it was.
+  turnAttention: Record<string, string>;
   // composerDraft is a one-shot draft injected into the chat composer
   // (used by the automations "create with OpenCraft" flow).
   composerDraft: string;
@@ -239,6 +247,10 @@ export interface StoreState {
     sessionID: string,
     workspacePath: string,
   ) => Promise<void>;
+  openFromNotification: (
+    sessionID: string,
+    workspacePath?: string,
+  ) => Promise<void>;
   sendFirstMessage: (
     workspacePath: string,
     text: string,
@@ -331,6 +343,7 @@ export const useStore = create<StoreState>((set, get, store) => {
     automationRuns: {},
     conversations: {},
     pendingPromptConvs: {},
+    turnAttention: {},
     composerDraft: '',
     statusText: '',
     lastUsage: null,
@@ -431,9 +444,14 @@ export const useStore = create<StoreState>((set, get, store) => {
             request: 1,
             generation,
           });
-          void api
-            .sessionTurns(currentSession, INITIAL_HISTORY_TURNS + 1, 0)
-            .then((turns) => {
+          // The restored conversation reads its meter snapshot with its
+          // transcript: both belong to the conversation, so a relaunch
+          // paints the last measurement instead of an empty composer.
+          void Promise.all([
+            api.sessionTurns(currentSession, INITIAL_HISTORY_TURNS + 1, 0),
+            readContextUsage(currentSession),
+          ])
+            .then(([turns, usage]) => {
               const page = historyPage(turns, INITIAL_HISTORY_TURNS);
               set((state) => ({
                 conversations: {
@@ -444,6 +462,9 @@ export const useStore = create<StoreState>((set, get, store) => {
                     turnArtifacts: page.turnArtifacts,
                     historySeq: page.historySeq,
                     historyHasMore: page.historyHasMore,
+                    contextUsage:
+                      usage ??
+                      state.conversations[currentSession]?.contextUsage,
                   }),
                 },
               }));
@@ -492,13 +513,46 @@ export const useStore = create<StoreState>((set, get, store) => {
       flushPendingStreams();
       const turnEndData =
         ev.type === UIEventType.turnEnd
-          ? (ev.data as { run_id?: string; conversation_id?: string })
+          ? (ev.data as {
+              run_id?: string;
+              conversation_id?: string;
+              status?: string;
+              error_kind?: string;
+            })
           : undefined;
       const turnEndConversationID =
         turnEndData?.conversation_id ??
         (turnEndData?.run_id
           ? stateRoot.registry.conversationForRun(turnEndData.run_id)
           : undefined);
+      if (
+        turnEndData &&
+        turnEndConversationID &&
+        !stateRoot.registry.isDeleted(turnEndConversationID)
+      ) {
+        // The sidebar's ❌ is about the conversation, not about this
+        // window's actor for it: the turn may have run in another
+        // workspace, or ended before this conversation was ever opened.
+        // Recording it here, before routing, keeps the row and the
+        // transcript from disagreeing about the same event. A deleted
+        // conversation is the one row that can never come back, so it
+        // is also the one mark nothing would ever clear: routing below
+        // drops it, the listing filters it out, and only the delete
+        // path - which already ran - clears the map.
+        const needsAttention = turnNeedsAttention(
+          turnEndData.status,
+          turnEndData.error_kind,
+        );
+        set((state) => {
+          const next = { ...state.turnAttention };
+          if (needsAttention) {
+            next[turnEndConversationID] = turnEndData.run_id ?? '';
+          } else {
+            delete next[turnEndConversationID];
+          }
+          return { turnAttention: next };
+        });
+      }
       routeBackendEvent(ev, { root: stateRoot, data: eventDataSink });
       if (turnEndConversationID) {
         // The tail sync runs after the reconciliation, not beside it:

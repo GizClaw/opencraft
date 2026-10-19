@@ -146,7 +146,14 @@ func (s *Service) replaysFullHistory() bool {
 
 // usageAnchorCommitFactory builds the opencraft.usageanchor hook: at turn
 // end it records the provider-measured prompt size so the next turn's fold
-// decision starts from a measurement instead of a character estimate.
+// decision starts from a measurement instead of a character estimate, and
+// the same request's context snapshot, which is what the chat meter draws.
+//
+// The two records come from one board read and one hook because they
+// describe one request: the anchor is the number the next fold is budgeted
+// against, the snapshot is that same number split by what filled it. The
+// impl name keeps saying "usageanchor" because it is a wire value — the
+// deploy document names it, and a user layer may too.
 type usageAnchorCommitFactory struct{}
 
 var _ resource.Factory = usageAnchorCommitFactory{}
@@ -178,6 +185,7 @@ func (usageAnchorCommitFactory) New(_ context.Context, in resource.Input) (any, 
 			board = res.LastBoard
 		}
 		recordUsageAnchor(ctx, store, contextID, board)
+		recordContextUsage(ctx, store, contextID, board)
 		return nil
 	}), nil
 }
@@ -230,6 +238,35 @@ func recordUsageAnchor(
 	}
 	if err := store.WriteUsageAnchor(contextID, anchor); err != nil {
 		telemetry.WarnErr(ctx, "worldstate: persist usage anchor failed", err,
+			attribute.String("conversation.id", contextID))
+	}
+}
+
+// recordContextUsage persists the turn's context snapshot, if it produced
+// one. The guards match recordUsageAnchor's — a delegated "ctx-" run has no
+// conversation to meter, and a turn that never prepared or never called the
+// model has nothing to describe — plus the one a snapshot adds: the earlier
+// turn's numbers are more useful than a fresh empty one, so a turn that says
+// nothing leaves the stored document alone.
+func recordContextUsage(
+	ctx context.Context,
+	store *ocsessions.Store,
+	contextID string,
+	board *agent.Board,
+) {
+	if store == nil || board == nil || contextID == "" {
+		return
+	}
+	if !ids.IsSession(contextID) {
+		return
+	}
+	usage, ok := ContextUsageFromBoard(board)
+	if !ok {
+		return
+	}
+	usage.At = time.Now().UTC()
+	if err := store.WriteContextUsage(contextID, usage); err != nil {
+		telemetry.WarnErr(ctx, "worldstate: persist context usage failed", err,
 			attribute.String("conversation.id", contextID))
 	}
 }

@@ -669,6 +669,8 @@ export interface InteractDTO {
   id: string;
   run_id: string;
   conversation_id?: string;
+  /** The workspace whose Host is asking (core.Prompt's interact payload). */
+  workspace?: string;
   kind: string;
   severity: InteractSeverity;
   title: string;
@@ -677,6 +679,33 @@ export interface InteractDTO {
   multi: boolean;
   allow_other: boolean;
   source: string;
+}
+
+// ContextCategoryUsage is one slice of the prompt the composer's context
+// meter draws. The ids come from the backend's sessions.ContextCategories;
+// the UI keeps its own label table, so an id this build does not know is a
+// slice it counts but does not name.
+export interface ContextCategoryUsage {
+  id: string;
+  tokens: number;
+}
+
+// ContextUsageDTO is the last measured prompt of one conversation: what
+// the turn's final model call carried, split by what filled it.
+//
+// measured_tokens is the provider's own inclusive count; categories always
+// sum to it (the residual category absorbs the difference between the
+// harness's estimates and the provider's count), so a bar drawn from the
+// categories fills exactly as far as the prompt reached. A turn that
+// produced no usage report leaves measured_tokens at zero and the
+// categories are estimates only. limit_tokens is the input window of the
+// model that served the call, zero when the deployment declares none.
+export interface ContextUsageDTO {
+  measured_tokens: number;
+  categories: ContextCategoryUsage[];
+  model?: string;
+  limit_tokens?: number;
+  at?: string;
 }
 
 export interface UsageDTO {

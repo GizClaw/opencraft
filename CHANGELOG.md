@@ -41,6 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `skills.settings.extra_roots` have to be deleted where they live. The
   settings page hides the delete entry for those rows — the rest of the
   row menu (pin, archive) stays.
+- Memory settings default to full-history replay (`replay_full_history:
+  true`): the prompt is the whole conversation and the compact node folds
+  only when the measured usage exceeds the serving model's input window,
+  which the router reports per model. The raw window
+  (`max_raw_messages`/`preserve_recent`) is still what a fold leaves
+  behind, but it no longer bounds what a turn sends — a mostly-empty
+  window costs nothing extra because the conversation prefix is one cache
+  hit. A user layer written before the switch existed keeps the new
+  default; set `replay_full_history: false` in `resources.mem.settings` to
+  go back to a per-turn cost bounded by the raw window.
 - The SSRF guard refuses more address classes: 0.0.0.0/8 and
   100.64.0.0/10, multicast, TEST-NET-1/2/3, 192.0.0.0/24, 192.88.99.0/24,
   198.18.0.0/15, 240.0.0.0/4, and the IPv6 documentation and Teredo
@@ -51,6 +61,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A sidebar row says what it wants before it is opened. Three marks
+  share the one slot beside the title and the most pressing wins: a
+  pending prompt (the run is waiting on an answer only the reader can
+  give) blinks the row and shows a question mark, a run in flight keeps
+  the spinner, and a turn that ended badly leaves a red mark
+  (`turnNeedsAttention`: `failed` or `aborted`, or `canceled` when
+  `error_kind` is `timeout` — a manual Stop and an interrupted turn do
+  not). The failed mark is store state keyed by conversation, not actor
+  state, so a row is right in a workspace this window never opened; it
+  tracks "the last turn that ended", so a retry that works takes its own
+  mark away, and clicking the row (either branch of `resume`) or
+  deleting it clears it.
+- A notification banner opens the conversation that raised it. The
+  `turn_end` and `interact` stream events carry the workspace whose Host
+  owns the run, so a banner raised by a background workspace lands on
+  that conversation instead of the one on screen; the chat actor takes
+  the field in through the conversation machine's `BIND_WORKSPACE`
+  event, which pins the actor's workspace and changes no turn state. A
+  click whose conversation the shown workspace does not own is refused
+  by the resume binding instead of opening an empty chat. Banners
+  replace one another per conversation (`turn-end:<id>`, `interact:<id>`,
+  `automation:<task>`), so a burst of turns cannot stack a queue of
+  notifications over the chat.
 - A path written in backticks in the transcript opens the file. One
   inline code span is classified as a path or a URL (`linkTarget.ts`):
   a chip renders where plain code would, a click resolves it the way a
@@ -58,6 +91,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rail — and a `:line[:column]` tag is peeled so the click lands on the
   file the tag points into. Everything a code span can also be (a
   command, an identifier, a version tag, `12:30`) stays plain text.
+- The composer meters the context: a ring in its footer reads the prompt's
+  size against the serving model's input window (`12.3k / 200k`), and the
+  popover splits that number into what filled it — system prompt,
+  environment and permissions, AGENTS.md, user memory, folded summary,
+  conversation, the turn's plan/skills block, and the residual the harness
+  cannot itemize (tool schemas, provider framing). The estimate half is
+  written at prepare time (`worldstate/contextusage.go`, board var
+  `world.context.usage`) from the sections the turn is about to send; the
+  turn-end hook pairs it with the provider's own count of that request and
+  stores the result as the conversation's `context_usage` document, so the
+  meter survives a restart and a workspace switch at the same numbers the
+  live turn showed. The two halves ride one hook because they describe one
+  request, and the residual absorbs the difference instead of being spread
+  over estimates that would then read as measurement.
 
 ### Changed
 
@@ -93,6 +140,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opening a session, sending a first message — keep the window they have,
   since a reload would drop the resume or the message. A switch that
   keeps the page asks again next time; nothing retries a refusal.
+- The memory policy ships with full-history replay on. The folded summary
+  plus raw window is what a turn falls back to after a fold, not the bound
+  on what it sends: the compact node folds when the prompt's measured size
+  crosses the serving model's input window, so a conversation that fits
+  costs one cache hit per turn instead of a truncated view of itself.
+  `replay_full_history: false` in `resources.mem.settings` restores the
+  old bound.
 - The engine's assembly half runs on flowcraft's `craft`. A Host loads a
   `config.View` (`LoadDocument` becomes `LoadView`) and builds one
   `craft.Craft` per Host (`BuildRuntime` becomes `BuildAssembly`): the

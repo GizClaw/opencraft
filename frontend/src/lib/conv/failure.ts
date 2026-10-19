@@ -44,6 +44,30 @@ export function isUserStop(
   return interruptCause === 'user_cancel' || interruptCause === 'user_input';
 }
 
+// turnNeedsAttention reports whether a finished turn is something the
+// reader has to come back to, which is what the sidebar's ❌ means. It is
+// isUserStop's inverse plus the one branch that inverse gets wrong for
+// this purpose: a deadline stops a turn the user did not stop, so it is a
+// failure worth opening. `interrupted` is not one — the host was shutting
+// down or the app restarted, and the transcript already says so where the
+// turn sits. A status this build cannot name counts as a failure for the
+// same reason turnEndStatus draws it as one: the row and the turn have to
+// agree about what happened.
+export function turnNeedsAttention(
+  status: TurnStatus | string | undefined,
+  errorKind?: string,
+): boolean {
+  switch (status) {
+    case 'completed':
+    case 'interrupted':
+      return false;
+    case 'canceled':
+      return errorKind === 'timeout';
+    default:
+      return true;
+  }
+}
+
 // friendlyFailure maps the inference error kind to user-safe text: a
 // provider failure only needs to tell the user the model call did not go
 // through and that retrying is reasonable. It returns null for a failure

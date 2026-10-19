@@ -23,9 +23,10 @@ type MemorySettings struct {
 // defaultMemorySettings matches the embedded deploy document.
 func defaultMemorySettings() MemorySettings {
 	return MemorySettings{
-		MaxRawMessages:  36,
-		PreserveRecent:  4,
-		MaxSummaryBytes: 4096,
+		MaxRawMessages:    36,
+		PreserveRecent:    4,
+		MaxSummaryBytes:   4096,
+		ReplayFullHistory: true,
 	}
 }
 
@@ -92,21 +93,34 @@ type memoryResourceLayer struct {
 	Settings MemorySettings `json:"settings"`
 }
 
-func decodeMemorySettings(data []byte) (MemorySettings, error) {
+// memorySettingsDoc is one layer's resources.mem.settings as written.
+// ReplayFullHistory is a pointer so a layer that does not mention the
+// switch stays distinguishable from one that turns it off: the default
+// is on, and a hand-written layer with only max_raw_messages must not
+// silently switch it back off by decoding a zero value over it.
+type memorySettingsDoc struct {
+	MaxRawMessages    int   `json:"max_raw_messages"`
+	PreserveRecent    int   `json:"preserve_recent"`
+	MaxSummaryBytes   int   `json:"max_summary_bytes"`
+	ReplayFullHistory *bool `json:"replay_full_history"`
+}
+
+func decodeMemorySettings(data []byte) (memorySettingsDoc, error) {
 	var doc struct {
 		Resources map[string]struct {
-			Settings MemorySettings `json:"settings"`
+			Settings memorySettingsDoc `json:"settings"`
 		} `json:"resources"`
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return MemorySettings{}, err
+		return memorySettingsDoc{}, err
 	}
 	return doc.Resources["mem"].Settings, nil
 }
 
-// overlayMemorySettings applies non-zero overlay values onto base.
-// ReplayFullHistory is a bool and always wins when set.
-func overlayMemorySettings(base, overlay MemorySettings) MemorySettings {
+// overlayMemorySettings applies the values a layer declares onto base.
+// A number left at zero and a switch left absent both mean "this layer
+// does not say", which is why the decoders keep absence visible.
+func overlayMemorySettings(base MemorySettings, overlay memorySettingsDoc) MemorySettings {
 	if overlay.MaxRawMessages > 0 {
 		base.MaxRawMessages = overlay.MaxRawMessages
 	}
@@ -116,6 +130,8 @@ func overlayMemorySettings(base, overlay MemorySettings) MemorySettings {
 	if overlay.MaxSummaryBytes > 0 {
 		base.MaxSummaryBytes = overlay.MaxSummaryBytes
 	}
-	base.ReplayFullHistory = overlay.ReplayFullHistory
+	if overlay.ReplayFullHistory != nil {
+		base.ReplayFullHistory = *overlay.ReplayFullHistory
+	}
 	return base
 }
