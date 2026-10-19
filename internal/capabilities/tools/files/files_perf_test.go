@@ -22,7 +22,7 @@ func BenchmarkJoinLineRange(b *testing.B) {
 	data := benchData()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = joinLineRange(data, 100, 200)
+		_, _ = joinLineRange(data, 100, 200, ReadResultChars)
 	}
 }
 
@@ -32,6 +32,6 @@ func BenchmarkJoinLineRange(b *testing.B) {
 func TestJoinLineRangeWithinBudget(t *testing.T) {
 	data := benchData()
 	perf.AssertMedianWithin(t, 10, func() {
-		_ = joinLineRange(data, 100, 200)
+		_, _ = joinLineRange(data, 100, 200, ReadResultChars)
 	}, 25*time.Millisecond)
 }

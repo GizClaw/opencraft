@@ -666,3 +666,126 @@ func (t *Tool) write() execTool { return &writeFileTool{t.ws} }
 func (t *Tool) list() execTool  { return &listDirTool{t.ws} }
 func (t *Tool) grep() execTool  { return &grepTool{t.ws} }
 func (t *Tool) glob() execTool  { return &globTool{t.ws} }
+
+// readResult is the decoded read_file payload.
+type readResult struct {
+	Content     string `json:"content"`
+	Offset      int    `json:"offset"`
+	Limit       int    `json:"limit"`
+	TotalLines  int    `json:"total_lines"`
+	IsTruncated bool   `json:"is_truncated"`
+	NextOffset  int    `json:"next_offset"`
+}
+
+func readWindow(t *testing.T, tool *Tool, args string) readResult {
+	t.Helper()
+	out, err := execute(t, tool.read(), args)
+	if err != nil {
+		t.Fatalf("read_file %s: %v", args, err)
+	}
+	var got readResult
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode read_file result: %v (%s)", err, out)
+	}
+	return got
+}
+
+// longFile builds n lines of a width that makes the character budget,
+// not the line limit, the binding constraint.
+func longFile(n int) string {
+	var b strings.Builder
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "line %04d %s\n", i, strings.Repeat("x", 40))
+	}
+	return b.String()
+}
+
+// TestReadFileStopsAtResultBudget: one read returns a whole window below
+// the truncate cap and names where the next one starts. The window has to
+// be contiguous — the model pages from next_offset, so a window that
+// skipped its middle would leave lines nothing points at.
+func TestReadFileStopsAtResultBudget(t *testing.T) {
+	tool, _ := newTestTool(t)
+	content := longFile(1000)
+	writeTree(t, tool.ws, map[string]string{"long.txt": content})
+
+	got := readWindow(t, tool, `{"file_path":"long.txt"}`)
+	if !got.IsTruncated {
+		t.Fatalf("read_file returned the whole %d-byte file, want a window under the budget", len(content))
+	}
+	if len(got.Content) > ReadResultChars+len("line 0001 ")+40 {
+		t.Fatalf("window = %d chars, want at most the budget plus one line", len(got.Content))
+	}
+	lines := strings.Split(strings.TrimSuffix(got.Content, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("window = %d lines, want a usable range", len(lines))
+	}
+	if got.NextOffset != len(lines)+1 {
+		t.Fatalf("next_offset = %d, want %d (one past the %d lines returned)",
+			got.NextOffset, len(lines)+1, len(lines))
+	}
+	if want := strings.Split(strings.TrimSuffix(content, "\n"), "\n")[:len(lines)]; strings.Join(want, "\n") != strings.Join(lines, "\n") {
+		t.Fatal("window is not the file's first lines")
+	}
+}
+
+// TestReadFileWindowsTileTheFile: the windows next_offset chains together
+// cover every line exactly once, which is what lets a caller read a long
+// file without re-reading or skipping.
+func TestReadFileWindowsTileTheFile(t *testing.T) {
+	tool, _ := newTestTool(t)
+	content := longFile(300)
+	writeTree(t, tool.ws, map[string]string{"long.txt": content})
+
+	var got []string
+	offset := 1
+	for reads := 0; ; reads++ {
+		if reads > 10 {
+			t.Fatal("windows did not finish the file")
+		}
+		win := readWindow(t, tool, fmt.Sprintf(`{"file_path":"long.txt","offset":%d}`, offset))
+		got = append(got, strings.Split(strings.TrimSuffix(win.Content, "\n"), "\n")...)
+		if !win.IsTruncated {
+			break
+		}
+		if win.NextOffset <= offset {
+			t.Fatalf("next_offset = %d does not advance past offset %d", win.NextOffset, offset)
+		}
+		offset = win.NextOffset
+	}
+	if want := strings.Split(strings.TrimSuffix(content, "\n"), "\n"); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("windows cover %d lines, want the file's %d", len(got), len(want))
+	}
+}
+
+// TestReadFileKeepsOneOverlongLine: a single line past the budget still
+// comes back. Returning nothing would leave the caller with no range to
+// page from; the truncate middleware is what bounds a line that long.
+func TestReadFileKeepsOneOverlongLine(t *testing.T) {
+	tool, _ := newTestTool(t)
+	line := strings.Repeat("y", ReadResultChars+5000)
+	writeTree(t, tool.ws, map[string]string{"min.js": line + "\n"})
+
+	got := readWindow(t, tool, `{"file_path":"min.js"}`)
+	if got.Content != line+"\n" {
+		t.Fatalf("window = %d chars, want the single %d-char line", len(got.Content), len(line))
+	}
+	if got.IsTruncated {
+		t.Fatal("a one-line file has no next window")
+	}
+}
+
+// TestReadFileLimitBelowBudgetWins: an explicit limit still bounds the
+// window, and the result keeps pointing at the next offset.
+func TestReadFileLimitBelowBudgetWins(t *testing.T) {
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{"long.txt": longFile(50)})
+
+	got := readWindow(t, tool, `{"file_path":"long.txt","limit":10}`)
+	if lines := strings.Count(got.Content, "\n"); lines != 10 {
+		t.Fatalf("window = %d lines, want the requested 10", lines)
+	}
+	if got.NextOffset != 11 {
+		t.Fatalf("next_offset = %d, want 11", got.NextOffset)
+	}
+}

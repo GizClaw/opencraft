@@ -39,6 +39,17 @@ const (
 	GlobName = "glob"
 )
 
+// ReadResultChars is the content budget of one read. The assembly's
+// truncate middleware caps a result at middlewares.truncate.max_chars
+// (24000 in tools.yaml) and answers anything longer with a head-and-tail
+// excerpt plus a cache pointer. A window below that cap comes back
+// whole, so a read is a complete range the model can page from, and
+// next_offset says where the next one starts. Without the budget a read
+// of a long file is cut twice — once at the line limit and again by the
+// middleware — which leaves the model holding the two ends of a range
+// whose middle it cannot reach in one call.
+const ReadResultChars = 20_000
+
 const (
 	defaultReadLimit = 1000
 	maxReadLimit     = 100_000
@@ -111,13 +122,15 @@ var _ tool.Tool = (*readFileTool)(nil)
 func (t *readFileTool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		ReadFileName,
-		"Read a text file from the workspace and return the requested "+
-			"line range. Paths are relative to the workspace root. "+
-			"Returns JSON: {file_path, content, offset, limit, "+
-			"total_lines, is_truncated}. Read a whole file, or one "+
-			"generous range, rather than probing it in small windows: "+
-			"an oversized result comes back as a head-and-tail excerpt "+
-			"pointing at the full output, so paging only adds rounds.",
+		"Read a text file from the workspace and return one window of "+
+			"it. Paths are relative to the workspace root. Returns JSON: "+
+			"{file_path, content, offset, limit, total_lines, "+
+			"is_truncated, next_offset}. A window carries as much as one "+
+			"result can hold (about 20000 characters, or limit lines if "+
+			"that is smaller); when lines remain, next_offset is where "+
+			"the next read continues. Read a file whole when it fits, and "+
+			"continue from next_offset otherwise: probing in small "+
+			"ranges costs a round per probe.",
 		message.ToolProperty("file_path", "string",
 			"The file to read: relative to the workspace root, or an "+
 				"absolute path under an allowed root (workspace, skill "+
@@ -206,18 +219,25 @@ func (t *readFileTool) execute(ctx context.Context, arguments string) (string, e
 	if end > total {
 		end = total
 	}
-	content := joinLineRange(data, start, end)
-	if end < total || (end == total && total > 0 && endsWithNL) {
+	content, reached := joinLineRange(data, start, end, ReadResultChars)
+	if reached < total || (reached == total && total > 0 && endsWithNL) {
 		content += "\n"
 	}
-	payload, err := json.Marshal(map[string]any{
+	result := map[string]any{
 		"file_path":    args.FilePath,
 		"content":      content,
 		"offset":       offset,
 		"limit":        limit,
 		"total_lines":  total,
-		"is_truncated": end < total,
-	})
+		"is_truncated": reached < total,
+	}
+	// next_offset is where the next read continues: the window can stop
+	// short of limit lines when the character budget fills first, so
+	// offset+limit is not that answer.
+	if reached < total {
+		result["next_offset"] = reached + 1
+	}
+	payload, err := json.Marshal(result)
 	if err != nil {
 		return "", errdefs.Internalf("%s: encode result: %v", ReadFileName, err)
 	}
@@ -225,15 +245,25 @@ func (t *readFileTool) execute(ctx context.Context, arguments string) (string, e
 }
 
 // joinLineRange returns lines [start, end) of data as a single string
-// without allocating the whole file as a line slice. Lines are split
-// on '\n'; a trailing newline is not part of a line.
-func joinLineRange(data []byte, start, end int) string {
+// without allocating the whole file as a line slice, stopping once the
+// window has reached budget characters. The returned end is exclusive
+// and comes up short of end when the budget stopped the window; the
+// caller reports it as where the next read continues.
+//
+// One line always comes back, even when it alone exceeds the budget: a
+// window that returned nothing could not be paged from. A line that
+// long is usually a bundle or generated file, which the truncate
+// middleware then excerpts with a pointer at the full output.
+//
+// Lines are split on '\n'; a trailing newline is not part of a line.
+func joinLineRange(data []byte, start, end, budget int) (string, int) {
 	if start >= end || len(data) == 0 {
-		return ""
+		return "", start
 	}
 	var b strings.Builder
 	line := 0
 	idx := 0
+	reached := start
 	for line < end && idx < len(data) {
 		nl := bytes.IndexByte(data[idx:], '\n')
 		lineEnd := len(data)
@@ -241,10 +271,14 @@ func joinLineRange(data []byte, start, end int) string {
 			lineEnd = idx + nl
 		}
 		if line >= start {
+			if b.Len() > 0 && b.Len()+1+(lineEnd-idx) > budget {
+				break
+			}
 			if b.Len() > 0 {
 				b.WriteByte('\n')
 			}
 			b.Write(data[idx:lineEnd])
+			reached = line + 1
 		}
 		if nl < 0 {
 			break
@@ -252,7 +286,7 @@ func joinLineRange(data []byte, start, end int) string {
 		idx = lineEnd + 1
 		line++
 	}
-	return b.String()
+	return b.String(), reached
 }
 
 // ---------------------------------------------------------------------------
