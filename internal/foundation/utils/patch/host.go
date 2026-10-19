@@ -75,7 +75,7 @@ func ApplyToDir(dir, patch string) ([]FileResult, error) {
 				if !found {
 					return results, errdefs.Validationf(
 						"apply_patch: hunk %d in %q did not match: %s",
-						i+1, op.path, hunkProblem(h, lines))
+						i+1, op.path, hunkProblem(h, lines, i))
 				}
 				lines = next
 			}

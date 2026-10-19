@@ -29,7 +29,8 @@ func TestHunkMismatchExplainsWhy(t *testing.T) {
 		msg := err.Error()
 		for _, want := range []string{
 			`apply_patch: hunk 1 in "a.txt" did not match`,
-			`no match for the first context line "missing line"`,
+			`none of the hunk's lines is in the file any more, ` +
+				`starting with "missing line"`,
 			"re-read the file",
 		} {
 			if !strings.Contains(msg, want) {

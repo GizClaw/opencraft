@@ -305,7 +305,7 @@ func applyUpdate(ctx context.Context, ws workspace.Workspace, op *op) error {
 		if !found {
 			return errdefs.Validationf(
 				"apply_patch: hunk %d in %q did not match: %s",
-				i+1, op.path, hunkProblem(h, lines))
+				i+1, op.path, hunkProblem(h, lines, i))
 		}
 		lines = next
 	}
@@ -314,8 +314,8 @@ func applyUpdate(ctx context.Context, ws workspace.Workspace, op *op) error {
 
 // hunkProblem explains why a hunk could not be located in terms a
 // model can act on. Naming only the anchor is useless for the common
-// failure — the context lines the model guessed from memory do not
-// match the file any more — and it says nothing at all for an
+// failure - the context lines the model guessed from memory do not
+// match the file any more - and it says nothing at all for an
 // insertion hunk that carries no anchor.
 //
 // The second half is what saves the round: the hunk's own lines are
@@ -323,18 +323,34 @@ func applyUpdate(ctx context.Context, ws workspace.Workspace, op *op) error {
 // retry can be written from text the model has just seen instead of
 // from another guess. When no line of the hunk resembles the file at
 // all, the error asks for a re-read instead of pretending to help.
-func hunkProblem(h hunk, lines []string) string {
-	head := hunkDiagnosis(h)
-	if tail := hunkLocator(h, lines); tail != "" {
-		return head + "\n" + tail
+//
+// applied is how many hunks of the same operation already went in:
+// lines is then that intermediate file rather than the one on disk, and
+// the numbers a re-read returns would not line up with the quoted ones.
+func hunkProblem(h hunk, lines []string, applied int) string {
+	loc := locateHunk(lines, h)
+	var b strings.Builder
+	b.WriteString(hunkDiagnosis(h, loc))
+	if applied > 0 {
+		b.WriteString("\n  (line numbers are the file's after the hunks " +
+			"before this one were applied)")
 	}
-	return head + "\n  re-read the file and copy the exact lines."
+	if tail := loc.render(h, lines); tail != "" {
+		b.WriteString("\n")
+		b.WriteString(tail)
+		return b.String()
+	}
+	b.WriteString("\n  re-read the file and copy the exact lines.")
+	return b.String()
 }
 
-// hunkDiagnosis names the reason the hunk could not be located.
-// hunkProblem appends the retry instruction, which depends on what the
-// locator found.
-func hunkDiagnosis(h hunk) string {
+// hunkDiagnosis names the reason the hunk could not be located. It
+// reads the locator, not the hunk alone: "no match for the first
+// context line" is untrue when every line of the hunk is in the file
+// and only the indentation moved, which is the case the locator exists
+// to tell apart. hunkProblem appends the retry instruction, which
+// depends on the same finding.
+func hunkDiagnosis(h hunk, loc hunkLocation) string {
 	switch {
 	case h.unified && len(h.removed) == 0 && h.atLine > 0:
 		return fmt.Sprintf(
@@ -347,9 +363,16 @@ func hunkDiagnosis(h hunk) string {
 	case len(h.removed) == 0:
 		return fmt.Sprintf(
 			"no line contains the \"@@\" anchor %q", h.anchor)
+	case loc.whole():
+		return fmt.Sprintf(
+			"every line of the hunk is in the file from line %d, but "+
+				"with different leading or trailing space", loc.start()+1)
+	case loc.found():
+		return "the hunk's lines no longer line up in the file"
 	default:
 		return fmt.Sprintf(
-			"no match for the first context line %q", h.removed[0])
+			"none of the hunk's lines is in the file any more, "+
+				"starting with %q", clipLine(h.removed[0]))
 	}
 }
 
@@ -358,38 +381,54 @@ func hunkDiagnosis(h hunk) string {
 // as context, so the window holds the lines a retry needs.
 const hunkWindowRadius = 3
 
-// hunkLocator renders where the hunk's own lines do appear in the
-// file, and what the file has no line for. It returns "" when none of
-// them resembles the file - a region rewritten past recognition - which
+// hunkLocation is where a hunk's own lines do appear in the file.
+type hunkLocation struct {
+	at     int // file index of the located line; -1 when nothing matched
+	hunkAt int // index within the hunk of the line sitting on at
+	agree  int // hunk lines that line up there
+	total  int // hunk lines the locator compared
+}
+
+func (l hunkLocation) found() bool { return l.at >= 0 }
+
+// whole reports that every line of the hunk is in the file. The
+// comparison ignores surrounding space, so when this holds and the hunk
+// still did not apply, that space is the whole difference.
+func (l hunkLocation) whole() bool { return l.found() && l.agree == l.total }
+
+// start is the file index of the hunk's first line. That is where the
+// reader has to look: the anchor line the locator settled on can sit
+// anywhere inside the hunk.
+func (l hunkLocation) start() int { return l.at - l.hunkAt }
+
+// render quotes where the hunk's own lines do appear in the file, and
+// what the file has no line for. It returns "" when none of them
+// resembles the file - a region rewritten past recognition - which
 // leaves the caller to ask for a re-read.
-func hunkLocator(h hunk, lines []string) string {
-	if len(lines) == 0 || len(h.removed) == 0 {
-		// Nothing of the hunk is text the file must contain: an
-		// insertion hunk locates itself by anchor or by header, and an
-		// empty file has no place to quote.
-		return ""
-	}
-	at, hunkAt, agree := locateHunk(lines, h)
-	if at < 0 {
+func (l hunkLocation) render(h hunk, lines []string) string {
+	if !l.found() || len(lines) == 0 || len(h.removed) == 0 {
+		// Nothing of the hunk is text the file must contain: an insertion
+		// hunk locates itself by anchor or by header, and an empty file has
+		// no place to quote.
 		return ""
 	}
 	var b strings.Builder
-	if agree == len(h.removed) {
-		fmt.Fprintf(&b,
-			"  all %d hunk lines are at line %d, differing only in "+
-				"leading or trailing space:\n", agree, at+1)
+	if l.whole() {
+		// The window opens on the hunk's first line, so the line it marks
+		// is the one the diagnosis names.
+		b.WriteString(renderWindow(lines, l.start()))
 	} else {
 		fmt.Fprintf(&b,
 			"  hunk line %d is at line %d of %d, and %d of %d hunk "+
-				"lines match there:\n", hunkAt+1, at+1, len(lines),
-			agree, len(h.removed))
+				"lines match there:\n", l.hunkAt+1, l.at+1, len(lines),
+			l.agree, l.total)
+		b.WriteString(renderWindow(lines, l.at))
 	}
-	b.WriteString(renderWindow(lines, at))
 	if missing := missingHunkLines(h, lines); len(missing) > 0 {
 		fmt.Fprintf(&b, "  the file has no line for: %s\n",
 			strings.Join(missing, ", "))
 	}
-	if agree == len(h.removed) {
+	if l.whole() {
 		b.WriteString("  re-send the hunk with the file's own whitespace.")
 	} else {
 		b.WriteString("  re-send the hunk with the lines above.")
@@ -397,13 +436,12 @@ func hunkLocator(h hunk, lines []string) string {
 	return b.String()
 }
 
-// locateHunk finds where the hunk's lines do appear: the position that
-// lines up the most of them, compared whitespace-insensitively because
-// indentation that moved is the common failure. It reports the file
-// index, the hunk line index that anchors it, and how many of the
-// hunk's lines agree at that position.
-func locateHunk(lines []string, h hunk) (at, hunkAt, agree int) {
-	at, hunkAt, agree = -1, -1, 0
+// locateHunk finds where the hunk's lines do appear, which is the
+// position that lines up the most of them, compared
+// whitespace-insensitively because indentation that moved is the common
+// failure.
+func locateHunk(lines []string, h hunk) hunkLocation {
+	loc := hunkLocation{at: -1, hunkAt: -1, total: len(h.removed)}
 	bestLen, bestExact := 0, false
 	for k, want := range h.removed {
 		i, exact := indexLine(lines, want)
@@ -414,12 +452,13 @@ func locateHunk(lines []string, h hunk) (at, hunkAt, agree int) {
 		key := len(strings.TrimSpace(want))
 		// Rank by agreement, then by how specific the anchoring line
 		// is, then by an exact match: a lone "}" is a poor locator.
-		if !better(n, key, exact, agree, bestLen, bestExact) {
+		if !better(n, key, exact, loc.agree, bestLen, bestExact) {
 			continue
 		}
-		at, hunkAt, agree, bestLen, bestExact = i, k, n, key, exact
+		loc.at, loc.hunkAt, loc.agree = i, k, n
+		bestLen, bestExact = key, exact
 	}
-	return at, hunkAt, agree
+	return loc
 }
 
 // better reports whether one locator candidate outranks another.
