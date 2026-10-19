@@ -231,6 +231,45 @@ describe('event router', () => {
     expect(root.workspaceOf('s-1')).toBe('/tmp/on-screen');
   });
 
+  it('rebinds once per change, not once per delta', () => {
+    const root = new StateRoot();
+    const { sink } = fakeSink();
+    root.registry.ensure('s-1', {
+      workspaceGeneration: root.generation(),
+      workspace: '/tmp/on-screen',
+    });
+    const actor = root.registry.get('s-1');
+    if (!actor) throw new Error('actor was not created');
+    const binds: string[] = [];
+    const send = actor.send;
+    // xstate actors are plain objects: wrapping send counts the
+    // transitions the router drives without changing what they do.
+    actor.send = ((event: { type: string; workspace?: string }) => {
+      if (event.type === 'BIND_WORKSPACE') binds.push(event.workspace ?? '');
+      return send.call(actor, event as never);
+    }) as typeof actor.send;
+
+    for (let i = 0; i < 3; i += 1) {
+      routeBackendEvent(
+        {
+          type: 'stream',
+          data: {
+            run_id: 'r-1',
+            conversation_id: 's-1',
+            workspace: '/tmp/background',
+            delta: { part: { type: 'text', text: `t${i}` } },
+          },
+        },
+        { root, data: sink },
+      );
+    }
+
+    // The first delta is news; the two after it name the workspace the
+    // actor already carries, and a bind per delta would re-enter the
+    // machine on a path that only exists to pin metadata.
+    expect(binds).toEqual(['/tmp/background']);
+  });
+
   it('tombstoned conversations never reach data or actors', () => {
     const root = new StateRoot();
     root.registry.markDeleted('s-1');
