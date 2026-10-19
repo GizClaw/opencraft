@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A model round no longer re-reads the whole conversation to size its
+  prompt. The compaction node projected the entire channel into script
+  objects and rendered every message into a character estimate before
+  every round — on a long replayed conversation the most expensive thing a
+  turn did, once per round, thrown away right after. The prepare hook
+  already renders the world sections and the replayed transcript, so it
+  now hands the node their token count and the message count it spans
+  (`world.compact.base_tokens` / `base_len`), and a round measures only
+  what was appended since: a length, a tail, the last message. The whole
+  channel is projected only on a round that actually folds, and a fold
+  drops the base because it rewrote the prefix it describes. Measured on a
+  1200-message, ~3 MB channel, through the engine's own script runtime: a
+  round now costs 0.63 ms and 0.54 MB instead of 600 ms and 143 MB. The
+  fold decision is unchanged — the base and the tail are additive, and a
+  test runs the same channel with and without it. (#254)
 - The newest answer in the transcript never folds. A settled markdown block
   past 2k characters still renders its first section and puts the rest
   behind one control, but the fold reads the block's position and nothing
