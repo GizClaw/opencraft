@@ -230,7 +230,11 @@ func (t *readFileTool) execute(ctx context.Context, arguments string) (string, e
 		end = total
 	}
 	content, reached := joinLineRange(data, start, end, ReadResultChars)
-	if reached < total || (reached == total && total > 0 && endsWithNL) {
+	// The trailing newline keeps the windows tileable: it is the break
+	// between the last line returned and the first one that is not. A
+	// window that returned nothing - an offset past the end of the file
+	// - has no such break to describe.
+	if reached > start && (reached < total || (reached == total && endsWithNL)) {
 		content += "\n"
 	}
 	result := map[string]any{
@@ -275,6 +279,11 @@ func joinLineRange(data []byte, start, end, budget int) (string, int) {
 	idx := 0
 	reached := start
 	encoded := 0
+	// emitted says a line of the window is already in b, which is not the
+	// same as b holding bytes: a window that opens on a blank line holds
+	// none, and a length test then drops its joining newline and lets the
+	// next line in for free.
+	emitted := false
 	for line < end && idx < len(data) {
 		nl := bytes.IndexByte(data[idx:], '\n')
 		lineEnd := len(data)
@@ -283,7 +292,7 @@ func joinLineRange(data []byte, start, end, budget int) (string, int) {
 		}
 		if line >= start {
 			cost := jsonStringLen(data[idx:lineEnd])
-			if b.Len() > 0 {
+			if emitted {
 				// The '\n' that joins this line to the previous
 				// one: one byte in the file, two once encoded.
 				// Charging it as one kept a quarter more than the
@@ -291,15 +300,16 @@ func joinLineRange(data []byte, start, end, budget int) (string, int) {
 				// two-character lines is past the truncate cap.
 				cost += 2
 			}
-			if b.Len() > 0 && encoded+cost > budget {
+			if emitted && encoded+cost > budget {
 				break
 			}
-			if b.Len() > 0 {
+			if emitted {
 				b.WriteByte('\n')
 			}
 			b.Write(data[idx:lineEnd])
 			encoded += cost
 			reached = line + 1
+			emitted = true
 		}
 		if nl < 0 {
 			break
@@ -664,7 +674,7 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 	if info.IsDir() {
 		err = scan.walk(ctx, t.ws, root, args.IncludeHidden)
 	} else {
-		scan.file(ctx, t.ws, root, info.Size())
+		err = scan.oneFile(ctx, t.ws, root, info.Size())
 	}
 	if err != nil && !errors.Is(err, errStopWalk) {
 		return "", err
@@ -769,6 +779,42 @@ func (s *grepScan) file(
 		s.skippedLarge++
 		return true
 	}
+	return !s.scanData(p, data)
+}
+
+// oneFile searches the single file the caller named. A walk can drop an
+// entry it cannot open and still answer for the tree around it; a named
+// file is the whole question, so a file it cannot read is an error rather
+// than an empty match list, which would read as "the file does not
+// contain it".
+func (s *grepScan) oneFile(
+	ctx context.Context,
+	ws workspace.Workspace,
+	p string,
+	size int64,
+) error {
+	// The size caps answer the same way a walk does - skipped_large, no
+	// matches - because they name a fact about the file rather than a
+	// failure to read it.
+	if size > maxGrepFileBytes {
+		s.skippedLarge++
+		return nil
+	}
+	data, oversized, err := readFileBounded(ctx, ws, p, maxGrepFileBytes)
+	if err != nil {
+		return err
+	}
+	if oversized {
+		s.skippedLarge++
+		return nil
+	}
+	s.scanData(p, data)
+	return nil
+}
+
+// scanData records the hits of one file's bytes and reports whether the
+// match cap stopped the scan short.
+func (s *grepScan) scanData(p string, data []byte) (capped bool) {
 	// A NUL byte in the head of the file means binary content: a
 	// matched line would be an unreadable slice of a bundle or an
 	// asset. The fact that it matches is still signal — grep -l
@@ -778,9 +824,8 @@ func (s *grepScan) file(
 		if s.re.Match(data) {
 			s.binaryMatches = append(s.binaryMatches, p)
 		}
-		return true
+		return false
 	}
-	capped := false
 	scanLines(data, func(lineNumber int, line []byte) bool {
 		if !s.re.Match(line) {
 			return true
@@ -803,9 +848,8 @@ func (s *grepScan) file(
 		// The scan stopped at a dropped hit rather than at the end
 		// of its input.
 		s.truncated = true
-		return false
 	}
-	return true
+	return capped
 }
 
 // scanLines calls emit once per line of data with the line's 1-based

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -961,5 +962,57 @@ func TestJoinLineRangeSpendsTheBudgetOnTheEncodedString(t *testing.T) {
 	if got := jsonStringLen([]byte(out)); got > budget {
 		t.Fatalf("window of %d lines encodes to %d bytes, want at most %d",
 			reached, got, budget)
+	}
+}
+
+// TestReadFileKeepsLeadingBlankLines: a window whose first line is empty
+// has written no bytes yet, so a "have I emitted a line" test made of the
+// builder's length drops the joining newline and returns the second line
+// as if it were the first. The whole read of a file has to be the file.
+func TestReadFileKeepsLeadingBlankLines(t *testing.T) {
+	tool, _ := newTestTool(t)
+	for _, content := range []string{"\n\nx\n", "\nfirst\n", "\n\n\n"} {
+		writeTree(t, tool.ws, map[string]string{"blank.txt": content})
+		got := readWindow(t, tool, `{"file_path":"blank.txt"}`)
+		if got.Content != content {
+			t.Fatalf("read of %q = %q, want the file", content, got.Content)
+		}
+	}
+}
+
+// denyReadWorkspace fails every read of one path. It is how this test
+// makes a file unreadable on every platform: chmod 000 denies nothing
+// to root or on Windows, and the lane that runs this file's tests must
+// not be the one where the assertion quietly stops running.
+type denyReadWorkspace struct {
+	workspace.Workspace
+	path string
+}
+
+func (d denyReadWorkspace) Read(ctx context.Context, p string) ([]byte, error) {
+	if p == d.path {
+		return nil, fmt.Errorf("read %s: %w", p, fs.ErrPermission)
+	}
+	return d.Workspace.Read(ctx, p)
+}
+
+// TestGrepNamedFileReportsItsErrors: a walk drops an entry it cannot
+// open and still answers for the tree around it, but a named file is the
+// whole question. Answering with an empty match list would read as "the
+// file does not contain it", which is a different fact.
+func TestGrepNamedFileReportsItsErrors(t *testing.T) {
+	base := newTestWorkspace(t)
+	writeTree(t, base, map[string]string{"locked": "secret\n"})
+	tool, err := New(denyReadWorkspace{Workspace: base, path: "locked"})
+	if err != nil {
+		t.Fatalf("files.New: %v", err)
+	}
+
+	out, err := execute(t, tool.grep(), `{"pattern":"secret","path":"locked"}`)
+	if err == nil {
+		t.Fatalf("grep on an unreadable file = %s, want an error", out)
+	}
+	if !strings.Contains(err.Error(), "locked") {
+		t.Fatalf("grep error = %v, want it to name the file", err)
 	}
 }
