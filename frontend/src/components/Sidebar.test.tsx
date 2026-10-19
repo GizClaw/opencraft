@@ -236,6 +236,9 @@ describe('Sidebar workspace history', () => {
     expect(rowButton.querySelector('svg.animate-spin')).not.toBeNull();
     // The spinner is the only row icon; there is no leading icon.
     expect(rowButton.querySelectorAll('svg')).toHaveLength(1);
+    // Work in progress is ambience: there is nothing for a screen
+    // reader to act on, so the row has no description to add.
+    expect(rowButton).not.toHaveAccessibleDescription();
   });
 
   it('blinks the row of a run that is waiting on the reader', () => {
@@ -259,6 +262,9 @@ describe('Sidebar workspace history', () => {
     expect(
       rowButton.querySelector('[data-tip="Waiting for you"]'),
     ).not.toBeNull();
+    // The icon is drawn; the words ride on the row's description, which
+    // is what a screen reader reads after the title.
+    expect(rowButton).toHaveAccessibleDescription('Waiting for you');
   });
 
   it('stops blinking once the prompt is answered', () => {
@@ -293,6 +299,7 @@ describe('Sidebar workspace history', () => {
     const rowButton = screen.getByRole('button', { name: 'broke on me' });
     expect(rowButton.querySelector('svg.animate-spin')).toBeNull();
     expect(rowButton.querySelector('[data-tip="Turn failed"]')).not.toBeNull();
+    expect(rowButton).toHaveAccessibleDescription('Turn failed');
   });
 
   it('shows a new run instead of the mark its predecessor left', () => {

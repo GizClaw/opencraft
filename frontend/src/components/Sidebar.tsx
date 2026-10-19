@@ -660,6 +660,11 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         : mark === 'failed'
           ? t('sidebar.turnFailed')
           : undefined;
+    // The mark is drawn, not read: the button's aria-label is the row's
+    // accessible name, so an aria-label on the icon inside it would be
+    // swallowed there. The copy rides on the row's description instead,
+    // which a screen reader reads right after the title.
+    const markDescID = markTip ? `session-mark-${row.id}` : undefined;
     return (
       <div key={row.id}>
         <div
@@ -697,6 +702,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                 onClick={() => openSession(row)}
                 className="flex w-full min-w-0 items-center text-left px-2 py-1.5"
                 aria-label={row.title}
+                aria-current={isActive ? 'true' : undefined}
+                aria-describedby={markDescID}
               >
                 <SessionTitle title={row.title} />
                 {slot !== undefined && (
@@ -723,9 +730,10 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                 )}
                 {mark && (
                   <span
-                    // The spinner is ambience; the two the reader may
-                    // have to act on carry copy and stay announced.
-                    aria-hidden={markTip ? undefined : 'true'}
+                    // The icons are ambience: the status travels in the
+                    // row's description (below), so a reader hears the
+                    // title and then what the row wants.
+                    aria-hidden="true"
                     className={`shrink-0 transition-opacity ${
                       actionsAllowed && menuOpen?.id === row.id
                         ? 'opacity-0'
@@ -736,23 +744,20 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                     data-tip={markTip}
                   >
                     {mark === 'waiting' ? (
-                      <CircleHelp
-                        size={ICON.sm}
-                        className="text-warn"
-                        aria-label={markTip}
-                      />
+                      <CircleHelp size={ICON.sm} className="text-warn" />
                     ) : mark === 'running' ? (
                       <Loader2
                         size={ICON.sm}
                         className="animate-spin text-accent"
                       />
                     ) : (
-                      <CircleX
-                        size={ICON.sm}
-                        className="text-err"
-                        aria-label={markTip}
-                      />
+                      <CircleX size={ICON.sm} className="text-err" />
                     )}
+                  </span>
+                )}
+                {markTip && (
+                  <span id={markDescID} className="sr-only">
+                    {markTip}
                   </span>
                 )}
               </button>

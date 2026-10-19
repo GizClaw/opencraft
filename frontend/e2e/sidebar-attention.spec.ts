@@ -174,7 +174,64 @@ test('a marked row opens, and the mark goes with the click', async ({
   await page.getByRole('button', { name: 'the other one' }).click();
 
   // Opening the row is the reader answering it: the mark is gone, and
-  // the conversation is on screen.
+  // the conversation is the one the window now shows - the row says so
+  // in the app's own terms (aria-current), not by matching the selector
+  // this test clicked.
   await expect(mark).toHaveCount(0);
-  await expect(row(page, 's-2')).toHaveAttribute('data-session-id', 's-2');
+  await expect(
+    page.getByRole('button', { name: 'the other one' }),
+  ).toHaveAttribute('aria-current', 'true');
+  await expect(
+    page.getByRole('button', { name: 'the session' }),
+  ).not.toHaveAttribute('aria-current', 'true');
+});
+
+// The pulse carries information, so the reader who asked for no motion
+// keeps its tint instead of losing it to the global rule. Emulated per
+// page: the reducedMotion fixture does not reach this browser build.
+test('a waiting row keeps its tint without pulsing', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.addInitScript(mockBackend as never, {
+    currentSession: 's-1',
+    startTurn: { run_id: 'r-1', context_id: 's-1' },
+    listSessions: [meta('s-1', 'the session')],
+  });
+  await page.goto('/');
+
+  await typeComposerMessage(page, 'do the thing');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await emit(page, {
+    type: 'interact',
+    data: {
+      id: 'p-1',
+      run_id: 'r-1',
+      conversation_id: 's-1',
+      kind: 'confirm',
+      severity: 'notice',
+      title: 'Allow the write?',
+      body: [],
+      options: [],
+      multi: false,
+      allow_other: false,
+      source: 'test',
+    },
+  });
+  await expect(
+    row(page, 's-1').locator('[data-tip="Waiting for you"]'),
+  ).toBeVisible();
+  expect(await animationName(page, 's-1')).toBe('none');
+
+  // The tint is the keyframe's midpoint, written as a plain
+  // declaration: resolving the token through a probe keeps the
+  // assertion on the theme the app is actually wearing.
+  const { background, token } = await row(page, 's-1').evaluate((el) => {
+    const probe = document.createElement('span');
+    probe.style.backgroundColor = 'var(--oc-row-attention)';
+    el.appendChild(probe);
+    const token = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return { background: getComputedStyle(el).backgroundColor, token };
+  });
+  expect(background).toBe(token);
+  expect(background).not.toBe('rgba(0, 0, 0, 0)');
 });

@@ -1149,9 +1149,7 @@ body.oc-resizing * {
    for a decision, and a spinner alone reads as "still working". Only the
    midpoint is written, so the two ends fall back to whatever background
    the row already has (its selection tint, its hover) and the pulse
-   reads as a flash over that state rather than replacing it. The global
-   prefers-reduced-motion rule flattens the pulse into a static tint; the
-   question mark still says what the row wants. */
+   reads as a flash over that state rather than replacing it. */
 @keyframes sidebar-row-attention {
   50% {
     background-color: var(--oc-row-attention);
@@ -1160,6 +1158,19 @@ body.oc-resizing * {
 
 .sidebar-row-attention {
   animation: sidebar-row-attention 1.6s ease-in-out infinite;
+}
+
+/* Reduced motion keeps the tint and drops only the pulse. The global rule
+   above squashes every animation to a single ~0s iteration, and a
+   keyframe that writes only its midpoint leaves no background behind
+   once it is over - the row would read as idle except for the question
+   mark. Painting the midpoint as a plain declaration is what "static
+   tint" means; the mark still says what the row wants. */
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-row-attention {
+    animation: none !important;
+    background-color: var(--oc-row-attention);
+  }
 }
 
 /* Diff viewports that hide lines below the fold fade into the surface
