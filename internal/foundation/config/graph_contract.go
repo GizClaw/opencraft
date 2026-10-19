@@ -44,17 +44,6 @@ const (
 	// BoardVarNoticeSent reports whether the model was told that compaction
 	// is out of options while the prompt is still over budget.
 	BoardVarNoticeSent = "world.compact.notice_sent"
-	// BoardVarPromptBaseTokens is the prepare hook's token estimate of the
-	// channel prefix a turn opens with — the world sections plus the
-	// replayed conversation, in the order the world node concatenates
-	// them. The compaction node sizes each round against it instead of
-	// rendering the whole conversation again (worldstate/compactbase.go).
-	BoardVarPromptBaseTokens = "world.compact.base_tokens"
-	// BoardVarPromptBaseLen is how many messages that estimate covers: the
-	// channel length right after the world node prepended its context.
-	// Everything after it is what the round appends, and the only part the
-	// node has to render.
-	BoardVarPromptBaseLen = "world.compact.base_len"
 	// BoardVarTailBlock carries the per-turn context block (plan, skills,
 	// caller extras) that the world node appends to the turn's own message
 	// instead of turning into messages of its own — a block that changes
@@ -80,6 +69,4 @@ var CompactionBoardVars = []string{
 	BoardVarFoldsPerTurn,
 	BoardVarFailStreak,
 	BoardVarNoticeSent,
-	BoardVarPromptBaseTokens,
-	BoardVarPromptBaseLen,
 }

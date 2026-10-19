@@ -80,6 +80,28 @@ func TestWorldNodeMergesThroughItsGoBridge(t *testing.T) {
 	}
 }
 
+// TestCompactNodeSizesThroughItsGoBridge pins the split between the
+// graph's compaction node and the estimate: the node decides on
+// "occompact" (capabilities/compaction), never on a local copy of the
+// rule. Mirroring summarytext in JS was a per-character CJK scan through
+// goja, ~80x the native number: 62 ms per sizing pass on a 230 KB
+// channel, 171 ms on a 560 KB one, and the node sizes twice a round. It
+// also needed a shared fixture to keep two copies of one rule in step.
+// The node keeps the policy (when to fold, which slice, how the result
+// lands) and calls Go only for the number.
+func TestCompactNodeSizesThroughItsGoBridge(t *testing.T) {
+	js := readAsset(t, "assets/graphs/nodes/compact.js")
+	if !strings.Contains(js, "occompact.estimate(") {
+		t.Fatal("compact.js does not size the channel through occompact.estimate")
+	}
+	for _, forbidden := range []string{"charCodeAt(", "JSON.stringify("} {
+		if strings.Contains(js, forbidden) {
+			t.Fatalf("compact.js still renders text through %s: the estimate "+
+				"is Go's rule, and a second renderer drifts from it", forbidden)
+		}
+	}
+}
+
 // TestCompactWritesRoutingVarsTheGraphTests pins the routing contract
 // between the compact node and the graph definition. The edges test bare
 // board vars ("tool_pending == false"), and a node that writes the same

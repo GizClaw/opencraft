@@ -6,11 +6,13 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent/bindings"
 	"github.com/GizClaw/flowcraft/core/resource"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/compaction"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // ScriptBindingsImpl is the impl name of this package's script surface:
-// the standard surface plus the "ocworld" global.
+// the standard surface plus the harness globals this graph's nodes call
+// into Go for ("ocworld", "occompact").
 const ScriptBindingsImpl = "opencraft"
 
 // WorldBridge binds the "ocworld" global: the world node's half of the
@@ -43,8 +45,10 @@ func (WorldBridge) Bind(inv bindings.Invocation) ([]bindings.Binding, error) {
 	}}, nil
 }
 
-// scriptBindingsFactory extends the standard script surface with
-// WorldBridge, as the "agent.ScriptBindings/opencraft" resource:
+// scriptBindingsFactory extends the standard script surface with the
+// harness globals — WorldBridge's "ocworld" and the compaction node's
+// "occompact" (capabilities/compaction) — as the
+// "agent.ScriptBindings/opencraft" resource:
 //
 //	resources:
 //	  script.standard:
@@ -83,5 +87,5 @@ func (scriptBindingsFactory) New(_ context.Context, in resource.Input) (any, err
 	if err != nil {
 		return nil, err
 	}
-	return bindings.Chain(standard, WorldBridge{}), nil
+	return bindings.Chain(standard, WorldBridge{}, compaction.Bridge{}), nil
 }

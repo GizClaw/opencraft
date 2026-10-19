@@ -103,8 +103,9 @@ const (
 )
 
 // EstimateText estimates the prompt footprint of one rendered message
-// text. It counts UTF-16 code units, matching the graph node's JS
-// `String.length`, so the two implementations stay interchangeable.
+// text. The unit is the UTF-16 code point count, so an astral character
+// is charged two units — the same way a provider's tokenizer and the
+// UI's own measurements see it.
 func EstimateText(text string) int {
 	units := utf16.Encode([]rune(text))
 	cjk := 0
@@ -121,10 +122,11 @@ func EstimateText(text string) int {
 // its rendered form: the sum of EstimateText over RenderMessage, plus
 // the per-message overhead.
 //
-// The graph's compaction node mirrors this in JS
-// (foundation/config/assets/graphs/nodes/compact.js) because a script
-// node cannot call into Go yet — see flowcraft#539. The shared fixture
-// in testdata keeps the two in step until it can.
+// This is the only implementation of the rule. The graph's compaction
+// node used to mirror it in JS because a script node could not call into
+// Go; it now reaches this function through the occompact script binding
+// (capabilities/compaction), so the estimate the node budgets a fold
+// against is the number every other reader sees.
 func EstimateTokens(msgs []message.Message) int {
 	total := 0
 	for _, m := range msgs {
@@ -139,9 +141,9 @@ func EstimateTokens(msgs []message.Message) int {
 // payload (or the URL) and a provider bills the pixels, so a conversation
 // full of screenshots is far larger than its text alone.
 //
-// The unit is the base64 character count rather than the decoded byte
-// count so the graph node's JS mirror — which only ever sees the encoded
-// string — computes the same number (see compact.js).
+// The unit is the base64 character count: that is the payload a provider
+// actually receives, and it is what the calibration above was measured
+// against.
 func EstimateImageTokens(source media.ImageSource) int {
 	chars := 0
 	if source.Kind() == media.SourceInline {
@@ -178,14 +180,12 @@ func isCJKUnit(unit uint16) bool {
 		(unit >= 0x3040 && unit <= 0x30ff)
 }
 
-// compactJSON renders tool arguments without insignificant whitespace.
-// A message crosses the script bridge as JSON, where the JS rendition
-// only ever sees the parsed value and re-serializes it; rendering the
-// caller's raw bytes here would make the two disagree about the same
-// call. Escaping and key order are preserved, so the remaining
-// difference is limited to how an exotic spelling (an explicit \uXXXX
-// escape, an HTML-escaped character) is written out, never to which
-// text the estimate covers. Invalid JSON is passed through unchanged.
+// compactJSON renders tool arguments without insignificant whitespace, so
+// the estimate charges one call the same regardless of how the caller
+// formatted its arguments (a pretty-printed JSON blob and a compact one
+// describe one call). Escaping and key order are preserved: only
+// whitespace changes, never the text the estimate covers. Invalid JSON is
+// passed through unchanged.
 func compactJSON(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""

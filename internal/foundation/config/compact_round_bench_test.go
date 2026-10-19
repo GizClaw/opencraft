@@ -11,16 +11,16 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent/scriptrt/jsrt"
 	"github.com/GizClaw/flowcraft/core/message"
 
-	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
+	"github.com/GizClaw/opencraft/internal/capabilities/compaction"
 )
 
 // These benchmarks measure what one compaction round costs the process,
 // through the same runtime the engine wires (jsrt: goja pool, board
-// bridge, config). They exist because that cost used to be paid per round
-// on the whole conversation: the node projected every message into script
-// objects and rendered the whole prompt to a character estimate, then
-// threw the numbers away. The narrow reads (channelLen / channelTail) and
-// the prepare-time base are what a round costs now.
+// bridge, config, occompact). They exist because that cost used to be paid
+// per round on the whole conversation: the node projected every message
+// into script objects and walked every character to a token estimate, then
+// threw the numbers away. A round now reads a count and the last message,
+// and pays Go's estimate (capabilities/compaction) for the number.
 //
 // Run with:
 //
@@ -64,13 +64,10 @@ func benchBoard(b *testing.B) *agent.Board {
 	board.SetChannel(agent.MainChannel, msgs)
 
 	// What the world node and the prepare hook stamp for a turn: the
-	// counts, the model window (never the router in a benchmark), and the
-	// base pair the node sizes against.
+	// counts and the model window (never the router in a benchmark).
 	board.SetVar("world.sections.count", len(sections))
 	board.SetVar("world.history.count", prefix-len(sections))
 	board.SetVar("world.compact.max_input_tokens", 2000000)
-	board.SetVar(BoardVarPromptBaseLen, prefix)
-	board.SetVar(BoardVarPromptBaseTokens, summarytext.EstimateTokens(msgs[:prefix]))
 	return board
 }
 
@@ -82,6 +79,13 @@ func benchEnv(ctx context.Context, board *agent.Board) *agent.ScriptEnv {
 			"board": bridge,
 			"run": map[string]any{
 				"get_context_id": func() string { return "bench" },
+			},
+			// The sizing call: the same function the node reaches in
+			// production, bound to this board.
+			"occompact": map[string]any{
+				"estimate": func(from int) (int, error) {
+					return compaction.EstimateChannelTokens(board, from)
+				},
 			},
 			"inference": map[string]any{
 				"routeExplain": func(map[string]any) map[string]any { return nil },
@@ -100,8 +104,8 @@ func benchRuntime(b *testing.B, board *agent.Board) (*jsrt.Runtime, string) {
 	return jsrt.New(), source
 }
 
-// BenchmarkCompactRound is one round of the node as it stands: counts and
-// tails only, with the prepare-time base covering the conversation prefix.
+// BenchmarkCompactRound is one round of the node as it stands: a count, the
+// last message, and one call into Go for the number.
 func BenchmarkCompactRound(b *testing.B) {
 	board := benchBoard(b)
 	rt, source := benchRuntime(b, board)
@@ -132,15 +136,30 @@ func BenchmarkCompactRoundProjection(b *testing.B) {
 	}
 }
 
-// BenchmarkCompactRoundWithFullSizing adds the old estimate on top of the
-// current round: project the channel, render every message, scan every
-// character. The difference against BenchmarkCompactRound is what the
-// prepare-time base removed from a round that folds nothing.
-func BenchmarkCompactRoundWithFullSizing(b *testing.B) {
+// BenchmarkCompactRoundEstimate is the sizing call on its own: the Go
+// estimate of the whole channel, out of the script interpreter. The
+// difference against BenchmarkCompactRound is what a round pays besides it;
+// the difference against the old per-character scan is what moving the rule
+// to Go bought.
+func BenchmarkCompactRoundEstimate(b *testing.B) {
+	board := benchBoard(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := compaction.EstimateChannelTokens(board, 0); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkCompactRoundDoubleSizing adds the round's second sizing call,
+// which the node makes when a measurement has to be topped up with the
+// tokens appended since.
+func BenchmarkCompactRoundDoubleSizing(b *testing.B) {
 	board := benchBoard(b)
 	rt, source := benchRuntime(b, board)
 	env := benchEnv(context.Background(), board)
-	source += "\n;estimateTokens(board.channel(board.MAIN_CHANNEL));"
+	source += "\n;estimateTokens(0);"
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

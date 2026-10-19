@@ -1,40 +1,12 @@
 package summarytext
 
 import (
-	"bytes"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
 )
-
-// compactCase is one fixture entry: a message list, its Go rendering,
-// and its Go estimate. The graph's JS compaction node is checked
-// against the same file (frontend/src/lib/compactMirror.test.ts), so a
-// change to either implementation that is not mirrored fails a test
-// instead of quietly shifting when compaction triggers.
-type compactCase struct {
-	Name string `json:"name"`
-	// Messages is the wire form the board carries, which is what the
-	// JS node reads.
-	Messages []json.RawMessage `json:"messages"`
-	// Rendered is RenderMessage per message, in order.
-	Rendered []string `json:"rendered"`
-	// Tokens is EstimateTokens over the whole list.
-	Tokens int `json:"tokens"`
-}
-
-type compactFixture struct {
-	Note string `json:"note"`
-	// SummaryPrefix lets the frontend assert its own copy of the marker
-	// (frontend/src/lib/compact.ts) against this one instead of trusting
-	// two hand-kept duplicates.
-	SummaryPrefix string        `json:"summaryPrefix"`
-	Cases         []compactCase `json:"cases"`
-}
 
 // imageSource builds one URL-backed image source for the media case.
 func imageSource(t *testing.T) media.ImageSource {
@@ -63,15 +35,19 @@ func imageBytes(t *testing.T, n int) media.ImageSource {
 	return src
 }
 
-// compactCaseMessages covers every branch of the renderer and the
-// estimate: text only, CJK, mixed scripts, astral code points (JS
-// counts two code units), tool calls and results alone and combined,
-// an empty message, a summary marker, and a multi-message round.
-func compactCaseMessages(t *testing.T) []struct {
-	name string
-	msgs []message.Message
-} {
-	t.Helper()
+// The estimate is what decides when a turn folds its older rounds, so its
+// exact numbers are a contract: a change here moves the threshold every
+// deployment budgets against. These cases cover every branch of the
+// renderer and the estimate — text only, CJK, mixed scripts, astral code
+// points (two UTF-16 units), tool calls and results alone and combined,
+// an empty message, media (charged by payload, not by words), and a
+// summary marker.
+//
+// The numbers used to be pinned against the graph node's JS mirror, which
+// read the same table through testdata/compact_cases.json. The node now
+// calls this estimate (capabilities/compaction), so the table only has to
+// hold Go to its own history.
+func TestEstimateTokens(t *testing.T) {
 	text := func(role message.Role, s string) message.Message {
 		return message.NewTextMessage(role, s)
 	}
@@ -95,11 +71,11 @@ func compactCaseMessages(t *testing.T) []struct {
 			}},
 		}
 	}
-	withTextAndTools := func(text string) message.Message {
+	withTextAndTools := func(body string) message.Message {
 		return message.Message{
 			Role: message.RoleAssistant,
 			Content: message.Content{Parts: []message.Part{
-				message.TextPart{Text: text},
+				message.TextPart{Text: body},
 				message.ToolCallPart{Call: message.ToolCall{
 					ID: "c1", Name: "exec_command",
 					Arguments: json.RawMessage(`{"cmd":"go test ./..."}`),
@@ -111,27 +87,26 @@ func compactCaseMessages(t *testing.T) []struct {
 			}},
 		}
 	}
-	return []struct {
+	for _, tc := range []struct {
 		name string
 		msgs []message.Message
+		want int
 	}{
-		{"empty list", nil},
-		{"text only", []message.Message{text(message.RoleUser, "hello there")}},
-		{"cjk text", []message.Message{text(message.RoleUser, "请把这段代码重构一下")}},
+		{"empty list", nil, 0},
+		{"text only", []message.Message{text(message.RoleUser, "hello there")}, 11},
+		{"cjk text", []message.Message{text(message.RoleUser, "请把这段代码重构一下")}, 18},
 		{"mixed scripts", []message.Message{
 			text(message.RoleAssistant, "done — 已完成 3 files"),
-		}},
+		}, 15},
 		{"astral code point", []message.Message{
 			text(message.RoleUser, "ship it 🚀"),
-		}},
+		}, 11},
 		{"tool call only", []message.Message{
 			call("c1", "read_file", `{"path":"a.txt"}`),
-		}},
-		{"tool result only", []message.Message{result("c1", "file body")}},
-		// The arguments arrive as raw JSON. Go renders the bytes it
-		// holds; the JS node only ever sees the parsed value and
-		// re-serializes it, so a non-canonical spelling is a place the
-		// two can disagree.
+		}, 18},
+		{"tool result only", []message.Message{result("c1", "file body")}, 14},
+		// The arguments arrive as raw JSON; the renderer compacts them, so
+		// a pretty-printed call and a tight one cost the same.
 		{"arguments with whitespace", []message.Message{{
 			Role: message.RoleAssistant,
 			Content: message.Content{Parts: []message.Part{
@@ -141,16 +116,16 @@ func compactCaseMessages(t *testing.T) []struct {
 						"{\n  \"cmd\": \"go build ./...\",\n  \"cwd\": \"/w\"\n}"),
 				}},
 			}},
-		}}},
-		// Reasoning is not part of the prompt form in either
-		// implementation: it is neither text nor tool activity.
+		}}, 23},
+		// Reasoning is neither text nor tool activity: it is not part of
+		// the prompt form.
 		{"reasoning beside text", []message.Message{{
 			Role: message.RoleAssistant,
 			Content: message.Content{Parts: []message.Part{
 				message.ReasoningPart{Text: "thinking about it"},
 				message.TextPart{Text: "the answer"},
 			}},
-		}}},
+		}}, 11},
 		// Several text parts concatenate without a separator.
 		{"split text parts", []message.Message{{
 			Role: message.RoleAssistant,
@@ -158,9 +133,10 @@ func compactCaseMessages(t *testing.T) []struct {
 				message.TextPart{Text: "first "},
 				message.TextPart{Text: "second"},
 			}},
-		}}},
-		// A result that carries media beside its text contributes the
-		// text only.
+		}}, 11},
+		// A result that carries media beside its text contributes the text
+		// to the rendering and the payload to the estimate; a URL-backed
+		// image pays the floor because the estimate cannot size the pixels.
 		{"tool result with media", []message.Message{{
 			Role: message.RoleTool,
 			Content: message.Content{Parts: []message.Part{
@@ -172,15 +148,15 @@ func compactCaseMessages(t *testing.T) []struct {
 					}},
 				}},
 			}},
-		}}},
+		}}, 1036},
 		// An inline image is charged by its encoded length: the URL form
-		// above pays only the floor, a real screenshot payload pays more.
+		// above pays only the floor, a real payload pays more.
 		{"inline image", []message.Message{{
 			Role: message.RoleUser,
 			Content: message.Content{Parts: []message.Part{
 				message.ImagePart{Source: imageBytes(t, 4096)},
 			}},
-		}}},
+		}}, 1032},
 		{"tool result with inline image", []message.Message{{
 			Role: message.RoleTool,
 			Content: message.Content{Parts: []message.Part{
@@ -192,25 +168,24 @@ func compactCaseMessages(t *testing.T) []struct {
 					}},
 				}},
 			}},
-		}}},
+		}}, 3430},
 		{"text with tool activity", []message.Message{
 			withTextAndTools("running the suite"),
-		}},
+		}, 29},
 		{"tool activity without text", []message.Message{
 			withTextAndTools(""),
-		}},
-		// A message whose parts carry no text renders to nothing in
-		// both implementations: the estimate still charges the
-		// per-message overhead.
+		}, 24},
+		// A message whose parts carry no text renders to nothing; the
+		// estimate still charges the per-message overhead and the image.
 		{"media part only", []message.Message{{
 			Role: message.RoleUser,
 			Content: message.Content{Parts: []message.Part{
 				message.ImagePart{Source: imageSource(t)},
 			}},
-		}}},
+		}}, 1032},
 		{"summary marker", []message.Message{
 			text(message.RoleUser, SummaryPrefix+"\nfolded older rounds"),
-		}},
+		}, 38},
 		{
 			"one round with a tool call and its result",
 			[]message.Message{
@@ -219,62 +194,35 @@ func compactCaseMessages(t *testing.T) []struct {
 				result("c1", ""),
 				text(message.RoleAssistant, "build is green"),
 			},
+			56,
 		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EstimateTokens(tc.msgs); got != tc.want {
+				t.Fatalf("EstimateTokens = %d, want %d", got, tc.want)
+			}
+		})
 	}
 }
 
-// TestCompactFixtureMatchesRenderAndEstimate pins the fixture to the Go
-// implementation. Run with UPDATE_GOLDEN=1 after an intentional change,
-// then run the frontend test that reads the same file.
-func TestCompactFixtureMatchesRenderAndEstimate(t *testing.T) {
-	cases := compactCaseMessages(t)
-	fixture := compactFixture{
-		Note: "Generated by TestCompactFixtureMatchesRenderAndEstimate " +
-			"(UPDATE_GOLDEN=1). The graph's JS compaction node is checked " +
-			"against this file by frontend/src/lib/compactMirror.test.ts.",
-		SummaryPrefix: SummaryPrefix,
-		Cases:         make([]compactCase, 0, len(cases)),
-	}
-	for _, tc := range cases {
-		entry := compactCase{
-			Name:     tc.name,
-			Messages: make([]json.RawMessage, 0, len(tc.msgs)),
-			Rendered: make([]string, 0, len(tc.msgs)),
-			Tokens:   EstimateTokens(tc.msgs),
+// TestEstimateTextCountsUTF16Units pins the unit itself: an astral code
+// point is two UTF-16 code units in one rune, so a text of emoji must
+// cost what the same number of code units costs anywhere else.
+func TestEstimateTextCountsUTF16Units(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want int
+	}{
+		{"", 0},
+		{"abcd", 1},
+		{"abcde", 2},
+		{"中文", 2},
+		// Two runes, four UTF-16 units.
+		{"🚀🚀", 1},
+		{"a🚀", 1},
+	} {
+		if got := EstimateText(tc.text); got != tc.want {
+			t.Fatalf("EstimateText(%q) = %d, want %d", tc.text, got, tc.want)
 		}
-		for _, m := range tc.msgs {
-			raw, err := json.Marshal(m)
-			if err != nil {
-				t.Fatalf("%s: marshal message: %v", tc.name, err)
-			}
-			entry.Messages = append(entry.Messages, raw)
-			entry.Rendered = append(entry.Rendered, RenderMessage(m))
-		}
-		fixture.Cases = append(fixture.Cases, entry)
-	}
-	got, err := json.MarshalIndent(fixture, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal fixture: %v", err)
-	}
-	got = append(got, '\n')
-
-	path := filepath.Join("testdata", "compact_cases.json")
-	if os.Getenv("UPDATE_GOLDEN") == "1" {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, got, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		t.Logf("wrote %s (%d bytes)", path, len(got))
-		return
-	}
-	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("fixture is stale; rerun with UPDATE_GOLDEN=1:\n--- want\n%s\n--- got\n%s",
-			want, got)
 	}
 }

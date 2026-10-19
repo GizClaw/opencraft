@@ -1,8 +1,14 @@
-// Cross-language gate for the compaction node.
+// Policy gate for the compaction node.
 //
-// Go renders the prompt and the harness measures it; the graph's compact
-// node decides whether to fold it into a summary. The node cannot import
-// Go, so the board-var contract is pinned here against a stub board:
+// Go renders the prompt and measures it; the graph's compact node decides
+// whether to fold it into a summary. Two contracts are pinned here against
+// a stub board:
+//
+//   - occompact.estimate(from): the measurement itself, which is Go's rule
+//     (capabilities/compaction -> summarytext.EstimateTokens) and is
+//     injected here so these cases assert the policy rather than the
+//     arithmetic;
+//   - the board vars the node reads and writes:
 //
 //   - llm_usage + world.compact.anchor_len/anchor_epoch: this turn's
 //     previous call measured the prompt this node is sizing;
@@ -18,6 +24,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { estimateTokensOf } from '../test/compactEstimate';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const NODE_SOURCE = join(
@@ -207,11 +214,19 @@ function runNode(opts: RunOptions): NodeResult {
     },
   };
   const run = { get_context_id: () => 's-test' };
-  new Function('board', 'run', 'config', readFileSync(NODE_SOURCE, 'utf8'))(
-    board,
-    run,
-    {},
-  );
+  // The node sizes the channel through Go (occompact.estimate ->
+  // summarytext.EstimateTokens); these tests pin the fold policy, so the
+  // measurement is injected here.
+  const occompact = {
+    estimate: (from: number) => estimateTokensOf(channels.main.slice(from)),
+  };
+  new Function(
+    'board',
+    'run',
+    'config',
+    'occompact',
+    readFileSync(NODE_SOURCE, 'utf8'),
+  )(board, run, {}, occompact);
   return {
     vars,
     channel: channels.main,
@@ -240,55 +255,6 @@ function noticeText(result: NodeResult): string {
     if (body.startsWith(NOTICE)) return body;
   }
   return '';
-}
-
-/**
- * The estimate the node's own mirror produces for a message list — the
- * number Go's summarytext produces for the same list (compactMirror.test.ts
- * pins the two against one fixture).
- */
-function estimateTokensOf(msgs: BoardMessage[]): number {
-  const board = {
-    MAIN_CHANNEL: 'main',
-    channel: () => [],
-    channelLen: () => 0,
-    channelTail: () => [],
-    lastMessage: () => null,
-    getVar: () => undefined,
-    setVar: () => {},
-    setChannel: () => {},
-    appendChannel: () => {},
-  };
-  const factory = new Function(
-    'board',
-    'config',
-    'run',
-    'inference',
-    `${readFileSync(NODE_SOURCE, 'utf8')}\nreturn estimateTokens;`,
-  );
-  const estimate = factory(
-    board,
-    {},
-    { get_context_id: () => 's-test' },
-    { routeExplain: () => ({ limits: { max_input_tokens: 0 } }) },
-  ) as (list: BoardMessage[]) => number;
-  return estimate(msgs);
-}
-
-/**
- * What the prepare hook publishes for a mid-turn channel: the world
- * sections and `history` replayed rounds, measured once, plus the message
- * count that prefix spans.
- */
-function preparedBase(
-  channel: BoardMessage[],
-  history: number,
-): Record<string, unknown> {
-  const prefix = SECTIONS + history * 2;
-  return {
-    'world.compact.base_len': prefix,
-    'world.compact.base_tokens': estimateTokensOf(channel.slice(0, prefix)),
-  };
 }
 
 describe('compaction node', () => {
@@ -489,62 +455,35 @@ describe('compaction node', () => {
     expect(result.vars['world.compact.anchor_epoch']).toBe(1);
   });
 
-  it('sizes a round from the prepare-time base, never from the whole channel', () => {
-    // The expensive read this node used to make on every round is the
-    // projection of the whole conversation into script objects. The
-    // prepare hook already rendered that prefix, so a round that folds
-    // nothing must not touch the messages at all.
+  it('projects the channel only on a round that folds', () => {
+    // The expensive read this node can make is the projection of the whole
+    // conversation into script objects — one object graph per message. A
+    // sizing round needs a count, the last message, and Go's number; only a
+    // round that goes on to fold needs the messages themselves.
     const history = 40;
     const channel = midTurn(history, text('tool', 'short output'));
-    const result = runNode({
-      channel,
+    const fits = runNode({ channel, history });
+    expect(fits.projections).toBe(0);
+    expect(foldRequested(fits)).toBe(false);
+    // The number the llm node is about to be measured against is this
+    // round's channel, count for count.
+    expect(fits.vars['world.compact.anchor_len']).toBe(channel.length);
+
+    // Over budget: the fold path reads the messages once, and the sizing
+    // call in front of it did not pay for a second projection.
+    const foldChannel = midTurn(history, bigToolResult());
+    const folds = runNode({
+      channel: foldChannel,
       history,
-      vars: preparedBase(channel, history),
+      vars: {
+        'world.usage.anchor': {
+          input_tokens: 9500,
+          anchored_messages: foldChannel.length - 2,
+          compact_count: 0,
+        },
+      },
     });
-
-    expect(result.projections).toBe(0);
-    expect(foldRequested(result)).toBe(false);
-    // The number the llm node is about to be measured against is still
-    // this round's channel, count for count.
-    expect(result.vars['world.compact.anchor_len']).toBe(channel.length);
-    // The base itself is untouched: nothing rewrote the prefix.
-    expect(result.vars['world.compact.base_len']).toBe(SECTIONS + history * 2);
-  });
-
-  it('reaches the same decision with and without the prepare-time base', () => {
-    // The base splits one estimate into two halves — the prefix the hook
-    // rendered and the tail this round renders. Additivity is what makes
-    // the split invisible to the decision, so every branch is checked
-    // against the same channel measured whole: fits, defers, folds.
-    const history = 6;
-    const folded: boolean[] = [];
-    for (const toolResult of [
-      text('tool', 'short output'),
-      mediumToolResult(),
-      bigToolResult(),
-    ]) {
-      const channel = midTurn(history, toolResult);
-      const whole = runNode({ channel, history });
-      const based = runNode({
-        channel,
-        history,
-        vars: preparedBase(channel, history),
-      });
-      expect(based.vars['world.compact.pending']).toBe(
-        whole.vars['world.compact.pending'],
-      );
-      expect(based.vars['world.compact.fold_start']).toBe(
-        whole.vars['world.compact.fold_start'],
-      );
-      expect(based.vars['world.compact.fold_end']).toBe(
-        whole.vars['world.compact.fold_end'],
-      );
-      expect(based.vars[TOOL_PENDING]).toBe(whole.vars[TOOL_PENDING]);
-      folded.push(whole.vars['world.compact.pending'] === true);
-    }
-    // The comparison covered both branches: a round that fits and a round
-    // that folds.
-    expect(folded).toContain(false);
-    expect(folded).toContain(true);
+    expect(foldRequested(folds)).toBe(true);
+    expect(folds.projections).toBe(1);
   });
 });
