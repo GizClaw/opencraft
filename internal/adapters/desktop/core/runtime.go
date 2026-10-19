@@ -120,7 +120,14 @@ func (r *Runtime) HostFor(workDir string) *host.Host {
 // BusyWorkspaces lists the workspaces with a live run right now, pooled
 // or still draining. It answers "is a turn working in this repository"
 // for callers whose scope is wider than one workspace (the git panel).
+//
+// A Runtime without a manager is the bare shape Reload and Close tolerate
+// (&Runtime{}): it has no pool to ask, and answering nil keeps the caller
+// (Core.BusyWorkspaces, which falls back here) from panicking.
 func (r *Runtime) BusyWorkspaces() []string {
+	if r.manager == nil {
+		return nil
+	}
 	return r.manager.BusyWorkspaces()
 }
 

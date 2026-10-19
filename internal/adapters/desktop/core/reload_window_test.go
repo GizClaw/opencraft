@@ -79,10 +79,12 @@ func TestReloadWindowOnBareCore(t *testing.T) {
 }
 
 // TestNewCoreWiresTheMemoryBoundary pins the two assignments in
-// NewCoreWithPaths that the cases above replace with doubles. Without them
-// every test here stays green - the no-window answer is the same for a nil
-// field - while a real window reloads under a live run and the git discard
-// guard in bindings/git.go stops seeing one.
+// NewCoreWithPaths that the cases above replace with doubles. Neither is
+// load-bearing for behaviour now - a nil busyWorkspaces falls back to the
+// runtime's pool, and a nil reloadWindow gives the same no-window answer
+// the doubles above give - so this is a tripwire on the spelling:
+// deleting either line closes off the substitution the cases above depend
+// on, and the boundary they check would silently become the fallback's.
 func TestNewCoreWiresTheMemoryBoundary(t *testing.T) {
 	c := NewCore(t.TempDir(), t.TempDir(), t.TempDir())
 	if c.busyWorkspaces == nil {
@@ -91,10 +93,30 @@ func TestNewCoreWiresTheMemoryBoundary(t *testing.T) {
 	if c.reloadWindow == nil {
 		t.Fatal("reloadWindow is not wired to Shell.reloadMain")
 	}
-	// The wired pool answers nothing on a fresh Core: no workspace has
-	// a live run yet, and the answer has to come from the pool rather
-	// than from a hardcoded nil.
-	if busy := c.BusyWorkspaces(); len(busy) != 0 {
-		t.Fatalf("BusyWorkspaces = %v, want none on a fresh Core", busy)
+}
+
+// TestBusyWorkspacesFallsBackToTheRuntime is the other half of the same
+// boundary: a Core that never went through the constructor (the literals
+// the stream tests build) answers from the runtime it carries instead of
+// nil, which the git discard guard would read as "no run anywhere". The
+// pool answers an empty but non-nil slice, so that is what tells the
+// fallback from the bare Core's fail-open nil (TestReloadWindowOnBareCore).
+func TestBusyWorkspacesFallsBackToTheRuntime(t *testing.T) {
+	c := &Core{Runtime: NewRuntime(t.TempDir(), t.TempDir(), "")}
+	if c.busyWorkspaces != nil {
+		t.Fatal("precondition: the field has to stay unwired here")
+	}
+	if busy := c.BusyWorkspaces(); busy == nil {
+		t.Fatal("BusyWorkspaces = nil, want the runtime's empty answer")
+	}
+}
+
+// TestBusyWorkspacesOnBareRuntime pins the arm that keeps the fallback
+// above from panicking: a &Runtime{} has no pool to ask (the shape Reload
+// and Close tolerate), and "nobody is busy" is the answer it can give.
+func TestBusyWorkspacesOnBareRuntime(t *testing.T) {
+	var r Runtime
+	if busy := r.BusyWorkspaces(); busy != nil {
+		t.Fatalf("BusyWorkspaces = %v, want nil from a runtime without a pool", busy)
 	}
 }

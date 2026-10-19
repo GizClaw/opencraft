@@ -69,7 +69,10 @@ type Core struct {
 	// busyWorkspaces and reloadWindow are the two halves of the memory
 	// boundary's decision (see reload_window.go). They are fields so the
 	// truth table - busy, no window, reloaded - is testable without a
-	// live run or a Wails window.
+	// live run or a Wails window. Their nils are not the same answer: a
+	// nil busyWorkspaces falls back to the runtime's pool (see
+	// Core.BusyWorkspaces), while a nil reloadWindow is the no-window
+	// refusal.
 	busyWorkspaces func() []string
 	reloadWindow   func() bool
 
