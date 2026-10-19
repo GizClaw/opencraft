@@ -46,12 +46,17 @@
   /* Chart / metric series. The one palette for usage, runtime metrics
      and graph accents, so a chart blue is the same blue everywhere and
      the light theme gets a darker set instead of the dark one washed
-     out on white. */
+     out on white. Eight stops, because a stacked bar can put that many
+     slices side by side and adjacent slices are what has to differ:
+     1-5 are the hues the line charts cycle, 6-8 fill in between them. */
   --color-series-1: #3b82f6;
   --color-series-2: #22c55e;
   --color-series-3: #f97316;
   --color-series-4: #a855f7;
   --color-series-5: #10b981;
+  --color-series-6: #22d3ee;
+  --color-series-7: #f472b6;
+  --color-series-8: #65a30d;
   --color-chart-grid: rgb(148 163 184 / 0.15);
   --color-chart-axis: #94a3b8;
   /* The graph canvas dot grid: a chart-grid cousin that has to stay
@@ -300,6 +305,9 @@
   --color-series-3: #c2410c;
   --color-series-4: #7c3aed;
   --color-series-5: #047857;
+  --color-series-6: #0e7490;
+  --color-series-7: #be185d;
+  --color-series-8: #4d7c0f;
   --color-chart-grid: rgb(15 23 42 / 0.1);
   --color-chart-axis: #5c6777;
   --color-graph-dot: rgb(100 116 139 / 0.3);

@@ -10,13 +10,22 @@ import { ICON } from './ui/icon';
 // window the last prompt took, and which part of it the harness added.
 //
 // Two surfaces, one number. Collapsed it is a ring and a fraction
-// ("12.3k / 200k") in the composer's footer; opened it is the breakdown —
-// the prompt split by category, in the order the backend lists them.
+// ("12.3k / 200k") in the composer's footer, right of the sandbox-mode
+// chip — the chip says how this session runs, the ring says how full its
+// window is, and both are session state rather than composer input, which
+// is why neither sits next to Send. Opened it is the breakdown — the
+// prompt split by category, in the order the backend lists them.
 //
 // The ids are wire values (sessions.ContextCategories on the Go side). A
 // category this build does not know is dropped rather than drawn
 // unlabelled, which is also why the table below is the only place a
 // label is decided: the backend never sends text.
+//
+// The hues are picked against their neighbours, not against the whole
+// list: what has to stay apart is what the stack draws side by side, and
+// a missing category (no AGENTS.md, nothing folded yet) closes the gap
+// between the ones around it — every pair below survives that, which is
+// why this is not simply series-1 through series-7 in order.
 const CATEGORIES = [
   {
     id: 'instructions',
@@ -28,17 +37,17 @@ const CATEGORIES = [
   {
     id: 'environment',
     labelKey: 'chat.contextEnvironment',
-    color: 'var(--color-series-1)',
+    color: 'var(--color-series-6)',
   },
   {
     id: 'project_docs',
     labelKey: 'chat.contextProjectDocs',
-    color: 'var(--color-series-5)',
+    color: 'var(--color-series-8)',
   },
   {
     id: 'user_memory',
     labelKey: 'chat.contextUserMemory',
-    color: 'var(--color-subagent)',
+    color: 'var(--color-series-7)',
   },
   {
     id: 'memory_summary',
@@ -107,7 +116,7 @@ function Ring({ share, color }: { share: number; color: string }) {
         cy="8"
         r={radius}
         fill="none"
-        stroke="var(--color-edge)"
+        stroke="var(--color-panel3)"
         strokeWidth="2"
       />
       <circle
@@ -180,7 +189,7 @@ export function ContextMeter({ usage }: { usage: ContextUsageDTO }) {
         aria-expanded={open}
         aria-haspopup="dialog"
         data-tip={t('chat.contextMeter')}
-        className="flex items-center gap-1.5 rounded-control px-1.5 py-1 text-micro tabular-nums text-dim transition-colors hover:bg-panel2 hover:text-fg"
+        className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-control px-1.5 py-1 text-micro tabular-nums text-dim transition-colors hover:bg-panel2 hover:text-fg"
       >
         {limit > 0 ? (
           <Ring share={share} color={tone} />
@@ -188,7 +197,15 @@ export function ContextMeter({ usage }: { usage: ContextUsageDTO }) {
           <Gauge size={ICON.xs} className="shrink-0" aria-hidden />
         )}
         <span>{usedLabel}</span>
-        {limit > 0 && <span className="text-faint">/ {limitLabel}</span>}
+        {limit > 0 && (
+          // The denominator is the first thing to go when the composer
+          // narrows: the ring still carries the share, and the popover
+          // has the full figure. The query is the footer's own width, so
+          // a resized window and a split pane both land here.
+          <span className="hidden text-faint @min-[30rem]:inline">
+            / {limitLabel}
+          </span>
+        )}
       </button>
       {open && (
         <Popover
@@ -197,7 +214,7 @@ export function ContextMeter({ usage }: { usage: ContextUsageDTO }) {
           anchor={triggerRef.current}
           role="dialog"
           ariaLabel={t('chat.contextMeter')}
-          align="end"
+          align="start"
           panelClassName="w-72 rounded-control border border-edge bg-panel p-3 shadow-popover"
         >
           <div className="flex items-baseline gap-2">
