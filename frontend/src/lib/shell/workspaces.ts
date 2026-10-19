@@ -112,6 +112,14 @@ export function createShellWorkspaces(
       // A switch to the workspace the window is already on is not a
       // switch: it would rebuild the runtime behind the reader and, if it
       // reached the reload below, throw the page away for nothing.
+      //
+      // This compares what the window believes it is on, which is what the
+      // picker showed. A window whose ready event never arrived can believe
+      // the wrong thing, and then this returns early where the call used to
+      // re-open the workspace the backend is actually on; that divergence
+      // predates the guard, no binding reports the backend's workdir, and a
+      // guard that paid a runtime rebuild on every ordinary re-pick to cover
+      // it is the worse trade.
       if (sameWorkspacePath(path, get().workspace)) return;
       try {
         await api.openWorkspace(path);
@@ -142,8 +150,10 @@ export function createShellWorkspaces(
         // Two things keep the page, both expected rather than rare: a
         // live run anywhere in the process (its deltas are addressed to
         // this window; the Go side logs the refusal with the workspace
-        // list), and a composer with something in it (see unsentDraft).
-        // Neither is retried here - the next switch asks again.
+        // list), and a composer with something in it (see unsentDraft,
+        // which keeps the call from being made, so this one leaves no Go
+        // log line - the composer is the visible reason). Neither is
+        // retried here - the next switch asks again.
         if (!hasUnsentDraft()) {
           void api
             .reloadWindow()
