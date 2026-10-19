@@ -133,17 +133,23 @@ def size_band(n):
 
 
 def parse_when(s, end_of_day):
-    """parse_when accepts YYYY-MM-DD (local day) or RFC3339."""
+    """parse_when accepts YYYY-MM-DD (that UTC day) or RFC3339.
+
+    A timestamp without an offset is read as UTC, which is what the
+    rollouts carry: leaving it naive made the window comparison raise
+    TypeError against their offset-aware times instead of filtering.
+    """
     s = s.strip()
     try:
         if len(s) == 10:
             d = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             if end_of_day:
-                d = d.replace(hour=23, minute=59, second=59)
+                d = d.replace(hour=23, minute=59, second=59, microsecond=999999)
             return d
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
         raise SystemExit(f"rounds-review: bad date {s!r} (want YYYY-MM-DD or RFC3339)")
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
 def event_time(s):
@@ -208,6 +214,13 @@ def read_rollout(path, stats, since, until):
                 continue
             kind = o.get("type")
             if kind == "turn.started":
+                if cur is not None:
+                    # A new turn opening over an unclosed one: the run
+                    # was interrupted (a stop, a crash, a restart), so
+                    # the turn is unfinished, not absent. Dropping it
+                    # here silently lost its rounds and its calls.
+                    stats["unfinished_turns"] += 1
+                    turns.append(cur)
                 cur = Turn(event_time(o.get("time")))
             elif kind in ("turn.completed", "turn.failed"):
                 if cur is not None:
