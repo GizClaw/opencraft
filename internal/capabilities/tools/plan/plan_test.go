@@ -2,6 +2,7 @@ package plan
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -177,6 +178,29 @@ func TestUpdatePlanValidation(t *testing.T) {
 	latest, ok := store.Latest("default", sessions.DefaultSessionID)
 	if !ok || latest.Items[0].Step != "keep" {
 		t.Errorf("plan was clobbered: %+v", latest)
+	}
+}
+
+// TestUpdatePlanNamesWhereTheExplanationGoes: an item-level
+// "explanation" is a shape mistake, not a typo the model can see from
+// "unknown field". The error has to say what an item takes and where the
+// explanation belongs, or the retry is another guess.
+func TestUpdatePlanNamesWhereTheExplanationGoes(t *testing.T) {
+	store := NewStore(newSessionsStore(t))
+	tool := MustNew(store).Tools()[0]
+	_, err := tool.Execute(context.Background(),
+		`{"plan":[{"step":"x","status":"pending","explanation":"why"}]}`)
+	if err == nil {
+		t.Fatal("item-level explanation accepted")
+	}
+	for _, want := range []string{
+		`plan[0] has unknown field "explanation"`,
+		"an item takes exactly {step, status}",
+		"the explanation goes at the top level",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
 	}
 }
 

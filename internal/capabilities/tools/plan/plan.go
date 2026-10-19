@@ -200,8 +200,10 @@ func decodeArgs(arguments string) (UpdatePlanArgs, error) {
 			for key := range item {
 				if key != "step" && key != "status" {
 					return UpdatePlanArgs{}, errdefs.Validationf(
-						"%s: plan[%d] has unknown field %q",
-						UpdatePlanName, i, key)
+						"%s: plan[%d] has unknown field %q; an item "+
+							"takes exactly {step, status}, and the "+
+							"explanation goes at the top level, next "+
+							"to plan", UpdatePlanName, i, key)
 				}
 			}
 		}

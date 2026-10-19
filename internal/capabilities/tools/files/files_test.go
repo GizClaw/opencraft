@@ -11,6 +11,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/workspace"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/jsonout"
 )
 
 func newTestTool(t *testing.T) (*Tool, workspace.Workspace) {
@@ -80,6 +82,29 @@ func TestReadFileRange(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("read_file result missing %s: %s", want, got)
 		}
+	}
+}
+
+// TestReadFileKeepsTheFilesOwnCharacters: a tool result is not an HTML
+// page, so <, > and & have to come back as themselves. encoding/json
+// escapes them by default, and a model copying "if a && b {" into a
+// patch wrote "\u0026\u0026" instead - a hunk that cannot match.
+func TestReadFileKeepsTheFilesOwnCharacters(t *testing.T) {
+	tool, _ := newTestTool(t)
+	content := "if a && b {\n\tif c < d && e > f {\n\t\treturn\n\t}\n}\n"
+	writeTree(t, tool.ws, map[string]string{"a.go": content})
+	got, err := execute(t, tool.read(), `{"file_path":"a.go"}`)
+	if err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	for _, unwanted := range []string{`\u0026`, `\u003c`, `\u003e`} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("read_file result carries %s: %s", unwanted, got)
+		}
+	}
+	if !strings.Contains(got, "if a && b {") ||
+		!strings.Contains(got, "if c < d && e > f {") {
+		t.Errorf("read_file result mangled the text: %s", got)
 	}
 }
 
@@ -883,7 +908,7 @@ func TestJSONStringLenMatchesMarshal(t *testing.T) {
 		string([]byte{0xff, 0xfe, 'a'}),
 	}
 	for _, c := range cases {
-		enc, err := json.Marshal(c)
+		enc, err := jsonout.Marshal(c)
 		if err != nil {
 			t.Fatalf("marshal %q: %v", c, err)
 		}

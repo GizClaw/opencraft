@@ -2,7 +2,6 @@ package exec
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"sync"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/jsonout"
 )
 
 // SessionName is the canonical exec_session tool name.
@@ -201,7 +201,7 @@ func (t *SessionTool) execute(ctx context.Context, arguments string) (string, er
 	if err != nil {
 		return "", err
 	}
-	payload, err := json.Marshal(result)
+	payload, err := jsonout.Marshal(result)
 	if err != nil {
 		return "", errdefs.Internalf("exec_session: encode result: %v", err)
 	}
