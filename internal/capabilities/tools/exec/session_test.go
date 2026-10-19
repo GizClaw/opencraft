@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/sandbox"
 )
@@ -250,5 +252,31 @@ func TestSessionNamesUnknownArgument(t *testing.T) {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q missing %q", msg, want)
 		}
+	}
+}
+
+// TestWaitBudgetClampsAtTheNanosecondOverflow pins the conversion
+// action=wait uses. A seconds budget past what int64 nanoseconds hold
+// is out of range for the float-to-int conversion, and what comes back
+// is up to the machine: arm64 saturates to MaxInt64, amd64 answers
+// MinInt64. Either way it must not become a deadline in the past, which
+// reports timed_out without waiting.
+func TestWaitBudgetClampsAtTheNanosecondOverflow(t *testing.T) {
+	if got := waitBudget(30); got != 30*time.Second {
+		t.Fatalf("waitBudget(30) = %s, want 30s", got)
+	}
+	// A budget the nanosecond count holds stays exact; this is the
+	// largest order of magnitude that does (9e18 ns of the 9.2e18).
+	if got := waitBudget(9e9); got != 9e9*time.Second {
+		t.Fatalf("waitBudget(9e9) = %s, want 9e9s", got)
+	}
+	for _, seconds := range []float64{1e10, 1e18, math.MaxFloat64} {
+		if got := waitBudget(seconds); got <= 0 {
+			t.Fatalf("waitBudget(%g) = %s, want a positive budget", seconds, got)
+		}
+	}
+	if got := waitBudget(math.MaxFloat64); got != time.Duration(math.MaxInt64) {
+		t.Fatalf("waitBudget(max float) = %s, want the clamp %s",
+			got, time.Duration(math.MaxInt64))
 	}
 }

@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"sync"
 	"time"
 
@@ -133,6 +134,23 @@ type args struct {
 	// TimeoutSeconds bounds action=wait: zero or absent blocks until
 	// the process exits.
 	TimeoutSeconds *float64 `json:"timeout_seconds"`
+}
+
+// waitBudget converts action=wait's timeout_seconds into a Duration,
+// clamped at the longest one that fits. Past it the float-to-int
+// conversion is out of range, and Go leaves that to the machine: arm64
+// saturates to MaxInt64, amd64 answers MinInt64. A negative duration is
+// a deadline already in the past, which turns "wait a very long time"
+// into an immediate timed_out.
+func waitBudget(seconds float64) time.Duration {
+	// Integer division, not float: float64(math.MaxInt64)/1e9 rounds
+	// up past the largest value whose nanosecond product still fits,
+	// so the boundary value alone overflows.
+	const maxSeconds = float64(math.MaxInt64 / int64(time.Second))
+	if seconds >= maxSeconds {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(seconds * float64(time.Second))
 }
 
 // Execute implements tool.Tool.
@@ -345,8 +363,7 @@ func (t *SessionTool) wait(ctx context.Context, a args) (any, error) {
 	waitCtx := ctx
 	if a.TimeoutSeconds != nil && *a.TimeoutSeconds > 0 {
 		var cancel context.CancelFunc
-		waitCtx, cancel = context.WithTimeout(ctx,
-			time.Duration(*a.TimeoutSeconds*float64(time.Second)))
+		waitCtx, cancel = context.WithTimeout(ctx, waitBudget(*a.TimeoutSeconds))
 		defer cancel()
 	}
 	exit, err := proc.Wait(waitCtx)
