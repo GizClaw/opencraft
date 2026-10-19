@@ -176,38 +176,49 @@ func readAudit(t *testing.T, dir string) auditEntry {
 // (flowcraft owns its definition, so it cannot declare the claim), and
 // every other tool keeps the default.
 func TestAssemblyHonorsSelfTimeoutClaims(t *testing.T) {
-	settings := `{"middlewares":{"timeout":{"default":"30ms"}}}`
 	const (
 		selfBounded = "selfbounded"
 		delegated   = "delegate"
 		plain       = "plain"
 	)
-	asm := newAssembly(t, settings, multiSource{tools: []tool.Tool{
-		sleepingTool{name: selfBounded, d: 150 * time.Millisecond,
-			meta: tool.ToolMeta{SelfTimeout: true}},
-		sleepingTool{name: delegated, d: 150 * time.Millisecond},
-		sleepingTool{name: plain, d: 150 * time.Millisecond},
-	}})
+	// The limiter is the one core middleware appended after the timeout,
+	// so it is also the case where the chain is built by splicing rather
+	// than appending: both arrangements have to leave every claim intact.
+	cases := map[string]string{
+		"plain chain": `{"middlewares":{"timeout":{"default":"30ms"}}}`,
+		"with limiter": `{"middlewares":{"timeout":{"default":"30ms"},` +
+			`"concurrency":{"limit":2}}}`,
+	}
+	for name, settings := range cases {
+		t.Run(name, func(t *testing.T) {
+			asm := newAssembly(t, settings, multiSource{tools: []tool.Tool{
+				sleepingTool{name: selfBounded, d: 150 * time.Millisecond,
+					meta: tool.ToolMeta{SelfTimeout: true}},
+				sleepingTool{name: delegated, d: 150 * time.Millisecond},
+				sleepingTool{name: plain, d: 150 * time.Millisecond},
+			}})
 
-	exec := func(name string) message.ToolResult {
-		t.Helper()
-		return asm.Execute(context.Background(), message.ToolCall{
-			ID: "call-" + name, Name: name,
+			exec := func(toolName string) message.ToolResult {
+				t.Helper()
+				return asm.Execute(context.Background(), message.ToolCall{
+					ID: "call-" + toolName, Name: toolName,
+				})
+			}
+
+			if res := exec(selfBounded); res.IsError {
+				t.Fatalf("SelfTimeout tool was timed out: %s", res.Content.Text())
+			}
+			if res := exec(delegated); res.IsError {
+				t.Fatalf("delegate was timed out: %s", res.Content.Text())
+			}
+			res := exec(plain)
+			if !res.IsError {
+				t.Fatalf("plain tool must time out, got %q", res.Content.Text())
+			}
+			if got := res.Content.Text(); !strings.Contains(got, "timed out after 30ms") {
+				t.Fatalf("plain tool error = %q, want a timeout naming 30ms", got)
+			}
 		})
-	}
-
-	if res := exec(selfBounded); res.IsError {
-		t.Fatalf("SelfTimeout tool was timed out: %s", res.Content.Text())
-	}
-	if res := exec(delegated); res.IsError {
-		t.Fatalf("delegate was timed out: %s", res.Content.Text())
-	}
-	res := exec(plain)
-	if !res.IsError {
-		t.Fatalf("plain tool must time out, got %q", res.Content.Text())
-	}
-	if got := res.Content.Text(); !strings.Contains(got, "timed out after 30ms") {
-		t.Fatalf("plain tool error = %q, want a timeout naming 30ms", got)
 	}
 }
 
