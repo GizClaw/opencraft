@@ -108,6 +108,8 @@ import { groupToolCalls, type ToolCallItem } from '../lib/stream';
 import { useToolElapsedLabel, workedForLabel } from '../lib/toolTiming';
 import { ICON } from './ui/icon';
 import { Overlay } from './ui/Overlay';
+import { attachmentPreviews } from '../lib/attachmentPreviews';
+import { setUnsentDraft } from '../lib/unsentDraft';
 import { Popover } from './ui/Popover';
 import { IconButton } from './ui/Button';
 
@@ -797,6 +799,7 @@ const MessageRow = memo(function MessageRow({
   busy,
   streaming,
   isTurnLast,
+  atTail,
   msgIndex,
   turnIndex,
   turnStart,
@@ -810,6 +813,12 @@ const MessageRow = memo(function MessageRow({
   busy: boolean;
   streaming: boolean;
   isTurnLast: boolean;
+  // atTail says the block is still the reader's position: the transcript's
+  // last row, or the newest answer, which an interjection below it does not
+  // stop being (see ChatView's renderTranscriptItem). It is a position, not
+  // a run's state: the reader has not moved past it, which is what keeps a
+  // watched answer unfolded.
+  atTail: boolean;
   msgIndex: number;
   turnIndex: number;
   turnStart: boolean;
@@ -992,7 +1001,7 @@ const MessageRow = memo(function MessageRow({
       {groups.map((group, gi) => {
         if (Array.isArray(group)) {
           return group.length === 1 ? (
-            <StreamItemView key={group[0].id} item={group[0]} />
+            <StreamItemView key={group[0].id} item={group[0]} atTail={atTail} />
           ) : (
             <ToolGroupView key={`group-${gi}`} tools={group} />
           );
@@ -1002,6 +1011,7 @@ const MessageRow = memo(function MessageRow({
             key={group.id}
             item={group}
             streaming={group === liveTail}
+            atTail={atTail}
           />
         );
       })}
@@ -1072,6 +1082,22 @@ function turnForIndex(
     }
   }
   return best;
+}
+
+// opensTurn says whether a user row opened a turn, as opposed to one the
+// app wrote while a turn was live: an interjection was said inside the run
+// it belongs to (steer), a compaction summary is context prepended to the
+// conversation, and a `kind` row is the app's own note rather than
+// something the reader said. Both readers of "which row opened this turn"
+// use it - the newest turn's opener below, and resumeTarget's "say it
+// again".
+function opensTurn(msg: MessageView): boolean {
+  return (
+    msg.role === 'user' &&
+    !msg.steer &&
+    !msg.kind &&
+    !msg.text.startsWith(COMPACT_SUMMARY_PREFIX)
+  );
 }
 
 // CompactCard renders a compaction summary (a user message marked with
@@ -1626,66 +1652,34 @@ function TurnSummaryHeader({
 // AttachmentImage renders one image attachment. Live sends carry the
 // data URL already; resumed history has only the stored path, so the
 // component fetches the preview from the backend on mount (WKWebView
-// cannot load file:// directly).
-//
-// attachmentPreviews caches one preview per path for the life of the
-// window: a virtualized transcript mounts a row again every time it
-// scrolls back into view, and without the cache the same bytes crossed the
-// bridge and were decoded again on every pass. A fetch that is still in
-// flight is cached as well, so two rows naming one file (a re-sent
-// attachment, a remount racing the first response) share one request. Only
-// a real preview is remembered: one that failed is dropped, so a file that
-// comes back is picked up on the next mount instead of staying missing for
-// the session. Exported so tests can start from a cold cache.
-export const attachmentPreviews = new Map<string, string | Promise<string>>();
-
-// cachedPreview is the part of the cache that is already usable: a preview
-// that has landed. An in-flight request is not a URL.
-function cachedPreview(path: string): string | undefined {
-  const cached = attachmentPreviews.get(path);
-  return typeof cached === 'string' ? cached : undefined;
-}
+// cannot load file:// directly). The cache it fetches through
+// (lib/attachmentPreviews) is a bounded LRU and a module singleton: one
+// request per path across remounts and re-sent attachments, and a budget
+// a window scrolling back through a screenshot-heavy session cannot
+// outgrow.
 
 function AttachmentImage({ att }: { att: AttachmentView }) {
   const [url, setUrl] = useState(
-    () => att.data_url ?? cachedPreview(att.path) ?? '',
+    () => att.data_url ?? attachmentPreviews.landed(att.path) ?? '',
   );
   const openFileTarget = useStore((s) => s.openFileTarget);
   useEffect(() => {
     if (url) return;
-    const cached = attachmentPreviews.get(att.path);
     let live = true;
-    if (typeof cached === 'string') {
-      setUrl(cached);
-      return;
-    }
-    const request =
-      cached ??
-      api
-        .readAttachment(att.path)
-        .then((dto) => {
-          const dataUrl = dto.data_url ?? '';
-          // An empty payload reads like a file that is gone.
-          if (!dataUrl) {
-            attachmentPreviews.delete(att.path);
-            return 'missing';
-          }
-          attachmentPreviews.set(att.path, dataUrl);
-          return dataUrl;
-        })
-        .catch(() => {
-          // The file is gone (deleted, moved, rotated out of the archive).
-          // Show the file name instead of a spinner that never stops — the
-          // rejected fetch used to be swallowed, which left the card
-          // loading forever because this state was unreachable. The failed
-          // request is dropped so the next mount can try again.
-          attachmentPreviews.delete(att.path);
-          return 'missing';
-        });
-    attachmentPreviews.set(att.path, request);
-    void request.then((preview) => {
-      if (live) setUrl(preview);
-    });
+    // An empty payload reads like a file that is gone, and a failed read
+    // (deleted, moved, rotated out of the archive) does too: show the file
+    // name instead of a spinner that never stops. The cache drops both, so
+    // the next mount tries again.
+    attachmentPreviews
+      .load(att.path, () =>
+        api.readAttachment(att.path).then((dto) => dto.data_url ?? ''),
+      )
+      .then((preview) => {
+        if (live) setUrl(preview || 'missing');
+      })
+      .catch(() => {
+        if (live) setUrl('missing');
+      });
     return () => {
       live = false;
     };
@@ -2174,6 +2168,18 @@ export function ChatView() {
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
+  // The memory boundary asks whether the composer holds work that only
+  // exists in this document - unsent text, or an attachment whose bytes
+  // are the staged data URL - and keeps the page when it does (see
+  // lib/unsentDraft and shell/workspaces.ts). Publishing it here is the
+  // only place that knows: the draft is this component's state. What it
+  // can keep is the draft of a conversation that has not started: the
+  // effect below empties this composer whenever the focus leaves a
+  // session, which is what a workspace switch does.
+  useEffect(() => {
+    setUnsentDraft(input.trim() !== '' || attachments.length > 0);
+    return () => setUnsentDraft(false);
+  }, [input, attachments]);
   // New-chat workspace bookmark: an empty chat shows the workspace the
   // first message will be created in. '' means the current workspace.
   const [draftWorkspace, setDraftWorkspace] = useState('');
@@ -2192,11 +2198,12 @@ export function ChatView() {
   const draftComposer = useStore((s) => s.draftComposer);
   // resumeTarget finds the user message that opened the newest turn: the
   // words "continue" sends again and "edit & resend" restores into the
-  // composer. Compaction summaries are prepended context and an
-  // interjection was said inside the turn rather than opening it, so
-  // both are skipped. It reads the live refs instead of taking the
-  // message as an argument, which keeps the callbacks stable: the rows
-  // are memoized on them, and the end notice renders from the newest one.
+  // composer. It skips the rows that did not open one - an interjection, a
+  // compaction summary, the app's own note (see opensTurn) - so it never
+  // answers with the app's words as if the reader had said them. It reads
+  // the live refs instead of taking the message as an argument, which keeps
+  // the callbacks stable: the rows are memoized on them, and the end notice
+  // renders from the newest one.
   const resumeTarget = useCallback((): MessageView | undefined => {
     const turns = turnArtifactsRef.current;
     const msgs = messagesRef.current;
@@ -2204,10 +2211,7 @@ export function ChatView() {
     if (!turn) return undefined;
     for (let i = turn.start; i < msgs.length; i += 1) {
       const msg = msgs[i];
-      if (msg?.role !== 'user') continue;
-      if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) continue;
-      if (msg.steer) continue;
-      return msg;
+      if (msg && opensTurn(msg)) return msg;
     }
     return undefined;
   }, []);
@@ -3459,6 +3463,43 @@ export function ChatView() {
   // know about its turn: the list is flat, so nothing is inherited from a
   // wrapper, and a row is the same row whether its turn's header is on
   // screen or a screen above.
+  //
+  // Two positions the rows below read from the flat list.
+  //
+  // lastAssistantIdx is the newest answer. It is what stays unfolded
+  // (see StreamItemView's atTail): a steer row landing below does not
+  // make it history - an interjection is not a new turn, turn.ts appends
+  // the row into the live one - while the answer a newer turn opens below
+  // it does.
+  //
+  // liveTurnStart is the user row that opened the newest turn. Only an
+  // answer from there down is one the stream may still be writing into: a
+  // turn is `busy` from the moment it is submitted, while its answer row
+  // only appears with the first delta (lib/conv/stream.ts opens it when
+  // the last row is not an assistant's), so between the two the newest
+  // answer is the previous turn's. It is what the reader is looking at -
+  // whole, parsed as markdown, with its actions - and rendering it as a
+  // growing block would flip it to plain text under them. Rows the app
+  // wrote, an interjection and a compaction summary do not open a turn
+  // (opensTurn, the rule resumeTarget reads too).
+  let lastAssistantIdx = -1;
+  let liveTurnStart = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (lastAssistantIdx < 0 && msg?.role === 'assistant') {
+      lastAssistantIdx = i;
+    }
+    if (liveTurnStart < 0 && msg !== undefined && opensTurn(msg)) {
+      liveTurnStart = i;
+    }
+    if (lastAssistantIdx >= 0 && liveTurnStart >= 0) break;
+  }
+  // -1 is "no row here opened a turn", which a live run cannot be in (its
+  // row is appended before the turn is submitted): the answer is then read
+  // as one the stream is not writing into - whole and parsed - rather than
+  // as the growing block.
+  const rowIsLive = (i: number) =>
+    busy && i === lastAssistantIdx && liveTurnStart >= 0 && i >= liveTurnStart;
   const renderTranscriptItem = (item: TranscriptItem) => {
     if (item.kind === 'interact') {
       return (
@@ -3524,14 +3565,16 @@ export function ChatView() {
     const isAssistantTurnLast =
       msg.role === 'assistant' &&
       (i === messages.length - 1 || messages[i + 1]?.role === 'user');
-    const assistantStreaming =
-      busy && msg.role === 'assistant' && i === messages.length - 1;
+    const assistantStreaming = msg.role === 'assistant' && rowIsLive(i);
     const archivedEnd = archivedTurnEndKind(turn?.status);
     const liveEnd = !busy && failedTurn !== undefined && turn === lastTurn;
     const endStatus = archivedEnd ?? (liveEnd ? failedTurn?.status : undefined);
+    // A fork opens the new conversation in this window, so a run still
+    // writing here would be left behind in the one it moved away from: the
+    // actions wait for it to stop. `busy` is this conversation's own run.
     const canFork =
       isAssistantTurnLast &&
-      !assistantStreaming &&
+      !busy &&
       !forking &&
       !endStatus &&
       Boolean(turn?.runID);
@@ -3540,6 +3583,7 @@ export function ChatView() {
         msg={msg}
         busy={busy}
         isTurnLast={isAssistantTurnLast}
+        atTail={i === messages.length - 1 || i === lastAssistantIdx}
         msgIndex={i}
         turnIndex={item.turnIdx}
         turnStart={item.turnStart}

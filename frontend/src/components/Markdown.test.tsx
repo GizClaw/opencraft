@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { markdownTrees } from '../lib/markdownCache';
 import { markdownStats, setPerfMetricsEnabled } from '../lib/perfMetrics';
 import { Markdown } from './Markdown';
 
@@ -156,6 +157,32 @@ describe('Markdown', () => {
     );
   });
 
+  it('mounts a block it parsed before without parsing it again', () => {
+    // The transcript unmounts a row that scrolls out of its window and
+    // mounts it again when it scrolls back. The parse is a pure function of
+    // the source text, so the second mount reuses the tree the first one
+    // built — and that tree still renders against the surface it is mounted
+    // under, which is what lets the new mount route its links through its
+    // own handler (lib/markdownCache).
+    const text = 'read [the guide](refs/guide.md) first';
+    const missesBefore = markdownTrees.misses;
+    const first = render(<Markdown text={text} />);
+    first.unmount();
+    const hitsBefore = markdownTrees.hits;
+
+    const onOpen = vi.fn();
+    render(<Markdown text={text} onOpen={onOpen} />);
+
+    expect(markdownTrees.misses - missesBefore).toBe(1);
+    expect(markdownTrees.hits - hitsBefore).toBe(1);
+    expect(screen.getByRole('link', { name: 'the guide' })).toHaveAttribute(
+      'href',
+      'refs/guide.md',
+    );
+    fireEvent.click(screen.getByRole('link', { name: 'the guide' }));
+    expect(onOpen).toHaveBeenCalledWith('refs/guide.md', undefined);
+  });
+
   it('records one render-to-commit measurement for the probe', () => {
     // The markdown series is what a "render streaming markdown as plain
     // text" decision would be based on, so the pair has to bracket this
@@ -170,6 +197,35 @@ describe('Markdown', () => {
     try {
       render(<Markdown text={'# hello\n\nsome **bold** text'} />);
       expect(markdownStats().max).toBeGreaterThan(0);
+    } finally {
+      setPerfMetricsEnabled(false);
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('measures the parse, not the cache hit that replaces it', () => {
+    // flush_md_p95 is the number the cache's argument is written in, so a
+    // hit must not add a sample: it would pull the series towards zero as
+    // the cache warms, and the parse it saves would stop showing up in the
+    // one place it is measured.
+    let tick = 0;
+    const nowSpy = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => (tick += 10));
+    setPerfMetricsEnabled(true);
+    const text = '# measured once\n\nsome **body** text';
+    try {
+      const first = render(<Markdown text={text} />);
+      first.unmount();
+      const parsed = markdownStats();
+      expect(parsed.max).toBeGreaterThan(0);
+
+      // A read taken on the hit path would be a hundred times the sample
+      // above, which is what this makes visible.
+      nowSpy.mockImplementation(() => (tick += 100_000));
+      render(<Markdown text={text} />);
+
+      expect(markdownStats()).toEqual(parsed);
     } finally {
       setPerfMetricsEnabled(false);
       nowSpy.mockRestore();

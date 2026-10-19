@@ -928,6 +928,8 @@
     "lastCancelled": "Reply cancelled",
     "lastCancelledDetail": "You stopped this reply before it finished.",
     "lastTimedOut": "Reply timed out",
+    "foldAnswerShow": "Show full answer ({{chars}} characters)",
+    "foldAnswerHide": "Collapse answer",
     "copyOutput": "Copy output",
     "copyMessage": "Copy message",
     "copied": "Copied",

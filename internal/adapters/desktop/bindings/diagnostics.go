@@ -255,6 +255,38 @@ func (b *Diagnostics) SetPerfProbe(enabled bool) error {
 	return b.core.Shell.SetPerfProbe(enabled)
 }
 
+// ReloadWindow drops the window's document and loads the page again, which
+// is the memory boundary a long session has no other way to reach. The
+// decision - and the reason when it says no - belongs to Core.ReloadWindow
+// (see reload_window.go); this only forwards it and records which answer
+// the session got, because the frontend drops the boolean and a support
+// log is then the only place the outcome survives.
+//
+// It answers whether the reload was requested. A true answer does not
+// promise that this page saw it: the reply travels back through the same
+// IPC bridge the navigation is tearing down.
+func (b *Diagnostics) ReloadWindow() bool {
+	ctx := b.core.Shell.Context()
+	out := b.core.ReloadWindow()
+	switch out.Reason {
+	case core.ReloadBusy:
+		flowtelemetry.Info(ctx, "diagnostics: window reload deferred, a run is live",
+			attribute.String("workspaces", strings.Join(out.Busy, ", ")))
+	case core.ReloadNoWindow:
+		flowtelemetry.Info(ctx, "diagnostics: window reload skipped, no window attached")
+	case "":
+		// The reloaded path: the window was told to drop its
+		// document.
+		flowtelemetry.Info(ctx, "diagnostics: window reload requested")
+	default:
+		// A reason this build does not know: log it as a refusal
+		// rather than claim a navigation that did not happen.
+		flowtelemetry.Info(ctx, "diagnostics: window reload declined",
+			attribute.String("reason", out.Reason))
+	}
+	return out.Reloaded
+}
+
 // HTTPProbeDTO is the diagnostics view of the provider round-trip
 // probe: the persisted switch, the environment override, whether the
 // transport is wrapped right now and, when it is not, the MCP

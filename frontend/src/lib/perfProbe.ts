@@ -7,6 +7,7 @@ import {
   SUSPENDED_GAP_MS,
 } from './perfMetrics';
 import { buildVersion, reportLabels } from './perfLabels';
+import { markdownTrees } from './markdownCache';
 import { storeBytes, streamFlushStats, useStore } from './store';
 
 // perfProbe is the renderer-side observability hook that a long-turn
@@ -186,6 +187,16 @@ async function report() {
     // Decoded images are the renderer's side of the same question: a
     // mounted image holds a bitmap the store's byte counts do not see.
     { name: 'dom_images', value: document.images.length, unit: '1', labels },
+    // The parsed-block cache, in the source characters its budget is
+    // written in: a scroll back served from here is one that reparsed
+    // nothing (see lib/markdownCache). Bounded, so a session reading its
+    // way up a long transcript shows a number that levels off.
+    {
+      name: 'md_cache_chars',
+      value: markdownTrees.charCount,
+      unit: '1',
+      labels,
+    },
   ];
   // Only a window that held an interaction carries the sample, and the
   // slowest one names it in the label: `interaction_max` alone could not

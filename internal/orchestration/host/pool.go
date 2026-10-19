@@ -296,6 +296,10 @@ func (m *Manager) anyActiveRuns() bool {
 // turn is working in asks this instead of asking one Host: the
 // desktop's git panel is repository-wide, and a run in a sibling
 // workspace of the same repository edits the same files.
+//
+// The answer is always a non-nil slice: "nobody is busy" and "no pool to
+// ask" are different answers, and core.BusyWorkspaces tells them apart by
+// it (TestBusyWorkspacesFallsBackToTheRuntime).
 func (m *Manager) BusyWorkspaces() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()

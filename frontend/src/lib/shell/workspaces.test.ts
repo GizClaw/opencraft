@@ -7,6 +7,9 @@ import type { WorkspaceMeta } from '../types';
 import { stateRoot } from '../../state/app';
 import { useStore } from '../store';
 import { apiMock } from '../../test/apiMock';
+import { attachmentPreviews } from '../attachmentPreviews';
+import { markdownTrees } from '../markdownCache';
+import { setUnsentDraft } from '../unsentDraft';
 import {
   actorValue,
   assistantTexts,
@@ -266,6 +269,174 @@ describe('workspace switch session restore', () => {
     );
     expect(texts).toContain('previous question');
     expect(texts).toContain('previous answer');
+  });
+
+  it('a workspace switch hands the window back to a fresh page', async () => {
+    // The switch is the memory boundary: the transcript the reader left
+    // (its decoded images, its text objects, the high-water mark behind
+    // them) only goes away with the document that holds it.
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+
+    await useStore.getState().openWorkspace('/tmp/b');
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/b');
+    expect(apiMock.reloadWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('a switch to the workspace already open is not a switch', async () => {
+    // Choosing the current folder in the picker used to rebuild the
+    // runtime and hand the page back for nothing.
+    await useStore.getState().openWorkspace('/tmp/w');
+
+    expect(apiMock.openWorkspace).not.toHaveBeenCalled();
+    expect(apiMock.reloadWindow).not.toHaveBeenCalled();
+  });
+
+  it('a re-pick whose backend is elsewhere is still a switch', async () => {
+    // The window switches on what the ready event carries, so one that
+    // never arrived leaves it believing the wrong workspace. Re-picking
+    // the workspace it believes it is on was the way out of that state;
+    // the getter tells a repair from an ordinary re-pick without paying
+    // a runtime rebuild.
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    apiMock.workspace.mockResolvedValueOnce('/tmp/elsewhere');
+
+    await useStore.getState().openWorkspace('/tmp/w');
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/w');
+    expect(apiMock.reloadWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('a composer with unsent work keeps the page', async () => {
+    // The draft and the attachments staged beside it live in the view's
+    // own state: a reload would drop them with nothing to restore from,
+    // so the switch skips its memory boundary instead. This is the
+    // composer of a conversation that has not started - it is what
+    // survives the reset - and the case below is the draft that does not.
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    useStore.getState().openDraftChat();
+    expect(stateRoot.focusSnapshot.value).toBe('no-session');
+    setUnsentDraft(true);
+    try {
+      await useStore.getState().openWorkspace('/tmp/b');
+    } finally {
+      setUnsentDraft(false);
+    }
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/b');
+    expect(apiMock.reloadWindow).not.toHaveBeenCalled();
+  });
+
+  it('a draft the switch clears does not keep the page', async () => {
+    // The flag says the composer holds text, not whose text it is: the
+    // switch resets the focus to no-session and ChatView empties the
+    // composer on the way in, so a draft typed inside a session goes with
+    // the switch. Reading the flag alone left the answer to whichever of
+    // the ready event and the binding's return came first.
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    await useStore.getState().newChat();
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    setUnsentDraft(true);
+    try {
+      await useStore.getState().openWorkspace('/tmp/b');
+    } finally {
+      setUnsentDraft(false);
+    }
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/b');
+    expect(apiMock.reloadWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads when the switch is announced before the binding returns', async () => {
+    // The backend emits "ready" from inside Workspace.Open, and that
+    // event's handler resets the focus synchronously - before the call
+    // resolves. Reading the draft's owner after the await would see the
+    // workspace being moved to and keep the page for a session's draft the
+    // switch is already clearing, so the two halves are read up front.
+    apiMock.openWorkspace.mockImplementation(async () => {
+      useStore.getState().handleEvent({
+        type: 'ready',
+        data: {
+          needed: false,
+          default_model: 'm',
+          default_reasoning: true,
+          work_dir: '/tmp/b',
+          user_dir: '/tmp/u',
+          version: 'test',
+          agents: 0,
+        },
+      });
+    });
+    // The restore the event starts is held open: until it answers, the
+    // focus is still the reset state, which is the window a late read
+    // would answer from.
+    apiMock.currentSession.mockReturnValue(new Promise(() => {}));
+    await useStore.getState().newChat();
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    setUnsentDraft(true);
+    try {
+      await useStore.getState().openWorkspace('/tmp/b');
+    } finally {
+      setUnsentDraft(false);
+    }
+
+    expect(stateRoot.focusSnapshot.value).toBe('no-session');
+    expect(apiMock.reloadWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('a switch a flow keeps working through does not reload', async () => {
+    // openSessionInWorkspace and sendFirstMessage switch the backend and
+    // then keep going through it (resume the session, send the first
+    // message). A reload would land a new page after the binding returned
+    // and drop that work, so only the plain switch reloads.
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    apiMock.workspace.mockResolvedValue('/tmp/other');
+
+    await useStore.getState().sendFirstMessage('/tmp/other', 'hello');
+
+    expect(apiMock.openWorkspace).toHaveBeenCalledWith('/tmp/other');
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-new',
+      expect.objectContaining({ role: 'user' }),
+      '/tmp/other',
+    );
+    expect(apiMock.reloadWindow).not.toHaveBeenCalled();
+  });
+
+  it('a workspace switch drops the previews but keeps the parsed blocks', async () => {
+    // The previews belong to the workspace the window is leaving: those
+    // paths name files it is no longer looking at, and a cache that
+    // outlived every switch was the window's largest unbounded map. A
+    // parsed markdown block is keyed by its own text, so it stays valid
+    // for the next workspace - and the transcripts stay alive across a
+    // switch, so dropping the trees would only make the reader pay for
+    // the parse twice.
+    await attachmentPreviews.load('/tmp/left-behind.png', async () => 'x');
+    expect(attachmentPreviews.size).toBe(1);
+    markdownTrees.set('# left behind', 'tree' as never);
+    expect(markdownTrees.size).toBe(1);
+
+    apiMock.currentSession.mockResolvedValue('');
+    apiMock.sessionTurns.mockResolvedValue([]);
+    useStore.setState({ workspace: '/tmp/b' });
+    useStore.getState().handleEvent({
+      type: 'ready',
+      data: {
+        needed: false,
+        default_model: 'm',
+        default_reasoning: true,
+        work_dir: '/tmp/a',
+        user_dir: '/tmp/u',
+        version: 'test',
+        agents: 0,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(useStore.getState().workspace).toBe('/tmp/a');
+    });
+    expect(attachmentPreviews.size).toBe(0);
+    expect(markdownTrees.size).toBe(1);
   });
 
   it('ready after a workspace change restores the saved session', async () => {

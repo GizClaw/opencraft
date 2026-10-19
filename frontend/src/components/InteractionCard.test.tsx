@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useRef } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { markdownTrees } from '../lib/markdownCache';
 import { useStore } from '../lib/store';
 import { useOverlayLayer } from '../lib/overlay';
 import type { InteractDTO } from '../lib/types';
@@ -79,6 +80,11 @@ const DENY = { label: 'Deny', value: 'deny' };
 
 describe('InteractionCard markdown', () => {
   it('does not re-parse the prompt body on every re-render', () => {
+    // The window keeps the tree it parsed for a block (lib/markdownCache),
+    // and an earlier test in this file already mounted this same body. What
+    // this case pins is the re-render, so start from a window that has not
+    // parsed it.
+    markdownTrees.clear();
     highlightMock.parses = 0;
     render(<InteractionCard spec={spec({ kind: 'text', options: [] })} />);
     // One parse for the prompt's own body.

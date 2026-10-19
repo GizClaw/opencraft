@@ -30,6 +30,10 @@ export const apiMock = {
   automations: vi.fn(),
   automationRuns: vi.fn(),
   openWorkspace: vi.fn(),
+  // reloadWindow answers false, the way a backend with a live run (or no
+  // window) does: no store test reloads the page it is running in, and the
+  // switch keeps the ordinary ready-driven path.
+  reloadWindow: vi.fn(async () => false),
   workspaces: vi.fn(),
   setSessionMode: vi.fn(),
   setThink: vi.fn(),

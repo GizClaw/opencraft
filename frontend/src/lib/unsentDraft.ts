@@ -1,0 +1,41 @@
+// unsentDraft answers whether the window's composer holds work that only
+// exists in this document: the text the reader has not sent, and the
+// attachments staged beside it. The memory boundary asks before it hands
+// the page back to WebKit (see shell/workspaces.ts): the reload is
+// best-effort by design, and a switch that would drop a draft is one it
+// skips.
+//
+// The draft it can keep is the one the switch would not touch anyway: a
+// composer that has not been committed to a session yet. A draft typed
+// inside a session is cleared by the switch itself - the focus resets to
+// no-session and ChatView empties the composer on the way in - so the
+// reload is never what takes that one, and this flag alone says nothing
+// about which of the two it is looking at. Its reader pairs it with the
+// focus (shell/workspaces.ts): the reset that clears a session's draft is
+// a commit away, and a page kept on a draft the switch is about to drop
+// would skip the boundary for nothing.
+//
+// The attachment half is not about the bytes - a pasted image is already
+// on disk (`File.ImportPastedImage` writes it, and the staged view
+// carries its path) - but about the tray: which files are staged, in what
+// order, with which previews. That list is the composer's state, and a
+// reload would hand the reader an empty tray and a directory to search
+// for what they just pasted.
+//
+// The registry is a module, not store state, for the same reason the
+// caches are: nothing renders it. ChatView publishes what its own state
+// holds on every change, and a reader who asks why a switch kept the page
+// finds the answer here.
+
+let pending = false;
+
+// setUnsentDraft publishes the composer's state. Called on every change of
+// the composer, and with false when the view that held it unmounts.
+export function setUnsentDraft(next: boolean): void {
+  pending = next;
+}
+
+// hasUnsentDraft is what a document swap would throw away.
+export function hasUnsentDraft(): boolean {
+  return pending;
+}

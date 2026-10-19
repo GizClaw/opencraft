@@ -375,6 +375,32 @@ func (s *Shell) FocusMain() {
 	main.Focus()
 }
 
+// reloadMain drops the main window's document and loads the page again,
+// which is the only way to give the renderer back what it cannot be talked
+// out of: WebKit keeps its own copies of the objects behind a transcript,
+// and the process high-water mark only comes down when the document that
+// filled it is gone. It answers whether there was a window to reload - the
+// headless entry point has none, and before attachment neither has the
+// desktop shell.
+//
+// It is the mechanism, not the policy: whether a reload is safe right now
+// (no live run whose deltas this window would miss) is Core.ReloadWindow's
+// decision, and that is its only caller. A half-flushed stream must not
+// land in the page that replaces the one it was written for, so the buffer
+// is dropped here. The window can be destroyed between the check and the
+// navigation, which drops that buffer for a page nobody will see: the
+// deltas were buffered, never rendered, and the page that would have shown
+// them is gone.
+func (s *Shell) reloadMain() bool {
+	app, main := s.attached()
+	if app == nil || main == nil {
+		return false
+	}
+	s.ClearPendingStreams()
+	main.Reload()
+	return true
+}
+
 // OpenURL opens an http(s) URL in the system default browser.
 func (s *Shell) OpenURL(url string) {
 	app, _ := s.attached()

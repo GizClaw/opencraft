@@ -12,7 +12,9 @@ import { useStore } from '../lib/store';
 import { stateRoot } from '../state/app';
 import type { MessageView, TurnArtifacts } from '../lib/store';
 import type { SandboxProcess, SessionMeta } from '../lib/types';
-import { ChatView, attachmentPreviews } from './ChatView';
+import { ChatView } from './ChatView';
+import { attachmentPreviews } from '../lib/attachmentPreviews';
+import { hasUnsentDraft } from '../lib/unsentDraft';
 
 const apiMock = vi.hoisted(() => ({
   workspace: vi.fn(),
@@ -1064,6 +1066,331 @@ describe('ChatView transcript windowing', () => {
       expect(screen.getByText('history.png')).toBeInTheDocument(),
     );
     expect(screen.queryByRole('img', { name: 'history.png' })).toBeNull();
+  });
+
+  // A workspace switch drops the window's previews (conv/workspace.ts):
+  // the paths name files of the workspace the reader left, and the bytes
+  // are the window's, not one conversation's.
+  it('re-reads a preview the workspace switch dropped', async () => {
+    attachmentPreviews.clear();
+    apiMock.readAttachment.mockResolvedValue({
+      path: '/tmp/history.png',
+      name: 'history.png',
+      media_type: 'image/png',
+      data_url: 'data:image/png;base64,BBBB',
+    });
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'look at this',
+          items: [],
+          attachments: historyImageAttachments(),
+        },
+      ],
+      [],
+    );
+
+    const first = render(<ChatView />);
+    await screen.findByRole('img', { name: 'history.png' });
+    expect(apiMock.readAttachment).toHaveBeenCalledTimes(1);
+
+    first.unmount();
+    attachmentPreviews.clear();
+    render(<ChatView />);
+    await screen.findByRole('img', { name: 'history.png' });
+    expect(apiMock.readAttachment).toHaveBeenCalledTimes(2);
+  });
+
+  // A settled answer long enough to be worth folding renders its first
+  // section and a control; the rest is one click away (StreamItemView).
+  // The node count is what the fold is for: every character costs the
+  // renderer an element or a text node, and they outlive the row.
+  function longAnswer(chars: number, label = 'Part'): string {
+    const section = (i: number) =>
+      `## ${label} ${i}\n\nParagraph ${i} explains what happened, with \`code\` inline.\n\n`;
+    return Array.from(
+      { length: Math.ceil(chars / section(0).length) },
+      (_, i) => section(i),
+    ).join('');
+  }
+
+  it('folds a long settled answer and expands it on request', async () => {
+    const text = longAnswer(6000);
+    setConversation([
+      {
+        id: 'm-user',
+        role: 'user',
+        text: 'explain everything',
+        items: [],
+        attachments: [],
+      },
+      {
+        id: 'm-answer',
+        role: 'assistant',
+        text: '',
+        items: [{ kind: 'text', id: 'p-1', text }],
+        attachments: [],
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<ChatView />);
+
+    expect(screen.getByRole('heading', { name: 'Part 0' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Part 50' })).toBeNull();
+    const control = screen.getByRole('button', {
+      name: /Show full answer/,
+    });
+    expect(control).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(control);
+    expect(
+      screen.getByRole('heading', { name: 'Part 50' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Collapse answer' }));
+    expect(screen.queryByRole('heading', { name: 'Part 50' })).toBeNull();
+  });
+
+  it('keeps a short answer, and one the reader watched arrive, whole', () => {
+    const short = longAnswer(600, 'Short');
+    const watched = longAnswer(6000, 'Watched');
+    setConversation([
+      {
+        id: 'm-answer',
+        role: 'assistant',
+        text: '',
+        items: [
+          { kind: 'text', id: 'p-1', text: short },
+          // streamed is what mergeAppend stamps on a block whose deltas
+          // this window folded in: the reader saw it grow, so it is not
+          // folded away at the turn end.
+          { kind: 'text', id: 'p-2', text: watched, streamed: true },
+        ],
+        attachments: [],
+      },
+    ]);
+    render(<ChatView />);
+
+    // Both blocks are rendered whole: the short one fits, and the long one
+    // is not folded because its deltas arrived here.
+    expect(
+      screen.getByRole('heading', { name: 'Short 7' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Watched 50' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+  });
+
+  it('folds a watched answer once a newer answer lands below it', () => {
+    // The exemption is positional, not permanent: while the block was the
+    // newest answer the reader was still on it, and the next answer makes
+    // it history - the scene the fold exists for.
+    const watched = longAnswer(6000, 'Watched');
+    setConversation([
+      { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+      {
+        id: 'm-a1',
+        role: 'assistant',
+        text: '',
+        items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+        attachments: [],
+      },
+      { id: 'm-u2', role: 'user', text: 'second', items: [], attachments: [] },
+      {
+        id: 'm-a2',
+        role: 'assistant',
+        text: 'done',
+        items: [{ kind: 'text', id: 'p-2', text: 'done' }],
+        attachments: [],
+      },
+    ]);
+    render(<ChatView />);
+
+    expect(screen.queryByRole('heading', { name: 'Watched 50' })).toBeNull();
+    expect(
+      screen.getByRole('button', { name: /Show full answer/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the previous answer whole while the next turn has none yet', () => {
+    // A turn is busy from the moment it is submitted, and its answer row
+    // only appears with the first delta (lib/conv/stream.ts opens one when
+    // the last row is not an assistant's). In between, the newest answer
+    // is the previous turn's: it is still what the reader is looking at,
+    // so it keeps its markdown and its actions instead of turning into the
+    // plain text a growing block is drawn as.
+    const watched = longAnswer(6000, 'Watched');
+    setConversation(
+      [
+        { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+        {
+          id: 'm-a1',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+          attachments: [],
+        },
+        {
+          id: 'm-u2',
+          role: 'user',
+          text: 'second',
+          items: [],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    // Parsed as markdown and left whole: the block is still the newest
+    // answer, which is what both the parse and the fold read.
+    expect(
+      screen.getByRole('heading', { name: 'Watched 50' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+    // The actions belong to the reply a user row follows: still there.
+    expect(
+      screen.getByRole('button', { name: 'Copy output' }),
+    ).toBeInTheDocument();
+    // Fork is the one that moves the window, and the run below is still
+    // writing into this conversation: it stays away until the turn stops.
+    expect(screen.queryByRole('button', { name: 'Fork' })).toBeNull();
+  });
+
+  it('keeps the newest answer whole when the turn below it has no answer', () => {
+    // A turn that ends before its first part - failed, cancelled - leaves
+    // its question as the transcript's last row and no answer under it.
+    // The newest answer is still the reader's position, so the exemption
+    // follows the position and not the run: the block stays whole, and the
+    // fold control arrives with the answer that supersedes it.
+    const watched = longAnswer(6000, 'Watched');
+    setConversation(
+      [
+        { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+        {
+          id: 'm-a1',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+          attachments: [],
+        },
+        {
+          id: 'm-u2',
+          role: 'user',
+          text: 'second',
+          items: [],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    render(<ChatView />);
+
+    expect(
+      screen.getByRole('heading', { name: 'Watched 50' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+    // The actions are back with the reader's position: this is the shape
+    // the case below checks while the next turn is still running.
+    expect(screen.getByRole('button', { name: 'Fork' })).toBeInTheDocument();
+  });
+
+  it('keeps a watched answer whole while a steer row sits below it', () => {
+    // A steer is not a new turn: turn.ts appends the row into the live
+    // one, so the answer above it is still the row the deltas belong to.
+    // Reading the exemption as "the transcript's last row" folded the
+    // answer under the reader the moment they interjected.
+    const watched = longAnswer(6000, 'Watched');
+    setConversation([
+      { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+      {
+        id: 'm-a1',
+        role: 'assistant',
+        text: '',
+        items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+        attachments: [],
+      },
+      {
+        id: 'm-u2',
+        role: 'user',
+        text: 'and also fix the header',
+        items: [],
+        attachments: [],
+        steer: 'pending',
+      },
+    ]);
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+    expect(screen.getByText(/Watched 50/)).toBeInTheDocument();
+  });
+
+  it('keeps the answer live under a note the app wrote below it', () => {
+    // A delegation note is a user-role row the app filed itself (kind),
+    // not something the reader said: it does not open a turn, so the
+    // answer above it is still the one the stream is writing into - and
+    // reads as the plain text a growing block is drawn as until it stops.
+    const watched = longAnswer(6000, 'Watched');
+    setConversation([
+      { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+      {
+        id: 'm-a1',
+        role: 'assistant',
+        text: '',
+        items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+        attachments: [],
+      },
+      {
+        id: 'm-note',
+        role: 'user',
+        text: '',
+        kind: 'delegation_note',
+        items: [],
+        attachments: [],
+      },
+    ]);
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    expect(screen.getByText(/Watched 50/)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Watched 50' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+  });
+
+  it('a workspace switch empties the composer a session draft was in', async () => {
+    // The guard in shell/workspaces.ts keeps the page for the draft of a
+    // conversation that has not started; this is the other half. The
+    // focus reset below is what a workspace switch does, and the composer
+    // goes with it - which is why the guard reads the focus beside the
+    // flag instead of trusting the flag alone.
+    setConversation([
+      { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+    ]);
+    render(<ChatView />);
+    await userEvent.setup().type(screen.getByRole('textbox'), 'half a thought');
+    await waitFor(() => expect(hasUnsentDraft()).toBe(true));
+
+    act(() => stateRoot.sendFocus({ type: 'WORKSPACE_RESET' }));
+
+    expect(hasUnsentDraft()).toBe(false);
+    expect(screen.getByRole('textbox')).not.toHaveTextContent('half a thought');
   });
 
   it('shows worked duration at the top of an artifact turn', () => {

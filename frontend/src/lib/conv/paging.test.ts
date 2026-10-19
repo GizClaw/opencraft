@@ -136,6 +136,80 @@ describe('transcript tail sync', () => {
     expect(useStore.getState().conversations['s-1']).toBe(before);
   });
 
+  it('keeps a watched turn whole when the archive replaces it', async () => {
+    hydratedConversation();
+    // The live row carries the marker mergeAppend stamped: this window saw
+    // the text arrive. The archived copy that lands at turn_end is written
+    // after the fact and carries nothing, so the reconciliation has to keep
+    // the marker - otherwise a long answer folds the moment the turn ends,
+    // taking the text away from the reader still in it.
+    const held = useStore.getState().conversations['s-1'];
+    useStore.setState({
+      conversations: {
+        ...useStore.getState().conversations,
+        's-1': {
+          ...held,
+          messages: [
+            ...held.messages.slice(0, 3),
+            {
+              id: 'm-live',
+              role: 'assistant',
+              text: 'streamed answer',
+              items: [
+                {
+                  kind: 'text',
+                  id: 'p-1',
+                  text: 'streamed answer',
+                  chars: 15,
+                  streamed: true,
+                },
+              ],
+              attachments: [],
+            },
+          ],
+        },
+      },
+    });
+    apiMock.turnByRunID.mockResolvedValue({
+      seq: 3,
+      at: '2026-09-03T00:06:00Z',
+      status: 'completed',
+      run_id: 'r-2',
+      messages: [
+        {
+          role: 'user',
+          content: { parts: [{ type: 'text', text: 'follow up' }] },
+        },
+        {
+          role: 'assistant',
+          content: { parts: [{ type: 'text', text: 'streamed answer' }] },
+        },
+      ],
+      artifacts: [],
+    });
+
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-2',
+        conversation_id: 's-1',
+        status: 'completed',
+      },
+    });
+
+    await vi.waitFor(() => {
+      const conv = useStore.getState().conversations['s-1'];
+      const answer = conv.messages[conv.messages.length - 1];
+      expect(answer.items.map((it) => it.kind)).toContain('text');
+    });
+    const conv = useStore.getState().conversations['s-1'];
+    const answer = conv.messages[conv.messages.length - 1];
+    const texts = answer.items.filter((it) => it.kind === 'text');
+    expect(texts).toHaveLength(1);
+    for (const block of texts) expect(block.streamed).toBe(true);
+    expect(texts.map((it) => it.text).join('')).toContain('streamed answer');
+  });
+
   it('holds a note that arrives mid-turn until the turn ends', async () => {
     hydratedConversation();
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-2' });

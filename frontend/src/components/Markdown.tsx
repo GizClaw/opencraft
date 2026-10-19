@@ -5,11 +5,13 @@ import {
   useLayoutEffect,
   useMemo,
   useState,
+  type ReactNode,
 } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Check, Copy } from 'lucide-react';
+import { markdownTrees } from '../lib/markdownCache';
 import { beginMarkdownRender, endMarkdownRender } from '../lib/perfMetrics';
 import { codeLinkTarget } from '../lib/linkTarget';
 import { ICON } from './ui/icon';
@@ -95,6 +97,36 @@ const MARKDOWN_COMPONENTS: Components = {
   table: MarkdownTable,
 };
 
+// markdownTree answers the elements for one block: the tree this window
+// parsed from that exact text before, or a fresh one kept for the next
+// mount (see lib/markdownCache for why it is kept and what bounds it).
+//
+// ReactMarkdown is a plain function of its options — no hooks — so calling
+// it here is the parse the JSX below used to ask for, once per text instead
+// of once per mount. The elements it returns are descriptors rendered
+// against the current surface, which is what lets a cached tree mount under
+// a different link handler without being rebuilt.
+//
+// The probe's clock starts only for a parse (parseStartedAt is 0 on a hit):
+// the series says what react-markdown costs, and folding a cache hit into
+// it would dilute that number towards zero as the cache warms.
+function markdownTree(text: string): {
+  tree: ReactNode;
+  parseStartedAt: number;
+} {
+  const cached = markdownTrees.get(text);
+  if (cached !== undefined) return { tree: cached, parseStartedAt: 0 };
+  const parseStartedAt = beginMarkdownRender();
+  const tree = ReactMarkdown({
+    children: text,
+    remarkPlugins: REMARK_PLUGINS,
+    rehypePlugins: REHYPE_PLUGINS,
+    components: MARKDOWN_COMPONENTS,
+  });
+  markdownTrees.set(text, tree);
+  return { tree, parseStartedAt };
+}
+
 // Markdown renders assistant content with GFM. Code blocks get a copy
 // button, syntax highlighting via rehype-highlight, and tables are
 // wrapped so they scroll instead of overflowing the chat column.
@@ -111,28 +143,20 @@ export const Markdown = memo(function Markdown({
   basePath?: string;
   onOpen?: MarkdownLinkHandler;
 }) {
-  // The probe's markdown series wants the cost of one block, so the pair is
-  // taken around this render: the body runs before react-markdown parses
-  // and builds its elements, and the layout effect runs after the block has
-  // committed. memo keeps a re-render of the parent from looking like a
-  // parse, and a disabled probe hands back a zero the effect ignores.
-  const renderStartedAt = beginMarkdownRender();
+  // The probe's markdown series wants the cost of one parse, so the clock
+  // starts inside markdownTree on a miss and the effect below closes it
+  // after the block has committed. A cache hit hands back 0, which the
+  // effect ignores: mounting a tree this window already parsed is not a
+  // parse. memo keeps a re-render of the parent from looking like one.
+  const { tree, parseStartedAt } = markdownTree(text);
   useLayoutEffect(() => {
-    endMarkdownRender(renderStartedAt);
-  });
+    endMarkdownRender(parseStartedAt);
+  }, [parseStartedAt]);
   // The context value is rebuilt only when the two props it carries change,
   // so the constant component map does not re-render its consumers either.
   const surface = useMemo(() => ({ onOpen, basePath }), [onOpen, basePath]);
   return (
-    <MarkdownSurface.Provider value={surface}>
-      <ReactMarkdown
-        remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={REHYPE_PLUGINS}
-        components={MARKDOWN_COMPONENTS}
-      >
-        {text}
-      </ReactMarkdown>
-    </MarkdownSurface.Provider>
+    <MarkdownSurface.Provider value={surface}>{tree}</MarkdownSurface.Provider>
   );
 });
 

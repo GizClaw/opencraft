@@ -66,6 +66,15 @@ type Core struct {
 	// stream sinks delegated runs deliver into (see streams.go).
 	streamTargetsOnce sync.Once
 	streamTargets     *subagents.StreamTargets
+	// busyWorkspaces and reloadWindow are the two halves of the memory
+	// boundary's decision (see reload_window.go). They are fields so the
+	// truth table - busy, no window, reloaded - is testable without a
+	// live run or a Wails window. Their nils are not the same answer: a
+	// nil busyWorkspaces asks the runtime, which answers from its pool and
+	// nil again only when it has none (see Core.BusyWorkspaces), while a
+	// nil reloadWindow is the no-window refusal.
+	busyWorkspaces func() []string
+	reloadWindow   func() bool
 
 	UserDir string
 	DataDir string
@@ -140,6 +149,8 @@ func NewCoreWithPaths(p Paths) *Core {
 		// caller remembers (SetWorkDir folds what it is handed too).
 		WorkDir: config.CanonicalWorkDir(p.WorkDir),
 	}
+	c.busyWorkspaces = runtime.BusyWorkspaces
+	c.reloadWindow = c.Shell.reloadMain
 	c.Shell.SetPetSink(func(typ string, data any) {
 		pet.OnEvent(typ, data)
 	})

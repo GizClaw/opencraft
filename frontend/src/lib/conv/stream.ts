@@ -38,12 +38,26 @@ export function mergeAppend(
         // `text`, which is where the trim marker lives.
         text: lastItem.chunks ? lastItem.text : '',
         chars: itemChars(lastItem) + text.length,
+        // A delta is proof this window saw the text arrive, whether the
+        // block was minted here or hydrated from the archive: the mark is
+        // what keeps the transcript from folding the block away at the
+        // turn end (see paging.ts and StreamItemView.tsx).
+        streamed: true,
       }),
     ];
   } else {
     msg.items = [
       ...items,
-      capTextItem({ kind, id: newID('part'), text, chars: text.length }),
+      capTextItem({
+        kind,
+        id: newID('part'),
+        text,
+        chars: text.length,
+        // Only the live path marks a block this way: a delta is proof the
+        // reader (or at least this window) saw the text arrive, which is
+        // what keeps the transcript from folding it away at the turn end.
+        streamed: true,
+      }),
     ];
   }
 }

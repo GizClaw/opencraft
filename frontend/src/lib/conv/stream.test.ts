@@ -4,6 +4,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { stateRoot } from '../../state/app';
 import { itemText, useStore } from '../store';
+import type { MessageView } from './model';
+import { foldLastTextItem, mergeAppend } from './stream';
 import { actorValue, bindRun, primeStoreTest } from '../../test/storeHarness';
 
 vi.mock('../api', async () => ({
@@ -17,6 +19,50 @@ vi.mock(
 beforeEach(primeStoreTest);
 
 describe('stream deltas and caps', () => {
+  it('marks the text block it appends as streamed', () => {
+    // The transcript keeps a block whole when its deltas arrived here (see
+    // StreamItemView): only the live path stamps the marker, so a block
+    // replayed from history cannot claim the reader watched it.
+    const msg: MessageView = {
+      id: 'm-1',
+      role: 'assistant',
+      text: '',
+      items: [],
+      attachments: [],
+    };
+    mergeAppend(msg, 'text', 'hello');
+    expect(msg.items[0]).toMatchObject({ kind: 'text', streamed: true });
+    // Appending to the same block keeps the marker.
+    mergeAppend(msg, 'text', ' again');
+    expect(msg.items[0]).toMatchObject({ streamed: true });
+    foldLastTextItem(msg);
+    const folded = msg.items[0];
+    if (folded.kind !== 'text') throw new Error('expected a text item');
+    expect(itemText(folded)).toBe('hello again');
+    expect(folded.streamed).toBe(true);
+  });
+
+  it('stamps a block hydrated from the archive when a delta lands in it', () => {
+    // resume merges the archive with a live shell: the block was built from
+    // history without the marker, and the delta that follows is proof this
+    // window watched it grow. Without the stamp paging drops the fold
+    // guard and the answer collapses under the reader at the turn end.
+    const msg: MessageView = {
+      id: 'm-1',
+      role: 'assistant',
+      text: '',
+      items: [{ kind: 'text', id: 'p-1', text: 'partial' }],
+      attachments: [],
+    };
+
+    mergeAppend(msg, 'text', ' more');
+
+    expect(msg.items[0]).toMatchObject({ kind: 'text', streamed: true });
+    const item = msg.items[0];
+    if (item.kind !== 'text') throw new Error('expected a text item');
+    expect(itemText(item)).toBe('partial more');
+  });
+
   it('folds stream deltas into one assistant message', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     bindRun('r-1');

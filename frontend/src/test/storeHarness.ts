@@ -8,6 +8,7 @@
 import { vi } from 'vitest';
 import { itemText, useStore } from '../lib/store';
 import type { MessageView } from '../lib/store';
+import { setUnsentDraft } from '../lib/unsentDraft';
 import { stateRoot } from '../state/app';
 import { apiMock } from './apiMock';
 
@@ -68,7 +69,15 @@ export function resetStore() {
 /** The `beforeEach` every store test file installs. */
 export function primeStoreTest() {
   resetStore();
+  // The draft registry is a module, not store state, so resetStore cannot
+  // reach it: a test file that leaves a draft behind would make the next
+  // one's workspace switches skip their reload.
+  setUnsentDraft(false);
   vi.clearAllMocks();
+  // The backend is where the window believes it is: the switch guard asks
+  // it once per re-pick (a case that wants them to disagree sets its own
+  // answer).
+  apiMock.workspace.mockResolvedValue('/tmp/w');
   apiMock.profile.mockResolvedValue({ yolo_only: false });
   apiMock.sessionDefaults.mockResolvedValue({
     mode: 'workspace',
