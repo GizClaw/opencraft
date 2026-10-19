@@ -8,6 +8,7 @@ import { stateRoot } from '../../state/app';
 import { useStore } from '../store';
 import { apiMock } from '../../test/apiMock';
 import { attachmentPreviews } from '../attachmentPreviews';
+import { markdownTrees } from '../markdownCache';
 import {
   actorValue,
   assistantTexts,
@@ -300,12 +301,17 @@ describe('workspace switch session restore', () => {
     expect(apiMock.reloadWindow).not.toHaveBeenCalled();
   });
 
-  it('a workspace switch drops the window attachment previews', async () => {
+  it('a workspace switch drops the window caches', async () => {
     // The previews belong to the workspace the window is leaving: those
     // paths name files it is no longer looking at, and a cache that
-    // outlived every switch was the window's largest unbounded map.
+    // outlived every switch was the window's largest unbounded map. The
+    // parsed markdown blocks go with them: the transcript that asked for
+    // them is gone, and a tree is not addressed by anything the new
+    // workspace would ask for again.
     await attachmentPreviews.load('/tmp/left-behind.png', async () => 'x');
     expect(attachmentPreviews.size).toBe(1);
+    markdownTrees.set('# left behind', 'tree' as never);
+    expect(markdownTrees.size).toBe(1);
 
     apiMock.currentSession.mockResolvedValue('');
     apiMock.sessionTurns.mockResolvedValue([]);
@@ -327,6 +333,7 @@ describe('workspace switch session restore', () => {
       expect(useStore.getState().workspace).toBe('/tmp/a');
     });
     expect(attachmentPreviews.size).toBe(0);
+    expect(markdownTrees.size).toBe(0);
   });
 
   it('ready after a workspace change restores the saved session', async () => {

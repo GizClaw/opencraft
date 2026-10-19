@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { markdownTrees } from '../lib/markdownCache';
 import { markdownStats, setPerfMetricsEnabled } from '../lib/perfMetrics';
 import { Markdown } from './Markdown';
 
@@ -154,6 +155,32 @@ describe('Markdown', () => {
     expect(container.querySelector('pre')?.textContent).toContain(
       'src/lib/store.ts',
     );
+  });
+
+  it('mounts a block it parsed before without parsing it again', () => {
+    // The transcript unmounts a row that scrolls out of its window and
+    // mounts it again when it scrolls back. The parse is a pure function of
+    // the source text, so the second mount reuses the tree the first one
+    // built — and that tree still renders against the surface it is mounted
+    // under, which is what lets the new mount route its links through its
+    // own handler (lib/markdownCache).
+    const text = 'read [the guide](refs/guide.md) first';
+    const missesBefore = markdownTrees.misses;
+    const first = render(<Markdown text={text} />);
+    first.unmount();
+    const hitsBefore = markdownTrees.hits;
+
+    const onOpen = vi.fn();
+    render(<Markdown text={text} onOpen={onOpen} />);
+
+    expect(markdownTrees.misses - missesBefore).toBe(1);
+    expect(markdownTrees.hits - hitsBefore).toBe(1);
+    expect(screen.getByRole('link', { name: 'the guide' })).toHaveAttribute(
+      'href',
+      'refs/guide.md',
+    );
+    fireEvent.click(screen.getByRole('link', { name: 'the guide' }));
+    expect(onOpen).toHaveBeenCalledWith('refs/guide.md', undefined);
   });
 
   it('records one render-to-commit measurement for the probe', () => {
