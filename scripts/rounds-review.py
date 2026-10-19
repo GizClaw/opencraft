@@ -34,16 +34,30 @@ Usage: scripts/rounds-review.py [--since YYYY-MM-DD] [--until YYYY-MM-DD]
   change, then again after it, and compare the two reports.
 
 Both stores are opened read-only: reviewing must not touch a live app's
-databases, and they may well be open by the running shell.
+databases, and they may well be open by the running shell. A WAL store
+whose -shm is gone refuses a read-only open in place (SQLite answers
+CANTOPEN instead of creating one), so those are snapshotted to a temp
+copy first — dropping the whole workspace was how an earlier report lost
+2100 rounds without saying so.
+
+The rounds line covers the conversations that still exist, and the
+coverage section says how much of the ledger that is: deleted
+conversations, and model calls whose session id never was a conversation
+(delegation, review runs), spend tokens too but have no turn count, so
+they cannot enter a per-turn ratio. Read the two together before
+treating calls/turn as the whole population.
 """
 
 import argparse
 import collections
+import contextlib
 import glob
 import json
 import os
+import shutil
 import sqlite3
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 # MarkerPrefix of core/tool/middleware's truncate: a result past the cap
@@ -336,41 +350,121 @@ def scan_rollouts(home, since, until):
     }
 
 
-def scan_rounds(home):
-    """scan_rounds joins model calls (user.db) with turns (session.db)."""
-    per_conv = []
-    user_db = os.path.join(home, "user.db")
-    if not os.path.exists(user_db):
-        return None
-    con = sqlite3.connect(f"file:{user_db}?mode=ro", uri=True)
+@contextlib.contextmanager
+def open_readonly(path, copies):
+    """open_readonly opens a store without touching it, and says how.
+
+    In place is the normal answer. A WAL database with no -shm beside it
+    is the exception: SQLite cannot attach to the shared-memory index
+    without creating one, and a read-only connection may not, so it
+    answers CANTOPEN rather than opening the file it was given — which is
+    how one workspace's 2100 rounds once dropped out of a report in
+    silence. The way through is a snapshot: copy the database and its WAL
+    sidecars, then open the copy as immutable. Immutable is exact for a
+    copy nothing else can write, and it is what lets SQLite read a WAL
+    store with no index at all. paths is appended to when that happens,
+    so the report can say how many stores were read as a copy.
+    """
     try:
-        usage = collections.defaultdict(lambda: [0, 0, 0])  # calls, total, output
-        for sid, calls, total, out in con.execute(
-            "SELECT session_id, SUM(calls), SUM(total_tokens), SUM(output_tokens)"
-            " FROM model_usage GROUP BY session_id"
-        ):
-            usage[sid] = [calls or 0, total or 0, out or 0]
-    except sqlite3.Error as err:
-        print(f"rounds-review: user.db has no usable model_usage ({err})", file=sys.stderr)
-        return None
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            # connect() is lazy: the header, and so the -shm, is touched
+            # on the first statement.
+            con.execute("PRAGMA schema_version").fetchone()
+        except sqlite3.Error:
+            con.close()
+            raise
+    except sqlite3.Error:
+        tmp = tempfile.mkdtemp(prefix="rounds-review-")
+        try:
+            name = os.path.basename(path)
+            for suffix in ("", "-wal", "-shm"):
+                if os.path.exists(path + suffix):
+                    shutil.copy2(path + suffix, os.path.join(tmp, name + suffix))
+            con = sqlite3.connect(
+                f"file:{os.path.join(tmp, name)}?immutable=1", uri=True,
+            )
+        except BaseException:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+        copies.append(path)
+    else:
+        tmp = None
+    try:
+        yield con
     finally:
         con.close()
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
 
+
+def scan_rounds(home):
+    """scan_rounds joins model calls (user.db) with turns (session.db).
+
+    Returns (per_conv, coverage). per_conv is what the round ratio is
+    computed from; coverage says what the ledger holds beyond it, so the
+    ratio is never read as the whole corpus.
+    """
+    user_db = os.path.join(home, "user.db")
+    if not os.path.exists(user_db):
+        return None, None
+    copies = []
+    usage = {}
+    try:
+        with open_readonly(user_db, copies) as con:
+            for sid, calls, total, out in con.execute(
+                "SELECT session_id, SUM(calls), SUM(total_tokens), SUM(output_tokens)"
+                " FROM model_usage GROUP BY session_id"
+            ):
+                usage[sid] = (calls or 0, total or 0, out or 0)
+    except sqlite3.Error as err:
+        print(f"rounds-review: user.db has no usable model_usage ({err})", file=sys.stderr)
+        return None, None
+
+    per_conv = []
+    stores = 0
+    deleted = set()
+    with_turns = 0
     for sessions_db in sorted(glob.glob(os.path.join(home, "workspaces", "*", "sessions", "session.db"))):
         try:
-            con = sqlite3.connect(f"file:{sessions_db}?mode=ro", uri=True)
-            rows = con.execute(
-                "SELECT id, turn_count FROM conversations WHERE turn_count > 0"
-            ).fetchall()
-            con.close()
-        except sqlite3.Error:
+            with open_readonly(sessions_db, copies) as con:
+                rows = con.execute(
+                    "SELECT id, turn_count FROM conversations WHERE turn_count > 0"
+                ).fetchall()
+                try:
+                    deleted.update(
+                        x[0] for x in con.execute("SELECT id FROM deleted_conversations")
+                    )
+                except sqlite3.Error:
+                    # Pre-migration stores have no tombstone table; every
+                    # deletion they saw is simply absent below.
+                    pass
+        except sqlite3.Error as err:
+            print(f"rounds-review: skipping {sessions_db}: {err}", file=sys.stderr)
             continue
+        stores += 1
+        with_turns += len(rows)
         for sid, turns in rows:
-            calls, total, out = usage.get(sid, [0, 0, 0])
+            calls, total, out = usage.get(sid, (0, 0, 0))
             if calls <= 0:
                 continue
             per_conv.append((sid, turns, calls, total, out))
-    return per_conv
+
+    joined = {row[0] for row in per_conv}
+    calls_total = sum(v[0] for v in usage.values())
+    calls_joined = sum(row[2] for row in per_conv)
+    calls_deleted = sum(v[0] for k, v in usage.items() if k in deleted and k not in joined)
+    coverage = {
+        "stores": stores,
+        "stores_snapshotted": len(copies),
+        "calls_total": calls_total,
+        "calls_in_conversations": calls_joined,
+        "calls_in_deleted_conversations": calls_deleted,
+        "calls_without_conversation": calls_total - calls_joined - calls_deleted,
+        "conversations_with_turns": with_turns,
+        "conversations_without_usage": with_turns - len(joined),
+    }
+    return per_conv, coverage
 
 
 def main():
@@ -388,7 +482,7 @@ def main():
         raise SystemExit(f"rounds-review: no OpenCraft home at {home}")
 
     roll = scan_rollouts(home, since, until)
-    rounds = scan_rounds(home)
+    rounds, coverage = scan_rounds(home)
 
     windows_note = []
     if since:
@@ -437,6 +531,7 @@ def main():
                 "calls_after_last_write_p50": pct(roll["after_last_write"], 50),
             },
             "compactions": roll["compactions"],
+            "coverage": coverage,
         }
         if rounds:
             per_turn = [calls / turns for _, turns, calls, _, _ in rounds]
@@ -480,6 +575,18 @@ def main():
         for sid, t, c, total, out in sorted(rounds, key=lambda r: r[2], reverse=True)[:10]:
             print(f"  {sid:24s} {t:5d} {c:6d} {c / t:10.1f} "
                   f"{total / max(c, 1) / 1000:9.1f} {out / max(c, 1):8.0f}")
+        if coverage:
+            print()
+            print("== coverage (what calls/turn cannot see: a ratio needs a turn count)")
+            print(f"model calls {coverage['calls_total']}: "
+                  f"in conversations {coverage['calls_in_conversations']}, "
+                  f"in deleted conversations {coverage['calls_in_deleted_conversations']}, "
+                  f"in sessions that are not conversations {coverage['calls_without_conversation']}")
+            print(f"conversations with turns {coverage['conversations_with_turns']}, "
+                  f"without usage rows {coverage['conversations_without_usage']}; "
+                  f"stores read {coverage['stores']}"
+                  + (f" ({coverage['stores_snapshotted']} from a snapshot)"
+                     if coverage["stores_snapshotted"] else ""))
 
     total_calls = sum(roll["tools"].values())
     print()
