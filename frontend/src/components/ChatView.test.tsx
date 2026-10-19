@@ -1188,10 +1188,44 @@ describe('ChatView transcript windowing', () => {
     ).toBeNull();
   });
 
-  it('folds a watched answer once a later turn lands below it', () => {
+  it('folds a watched answer once a newer answer lands below it', () => {
     // The exemption is positional, not permanent: while the block was the
-    // transcript's last row the reader was still on it, and a question
-    // under it makes it history - the scene the fold exists for.
+    // newest answer the reader was still on it, and the next answer makes
+    // it history - the scene the fold exists for.
+    const watched = longAnswer(6000, 'Watched');
+    setConversation([
+      { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+      {
+        id: 'm-a1',
+        role: 'assistant',
+        text: '',
+        items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+        attachments: [],
+      },
+      { id: 'm-u2', role: 'user', text: 'second', items: [], attachments: [] },
+      {
+        id: 'm-a2',
+        role: 'assistant',
+        text: 'done',
+        items: [{ kind: 'text', id: 'p-2', text: 'done' }],
+        attachments: [],
+      },
+    ]);
+    render(<ChatView />);
+
+    expect(screen.queryByRole('heading', { name: 'Watched 50' })).toBeNull();
+    expect(
+      screen.getByRole('button', { name: /Show full answer/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the previous answer whole while the next turn has none yet', () => {
+    // A turn is busy from the moment it is submitted, and its answer row
+    // only appears with the first delta (lib/conv/stream.ts opens one when
+    // the last row is not an assistant's). In between, the newest answer
+    // is the previous turn's: it is still what the reader is looking at,
+    // so it keeps its markdown and its actions instead of turning into the
+    // plain text a growing block is drawn as.
     const watched = longAnswer(6000, 'Watched');
     setConversation([
       { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
@@ -1204,11 +1238,20 @@ describe('ChatView transcript windowing', () => {
       },
       { id: 'm-u2', role: 'user', text: 'second', items: [], attachments: [] },
     ]);
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     render(<ChatView />);
 
-    expect(screen.queryByRole('heading', { name: 'Watched 50' })).toBeNull();
+    // Parsed as markdown and left whole: the block is still the newest
+    // answer, which is what both the parse and the fold read.
     expect(
-      screen.getByRole('button', { name: /Show full answer/ }),
+      screen.getByRole('heading', { name: 'Watched 50' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+    // The actions belong to the reply a user row follows: still there.
+    expect(
+      screen.getByRole('button', { name: 'Copy output' }),
     ).toBeInTheDocument();
   });
 
@@ -1245,10 +1288,46 @@ describe('ChatView transcript windowing', () => {
     expect(screen.getByText(/Watched 50/)).toBeInTheDocument();
   });
 
-  it('a workspace switch empties the composer, so no draft waits for the reload', async () => {
-    // The guard in shell/workspaces.ts keeps the page for a draft only
-    // when the switch would not clear it anyway: the focus reset below is
-    // what a workspace switch does, and the composer goes with it.
+  it('keeps the answer live under a note the app wrote below it', () => {
+    // A delegation note is a user-role row the app filed itself (kind),
+    // not something the reader said: it does not open a turn, so the
+    // answer above it is still the one the stream is writing into - and
+    // reads as the plain text a growing block is drawn as until it stops.
+    const watched = longAnswer(6000, 'Watched');
+    setConversation([
+      { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+      {
+        id: 'm-a1',
+        role: 'assistant',
+        text: '',
+        items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+        attachments: [],
+      },
+      {
+        id: 'm-note',
+        role: 'user',
+        text: '',
+        kind: 'delegation_note',
+        items: [],
+        attachments: [],
+      },
+    ]);
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    expect(screen.getByText(/Watched 50/)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Watched 50' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+  });
+
+  it('a workspace switch empties the composer a session draft was in', async () => {
+    // The guard in shell/workspaces.ts keeps the page for the draft of a
+    // conversation that has not started; this is the other half. The
+    // focus reset below is what a workspace switch does, and the composer
+    // goes with it - which is why the guard reads the focus beside the
+    // flag instead of trusting the flag alone.
     setConversation([
       { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
     ]);

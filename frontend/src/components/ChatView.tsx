@@ -3448,18 +3448,44 @@ export function ChatView() {
   // wrapper, and a row is the same row whether its turn's header is on
   // screen or a screen above.
   //
-  // The newest assistant row is what the stream is writing into, and it
-  // stays that while a steer row lands below it (an interjection is not a
-  // new turn: turn.ts appends the row into the live one). Reading the
-  // position as "the transcript's last row" would fold a watched answer
-  // and stop rendering its markdown the moment the reader speaks.
+  // Two positions the rows below read from the flat list.
+  //
+  // lastAssistantIdx is the newest answer. It is what stays unfolded
+  // (see StreamItemView's atTail): a steer row landing below does not
+  // make it history - an interjection is not a new turn, turn.ts appends
+  // the row into the live one - while the answer a newer turn opens below
+  // it does.
+  //
+  // liveTurnStart is the user row that opened the newest turn. Only an
+  // answer from there down is one the stream may still be writing into: a
+  // turn is `busy` from the moment it is submitted, while its answer row
+  // only appears with the first delta (lib/conv/stream.ts opens it when
+  // the last row is not an assistant's), so between the two the newest
+  // answer is the previous turn's. It is what the reader is looking at -
+  // whole, parsed as markdown, with its actions - and rendering it as a
+  // growing block would flip it to plain text under them. Steer rows,
+  // compaction summaries and the notes the app files itself do not open a
+  // turn (the rule resumeTarget uses, plus kind for the rows nobody said).
   let lastAssistantIdx = -1;
+  let liveTurnStart = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
-    if (messages[i]?.role === 'assistant') {
+    const msg = messages[i];
+    if (lastAssistantIdx < 0 && msg?.role === 'assistant') {
       lastAssistantIdx = i;
-      break;
     }
+    if (
+      liveTurnStart < 0 &&
+      msg?.role === 'user' &&
+      !msg.steer &&
+      !msg.kind &&
+      !msg.text.startsWith(COMPACT_SUMMARY_PREFIX)
+    ) {
+      liveTurnStart = i;
+    }
+    if (lastAssistantIdx >= 0 && liveTurnStart >= 0) break;
   }
+  const rowIsLive = (i: number) =>
+    busy && i === lastAssistantIdx && i >= liveTurnStart;
   const renderTranscriptItem = (item: TranscriptItem) => {
     if (item.kind === 'interact') {
       return (
@@ -3525,8 +3551,7 @@ export function ChatView() {
     const isAssistantTurnLast =
       msg.role === 'assistant' &&
       (i === messages.length - 1 || messages[i + 1]?.role === 'user');
-    const assistantStreaming =
-      busy && msg.role === 'assistant' && i === lastAssistantIdx;
+    const assistantStreaming = msg.role === 'assistant' && rowIsLive(i);
     const archivedEnd = archivedTurnEndKind(turn?.status);
     const liveEnd = !busy && failedTurn !== undefined && turn === lastTurn;
     const endStatus = archivedEnd ?? (liveEnd ? failedTurn?.status : undefined);
@@ -3541,7 +3566,7 @@ export function ChatView() {
         msg={msg}
         busy={busy}
         isTurnLast={isAssistantTurnLast}
-        atTail={i === messages.length - 1 || (busy && i === lastAssistantIdx)}
+        atTail={i === messages.length - 1 || i === lastAssistantIdx}
         msgIndex={i}
         turnIndex={item.turnIdx}
         turnStart={item.turnStart}

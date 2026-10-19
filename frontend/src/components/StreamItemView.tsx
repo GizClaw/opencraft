@@ -31,15 +31,14 @@ const BLOCK_FOLD_CHARS = 2 << 10;
 // A settled block longer than BLOCK_FOLD_CHARS renders its first section
 // and a control instead of the whole answer, unless the reader is still
 // on it: a block whose text arrived through this window's live stream
-// (TextItemFields.streamed) and which the stream is still writing into -
-// the newest answer while a run is live, which a steer row below it does
-// not change. That
-// block the reader watched grow, and folding it under them the moment the
-// turn ends would take away what they were reading. The exemption ends
-// with the position: once a newer answer lands below it, the block is
-// history like the ones above it, and the scene the fold exists for - a
-// reader scrolling back through a long session - is exactly where it
-// applies.
+// (TextItemFields.streamed) and which is the newest answer. That block
+// the reader watched grow, and folding it under them the moment the turn
+// ends would take away what they were reading. The exemption is the
+// position, not the turn: a steer row below it does not move it (an
+// interjection goes into the live turn rather than opening a new one),
+// while the answer the stream opens below it does - the next delta of
+// that turn - and it folds like the ones above it. That is the scene the
+// fold exists for: a reader scrolling back through a long session.
 const AssistantText = memo(function AssistantText({
   text,
   streaming,
@@ -49,9 +48,9 @@ const AssistantText = memo(function AssistantText({
   text: string;
   streaming: boolean;
   streamed: boolean;
-  // atTail says the block is the one the stream is writing into: the
-  // transcript's last row, or the newest answer while a run is live (an
-  // interjection below it does not end it).
+  // atTail says the block is still the reader's position: the transcript's
+  // last row, or the newest answer (an interjection below it does not end
+  // it).
   atTail: boolean;
 }) {
   const { t, i18n } = useTranslation();
