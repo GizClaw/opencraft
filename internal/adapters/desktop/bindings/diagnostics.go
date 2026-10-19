@@ -274,10 +274,15 @@ func (b *Diagnostics) ReloadWindow() bool {
 			attribute.String("workspaces", strings.Join(out.Busy, ", ")))
 	case core.ReloadNoWindow:
 		flowtelemetry.Info(ctx, "diagnostics: window reload skipped, no window attached")
-	default:
-		// "" is the reloaded path: the window was told to drop its
+	case "":
+		// The reloaded path: the window was told to drop its
 		// document.
 		flowtelemetry.Info(ctx, "diagnostics: window reload requested")
+	default:
+		// A reason this build does not know: log it as a refusal
+		// rather than claim a navigation that did not happen.
+		flowtelemetry.Info(ctx, "diagnostics: window reload declined",
+			attribute.String("reason", out.Reason))
 	}
 	return out.Reloaded
 }

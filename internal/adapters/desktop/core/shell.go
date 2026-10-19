@@ -387,7 +387,10 @@ func (s *Shell) FocusMain() {
 // (no live run whose deltas this window would miss) is Core.ReloadWindow's
 // decision, and that is its only caller. A half-flushed stream must not
 // land in the page that replaces the one it was written for, so the buffer
-// is dropped here.
+// is dropped here. The window can be destroyed between the check and the
+// navigation, which drops that buffer for a page nobody will see: the
+// deltas were buffered, never rendered, and the page that would have shown
+// them is gone.
 func (s *Shell) reloadMain() bool {
 	app, main := s.attached()
 	if app == nil || main == nil {

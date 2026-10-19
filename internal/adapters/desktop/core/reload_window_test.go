@@ -77,3 +77,24 @@ func TestReloadWindowOnBareCore(t *testing.T) {
 		t.Fatalf("BusyWorkspaces = %v, want none", busy)
 	}
 }
+
+// TestNewCoreWiresTheMemoryBoundary pins the two assignments in
+// NewCoreWithPaths that the cases above replace with doubles. Without them
+// every test here stays green - the no-window answer is the same for a nil
+// field - while a real window reloads under a live run and the git discard
+// guard in bindings/git.go stops seeing one.
+func TestNewCoreWiresTheMemoryBoundary(t *testing.T) {
+	c := NewCore(t.TempDir(), t.TempDir(), t.TempDir())
+	if c.busyWorkspaces == nil {
+		t.Fatal("busyWorkspaces is not wired to the runtime's pool")
+	}
+	if c.reloadWindow == nil {
+		t.Fatal("reloadWindow is not wired to Shell.reloadMain")
+	}
+	// The wired pool answers nothing on a fresh Core: no workspace has
+	// a live run yet, and the answer has to come from the pool rather
+	// than from a hardcoded nil.
+	if busy := c.BusyWorkspaces(); len(busy) != 0 {
+		t.Fatalf("BusyWorkspaces = %v, want none on a fresh Core", busy)
+	}
+}

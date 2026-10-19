@@ -56,10 +56,18 @@ func (c *Core) ActiveHost() *host.Host {
 // ReloadWindow): the window's event channel is process-wide, so any live
 // run has deltas in flight towards it.
 func (c *Core) BusyWorkspaces() []string {
-	if c.busyWorkspaces == nil {
-		return nil
+	if c.busyWorkspaces != nil {
+		return c.busyWorkspaces()
 	}
-	return c.busyWorkspaces()
+	// A Core built outside the constructor (the stream tests) still
+	// answers from the runtime it carries. The git discard guard in
+	// bindings/git.go reads this same list, so an unreachable runtime
+	// has to mean "unknown, answer none" and not the silent empty
+	// answer a bare Core gives.
+	if c.Runtime != nil {
+		return c.Runtime.BusyWorkspaces()
+	}
+	return nil
 }
 
 // RecordWorkspace persists one workspace open. Failures are best-effort.
