@@ -99,6 +99,18 @@ function percentLabel(part: number, whole: number): string {
   return `${pct.toFixed(1)}%`;
 }
 
+// windowPercent is percentLabel for the one ratio in the popover that can
+// pass its whole. A prompt can run past the model window — an unfolded
+// full-history replay, or a provider that counts past the window it
+// enforces — and percentLabel would round 424% down to "100%", the one
+// number that must not stand next to a full, red bar: it would say the
+// prompt exactly filled a window it overflowed four times.
+function windowPercent(total: number, limit: number): string {
+  const pct = limit > 0 ? (total / limit) * 100 : 0;
+  if (pct > 100.5) return `${Math.round(pct)}%`;
+  return percentLabel(total, limit);
+}
+
 function Ring({ share, color }: { share: number; color: string }) {
   const radius = 6;
   const circumference = 2 * Math.PI * radius;
@@ -238,7 +250,7 @@ export function ContextMeter({ usage }: { usage: ContextUsageDTO }) {
             <span className="text-micro text-dim">
               {limit > 0
                 ? t('chat.contextOfWindow', {
-                    percent: percentLabel(total, limit),
+                    percent: windowPercent(total, limit),
                     limit: limitLabel,
                   })
                 : t('chat.contextNoWindow')}

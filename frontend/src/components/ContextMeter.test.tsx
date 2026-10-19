@@ -65,6 +65,24 @@ describe('ContextMeter', () => {
     expect(within(dialog).getByText('claude-sonnet-4')).toBeInTheDocument();
   });
 
+  it('a prompt past the window says how far past it ran', async () => {
+    render(
+      <ContextMeter
+        usage={{
+          ...usage,
+          measured_tokens: 0,
+          limit_tokens: 10000,
+          categories: [{ id: 'conversation', tokens: 42400 }],
+        }}
+      />,
+    );
+    const dialog = await open();
+    // The slice percentages share the prompt and stop at 100%, but this
+    // one divides by the window and can pass it. Rounding 424% down to
+    // "100%" would draw four windows of prompt as exactly one.
+    expect(within(dialog).getByText('424% of 10k')).toBeInTheDocument();
+  });
+
   it('a category this build does not know is counted but not drawn', async () => {
     render(
       <ContextMeter
