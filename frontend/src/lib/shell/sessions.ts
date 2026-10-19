@@ -14,6 +14,7 @@ import { createConvCore } from '../conv/core';
 import { createConvPaging } from '../conv/paging';
 import { createWorkspaceGlue } from '../conv/workspace';
 import { liveTurnEntry } from '../conv/artifacts';
+import { readContextUsage } from './history';
 import { measureInteraction } from '../perfMetrics';
 import { sameWorkspacePath } from '../workspacePath';
 import { stateRoot } from '../../state/app';
@@ -160,6 +161,12 @@ export function createShellSessions(
             return;
           }
           const resolvedID = snapshot.conversation_id;
+          // The meter's snapshot is read alongside the transcript: it is
+          // a property of the conversation, so a chat that comes back
+          // after a restart shows where its context went before the user
+          // pays for another turn. It never rejects (see
+          // readContextUsage), so it cannot fail the open.
+          const usageRead = readContextUsage(resolvedID);
           const actor = stateRoot.registry.ensure(resolvedID, {
             workspaceGeneration: stateRoot.generation(),
             workspace: get().workspace,
@@ -175,15 +182,18 @@ export function createShellSessions(
           const actorValue = actor?.getSnapshot().value as
             { transcript: string; turn: string } | undefined;
           if (existing && actorValue?.transcript === 'ready') {
+            const usage = await usageRead;
+            const held = get().conversations[resolvedID];
             set({
               toolsView: null,
               conversations: {
                 ...get().conversations,
                 [resolvedID]: {
-                  ...get().conversations[resolvedID],
+                  ...held,
                   mode: snapshot.mode,
                   think: snapshot.think,
                   model: snapshot.model,
+                  contextUsage: usage ?? held?.contextUsage,
                 },
               },
             });
@@ -197,12 +207,12 @@ export function createShellSessions(
             return;
           }
           let turns: Awaited<ReturnType<typeof api.sessionTurns>>;
+          let usage: Awaited<typeof usageRead>;
           try {
-            turns = await api.sessionTurns(
-              resolvedID,
-              INITIAL_HISTORY_TURNS + 1,
-              0,
-            );
+            [turns, usage] = await Promise.all([
+              api.sessionTurns(resolvedID, INITIAL_HISTORY_TURNS + 1, 0),
+              usageRead,
+            ]);
           } catch (err) {
             actor?.send({
               type: 'HYDRATE_FAIL',
@@ -284,6 +294,11 @@ export function createShellSessions(
                 turnArtifacts,
                 historySeq: page.historySeq,
                 historyHasMore: page.historyHasMore,
+                // A read that found nothing keeps what the shell
+                // already had: the live turn's terminal event writes
+                // the same document, and a rebuild is not a reason to
+                // forget a number the user just watched.
+                contextUsage: usage ?? existing?.contextUsage,
                 pendingInteracts: existing?.pendingInteracts ?? [],
                 ...(liveSteerSent.length > 0
                   ? { steerSent: liveSteerSent }

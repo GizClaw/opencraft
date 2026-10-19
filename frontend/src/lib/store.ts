@@ -45,7 +45,7 @@ import { turnNeedsAttention } from './conv/failure';
 import { createShellViewers } from './shell/viewers';
 import { createShellSettings } from './shell/settings';
 import { createShellSessions } from './shell/sessions';
-import { createShellHistory } from './shell/history';
+import { createShellHistory, readContextUsage } from './shell/history';
 import { createShellWorkspaces } from './shell/workspaces';
 import { createShellAutomations } from './shell/automations';
 import { createShellToasts } from './shell/toasts';
@@ -444,9 +444,14 @@ export const useStore = create<StoreState>((set, get, store) => {
             request: 1,
             generation,
           });
-          void api
-            .sessionTurns(currentSession, INITIAL_HISTORY_TURNS + 1, 0)
-            .then((turns) => {
+          // The restored conversation reads its meter snapshot with its
+          // transcript: both belong to the conversation, so a relaunch
+          // paints the last measurement instead of an empty composer.
+          void Promise.all([
+            api.sessionTurns(currentSession, INITIAL_HISTORY_TURNS + 1, 0),
+            readContextUsage(currentSession),
+          ])
+            .then(([turns, usage]) => {
               const page = historyPage(turns, INITIAL_HISTORY_TURNS);
               set((state) => ({
                 conversations: {
@@ -457,6 +462,9 @@ export const useStore = create<StoreState>((set, get, store) => {
                     turnArtifacts: page.turnArtifacts,
                     historySeq: page.historySeq,
                     historyHasMore: page.historyHasMore,
+                    contextUsage:
+                      usage ??
+                      state.conversations[currentSession]?.contextUsage,
                   }),
                 },
               }));

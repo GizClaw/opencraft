@@ -580,11 +580,13 @@ export function ConfigPage() {
   // attempt and the approval prompt.
   const [escalatedRules, setEscalatedRules] = useState<string[]>([]);
   const [escalatedInput, setEscalatedInput] = useState('');
+  // Placeholder until the load lands; it mirrors the shipped defaults so
+  // the card cannot flash the opposite of what it is about to show.
   const [memory, setMemory] = useState<MemorySettings>({
     max_raw_messages: 36,
     preserve_recent: 4,
     max_summary_bytes: 4096,
-    replay_full_history: false,
+    replay_full_history: true,
   });
   const [memorySaving, setMemorySaving] = useState(false);
   const [memorySaved, setMemorySaved] = useState(false);

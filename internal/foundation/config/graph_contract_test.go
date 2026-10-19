@@ -86,7 +86,8 @@ func TestCompactWritesRoutingVarsTheGraphTests(t *testing.T) {
 // assistant graph's world state, llm_usage is the node-level usage slot, and
 // nothing may enter the engine's reserved "__" namespace.
 func TestCompactionBoardVarsAreNamespaced(t *testing.T) {
-	for _, name := range append([]string{BoardVarTailBlock}, CompactionBoardVars...) {
+	for _, name := range append(
+		[]string{BoardVarTailBlock, BoardVarContextUsage}, CompactionBoardVars...) {
 		if strings.HasPrefix(name, "__") {
 			t.Fatalf("board var %q uses the engine's reserved namespace", name)
 		}

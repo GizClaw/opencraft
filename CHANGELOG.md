@@ -41,6 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `skills.settings.extra_roots` have to be deleted where they live. The
   settings page hides the delete entry for those rows — the rest of the
   row menu (pin, archive) stays.
+- Memory settings default to full-history replay (`replay_full_history:
+  true`): the prompt is the whole conversation and the compact node folds
+  only when the measured usage exceeds the serving model's input window,
+  which the router reports per model. The raw window
+  (`max_raw_messages`/`preserve_recent`) is still what a fold leaves
+  behind, but it no longer bounds what a turn sends — a mostly-empty
+  window costs nothing extra because the conversation prefix is one cache
+  hit. A user layer written before the switch existed keeps the new
+  default; set `replay_full_history: false` in `resources.mem.settings` to
+  go back to a per-turn cost bounded by the raw window.
 - The SSRF guard refuses more address classes: 0.0.0.0/8 and
   100.64.0.0/10, multicast, TEST-NET-1/2/3, 192.0.0.0/24, 192.88.99.0/24,
   198.18.0.0/15, 240.0.0.0/4, and the IPv6 documentation and Teredo
@@ -81,9 +91,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rail — and a `:line[:column]` tag is peeled so the click lands on the
   file the tag points into. Everything a code span can also be (a
   command, an identifier, a version tag, `12:30`) stays plain text.
+- The composer meters the context: a ring in its footer reads the prompt's
+  size against the serving model's input window (`12.3k / 200k`), and the
+  popover splits that number into what filled it — system prompt,
+  environment and permissions, AGENTS.md, user memory, folded summary,
+  conversation, the turn's plan/skills block, and the residual the harness
+  cannot itemize (tool schemas, provider framing). The estimate half is
+  written at prepare time (`worldstate/contextusage.go`, board var
+  `world.context.usage`) from the sections the turn is about to send; the
+  turn-end hook pairs it with the provider's own count of that request and
+  stores the result as the conversation's `context_usage` document, so the
+  meter survives a restart and a workspace switch at the same numbers the
+  live turn showed. The two halves ride one hook because they describe one
+  request, and the residual absorbs the difference instead of being spread
+  over estimates that would then read as measurement.
 
 ### Changed
 
+- The memory policy ships with full-history replay on. The folded summary
+  plus raw window is what a turn falls back to after a fold, not the bound
+  on what it sends: the compact node folds when the prompt's measured size
+  crosses the serving model's input window, so a conversation that fits
+  costs one cache hit per turn instead of a truncated view of itself.
+  `replay_full_history: false` in `resources.mem.settings` restores the
+  old bound.
 - The engine's assembly half runs on flowcraft's `craft`. A Host loads a
   `config.View` (`LoadDocument` becomes `LoadView`) and builds one
   `craft.Craft` per Host (`BuildRuntime` becomes `BuildAssembly`): the

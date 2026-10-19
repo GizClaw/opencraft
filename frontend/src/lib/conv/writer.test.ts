@@ -758,3 +758,64 @@ describe('start events with no message', () => {
     expect(texts).toContain('writing the brief');
   });
 });
+
+describe('context snapshot', () => {
+  // The meter's number belongs to the conversation, and turn_end is the
+  // only event that carries it. Two rules matter: a turn that measured a
+  // prompt replaces the snapshot, and a turn that reported nothing (a
+  // failed call, a provider without usage) leaves the previous one alone
+  // instead of blanking a meter the user is watching.
+  it("turn_end records the turn's context snapshot", () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    bindRun('r-1');
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        status: 'completed',
+        context: {
+          measured_tokens: 41000,
+          limit_tokens: 200000,
+          model: 'claude-sonnet-4',
+          categories: [
+            { id: 'instructions', tokens: 6000 },
+            { id: 'conversation', tokens: 35000 },
+          ],
+        },
+      },
+    });
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.contextUsage?.measured_tokens).toBe(41000);
+    expect(conv.contextUsage?.limit_tokens).toBe(200000);
+    expect(conv.contextUsage?.categories).toHaveLength(2);
+  });
+
+  it('turn_end without a snapshot keeps the last measurement', () => {
+    const previous = {
+      measured_tokens: 1200,
+      limit_tokens: 128000,
+      categories: [{ id: 'conversation', tokens: 1200 }],
+    };
+    useStore.setState({
+      conversations: {
+        ...useStore.getState().conversations,
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          contextUsage: previous,
+        },
+      },
+    });
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    bindRun('r-1');
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: { run_id: 'r-1', conversation_id: 's-1', status: 'failed' },
+    });
+
+    expect(useStore.getState().conversations['s-1'].contextUsage).toEqual(
+      previous,
+    );
+  });
+});

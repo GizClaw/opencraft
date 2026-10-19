@@ -50,6 +50,12 @@ const (
 	// every turn must not sit in front of the conversation, because a
 	// provider's prompt cache reuses the longest common prefix.
 	BoardVarTailBlock = "world.tail_block"
+	// BoardVarContextUsage carries the prepare hook's token estimate of
+	// the prompt it just rendered, split by category, for the chat
+	// meter (worldstate/contextusage.go). The turn-end hook pairs it
+	// with the provider's own measurement of the same request; the
+	// graph itself never reads it.
+	BoardVarContextUsage = "world.context.usage"
 )
 
 // CompactionBoardVars lists every board var the compaction node and the Go

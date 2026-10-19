@@ -23,6 +23,7 @@ import (
 	skillusage "github.com/GizClaw/opencraft/internal/capabilities/skills/usage"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
 // Section is one world-state fragment written to the board for the
@@ -190,6 +191,10 @@ func (s *Service) RenderTurn(
 	// The per-turn plan / skills / extras split off into the tail block
 	// further down.
 	var summaries, raw []Section
+	// historyTokens is what the replayed transcript costs, in the same
+	// estimate the compaction node budgets with. Bounded mode replays
+	// its raw window as sections instead, so this stays zero there.
+	historyTokens := 0
 	if s.memory != nil {
 		if rp, ok := s.memory.(interface {
 			ReplayFullHistory() bool
@@ -201,6 +206,7 @@ func (s *Service) RenderTurn(
 				if data, err := json.Marshal(history); err == nil {
 					board.SetVar("world.history", string(data))
 				}
+				historyTokens = summarytext.EstimateTokens(history)
 			}
 		} else {
 			for _, sec := range s.memorySections(ctx, id.ConversationID) {
@@ -253,8 +259,9 @@ func (s *Service) RenderTurn(
 		return err
 	}
 	board.SetVar("world.sections", string(data))
-	if block := renderTailBlock(tail); block != "" {
-		board.SetVar(config.BoardVarTailBlock, block)
+	tailBlock := renderTailBlock(tail)
+	if tailBlock != "" {
+		board.SetVar(config.BoardVarTailBlock, tailBlock)
 	} else {
 		// Clear it, do not just skip the write: the board can be a reused
 		// one (a resume restores the previous run's board and its vars), and
@@ -262,6 +269,11 @@ func (s *Service) RenderTurn(
 		// were current context.
 		board.DeleteVar(config.BoardVarTailBlock)
 	}
+	// What this prompt is made of, for the chat meter. The measured
+	// total is paired with these at turn end (contextusage.go).
+	estimateContextUsage(
+		sections, tailBlock, historyTokens, requestTextTokens(reqText),
+	).writeTo(board)
 	// The previous turn's own measurement of this conversation, for the
 	// graph's compaction node. It rides the board rather than the sections
 	// above: it is a number the harness budgets with, not content the model

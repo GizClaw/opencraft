@@ -370,6 +370,17 @@ func (b *Conversation) waitTurn(
 				Notified: report.Notified,
 			}
 		}
+		// The same board the compaction report came from carries the
+		// prompt snapshot: what prepare estimated the prompt was made
+		// of, paired with the usage report of the call it was sent
+		// for. The window is resolved here (not on the frontend) so a
+		// conversation re-opened from the archive reads the same
+		// numbers as the live one.
+		if usage, ok := worldstate.ContextUsageFromBoard(res.LastBoard); ok {
+			ev := core.NewContextUsageEvent(usage,
+				modelInputWindow(b.core.UserDir, usage.Model))
+			end.Context = &ev
+		}
 	}
 	class := host.ClassifyRunError(resultErr(res), err)
 	end.InterruptCause = class.InterruptCause

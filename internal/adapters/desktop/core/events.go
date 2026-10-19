@@ -9,6 +9,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/inference"
 
+	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
@@ -61,6 +62,13 @@ type TurnEndEvent struct {
 	// Notify lets an automation task suppress the system notification
 	// for this turn (nil = notify, the default for user turns).
 	Notify *bool `json:"notify,omitempty"`
+	// Context is the prompt this turn's last model call carried, split by
+	// what filled it — the meter the composer draws. It rides the
+	// terminal event instead of being fetched on demand because the
+	// numbers come off the turn's own board, which is only reachable
+	// while the run result is still in hand; the persisted copy is what a
+	// re-opened conversation reads (sessions.DocumentContextUsage).
+	Context *ContextUsageEvent `json:"context,omitempty"`
 	// Compaction is what automatic context compaction did during this
 	// turn, when the turn reached the compaction node. A fold rewrites the
 	// conversation prefix, which invalidates the provider's prompt cache:
@@ -110,6 +118,56 @@ type OpenConversationEvent struct {
 	// empty value means the producer could not name it, and the window
 	// stays where it is.
 	Workspace string `json:"workspace,omitempty"`
+}
+
+// ContextCategoryEvent is one slice of the prompt, by category id. The
+// ids are sessions.ContextCategories: the UI keeps its own label table, so
+// an id this build does not know is a row it does not draw.
+type ContextCategoryEvent struct {
+	ID     string `json:"id"`
+	Tokens int    `json:"tokens"`
+}
+
+// ContextUsageEvent mirrors sessions.ContextUsage onto the wire.
+type ContextUsageEvent struct {
+	// MeasuredTokens is the provider's count of the prompt; zero when the
+	// call reported no usage, in which case the categories are estimates.
+	MeasuredTokens int64 `json:"measured_tokens"`
+	// Categories always sums to what the meter shows as used: the
+	// measurement when there is one (the residual category absorbing the
+	// difference), the estimates otherwise.
+	Categories []ContextCategoryEvent `json:"categories"`
+	// Model is the model that served the measured call.
+	Model string `json:"model,omitempty"`
+	// LimitTokens is that model's input window, zero when the deployment
+	// declares none and the catalog cannot say. A meter with no window
+	// shows the absolute count and no percentage.
+	LimitTokens int    `json:"limit_tokens,omitempty"`
+	At          string `json:"at,omitempty"`
+}
+
+// NewContextUsageEvent maps a persisted context snapshot to the wire shape.
+func NewContextUsageEvent(
+	usage ocsessions.ContextUsage, limit int,
+) ContextUsageEvent {
+	ev := ContextUsageEvent{
+		MeasuredTokens: usage.MeasuredTokens,
+		Model:          usage.Model,
+		LimitTokens:    limit,
+	}
+	if !usage.At.IsZero() {
+		ev.At = usage.At.UTC().Format(time.RFC3339)
+	}
+	if len(usage.Categories) > 0 {
+		ev.Categories = make([]ContextCategoryEvent, 0, len(usage.Categories))
+		for _, c := range usage.Categories {
+			ev.Categories = append(ev.Categories, ContextCategoryEvent{
+				ID:     c.ID,
+				Tokens: c.Tokens,
+			})
+		}
+	}
+	return ev
 }
 
 // CompactionEvent mirrors worldstate.CompactionReport onto the wire.
