@@ -260,4 +260,45 @@ describe('markdownPreview', () => {
     expect(preview).not.toBeNull();
     expect(preview!.shown).not.toContain('[guide]:');
   });
+
+  it('closes a CRLF block, so a definition after it travels', () => {
+    // Lines are cut on the newline, so a CRLF closer arrives with its
+    // carriage return. A closer read as "not a closer" left the block open
+    // for the rest of the document: no section boundary under it counted,
+    // and the definition after it stayed behind with the code.
+    const text = [
+      'See [guide] for the rest.',
+      '',
+      '```md',
+      'x'.repeat(3000),
+      '```',
+      '',
+      '[guide]: ./refs/guide.md',
+    ].join('\r\n');
+    const preview = markdownPreview(text, 2048);
+    expect(preview).not.toBeNull();
+    expect(preview!.shown).toContain('[guide]:');
+    expect(fenceCount(preview!.shown) % 2).toBe(0);
+  });
+
+  it('does not read the run of a code line as the closer', () => {
+    // The cut can land right after the ``` of a ```js line inside a block.
+    // That prefix is not a closer - the line goes on - so the block is
+    // still open at the cut and the definition under it is still code.
+    // `limit` sits three characters into the code line below.
+    const text = [
+      '```md',
+      'x'.repeat(2038),
+      '```js',
+      '[guide]: ./refs/guide.md',
+      '',
+      '```',
+    ].join('\n');
+    const preview = markdownPreview(text, 2048);
+    expect(preview).not.toBeNull();
+    // The count of runs is not the oracle here: the block's own code line
+    // starts with one, and the preview shows it as the text it is.
+    expect(preview!.shown).not.toContain('[guide]:');
+    expect(preview!.shown.endsWith('\n```')).toBe(true);
+  });
 });

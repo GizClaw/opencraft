@@ -812,11 +812,11 @@ const MessageRow = memo(function MessageRow({
   busy: boolean;
   streaming: boolean;
   isTurnLast: boolean;
-  // atTail says the stream is writing into this row: it is the transcript's
-  // last row, or - while a run is live - the newest answer, which an
-  // interjection below it does not stop being (see ChatView's
-  // renderTranscriptItem). The reader has not moved past it, which is what
-  // keeps a watched answer unfolded.
+  // atTail says the block is still the reader's position: the transcript's
+  // last row, or the newest answer, which an interjection below it does not
+  // stop being (see ChatView's renderTranscriptItem). It is a position, not
+  // a run's state: the reader has not moved past it, which is what keeps a
+  // watched answer unfolded.
   atTail: boolean;
   msgIndex: number;
   turnIndex: number;
@@ -1081,6 +1081,22 @@ function turnForIndex(
     }
   }
   return best;
+}
+
+// opensTurn says whether a user row opened a turn, as opposed to one the
+// app wrote while a turn was live: an interjection was said inside the run
+// it belongs to (steer), a compaction summary is context prepended to the
+// conversation, and a `kind` row is the app's own note rather than
+// something the reader said. Both readers of "which row opened this turn"
+// use it - the newest turn's opener below, and resumeTarget's "say it
+// again".
+function opensTurn(msg: MessageView): boolean {
+  return (
+    msg.role === 'user' &&
+    !msg.steer &&
+    !msg.kind &&
+    !msg.text.startsWith(COMPACT_SUMMARY_PREFIX)
+  );
 }
 
 // CompactCard renders a compaction summary (a user message marked with
@@ -2180,11 +2196,12 @@ export function ChatView() {
   const draftComposer = useStore((s) => s.draftComposer);
   // resumeTarget finds the user message that opened the newest turn: the
   // words "continue" sends again and "edit & resend" restores into the
-  // composer. Compaction summaries are prepended context and an
-  // interjection was said inside the turn rather than opening it, so
-  // both are skipped. It reads the live refs instead of taking the
-  // message as an argument, which keeps the callbacks stable: the rows
-  // are memoized on them, and the end notice renders from the newest one.
+  // composer. It skips the rows that did not open one - an interjection, a
+  // compaction summary, the app's own note (see opensTurn) - so it never
+  // answers with the app's words as if the reader had said them. It reads
+  // the live refs instead of taking the message as an argument, which keeps
+  // the callbacks stable: the rows are memoized on them, and the end notice
+  // renders from the newest one.
   const resumeTarget = useCallback((): MessageView | undefined => {
     const turns = turnArtifactsRef.current;
     const msgs = messagesRef.current;
@@ -2192,10 +2209,7 @@ export function ChatView() {
     if (!turn) return undefined;
     for (let i = turn.start; i < msgs.length; i += 1) {
       const msg = msgs[i];
-      if (msg?.role !== 'user') continue;
-      if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) continue;
-      if (msg.steer) continue;
-      return msg;
+      if (msg && opensTurn(msg)) return msg;
     }
     return undefined;
   }, []);
@@ -3463,9 +3477,9 @@ export function ChatView() {
   // the last row is not an assistant's), so between the two the newest
   // answer is the previous turn's. It is what the reader is looking at -
   // whole, parsed as markdown, with its actions - and rendering it as a
-  // growing block would flip it to plain text under them. Steer rows,
-  // compaction summaries and the notes the app files itself do not open a
-  // turn (the rule resumeTarget uses, plus kind for the rows nobody said).
+  // growing block would flip it to plain text under them. Rows the app
+  // wrote, an interjection and a compaction summary do not open a turn
+  // (opensTurn, the rule resumeTarget reads too).
   let lastAssistantIdx = -1;
   let liveTurnStart = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -3473,19 +3487,17 @@ export function ChatView() {
     if (lastAssistantIdx < 0 && msg?.role === 'assistant') {
       lastAssistantIdx = i;
     }
-    if (
-      liveTurnStart < 0 &&
-      msg?.role === 'user' &&
-      !msg.steer &&
-      !msg.kind &&
-      !msg.text.startsWith(COMPACT_SUMMARY_PREFIX)
-    ) {
+    if (liveTurnStart < 0 && msg !== undefined && opensTurn(msg)) {
       liveTurnStart = i;
     }
     if (lastAssistantIdx >= 0 && liveTurnStart >= 0) break;
   }
+  // -1 is "no row here opened a turn", which a live run cannot be in (its
+  // row is appended before the turn is submitted): the answer is then read
+  // as one the stream is not writing into - whole and parsed - rather than
+  // as the growing block.
   const rowIsLive = (i: number) =>
-    busy && i === lastAssistantIdx && i >= liveTurnStart;
+    busy && i === lastAssistantIdx && liveTurnStart >= 0 && i >= liveTurnStart;
   const renderTranscriptItem = (item: TranscriptItem) => {
     if (item.kind === 'interact') {
       return (
@@ -3555,9 +3567,12 @@ export function ChatView() {
     const archivedEnd = archivedTurnEndKind(turn?.status);
     const liveEnd = !busy && failedTurn !== undefined && turn === lastTurn;
     const endStatus = archivedEnd ?? (liveEnd ? failedTurn?.status : undefined);
+    // A fork opens the new conversation in this window, so a run still
+    // writing here would be left behind in the one it moved away from: the
+    // actions wait for it to stop. `busy` is this conversation's own run.
     const canFork =
       isAssistantTurnLast &&
-      !assistantStreaming &&
+      !busy &&
       !forking &&
       !endStatus &&
       Boolean(turn?.runID);

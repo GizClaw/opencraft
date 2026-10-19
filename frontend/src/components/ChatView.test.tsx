@@ -1227,17 +1227,26 @@ describe('ChatView transcript windowing', () => {
     // so it keeps its markdown and its actions instead of turning into the
     // plain text a growing block is drawn as.
     const watched = longAnswer(6000, 'Watched');
-    setConversation([
-      { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
-      {
-        id: 'm-a1',
-        role: 'assistant',
-        text: '',
-        items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
-        attachments: [],
-      },
-      { id: 'm-u2', role: 'user', text: 'second', items: [], attachments: [] },
-    ]);
+    setConversation(
+      [
+        { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+        {
+          id: 'm-a1',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+          attachments: [],
+        },
+        {
+          id: 'm-u2',
+          role: 'user',
+          text: 'second',
+          items: [],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     render(<ChatView />);
 
@@ -1253,6 +1262,49 @@ describe('ChatView transcript windowing', () => {
     expect(
       screen.getByRole('button', { name: 'Copy output' }),
     ).toBeInTheDocument();
+    // Fork is the one that moves the window, and the run below is still
+    // writing into this conversation: it stays away until the turn stops.
+    expect(screen.queryByRole('button', { name: 'Fork' })).toBeNull();
+  });
+
+  it('keeps the newest answer whole when the turn below it has no answer', () => {
+    // A turn that ends before its first part - failed, cancelled - leaves
+    // its question as the transcript's last row and no answer under it.
+    // The newest answer is still the reader's position, so the exemption
+    // follows the position and not the run: the block stays whole, and the
+    // fold control arrives with the answer that supersedes it.
+    const watched = longAnswer(6000, 'Watched');
+    setConversation(
+      [
+        { id: 'm-u1', role: 'user', text: 'first', items: [], attachments: [] },
+        {
+          id: 'm-a1',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 'p-1', text: watched, streamed: true }],
+          attachments: [],
+        },
+        {
+          id: 'm-u2',
+          role: 'user',
+          text: 'second',
+          items: [],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    render(<ChatView />);
+
+    expect(
+      screen.getByRole('heading', { name: 'Watched 50' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Show full answer/ }),
+    ).toBeNull();
+    // The actions are back with the reader's position: this is the shape
+    // the case below checks while the next turn is still running.
+    expect(screen.getByRole('button', { name: 'Fork' })).toBeInTheDocument();
   });
 
   it('keeps a watched answer whole while a steer row sits below it', () => {

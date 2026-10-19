@@ -104,7 +104,7 @@ function foldPoint(
     // an opener (the preview keeps code up to the limit) as well as inside
     // a closer (the block ends before it).
     if (start <= limit && limit < after) {
-      fenceAtLimit = fenceAtCut(fence, text.slice(start, limit));
+      fenceAtLimit = fenceAtCut(fence, text.slice(start, limit), limit >= end);
     }
     const body = text.slice(start, end);
     const marker = fenceMarker(body);
@@ -226,11 +226,18 @@ function isDefinition(text: string, start: number, end: number): boolean {
 // shows has been read as the opener or the closer it is. A run the cut
 // went through is not a fence yet - the preview would end mid-run, which
 // remark reads as prose.
+//
+// Only a line the preview shows whole can close a block: a prefix that
+// looks like a closer may be the start of a code line (```js), and the
+// rest of that block is still code. Reading the prefix as the closer left
+// the scan outside a block that never ended, so a definition under it was
+// hoisted into the preview.
 function fenceAtCut(
   fence: FenceMarker | null,
   shown: string,
+  complete: boolean,
 ): FenceMarker | null {
-  if (fence) return fenceCloses(shown, fence) ? null : fence;
+  if (fence) return complete && fenceCloses(shown, fence) ? null : fence;
   return fenceMarker(shown);
 }
 
@@ -239,8 +246,13 @@ function fenceAtCut(
 // after it (CommonMark). A code line that happens to start with ```js is
 // therefore still code; reading it as the closer ended the block early and
 // handed everything under it to the fold as prose.
+//
+// The carriage return belongs to a CRLF line's ending here: lines are cut on
+// the newline, so a closer in a CRLF block arrives as "```\r". Without it
+// the block never closed, no section boundary under it counted, and the
+// definitions after it stayed behind with the code.
 function fenceCloses(line: string, fence: FenceMarker): boolean {
-  const match = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+  const match = /^ {0,3}(`{3,}|~{3,})[ \t\r]*$/.exec(line);
   if (!match) return false;
   return match[1][0] === fence.char && match[1].length >= fence.length;
 }
