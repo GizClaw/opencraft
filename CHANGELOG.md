@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another conversation was on screen. An answer a newer one has pushed above
   is history, and history folds. The `streamed` marker that used to record
   "this window watched it grow" - and the paging pass that carried it across
-  the archive handoff - went with the old rule.
+  the archive handoff - went with the old rule. (#251)
 
 ### Fixed
 
