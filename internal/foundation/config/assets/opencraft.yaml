@@ -51,15 +51,18 @@ resources:
       max_raw_messages: 36
       preserve_recent: 4
       max_summary_bytes: 4096
-      # Experimental: replay the full conversation history instead of
-      # injecting the folded summary + raw window. Folding is then owned
+      # Replay the full conversation history instead of injecting the
+      # folded summary + raw window (the default). Folding is then owned
       # by the graph compact node, which folds only when estimated usage
-      # exceeds the model's input window. The router reports the window
+      # exceeds the model's input window: a window that is mostly empty
+      # costs nothing extra (the prefix is one cache hit), and a window
+      # that fills up gets folded anyway. The router reports the window
       # per model; when it cannot (azure / manually-entered models), the
       # compact node falls back to the graph's max_input_tokens setting,
       # then to a conservative 128k budget, so folding is never silently
-      # disabled. Keep false for bounded per-turn cost.
-      replay_full_history: false
+      # disabled. Turn it off when per-turn cost must be bounded by the
+      # raw window instead of by the model.
+      replay_full_history: true
   # Sandbox exec policy: static allowed_commands plus the workspace
   # approvals file merge into one allowlist. The sandbox runner, the
   # worldstate permissions section, and request_permissions all depend

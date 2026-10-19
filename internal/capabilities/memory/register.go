@@ -66,10 +66,23 @@ func (Factory) Spec() resource.Spec {
 }
 
 type policySettings struct {
-	MaxRawMessages    int  `json:"max_raw_messages,omitempty"`
-	PreserveRecent    int  `json:"preserve_recent,omitempty"`
-	MaxSummaryBytes   int  `json:"max_summary_bytes,omitempty"`
-	ReplayFullHistory bool `json:"replay_full_history,omitempty"`
+	MaxRawMessages  int `json:"max_raw_messages,omitempty"`
+	PreserveRecent  int `json:"preserve_recent,omitempty"`
+	MaxSummaryBytes int `json:"max_summary_bytes,omitempty"`
+	// ReplayFullHistory is a pointer so a settings document that omits
+	// the switch gets the shipped default instead of Go's zero value.
+	ReplayFullHistory *bool `json:"replay_full_history,omitempty"`
+}
+
+// replayFullHistory is the policy's switch, on unless a deployment says
+// otherwise. The default lives here and not only in the embedded deploy
+// document: a custom deployment, a test fixture and a user layer that
+// predates the switch all have to land on the same behaviour.
+func (p policySettings) replayFullHistory() bool {
+	if p.ReplayFullHistory == nil {
+		return true
+	}
+	return *p.ReplayFullHistory
 }
 
 // New builds the summary Assembly over the SQLite adapter.
@@ -94,7 +107,7 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 			PreserveRecent:  policy.PreserveRecent,
 			MaxSummaryBytes: policy.MaxSummaryBytes,
 		}),
-		summary.WithReplayFullHistory(policy.ReplayFullHistory),
+		summary.WithReplayFullHistory(policy.replayFullHistory()),
 	}
 	if dep, ok := in.Dep("router"); ok {
 		if router, ok := dep.(*route.Router); ok {

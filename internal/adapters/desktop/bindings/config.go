@@ -273,6 +273,36 @@ func (b *Config) ModelOptions() ([]ModelOption, error) {
 	return out, nil
 }
 
+// modelInputWindow resolves the input window of a served model by name,
+// zero when the deployment declares none for it. The meter needs the
+// window of the model that actually served a call, which is not the model
+// the conversation is configured to prefer: a router fallback serves a
+// turn under its own name, and a limit read off the preferred model would
+// be the wrong denominator. A load failure or an unknown name is "no
+// window", never an error: the meter still shows the absolute count.
+func modelInputWindow(userDir, model string) int {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return 0
+	}
+	cfg, err := config.LoadInference(userDir)
+	if err != nil {
+		return 0
+	}
+	for _, in := range cfg.Instances {
+		if !in.Enabled {
+			continue
+		}
+		for _, m := range in.Models {
+			if strings.TrimSpace(m.Name) != model || m.Limits.MaxInputTokens == nil {
+				continue
+			}
+			return *m.Limits.MaxInputTokens
+		}
+	}
+	return 0
+}
+
 // instanceLabelName names one instance for the model picker.
 func instanceLabelName(in config.Instance) string {
 	if in.Name != "" {

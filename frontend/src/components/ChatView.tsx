@@ -98,6 +98,7 @@ import {
 } from './MarkdownComposer';
 import { Markdown } from './Markdown';
 import { ActivityCard } from './ActivityCard';
+import { ContextMeter } from './ContextMeter';
 import { ToolCard, toolActivityDetail } from './ToolCard';
 import { StreamItemView } from './StreamItemView';
 import { latestPlan, planNeedsRefresh } from '../lib/plan';
@@ -1954,6 +1955,7 @@ export function ChatView() {
   const openFiles = useStore((s) => s.openFiles);
   const closeFiles = useStore((s) => s.closeFiles);
   const messages = conv?.messages ?? [];
+  const contextUsage = conv?.contextUsage;
   const hasMoreHistory = conv?.historyHasMore ?? false;
   const loadEarlierHistory = useStore((s) => s.loadEarlierHistory);
   const turnState = conversationState?.turn;
@@ -4008,7 +4010,7 @@ export function ChatView() {
                   {t('chat.busyKeyHint')}
                 </div>
               )}
-              <div className="mt-3 flex items-center justify-between px-3 pb-2.5">
+              <div className="mt-3 flex items-center justify-between gap-2 px-3 pb-2.5">
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => void pickAttachment()}
@@ -4194,55 +4196,58 @@ export function ChatView() {
                       )}
                     </div>
                   )}
-                  {switchingWs ? (
-                    <IconButton
-                      label={t('chat.send')}
-                      tone="primary"
-                      size="lg"
-                      disabled
-                      className="opacity-60"
-                    >
-                      <Loader2 size={ICON.sm} className="animate-spin" />
-                    </IconButton>
-                  ) : busy && composerEmpty && !bargeWaiting ? (
-                    <IconButton
-                      label={t('chat.stop')}
-                      shortcut="turn.stop"
-                      tone="danger"
-                      size="lg"
-                      onClick={() => void cancelRun()}
-                    >
-                      <Square size={ICON.sm} fill="currentColor" />
-                    </IconButton>
-                  ) : (
-                    <div className="flex items-center gap-1.5">
-                      {busy && !bargeWaiting && (
-                        // A draft keeps the primary action on send/steer
-                        // (matching Enter), so Stop sits next to it:
-                        // interrupting a reply must not require emptying
-                        // the composer first. bargeWaiting owns its Stop
-                        // in the staged banner.
-                        <IconButton
-                          label={t('chat.stop')}
-                          shortcut="turn.stop"
-                          tone="danger"
-                          size="md"
-                          onClick={() => void cancelRun()}
-                        >
-                          <Square size={ICON.xs} fill="currentColor" />
-                        </IconButton>
-                      )}
+                  <div className="flex items-center gap-1.5">
+                    {contextUsage && <ContextMeter usage={contextUsage} />}
+                    {switchingWs ? (
                       <IconButton
                         label={t('chat.send')}
                         tone="primary"
                         size="lg"
-                        onClick={() => void submitDraft()}
-                        disabled={composerEmpty && (!busy || bargeWaiting)}
+                        disabled
+                        className="opacity-60"
                       >
-                        <ArrowUp size={ICON.md} />
+                        <Loader2 size={ICON.sm} className="animate-spin" />
                       </IconButton>
-                    </div>
-                  )}
+                    ) : busy && composerEmpty && !bargeWaiting ? (
+                      <IconButton
+                        label={t('chat.stop')}
+                        shortcut="turn.stop"
+                        tone="danger"
+                        size="lg"
+                        onClick={() => void cancelRun()}
+                      >
+                        <Square size={ICON.sm} fill="currentColor" />
+                      </IconButton>
+                    ) : (
+                      <>
+                        {busy && !bargeWaiting && (
+                          // A draft keeps the primary action on send/steer
+                          // (matching Enter), so Stop sits next to it:
+                          // interrupting a reply must not require emptying
+                          // the composer first. bargeWaiting owns its Stop
+                          // in the staged banner.
+                          <IconButton
+                            label={t('chat.stop')}
+                            shortcut="turn.stop"
+                            tone="danger"
+                            size="md"
+                            onClick={() => void cancelRun()}
+                          >
+                            <Square size={ICON.xs} fill="currentColor" />
+                          </IconButton>
+                        )}
+                        <IconButton
+                          label={t('chat.send')}
+                          tone="primary"
+                          size="lg"
+                          onClick={() => void submitDraft()}
+                          disabled={composerEmpty && (!busy || bargeWaiting)}
+                        >
+                          <ArrowUp size={ICON.md} />
+                        </IconButton>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

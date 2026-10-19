@@ -138,3 +138,49 @@ func TestWriteMemoryKeepsMergedMemResourceValid(t *testing.T) {
 		t.Fatalf("mem settings = %+v, want max_raw_messages 20", settings)
 	}
 }
+
+// TestLoadMemoryReplayFullHistoryDefaultsOn pins the shipped default and
+// the overlay rule that makes it meaningful: only a layer that spells the
+// switch out changes it. A user layer holding just max_raw_messages, or
+// an embedded document without the key, must not quietly decode a zero
+// value over the default.
+func TestLoadMemoryReplayFullHistoryDefaultsOn(t *testing.T) {
+	dir := t.TempDir()
+	got, err := LoadMemory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.ReplayFullHistory {
+		t.Fatal("default memory settings have full-history replay off")
+	}
+
+	if err := os.WriteFile(
+		filepath.Join(dir, "opencraft.yaml"),
+		[]byte("version: v1\nresources:\n  mem:\n    settings:\n      max_raw_messages: 12\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	got, err = LoadMemory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxRawMessages != 12 || !got.ReplayFullHistory {
+		t.Fatalf("layer without the switch = %+v, want max_raw_messages 12 and replay on", got)
+	}
+
+	if err := os.WriteFile(
+		filepath.Join(dir, "opencraft.yaml"),
+		[]byte("version: v1\nresources:\n  mem:\n    settings:\n      replay_full_history: false\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	got, err = LoadMemory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReplayFullHistory {
+		t.Fatalf("an explicit false did not win: %+v", got)
+	}
+}
