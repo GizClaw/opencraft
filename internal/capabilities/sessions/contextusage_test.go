@@ -200,7 +200,7 @@ func TestReadContextUsageRepairsAnOvershootingDocument(t *testing.T) {
 	}
 	// The shares survive the shrink: conversation was 99.6% of the
 	// estimates and stays the bigger slice.
-	if conv, instr := got.Token(ContextCategoryConversation), got.Token(ContextCategoryInstructions); !(conv > instr && instr > 0) {
+	if conv, instr := got.Token(ContextCategoryConversation), got.Token(ContextCategoryInstructions); conv <= instr || instr <= 0 {
 		t.Fatalf("conversation = %d, instructions = %d: shares lost (%+v)", conv, instr, got.Categories)
 	}
 }
