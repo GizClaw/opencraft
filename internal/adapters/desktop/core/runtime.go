@@ -123,7 +123,10 @@ func (r *Runtime) HostFor(workDir string) *host.Host {
 //
 // A Runtime without a manager is the bare shape Reload and Close tolerate
 // (&Runtime{}): it has no pool to ask, and answering nil keeps the caller
-// (Core.BusyWorkspaces, which falls back here) from panicking.
+// (Core.BusyWorkspaces, which falls back here) from panicking. The answer
+// is "unknown", not "nobody is busy" - a Runtime that lost its manager is
+// still a bug in every other method (HostFor dereferences it), so this one
+// only has to stay total.
 func (r *Runtime) BusyWorkspaces() []string {
 	if r.manager == nil {
 		return nil

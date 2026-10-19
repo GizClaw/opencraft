@@ -33,10 +33,13 @@ export function createShellWorkspaces(
   // saying whose it is: a draft typed inside a session is emptied by the
   // switch - the reset below lands on no-session and ChatView clears the
   // composer on the way in - and only a draft of a conversation that has
-  // not started survives the reset. The focus is still the one of the
-  // workspace being left, so it is what separates the two; asking after
-  // the reset committed would make the answer depend on whether the ready
-  // event beat the binding's return.
+  // not started survives the reset. The focus is what separates the two,
+  // and it has to be read *before* the switch is asked for: the backend
+  // announces the switch from inside the binding (Workspace.Open emits
+  // "ready" before it returns) and that announcement resets the focus
+  // synchronously, so a read after the await answers for the workspace
+  // being moved to - and a session's draft skips the boundary whenever the
+  // event won that race.
   function keepForComposer(): boolean {
     return hasUnsentDraft() && stateRoot.focusSnapshot.value === 'no-session';
   }
@@ -140,6 +143,9 @@ export function createShellWorkspaces(
         const active = await api.workspace().catch(() => '');
         if (!active || sameWorkspacePath(active, path)) return;
       }
+      // The draft and the focus it is published under, as they stand
+      // before the switch: see keepForComposer.
+      const keepPage = keepForComposer();
       try {
         await api.openWorkspace(path);
         // The runtime rebuild emits "ready"; the ready handler
@@ -178,12 +184,14 @@ export function createShellWorkspaces(
         // (WORKSPACE_RESET puts the focus back to no-session, ChatView
         // empties the composer on the way in), and the flag learns about
         // it a commit later - which is why the focus is read beside it
-        // rather than waiting for the clearing to land. The one thing a
-        // switch can still drop is a settings edit that has not reached
-        // disk: SettingsGeneral debounces its slider and flushes on
-        // unmount, and this navigation may replace the page first.
-        // Neither half is retried here - the next switch asks again.
-        if (!keepForComposer()) {
+        // rather than waiting for the clearing to land, and why both are
+        // read before the switch is asked for (see keepForComposer). The
+        // one thing a switch can still drop is a settings edit that has
+        // not reached disk: SettingsGeneral debounces its slider and
+        // flushes on unmount, and this navigation may replace the page
+        // first. Neither half is retried here - the next switch asks
+        // again.
+        if (!keepPage) {
           void api
             .reloadWindow()
             .catch((err) => reportFrontendError('reload-window', err));

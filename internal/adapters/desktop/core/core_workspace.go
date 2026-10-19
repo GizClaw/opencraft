@@ -58,12 +58,14 @@ func (c *Core) ActiveHost() *host.Host {
 //
 // A nil field means "ask the pool", not "nobody is busy", so a Core built
 // without NewCoreWithPaths answers from the runtime it carries instead of
-// returning a hardcoded empty list. Only a Core with no runtime at all
-// answers nil, and that answer is fail-open by construction: the git
-// discard guard reads an empty list as "no run anywhere in this
-// repository" and lets the checkout through. Nothing reaches it today -
-// that guard calls ActiveHost first, which dereferences the same runtime -
-// but a caller added later has to know which of the two nils it got.
+// returning a hardcoded empty list. The nil answer is left for a Core with
+// no runtime, and for one whose runtime has no pool yet: both are fail-open
+// by construction, because the git discard guard reads an empty list as "no
+// run anywhere in this repository" and lets the checkout through. Nothing
+// reaches either today - that guard calls ActiveHost first, which
+// dereferences the same runtime - but a caller added later has to know
+// which of the two it got, since the signature cannot tell "unknown" from
+// "nobody is busy".
 func (c *Core) BusyWorkspaces() []string {
 	if c.busyWorkspaces != nil {
 		return c.busyWorkspaces()

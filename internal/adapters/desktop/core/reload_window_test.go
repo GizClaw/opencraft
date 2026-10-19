@@ -79,12 +79,15 @@ func TestReloadWindowOnBareCore(t *testing.T) {
 }
 
 // TestNewCoreWiresTheMemoryBoundary pins the two assignments in
-// NewCoreWithPaths that the cases above replace with doubles. Neither is
-// load-bearing for behaviour now - a nil busyWorkspaces falls back to the
-// runtime's pool, and a nil reloadWindow gives the same no-window answer
-// the doubles above give - so this is a tripwire on the spelling:
-// deleting either line closes off the substitution the cases above depend
-// on, and the boundary they check would silently become the fallback's.
+// NewCoreWithPaths that a Core built without the constructor would not
+// have. The cases above replace both fields with doubles, so they say
+// nothing about the wiring; production has no other Core, and the two
+// lines are what make the boundary real - a stub that answered nil would
+// leave the busy gate (reload_window.go) reading "nobody is busy" under a
+// live run, and the wiring test would still be green. That is why the
+// answer has to come from a real pool here rather than from a non-nil
+// field: the pool's empty answer is a non-nil slice, the hardcoded one is
+// nil.
 func TestNewCoreWiresTheMemoryBoundary(t *testing.T) {
 	c := NewCore(t.TempDir(), t.TempDir(), t.TempDir())
 	if c.busyWorkspaces == nil {
@@ -93,14 +96,19 @@ func TestNewCoreWiresTheMemoryBoundary(t *testing.T) {
 	if c.reloadWindow == nil {
 		t.Fatal("reloadWindow is not wired to Shell.reloadMain")
 	}
+	if busy := c.BusyWorkspaces(); busy == nil {
+		t.Fatal("the wired pool answered nil, want its empty answer")
+	}
 }
 
 // TestBusyWorkspacesFallsBackToTheRuntime is the other half of the same
-// boundary: a Core that never went through the constructor (the literals
-// the stream tests build) answers from the runtime it carries instead of
-// nil, which the git discard guard would read as "no run anywhere". The
-// pool answers an empty but non-nil slice, so that is what tells the
-// fallback from the bare Core's fail-open nil (TestReloadWindowOnBareCore).
+// boundary: a Core that never went through the constructor answers from
+// the runtime it carries instead of nil, which the git discard guard would
+// read as "no run anywhere". No Core in the tree is built that way today
+// (the literals in streams_test build &Core{}, which has no runtime at all
+// and takes the fail-open nil), so this pins the branch a literal carrying
+// a runtime would take. The pool answers an empty but non-nil slice, which
+// is what tells the fallback from that nil.
 func TestBusyWorkspacesFallsBackToTheRuntime(t *testing.T) {
 	c := &Core{Runtime: NewRuntime(t.TempDir(), t.TempDir(), "")}
 	if c.busyWorkspaces != nil {

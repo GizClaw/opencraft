@@ -347,6 +347,43 @@ describe('workspace switch session restore', () => {
     expect(apiMock.reloadWindow).toHaveBeenCalledTimes(1);
   });
 
+  it('reloads when the switch is announced before the binding returns', async () => {
+    // The backend emits "ready" from inside Workspace.Open, and that
+    // event's handler resets the focus synchronously - before the call
+    // resolves. Reading the draft's owner after the await would see the
+    // workspace being moved to and keep the page for a session's draft the
+    // switch is already clearing, so the two halves are read up front.
+    apiMock.openWorkspace.mockImplementation(async () => {
+      useStore.getState().handleEvent({
+        type: 'ready',
+        data: {
+          needed: false,
+          default_model: 'm',
+          default_reasoning: true,
+          work_dir: '/tmp/b',
+          user_dir: '/tmp/u',
+          version: 'test',
+          agents: 0,
+        },
+      });
+    });
+    // The restore the event starts is held open: until it answers, the
+    // focus is still the reset state, which is the window a late read
+    // would answer from.
+    apiMock.currentSession.mockReturnValue(new Promise(() => {}));
+    await useStore.getState().newChat();
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    setUnsentDraft(true);
+    try {
+      await useStore.getState().openWorkspace('/tmp/b');
+    } finally {
+      setUnsentDraft(false);
+    }
+
+    expect(stateRoot.focusSnapshot.value).toBe('no-session');
+    expect(apiMock.reloadWindow).toHaveBeenCalledTimes(1);
+  });
+
   it('a switch a flow keeps working through does not reload', async () => {
     // openSessionInWorkspace and sendFirstMessage switch the backend and
     // then keep going through it (resume the session, send the first
