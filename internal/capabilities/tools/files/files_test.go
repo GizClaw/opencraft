@@ -938,3 +938,28 @@ func TestReadFileWindowFitsEncodedBudget(t *testing.T) {
 		offset = got.NextOffset
 	}
 }
+
+// TestJoinLineRangeSpendsTheBudgetOnTheEncodedString: the newline
+// joining two lines is one byte in the file and two once encoded, so a
+// window of short lines that charges it as one keeps a quarter more than
+// the budget allows. On two-character lines that is the difference
+// between a window under the truncate cap and one the policy cuts in
+// half — the case the encoded budget exists to prevent.
+func TestJoinLineRangeSpendsTheBudgetOnTheEncodedString(t *testing.T) {
+	const (
+		budget = 200
+		lines  = 500
+	)
+	var b strings.Builder
+	for i := 0; i < lines; i++ {
+		b.WriteString("ab\n")
+	}
+	out, reached := joinLineRange([]byte(b.String()), 0, lines, budget)
+	if reached >= lines {
+		t.Fatalf("a %d-byte budget held all %d lines", budget, reached)
+	}
+	if got := jsonStringLen([]byte(out)); got > budget {
+		t.Fatalf("window of %d lines encodes to %d bytes, want at most %d",
+			reached, got, budget)
+	}
+}

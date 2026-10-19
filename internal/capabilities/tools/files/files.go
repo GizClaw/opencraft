@@ -284,8 +284,12 @@ func joinLineRange(data []byte, start, end, budget int) (string, int) {
 		if line >= start {
 			cost := jsonStringLen(data[idx:lineEnd])
 			if b.Len() > 0 {
-				// The '\n' that joins this line to the previous one.
-				cost++
+				// The '\n' that joins this line to the previous
+				// one: one byte in the file, two once encoded.
+				// Charging it as one kept a quarter more than the
+				// budget on a file of short lines, which on
+				// two-character lines is past the truncate cap.
+				cost += 2
 			}
 			if b.Len() > 0 && encoded+cost > budget {
 				break
