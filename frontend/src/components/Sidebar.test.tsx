@@ -157,6 +157,7 @@ describe('Sidebar workspace history', () => {
       workspaces: [workspaceA, workspaceB],
       conversations: {},
       viewers: {},
+      turnAttention: {},
       configured: true,
     });
   });
@@ -282,6 +283,50 @@ describe('Sidebar workspace history', () => {
         .getByRole('button', { name: 'waits on you' })
         .querySelector('svg.animate-spin'),
     ).not.toBeNull();
+  });
+
+  it('marks the row of a conversation whose last turn failed', () => {
+    switchWorkspace(workspaceB.path, [meta('s-bad', 'broke on me')]);
+    useStore.setState({ turnAttention: { 's-bad': 'r-bad' } });
+    render(<Sidebar isMac={false} />);
+
+    const rowButton = screen.getByRole('button', { name: 'broke on me' });
+    expect(rowButton.querySelector('svg.animate-spin')).toBeNull();
+    expect(rowButton.querySelector('[data-tip="Turn failed"]')).not.toBeNull();
+  });
+
+  it('shows a new run instead of the mark its predecessor left', () => {
+    // The mark is about the last turn that *ended*. While the next one
+    // runs, the row's job is to say the work is happening.
+    switchWorkspace(workspaceB.path, [meta('s-1', 'retrying')]);
+    startRuns(workspaceB.path, ['s-1']);
+    useStore.setState({ turnAttention: { 's-1': 'r-bad' } });
+    render(<Sidebar isMac={false} />);
+
+    const rowButton = screen.getByRole('button', { name: 'retrying' });
+    expect(rowButton.querySelector('svg.animate-spin')).not.toBeNull();
+    expect(rowButton.querySelector('[data-tip="Turn failed"]')).toBeNull();
+  });
+
+  it('folds a failed row like any other, and draws it once unfolded', async () => {
+    // D2: a failure does not push its row to the top of the list or make
+    // it survive the fold. The failure marks a row; it does not reorder
+    // the workspace.
+    const rows = [1, 2, 3, 4, 5, 6].map((n) => meta(`s-${n}`, `session ${n}`));
+    apiMock.listSessionsInWorkspace.mockResolvedValue(rows);
+    useStore.setState({ turnAttention: { 's-6': 'r-6' } });
+    render(<Sidebar isMac={false} />);
+
+    await screen.findByTestId('more-sessions');
+    // session 6 is the oldest, so it sits behind "More sessions" with
+    // session 5: the failure did not buy it a place in the preview.
+    expect(screen.getByText('session 4')).toBeInTheDocument();
+    expect(screen.queryByText('session 5')).not.toBeInTheDocument();
+    expect(screen.queryByText('session 6')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('more-sessions'));
+    const rowButton = await screen.findByRole('button', { name: 'session 6' });
+    expect(rowButton.querySelector('[data-tip="Turn failed"]')).not.toBeNull();
   });
 
   it('numbers the visible rows the session slots name', () => {

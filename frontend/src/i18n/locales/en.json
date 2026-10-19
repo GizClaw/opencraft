@@ -21,6 +21,7 @@
     "justNow": "just now",
     "running": "Running",
     "waiting": "Waiting for you",
+    "turnFailed": "Turn failed",
     "noSessions": "No sessions yet",
     "hoverShortcut": "Shortcut",
     "hoverTokens": "Tokens used",

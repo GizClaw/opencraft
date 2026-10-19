@@ -35,6 +35,21 @@ describe('resume, delete and new chat', () => {
     expect(apiMock.resumeSession).not.toHaveBeenCalled();
   });
 
+  it('opening the row clears the mark its failed turn left', async () => {
+    // Clicking the row is the reader answering it. Both branches clear:
+    // the early return for the conversation already on screen is still a
+    // click on the row that was asking.
+    useStore.setState({ turnAttention: { 's-1': 'r-1' } });
+
+    await useStore.getState().resume('s-1');
+    expect(useStore.getState().turnAttention).toEqual({});
+
+    // And another row's mark is not collateral.
+    useStore.setState({ turnAttention: { 's-2': 'r-2' } });
+    await useStore.getState().resume('s-1');
+    expect(useStore.getState().turnAttention).toEqual({ 's-2': 'r-2' });
+  });
+
   it('resume refuses an id this process already deleted', async () => {
     stateRoot.registry.markDeleted('s-2');
 
@@ -128,6 +143,22 @@ describe('resume, delete and new chat', () => {
     expect(useStore.getState().toasts.at(-1)?.text).toBe(
       i18n.t('chat.sessionDeleted'),
     );
+  });
+
+  it('a delete forgets the mark too, since the row never comes back', async () => {
+    apiMock.deleteSession.mockResolvedValue({
+      conversation_id: 's-next',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    useStore.setState({ turnAttention: { 's-1': 'r-1', 's-2': 'r-2' } });
+
+    await useStore.getState().deleteSession('s-1');
+
+    // Session ids are never reused (deleted_conversations), so a mark
+    // left behind would only ever be a leak.
+    expect(useStore.getState().turnAttention).toEqual({ 's-2': 'r-2' });
   });
 
   it('takes the deleted conversation\u2019s run mapping and viewer with it', async () => {

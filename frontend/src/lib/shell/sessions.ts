@@ -54,6 +54,18 @@ export function createShellSessions(
   const { switchWorkspace } = ws;
   const { waitForWorkspaceRestore } = ws;
 
+  // clearTurnAttention drops the sidebar's failure marker for one
+  // conversation: opening the row is the reader answering it, and a
+  // delete takes the row away for good.
+  const clearTurnAttention = (id: string) => {
+    if (!get().turnAttention[id]) return;
+    set((state) => {
+      const next = { ...state.turnAttention };
+      delete next[id];
+      return { turnAttention: next };
+    });
+  };
+
   return {
     newEmptyTab: () => {
       const id = activeConversationID();
@@ -114,6 +126,7 @@ export function createShellSessions(
 
     resume: (id) =>
       measureInteraction('resume', async () => {
+        clearTurnAttention(id);
         if (activeConversationID() === id) {
           // Returning to the already-active conversation means closing
           // whatever overlay/tool page currently covers the chat.
@@ -322,6 +335,7 @@ export function createShellSessions(
           return { conversations, viewers };
         });
         clearPendingIndex(id);
+        clearTurnAttention(id);
         // A tail sync waiting on this conversation holds its id until
         // that conversation's next turn_end; there will not be one.
         paging.forgetDeferredTailSync(id);

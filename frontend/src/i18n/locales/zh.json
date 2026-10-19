@@ -21,6 +21,7 @@
     "justNow": "刚刚",
     "running": "运行中",
     "waiting": "等待你的决定",
+    "turnFailed": "运行失败",
     "noSessions": "暂无会话",
     "hoverShortcut": "快捷键",
     "hoverTokens": "消耗 tokens",

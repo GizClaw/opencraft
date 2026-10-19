@@ -2,6 +2,7 @@ import {
   Bot,
   ChevronDown,
   CircleHelp,
+  CircleX,
   Clock,
   Download,
   FolderClosed,
@@ -108,6 +109,8 @@ interface SessionRow {
   running: boolean;
   /** waiting: the run is blocked on a prompt the reader has to answer. */
   waiting?: boolean;
+  /** failed: the last turn that ended needs the reader (see turnNeedsAttention). */
+  failed?: boolean;
   tokens?: string;
   time?: string;
   turns?: number;
@@ -190,6 +193,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const closeTools = useStore((s) => s.closeTools);
   const deleteSession = useStore((s) => s.deleteSession);
   const pendingPromptConvs = useStore((s) => s.pendingPromptConvs);
+  const turnAttention = useStore((s) => s.turnAttention);
   const flash = useStore((s) => s.flash);
   const loadSessions = useStore((s) => s.loadSessions);
   const loadWorkspaces = useStore((s) => s.loadWorkspaces);
@@ -562,6 +566,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             : liveTitle || t('sidebar.newSession'),
         running: true,
         waiting: waitingIDs.has(id),
+        failed: Boolean(turnAttention[id]),
         tokens: meta ? fmtTokens(meta.total_tokens) : '',
         time: meta ? fmtTime(meta.updated_at) : '',
         turns: meta?.turns,
@@ -576,6 +581,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         title: s.title,
         running: false,
         waiting: waitingIDs.has(s.id),
+        failed: Boolean(turnAttention[s.id]),
         tokens: fmtTokens(s.total_tokens),
         time: fmtTime(s.updated_at),
         turns: s.turns,
@@ -637,6 +643,23 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     slot?: number,
   ) => {
     const isActive = row.id === currentSession;
+    // One icon per row, saying the most pressing thing it has to say: a
+    // prompt outranks work in progress, because the run cannot go on
+    // without the reader; work in progress outranks the mark a previous
+    // turn left, because that failure is the thing being retried.
+    const mark = row.waiting
+      ? 'waiting'
+      : row.running
+        ? 'running'
+        : row.failed
+          ? 'failed'
+          : undefined;
+    const markTip =
+      mark === 'waiting'
+        ? t('sidebar.waiting')
+        : mark === 'failed'
+          ? t('sidebar.turnFailed')
+          : undefined;
     return (
       <div key={row.id}>
         <div
@@ -698,11 +721,11 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                     {formatCombo(`Mod+${slot}`, isMac)}
                   </kbd>
                 )}
-                {(row.waiting || row.running) && (
+                {mark && (
                   <span
-                    // The spinner is ambience; a prompt waiting on the
-                    // reader carries copy and stays announced.
-                    aria-hidden={row.waiting ? undefined : 'true'}
+                    // The spinner is ambience; the two the reader may
+                    // have to act on carry copy and stay announced.
+                    aria-hidden={markTip ? undefined : 'true'}
                     className={`shrink-0 transition-opacity ${
                       actionsAllowed && menuOpen?.id === row.id
                         ? 'opacity-0'
@@ -710,18 +733,24 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                           ? 'group-hover:opacity-0'
                           : ''
                     }`}
-                    data-tip={row.waiting ? t('sidebar.waiting') : undefined}
+                    data-tip={markTip}
                   >
-                    {row.waiting ? (
+                    {mark === 'waiting' ? (
                       <CircleHelp
                         size={ICON.sm}
                         className="text-warn"
-                        aria-label={t('sidebar.waiting')}
+                        aria-label={markTip}
                       />
-                    ) : (
+                    ) : mark === 'running' ? (
                       <Loader2
                         size={ICON.sm}
                         className="animate-spin text-accent"
+                      />
+                    ) : (
+                      <CircleX
+                        size={ICON.sm}
+                        className="text-err"
+                        aria-label={markTip}
                       />
                     )}
                   </span>

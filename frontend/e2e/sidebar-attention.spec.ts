@@ -2,9 +2,10 @@ import { expect, test, type Page } from '@playwright/test';
 import { mockBackend } from './mock/backend';
 import { typeComposerMessage } from './helpers';
 
-// Whether a waiting row actually pulses is a stylesheet question, and
-// jsdom never resolves one: vitest asserts the class and the icon, and
-// the animation is checked here, against the built app.
+// The sidebar's two attention states are asserted in vitest at the level
+// a unit test can see: a class on the row, an icon in it. Whether that
+// class actually pulses the row is a stylesheet question, and jsdom never
+// resolves one - so the animation is checked here, against the built app.
 
 function emit(page: Page, data: unknown) {
   return page.evaluate(
@@ -85,4 +86,95 @@ test('a prompt waiting on the reader pulses its row until it is answered', async
   ).toHaveCount(0);
   await expect(row(page, 's-1').locator('svg.animate-spin')).toBeVisible();
   expect(await animationName(page, 's-1')).toBe('none');
+});
+
+test('a turn that ends on its own leaves a mark the next ending clears', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    currentSession: 's-1',
+    startTurn: { run_id: 'r-1', context_id: 's-1' },
+    listSessions: [meta('s-1', 'the session')],
+  });
+  await page.goto('/');
+  const mark = row(page, 's-1').locator('[data-tip="Turn failed"]');
+
+  await typeComposerMessage(page, 'do the thing');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await emit(page, {
+    type: 'stream',
+    data: {
+      run_id: 'r-1',
+      conversation_id: 's-1',
+      delta: { type: 'part', part: { type: 'text', text: 'working' } },
+    },
+  });
+  await emit(page, {
+    type: 'turn_end',
+    data: {
+      run_id: 'r-1',
+      conversation_id: 's-1',
+      status: 'failed',
+      error: 'provider 500',
+      error_kind: 'provider_failure',
+    },
+  });
+  await expect(mark).toBeVisible();
+  expect(await animationName(page, 's-1')).toBe('none');
+
+  // A deadline shares the wire status with a user stop and is the one
+  // that still needs the reader: the row marks it too. Nothing marks
+  // this one live - the store reads the event, not the turn - which is
+  // what keeps a run in another workspace visible here.
+  await emit(page, {
+    type: 'turn_end',
+    data: {
+      run_id: 'r-2',
+      conversation_id: 's-1',
+      status: 'canceled',
+      error_kind: 'timeout',
+    },
+  });
+  await expect(mark).toBeVisible();
+
+  // The reader's own Stop is not news: the last ending says so, and the
+  // row goes quiet.
+  await emit(page, {
+    type: 'turn_end',
+    data: { run_id: 'r-3', conversation_id: 's-1', status: 'canceled' },
+  });
+  await expect(mark).toHaveCount(0);
+});
+
+test('a marked row opens, and the mark goes with the click', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    currentSession: 's-1',
+    startTurns: { 's-2': { run_id: 'r-2' } },
+    listSessions: [meta('s-1', 'the session'), meta('s-2', 'the other one')],
+  });
+  await page.goto('/');
+
+  // A turn that failed while this window was elsewhere: the event alone
+  // puts the mark on that row.
+  await emit(page, {
+    type: 'turn_end',
+    data: {
+      run_id: 'r-9',
+      conversation_id: 's-2',
+      status: 'failed',
+      error: 'boom',
+      error_kind: 'provider_failure',
+    },
+  });
+  const mark = row(page, 's-2').locator('[data-tip="Turn failed"]');
+  await expect(mark).toBeVisible();
+
+  await page.getByRole('button', { name: 'the other one' }).click();
+
+  // Opening the row is the reader answering it: the mark is gone, and
+  // the conversation is on screen.
+  await expect(mark).toHaveCount(0);
+  await expect(row(page, 's-2')).toHaveAttribute('data-session-id', 's-2');
 });
