@@ -499,17 +499,19 @@ func (t *grepTool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		GrepName,
 		"Search workspace files for lines matching a pattern. "+
-			"Returns JSON: {matches:[{path, line_number, line}], "+
-			"truncated, skipped_large, binary_matches}. Hidden "+
+			"path may name a directory (searched recursively) or a "+
+			"single file. Returns JSON: {matches:[{path, line_number, "+
+			"line}], truncated, skipped_large, binary_matches}. Hidden "+
 			"entries and .git are skipped unless include_hidden is "+
-			"true; files larger than 1 MiB are skipped, and a binary "+
-			"file that matches is reported by path in binary_matches "+
-			"instead of by line.",
+			"true, or the entry is the file path itself; files larger "+
+			"than 1 MiB are skipped, and a binary file that matches is "+
+			"reported by path in binary_matches instead of by line.",
 		message.ToolProperty("pattern", "string",
 			"The search pattern: a regular expression unless "+
 				"fixed_strings is true (required)."),
 		message.ToolProperty("path", "string",
-			"Directory to search, relative to the workspace root (default \".\")."),
+			"Directory to search, or one file to search, relative to "+
+				"the workspace root (default \".\")."),
 		message.ToolProperty("case_insensitive", "boolean",
 			"Case-insensitive match (default false)."),
 		message.ToolProperty("fixed_strings", "boolean",
@@ -567,11 +569,6 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 	if err != nil {
 		return "", err
 	}
-	if !info.IsDir() {
-		return "", errdefs.Validationf(
-			"%s: path %q is a file, not a directory; pass the directory "+
-				"that contains it, or read the file instead", GrepName, root)
-	}
 	expr := args.Pattern
 	if args.FixedStrings {
 		expr = regexp.QuoteMeta(expr)
@@ -591,108 +588,157 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 		maxMatches = maxGrepMatches
 	}
 
-	var matches []grepMatch
-	var binaryMatches []string
-	var skippedLarge int
-	scannedFiles := 0
-	truncated := false
-	err = workspace.Walk(ctx, t.ws, root, func(p string, entry fs.DirEntry) error {
-		if entry.IsDir() {
-			name := entry.Name()
-			if name == alwaysSkipDir ||
-				(!args.IncludeHidden && fshidden.Hidden(entry)) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !args.IncludeHidden && fshidden.Hidden(entry) {
-			return nil
-		}
-		if len(matches) > maxMatches {
-			// The list already holds one match over the cap, so the walk
-			// is on a file whose hits cannot be reported: the result is
-			// incomplete by construction.
-			truncated = true
-			return errStopWalk
-		}
-		scannedFiles++
-		if scannedFiles > maxGrepFiles {
-			truncated = true
-			return errStopWalk
-		}
-		// Skip oversized files from the walk's own stat when it has one:
-		// reading a MiB of a binary or a bundle only to discard it was
-		// the bulk of what a grep allocated.
-		if info, err := entry.Info(); err == nil &&
-			info.Size() > maxGrepFileBytes {
-			skippedLarge++
-			return nil
-		}
-		data, oversized, err := readFileBounded(
-			ctx, t.ws, p, maxGrepFileBytes)
-		if err != nil {
-			return nil // unreadable file: skip
-		}
-		if oversized {
-			skippedLarge++
-			return nil
-		}
-		// A NUL byte in the head of the file means binary content: a
-		// matched line would be an unreadable slice of a bundle or an
-		// asset. The fact that it matches is still signal — grep -l
-		// reports exactly this — so search it whole and report the path
-		// without scanning lines or building strings.
-		if bytes.IndexByte(data[:min(len(data), binarySniffBytes)], 0) >= 0 {
-			if re.Match(data) {
-				binaryMatches = append(binaryMatches, p)
-			}
-			return nil
-		}
-		capped := false
-		scanLines(data, func(lineNumber int, line []byte) bool {
-			if !re.Match(line) {
-				return true
-			}
-			matches = append(matches, grepMatch{
-				Path:       p,
-				LineNumber: lineNumber,
-				Line:       string(line),
-			})
-			// One match over the cap is the smallest amount of evidence
-			// that the cap is hiding hits, and it is what separates a
-			// complete answer from an incomplete one: a scan that stops
-			// as soon as the list is full cannot tell whether the last
-			// hit it kept was also the last hit in the tree, so it
-			// reported truncation for exactly-full results too.
-			capped = len(matches) > maxMatches
-			return !capped
-		})
-		if capped {
-			// The scan stopped at a dropped hit rather than at the end
-			// of its input.
-			truncated = true
-			return errStopWalk
-		}
-		return nil
-	})
+	scan := grepScan{re: re, maxMatches: maxMatches}
+	// A path that names a file searches that file: "search inside this
+	// one file" is a request the directory-only rule used to reject,
+	// and the caller has already done the narrowing a tree walk exists
+	// to do. Naming a file also outranks the hidden-entry rule, as it
+	// does for read_file.
+	if info.IsDir() {
+		err = scan.walk(ctx, t.ws, root, args.IncludeHidden)
+	} else {
+		scan.file(ctx, t.ws, root, info.Size())
+	}
 	if err != nil && !errors.Is(err, errStopWalk) {
 		return "", err
 	}
-	if len(matches) > maxMatches {
-		matches = matches[:maxMatches]
+	if len(scan.matches) > scan.maxMatches {
+		scan.matches = scan.matches[:scan.maxMatches]
 	}
 	payload, err := json.Marshal(map[string]any{
-		"matches":       matches,
-		"truncated":     truncated,
-		"skipped_large": skippedLarge,
+		"matches":       scan.matches,
+		"truncated":     scan.truncated,
+		"skipped_large": scan.skippedLarge,
 		// Paths of binary files (bundles, wasm, media) whose bytes
 		// matched. Their lines are not returned: they are not text.
-		"binary_matches": binaryMatches,
+		"binary_matches": scan.binaryMatches,
 	})
 	if err != nil {
 		return "", errdefs.Internalf("%s: encode result: %v", GrepName, err)
 	}
 	return string(payload), nil
+}
+
+// grepScan accumulates the hits of one grep call. Both shapes a call
+// can take — a directory walked file by file, and the single file the
+// caller named — go through it, so they report the same fields under
+// the same caps.
+type grepScan struct {
+	re            *regexp.Regexp
+	maxMatches    int
+	matches       []grepMatch
+	binaryMatches []string
+	skippedLarge  int
+	truncated     bool
+}
+
+// walk searches root's tree, skipping hidden entries and .git unless
+// includeHidden is set, and stopping at maxGrepFiles.
+func (s *grepScan) walk(
+	ctx context.Context,
+	ws workspace.Workspace,
+	root string,
+	includeHidden bool,
+) error {
+	scannedFiles := 0
+	return workspace.Walk(ctx, ws, root, func(p string, entry fs.DirEntry) error {
+		if entry.IsDir() {
+			name := entry.Name()
+			if name == alwaysSkipDir ||
+				(!includeHidden && fshidden.Hidden(entry)) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !includeHidden && fshidden.Hidden(entry) {
+			return nil
+		}
+		if len(s.matches) > s.maxMatches {
+			// The list already holds one match over the cap, so the walk
+			// is on a file whose hits cannot be reported: the result is
+			// incomplete by construction.
+			s.truncated = true
+			return errStopWalk
+		}
+		scannedFiles++
+		if scannedFiles > maxGrepFiles {
+			s.truncated = true
+			return errStopWalk
+		}
+		// The walk's own stat spares reading a file it cannot report on.
+		size := int64(-1)
+		if info, err := entry.Info(); err == nil {
+			size = info.Size()
+		}
+		if !s.file(ctx, ws, p, size) {
+			return errStopWalk
+		}
+		return nil
+	})
+}
+
+// file searches one file and reports whether the walk may continue. An
+// unreadable file is skipped: one entry the process cannot open must
+// not fail a search of everything around it. size is the file's size
+// when the caller has already stat'ed it, or -1 to let the read decide.
+func (s *grepScan) file(
+	ctx context.Context,
+	ws workspace.Workspace,
+	p string,
+	size int64,
+) bool {
+	// Skip oversized files from the walk's own stat when it has one:
+	// reading a MiB of a binary or a bundle only to discard it was
+	// the bulk of what a grep allocated.
+	if size > maxGrepFileBytes {
+		s.skippedLarge++
+		return true
+	}
+	data, oversized, err := readFileBounded(ctx, ws, p, maxGrepFileBytes)
+	if err != nil {
+		return true // unreadable file: skip
+	}
+	if oversized {
+		s.skippedLarge++
+		return true
+	}
+	// A NUL byte in the head of the file means binary content: a
+	// matched line would be an unreadable slice of a bundle or an
+	// asset. The fact that it matches is still signal — grep -l
+	// reports exactly this — so search it whole and report the path
+	// without scanning lines or building strings.
+	if bytes.IndexByte(data[:min(len(data), binarySniffBytes)], 0) >= 0 {
+		if s.re.Match(data) {
+			s.binaryMatches = append(s.binaryMatches, p)
+		}
+		return true
+	}
+	capped := false
+	scanLines(data, func(lineNumber int, line []byte) bool {
+		if !s.re.Match(line) {
+			return true
+		}
+		s.matches = append(s.matches, grepMatch{
+			Path:       p,
+			LineNumber: lineNumber,
+			Line:       string(line),
+		})
+		// One match over the cap is the smallest amount of evidence
+		// that the cap is hiding hits, and it is what separates a
+		// complete answer from an incomplete one: a scan that stops
+		// as soon as the list is full cannot tell whether the last
+		// hit it kept was also the last hit in the tree, so it
+		// reported truncation for exactly-full results too.
+		capped = len(s.matches) > s.maxMatches
+		return !capped
+	})
+	if capped {
+		// The scan stopped at a dropped hit rather than at the end
+		// of its input.
+		s.truncated = true
+		return false
+	}
+	return true
 }
 
 // scanLines calls emit once per line of data with the line's 1-based

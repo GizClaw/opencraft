@@ -165,23 +165,96 @@ func TestFileToolsNameUnknownArguments(t *testing.T) {
 	}
 }
 
-// TestGrepPathMustBeDirectory: grep walks directories; handing it a
-// file used to surface the raw walk error ("workspace: list …").
-func TestGrepPathMustBeDirectory(t *testing.T) {
+// TestGrepSearchesOneNamedFile: naming a file searches that file.
+// Handing grep a file used to be a validation error — "pass the
+// directory that contains it, or read the file instead" — although the
+// caller had already done the narrowing a tree walk exists to do. On
+// the review corpus that error fired 139 times across 37 sessions, and
+// 92 of those calls were the last of their turn.
+func TestGrepSearchesOneNamedFile(t *testing.T) {
 	tool, _ := newTestTool(t)
-	writeTree(t, tool.ws, map[string]string{"src/main.go": "package main\n"})
-	_, err := execute(t, tool.grep(), `{"pattern":"main","path":"src/main.go"}`)
-	if err == nil {
-		t.Fatal("grep on a file path accepted")
+	writeTree(t, tool.ws, map[string]string{
+		"src/main.go":  "package main\n\nfunc main() {}\n",
+		"src/other.go": "package main\nfunc main() {}\n",
+		".hidden/x.go": "package main\n",
+	})
+
+	got, err := execute(t, tool.grep(), `{"pattern":"func main","path":"src/main.go"}`)
+	if err != nil {
+		t.Fatalf("grep on a named file: %v", err)
 	}
-	msg := err.Error()
-	for _, want := range []string{
-		`grep: path "src/main.go" is a file, not a directory`,
-		"read the file instead",
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("error %q missing %q", msg, want)
-		}
+	var result struct {
+		Matches   []grepMatch `json:"matches"`
+		Truncated bool        `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("grep result is not JSON: %v", err)
+	}
+	// other.go holds the same line: only the named file is searched.
+	if len(result.Matches) != 1 {
+		t.Fatalf("grep searched more than the named file: %s", got)
+	}
+	if want := (grepMatch{Path: "src/main.go", LineNumber: 3, Line: "func main() {}"}); result.Matches[0] != want {
+		t.Errorf("grep match = %+v, want %+v", result.Matches[0], want)
+	}
+	if result.Truncated {
+		t.Errorf("grep called a complete result truncated: %s", got)
+	}
+
+	// Naming a file outranks the hidden-entry rule, as it does for
+	// read_file: the caller named the entry it wants searched.
+	hidden, err := execute(t, tool.grep(), `{"pattern":"package","path":".hidden/x.go"}`)
+	if err != nil {
+		t.Fatalf("grep on a named hidden file: %v", err)
+	}
+	if !strings.Contains(hidden, `"path":".hidden/x.go"`) {
+		t.Errorf("grep skipped a file that was named outright: %s", hidden)
+	}
+}
+
+// TestGrepOnOneFileKeepsTheCaps: the size bound, the binary rule and
+// the match cap are properties of a file, so a named file reports them
+// the way a walked one does — same fields, same names.
+func TestGrepOnOneFileKeepsTheCaps(t *testing.T) {
+	old := maxGrepMatches
+	maxGrepMatches = 2
+	t.Cleanup(func() { maxGrepMatches = old })
+
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{
+		"three.txt":   "needle one\nneedle two\nneedle three\n",
+		"bundle.wasm": "\x00\x61\x73\x6dneedle",
+	})
+	if err := tool.ws.Write(context.Background(), "big.txt",
+		[]byte(strings.Repeat("needle ", maxGrepFileBytes))); err != nil {
+		t.Fatal(err)
+	}
+
+	capped, err := execute(t, tool.grep(), `{"pattern":"needle","path":"three.txt"}`)
+	if err != nil {
+		t.Fatalf("grep on a named file: %v", err)
+	}
+	if !strings.Contains(capped, `"truncated":true`) {
+		t.Errorf("grep stopped at the cap without saying so: %s", capped)
+	}
+	if n := strings.Count(capped, `"line_number"`); n != 2 {
+		t.Errorf("grep returned %d matches, want the cap 2: %s", n, capped)
+	}
+
+	binary, err := execute(t, tool.grep(), `{"pattern":"needle","path":"bundle.wasm"}`)
+	if err != nil {
+		t.Fatalf("grep on a named binary file: %v", err)
+	}
+	if !strings.Contains(binary, `"binary_matches":["bundle.wasm"]`) {
+		t.Errorf("grep binary_matches not reported: %s", binary)
+	}
+
+	large, err := execute(t, tool.grep(), `{"pattern":"needle","path":"big.txt"}`)
+	if err != nil {
+		t.Fatalf("grep on a named oversized file: %v", err)
+	}
+	if !strings.Contains(large, `"skipped_large":1`) {
+		t.Errorf("grep skipped_large not reported: %s", large)
 	}
 }
 

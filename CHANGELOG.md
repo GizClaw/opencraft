@@ -108,6 +108,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leave `bcd` in the telemetry copy while `bearer abcdef` went out whole.
   The word after a scheme is kept only when it is prose the closed list
   knows; everything else is the credential.
+- `grep` searches the file it is given. Its `path` had to name a
+  directory, so "in this file, where is X?" came back as a validation
+  error telling the caller to pass the directory instead (139 times
+  across 37 sessions on the review corpus, 92 of them the last call of
+  their turn — a round spent to learn nothing). A path that names a
+  file now searches that file through the same scan the directory walk
+  uses: same 1 MiB bound, same binary rule, same match cap and
+  truncation flag, and the named entry is searched even when hidden, as
+  `read_file` does.
 - A whole-file read comes back as one window it can page from. The read
   tool answered up to 1000 lines and the result policy then cut that at
   the cap, so a longer file arrived as the two ends of a range whose
