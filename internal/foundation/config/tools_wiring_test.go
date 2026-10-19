@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
@@ -312,5 +313,47 @@ func TestEmbeddedToolsReadWindowFitsTruncateCap(t *testing.T) {
 	if headroom := truncate.MaxChars - files.ReadResultChars; headroom < 1024 {
 		t.Fatalf("read window %d leaves only %d chars under the %d-char cap",
 			files.ReadResultChars, headroom, truncate.MaxChars)
+	}
+}
+
+// TestEmbeddedToolsSetTheToolTimeout pins the deploy's generic per-call
+// deadline: the assembly builds the timeout middleware by hand so it can
+// read each tool's SelfTimeout claim, and it only does so when the
+// section names a default. A renamed key or a lost indent then leaves
+// every tool without a bound while each package test still passes, which
+// is what the rollout corpus caught once already.
+func TestEmbeddedToolsSetTheToolTimeout(t *testing.T) {
+	userDir := t.TempDir()
+	mgr, err := Open(Options{UserDir: userDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mgr.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toolsSettings struct {
+		Middlewares struct {
+			Timeout struct {
+				Default string `json:"default"`
+			} `json:"timeout"`
+		} `json:"middlewares"`
+	}
+	if err := json.Unmarshal(
+		view.Document.Resources["tools"].Settings, &toolsSettings,
+	); err != nil {
+		t.Fatalf("decode tools settings: %v", err)
+	}
+	spec := toolsSettings.Middlewares.Timeout.Default
+	if spec == "" {
+		t.Fatal("tools assembly declares no middlewares.timeout.default: " +
+			"every tool that does not bound itself is unbounded")
+	}
+	d, err := time.ParseDuration(spec)
+	if err != nil {
+		t.Fatalf("middlewares.timeout.default %q does not parse: %v", spec, err)
+	}
+	if d <= 0 {
+		t.Fatalf("middlewares.timeout.default %q is not a positive bound", spec)
 	}
 }
