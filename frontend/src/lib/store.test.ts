@@ -4589,6 +4589,137 @@ describe('store: mid-turn steer', () => {
     });
   });
 
+  it('keeps the draft when a retry rebuilt the conversation mid-submission', async () => {
+    runningConversation();
+    let rejectSteer: (err: Error) => void = () => {};
+    apiMock.steerTurn.mockImplementation(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSteer = reject;
+        }),
+    );
+    // The user hits retry on the transcript banner while the submission
+    // is in flight. retryTranscript rebuilds the shell from the archive,
+    // which never saw this text (the RPC had not landed), and the
+    // rebuilt shell carries no steer registrations at all.
+    apiMock.sessionTurns.mockResolvedValue([]);
+
+    const submission = useStore.getState().steer('rebuilt away');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await useStore.getState().retryTranscript('s-1');
+    rejectSteer(new Error('turn not found'));
+
+    // Nothing took the text: the archive does not have it and the
+    // rebuilt transcript dropped the row. The composer draft is then
+    // the only copy left, so the submission has to report the failure
+    // instead of claiming the conversation took it over.
+    expect(await submission).toBe(false);
+    expect(steerRows()).toEqual([]);
+    expect(useStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'warning',
+    });
+  });
+
+  it('carries a submission across a retry and lets the ending settle it', async () => {
+    runningConversation();
+    let resolveSteer: () => void = () => {};
+    apiMock.steerTurn.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSteer = resolve;
+        }),
+    );
+    apiMock.sessionTurns.mockResolvedValue([]);
+
+    const submission = useStore.getState().steer('still queued');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await useStore.getState().retryTranscript('s-1');
+    resolveSteer();
+
+    // The submission succeeds, so the composer clears its draft: the row
+    // is then the only copy of the text, and it has to travel across the
+    // rebuild with the registration that names its run.
+    expect(await submission).toBe(true);
+    expect(steerRows().map((m) => [m.text, m.steer])).toEqual([
+      ['still queued', 'pending'],
+    ]);
+    expect(useStore.getState().conversations['s-1'].steerSent).toEqual([
+      { runID: 'r-run', messageID: steerRows()[0].id, text: 'still queued' },
+    ]);
+
+    // The boundary never drained it: the ending says one message is still
+    // waiting, and the carried row is the one it names.
+    endTurn('r-run', 1);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(steerRows().map((m) => [m.text, m.steer])).toEqual([
+      ['still queued', 'undelivered'],
+    ]);
+  });
+
+  it('keeps a pending row registered when a hydrate rebuilds the shell', async () => {
+    // A pending row outlives the switch back into the conversation: it
+    // is waiting for a boundary of a run that is still live. The
+    // hydrate a fresh actor triggers rebuilds the shell around it, and
+    // the registration naming its run is the only thing that can settle
+    // it later.
+    stateRoot.registry.ensure('s-2', {
+      workspaceGeneration: stateRoot.generation(),
+      workspace: '/tmp/w',
+    });
+    stateRoot.registry.get('s-2')?.send({ type: 'RUN_STARTED', runID: 'r-2' });
+    useStore.setState({
+      conversations: {
+        ...useStore.getState().conversations,
+        's-2': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-steer',
+              role: 'user',
+              text: 'kept',
+              items: [],
+              attachments: [],
+              steer: 'pending',
+            },
+          ],
+          steerSent: [{ runID: 'r-2', messageID: 'm-steer', text: 'kept' }],
+        },
+      },
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'earlier question', 'earlier answer'),
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    // The row travels with the live run, and it is still waiting for
+    // that run's boundary.
+    const hydrated = useStore.getState().conversations['s-2'];
+    expect(hydrated.messages.at(-1)).toMatchObject({
+      id: 'm-steer',
+      steer: 'pending',
+    });
+    expect(hydrated.steerSent).toEqual([
+      { runID: 'r-2', messageID: 'm-steer', text: 'kept' },
+    ]);
+
+    // Which is what lets the ending classify it: without the
+    // registration the row would wait for a boundary that already came.
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-2',
+        conversation_id: 's-2',
+        status: 'completed',
+        steer_pending: 0,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      useStore.getState().conversations['s-2'].messages.at(-1)?.steer,
+    ).toBe('delivered');
+  });
+
   it('marks an undelivered steer in place at turn_end', async () => {
     runningConversation();
     await useStore.getState().steer('lost note');

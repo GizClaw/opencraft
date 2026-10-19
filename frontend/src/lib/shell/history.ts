@@ -6,7 +6,7 @@ import {
 } from '../conv/history';
 import { api } from '../api';
 import {
-  carryUndeliveredSteers,
+  carryUnarchivedSteers,
   emptyConv,
   errorMessage,
   settleConversation,
@@ -91,6 +91,10 @@ export function createShellHistory(
       try {
         const turns = await api.sessionTurns(id, INITIAL_HISTORY_TURNS + 1, 0);
         const page = historyPage(turns, INITIAL_HISTORY_TURNS);
+        // The steers the archive never saw travel across the rebuild with
+        // the registrations that still owe them a boundary: the rows are
+        // the only copy of their text.
+        const carried = carryUnarchivedSteers(before, page.messages);
         set((state) => ({
           conversations: {
             ...state.conversations,
@@ -99,13 +103,10 @@ export function createShellHistory(
               mode: state.conversations[id]?.mode ?? 'workspace',
               think: state.conversations[id]?.think ?? 'medium',
               model: state.conversations[id]?.model ?? '',
-              // Undelivered steer rows never entered the archive, so a
-              // rebuild from archived turns has to carry them over: they
-              // are the only copy of their text.
-              messages: [
-                ...page.messages,
-                ...carryUndeliveredSteers(before?.messages, page.messages),
-              ],
+              messages: [...page.messages, ...carried.messages],
+              ...(carried.steerSent.length > 0
+                ? { steerSent: carried.steerSent }
+                : {}),
               turnArtifacts: page.turnArtifacts,
               historySeq: page.historySeq,
               historyHasMore: page.historyHasMore,

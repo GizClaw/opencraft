@@ -173,26 +173,42 @@ export interface QueuedSteer {
   text: string;
 }
 
-// carryUndeliveredSteers picks the interjection rows a turn ended
-// without delivering and appends them to a transcript rebuilt from the
-// archive. They are not in the archive (nothing appended their text to
-// the conversation), so carrying them over is what keeps the only copy
-// of the words; dropping them would drop the text.
+// carryUnarchivedSteers picks the interjection rows the archive never
+// saw and appends them to a transcript rebuilt from it. Two shapes are
+// not in the archive, because nothing appended their text to the
+// conversation: the rows a turn ended without delivering
+// ('undelivered') and the rows still queued for a boundary ('pending').
+// Carrying them over keeps the only copy of the words; dropping them
+// drops the text.
+//
+// A pending row travels only while a registration still names it: that
+// entry is what its run's turn_end classifies the row by, and a rebuild
+// that kept the row but dropped the entry would leave it claiming a
+// boundary that already came. The registrations that do travel come
+// with it for the same reason.
 //
 // A row whose text the rebuilt transcript already holds as a delivered
 // interjection is dropped instead: that shape comes from a boundary
 // that did take the message while the run's terminal event was lost, so
 // the settle-on-drop below guessed wrong and the archive is the truth.
-export function carryUndeliveredSteers(
-  messages: MessageView[] | undefined,
+export function carryUnarchivedSteers(
+  conv: ConversationState | undefined,
   rebuilt: MessageView[],
-): MessageView[] {
+): { messages: MessageView[]; steerSent: QueuedSteer[] } {
+  const registered = new Set((conv?.steerSent ?? []).map((s) => s.messageID));
   const delivered = new Set(
     rebuilt.filter((m) => m.steer === 'delivered').map((m) => m.text),
   );
-  return (messages ?? []).filter(
-    (m) => m.steer === 'undelivered' && !delivered.has(m.text),
-  );
+  const messages = (conv?.messages ?? []).filter((m) => {
+    if (delivered.has(m.text)) return false;
+    if (m.steer === 'undelivered') return true;
+    return m.steer === 'pending' && registered.has(m.id);
+  });
+  const kept = new Set(messages.map((m) => m.id));
+  return {
+    messages,
+    steerSent: (conv?.steerSent ?? []).filter((s) => kept.has(s.messageID)),
+  };
 }
 
 // capUndeliveredSteers bounds the number of undelivered steer rows one
@@ -290,8 +306,9 @@ export interface ConversationState {
   // (MessageView.steer). A row leaves the list once its state is
   // settled, so the list holds exactly the rows a still-running turn was
   // handed, and it is render-process state that starts empty again after
-  // a reload. Rows the archive cannot see (undelivered ones) are carried
-  // across transcript rebuilds — see carryUndeliveredSteers.
+  // a reload. Rows the archive cannot see (undelivered and still-queued
+  // ones) are carried across transcript rebuilds — see
+  // carryUnarchivedSteers.
   steerSent?: QueuedSteer[];
   // footprint is the last measurement settleConversation took (see
   // there). It caches the two byte totals, not the transcript: a
