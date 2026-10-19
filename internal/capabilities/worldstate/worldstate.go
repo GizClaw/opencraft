@@ -1,6 +1,9 @@
 // Package worldstate gathers the per-session world state (AGENTS.md,
-// permissions, environment, memory context) into board vars. A graph
-// script node renders those vars into the model-facing message list.
+// permissions, environment, memory context) into board vars, and merges
+// them onto the model-facing channel. The merge is Merge (called by the
+// graph's world node through the "ocworld" script global), not script
+// code: it rewrites the whole transcript every turn, which the script
+// bridge could only do by projecting every message through JSON twice.
 package worldstate
 
 import (

@@ -319,3 +319,26 @@ resources:
     impl: js
     settings:
       pool_size: 2
+  # ------------------------------------------------------------------
+  # Script surface
+  # ------------------------------------------------------------------
+  # The globals every script node of the assistant graph runs on. The
+  # standard surface is a resource of its own so the bridges and their
+  # policy have one home; the opencraft surface chains onto it and adds
+  # the "ocworld" global, which the world node merges the channel with
+  # (internal/capabilities/worldstate/bridge.go). The graph engine is
+  # wired to script.opencraft in assets/agents.yaml.
+  script.standard:
+    kind: agent.ScriptBindings
+    impl: standard
+    deps:
+      tools: tools
+      inference: infer
+      router: router
+      workspace: ws
+      sandbox: box
+  script.opencraft:
+    kind: agent.ScriptBindings
+    impl: opencraft
+    deps:
+      standard: script.standard

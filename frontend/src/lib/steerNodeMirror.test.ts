@@ -8,7 +8,7 @@
 // silent when broken — appending at a boundary that is not a tool
 // result, and draining while a compaction fold owns the channel tail —
 // so the real node runs here against a stubbed board and host, the same
-// way worldNodeMirror.test.ts runs the world node against Go's fixture.
+// way compactNodeBehavior.test.ts runs the compaction node.
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
