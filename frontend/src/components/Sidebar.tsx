@@ -1,6 +1,7 @@
 import {
   Bot,
   ChevronDown,
+  CircleHelp,
   Clock,
   Download,
   FolderClosed,
@@ -27,7 +28,11 @@ import { formatCombo } from '../lib/keys';
 import { useModifierHeld } from '../lib/modifierHeld';
 import { runningIDsByWorkspace, sessionSlotIDs } from '../lib/sessionSlots';
 import { useShallow } from 'zustand/react/shallow';
-import { firstMessageTitle, useStore } from '../lib/store';
+import {
+  firstMessageTitle,
+  pendingConversationIDs,
+  useStore,
+} from '../lib/store';
 import { useFocusState, useRunningConversations } from '../state/react';
 import type { ComponentType } from 'react';
 import type { SessionMeta, WorkspaceMeta } from '../lib/types';
@@ -101,6 +106,8 @@ interface SessionRow {
   id: string;
   title: string;
   running: boolean;
+  /** waiting: the run is blocked on a prompt the reader has to answer. */
+  waiting?: boolean;
   tokens?: string;
   time?: string;
   turns?: number;
@@ -405,6 +412,14 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       ),
     [runningActors, pendingPromptConvs],
   );
+  // The waiting rows are a subset of the running ones (a prompt is only
+  // pending while its run is live), and they are the only rows that
+  // pulse: the pulse is about the reader's decision, not about work
+  // happening.
+  const waitingIDs = useMemo(
+    () => new Set(pendingConversationIDs(pendingPromptConvs)),
+    [pendingPromptConvs],
+  );
 
   // A running row is retitled by the first user message of its live
   // conversation until the archive names the session. That title is the
@@ -546,6 +561,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             ? meta.title
             : liveTitle || t('sidebar.newSession'),
         running: true,
+        waiting: waitingIDs.has(id),
         tokens: meta ? fmtTokens(meta.total_tokens) : '',
         time: meta ? fmtTime(meta.updated_at) : '',
         turns: meta?.turns,
@@ -559,6 +575,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         id: s.id,
         title: s.title,
         running: false,
+        waiting: waitingIDs.has(s.id),
         tokens: fmtTokens(s.total_tokens),
         time: fmtTime(s.updated_at),
         turns: s.turns,
@@ -624,6 +641,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       <div key={row.id}>
         <div
           className={`group relative rounded-control text-left ${
+            row.waiting ? 'sidebar-row-attention ' : ''
+          }${
             isActive
               ? 'bg-accent/15 border border-accent/40'
               : 'border border-transparent hover:bg-panel2'
@@ -679,9 +698,11 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                     {formatCombo(`Mod+${slot}`, isMac)}
                   </kbd>
                 )}
-                {row.running && (
+                {(row.waiting || row.running) && (
                   <span
-                    aria-hidden="true"
+                    // The spinner is ambience; a prompt waiting on the
+                    // reader carries copy and stays announced.
+                    aria-hidden={row.waiting ? undefined : 'true'}
                     className={`shrink-0 transition-opacity ${
                       actionsAllowed && menuOpen?.id === row.id
                         ? 'opacity-0'
@@ -689,11 +710,20 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                           ? 'group-hover:opacity-0'
                           : ''
                     }`}
+                    data-tip={row.waiting ? t('sidebar.waiting') : undefined}
                   >
-                    <Loader2
-                      size={ICON.sm}
-                      className="animate-spin text-accent"
-                    />
+                    {row.waiting ? (
+                      <CircleHelp
+                        size={ICON.sm}
+                        className="text-warn"
+                        aria-label={t('sidebar.waiting')}
+                      />
+                    ) : (
+                      <Loader2
+                        size={ICON.sm}
+                        className="animate-spin text-accent"
+                      />
+                    )}
                   </span>
                 )}
               </button>

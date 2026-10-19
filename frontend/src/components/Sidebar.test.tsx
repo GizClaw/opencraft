@@ -237,6 +237,53 @@ describe('Sidebar workspace history', () => {
     expect(rowButton.querySelectorAll('svg')).toHaveLength(1);
   });
 
+  it('blinks the row of a run that is waiting on the reader', () => {
+    switchWorkspace(workspaceB.path, [meta('s-wait', 'waits on you')]);
+    startRuns(workspaceB.path, ['s-wait']);
+    useStore.setState({ pendingPromptConvs: { 'p-1': 's-wait' } });
+    render(<Sidebar isMac={false} />);
+
+    const row = screen
+      .getByRole('button', { name: 'waits on you' })
+      .closest('[data-session-id]')!;
+    // The pulse is a class: jsdom does not resolve the stylesheet, and
+    // the browser's own verdict on the animation lives in
+    // e2e/sidebar-attention.spec.ts.
+    expect(row.className).toContain('sidebar-row-attention');
+    // The question mark replaces the spinner instead of sitting beside
+    // it: blocked on the reader is not the same story as still working,
+    // and the row can only tell one.
+    const rowButton = screen.getByRole('button', { name: 'waits on you' });
+    expect(rowButton.querySelector('svg.animate-spin')).toBeNull();
+    expect(
+      rowButton.querySelector('[data-tip="Waiting for you"]'),
+    ).not.toBeNull();
+  });
+
+  it('stops blinking once the prompt is answered', () => {
+    switchWorkspace(workspaceB.path, [meta('s-wait', 'waits on you')]);
+    startRuns(workspaceB.path, ['s-wait']);
+    useStore.setState({ pendingPromptConvs: { 'p-1': 's-wait' } });
+    const { rerender } = render(<Sidebar isMac={false} />);
+    const row = () =>
+      screen
+        .getByRole('button', { name: 'waits on you' })
+        .closest('[data-session-id]')!;
+    expect(row().className).toContain('sidebar-row-attention');
+
+    act(() => useStore.setState({ pendingPromptConvs: {} }));
+    rerender(<Sidebar isMac={false} />);
+
+    // The turn is still in flight, so the row goes back to what it was
+    // before the prompt: a spinner, no pulse.
+    expect(row().className).not.toContain('sidebar-row-attention');
+    expect(
+      screen
+        .getByRole('button', { name: 'waits on you' })
+        .querySelector('svg.animate-spin'),
+    ).not.toBeNull();
+  });
+
   it('numbers the visible rows the session slots name', () => {
     // The digits come from the key table's own formatter, so the badge
     // reads the same on every platform as the shortcut sheet does.
