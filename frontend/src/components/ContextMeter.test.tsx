@@ -117,6 +117,23 @@ describe('ContextMeter', () => {
     expect(within(dialog).queryByText(/Estimated from/)).toBeNull();
   });
 
+  it('a split scaled back to the measurement says it is a proportion', async () => {
+    render(<ContextMeter usage={{ ...usage, scaled: true }} />);
+    const dialog = await open();
+    expect(
+      within(dialog).getByText(/Scaled to the provider's count/),
+    ).toBeInTheDocument();
+    // The total is still the measurement, so the estimate disclaimer does
+    // not apply: the two footnotes answer different questions.
+    expect(within(dialog).queryByText(/Estimated from/)).toBeNull();
+  });
+
+  it('a split that fits the measurement carries no scaling note', async () => {
+    render(<ContextMeter usage={usage} />);
+    const dialog = await open();
+    expect(within(dialog).queryByText(/Scaled to/)).toBeNull();
+  });
+
   it('draws nothing before the conversation has been metered', () => {
     const { container } = render(
       <ContextMeter usage={{ measured_tokens: 0, categories: [] }} />,

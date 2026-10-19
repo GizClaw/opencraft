@@ -164,6 +164,45 @@ func TestContextUsageFromBoardWithoutUsage(t *testing.T) {
 	}
 }
 
+// TestContextUsageFromBoardScalesAFoldedPrompt pins the fold: full-history
+// replay estimates the transcript the turn opened with, then the fold moves
+// the older rounds out of the prompt, so the call the usage report belongs
+// to carried a fraction of it. The snapshot must total the measurement (the
+// composer draws its bar against that sum) and say that the split is a
+// proportion.
+func TestContextUsageFromBoardScalesAFoldedPrompt(t *testing.T) {
+	board := agent.NewBoard()
+	estimateContextUsage(
+		[]Section{newTextSection("environment", message.RoleUser, "workspace: /tmp/w")},
+		"",
+		400000,
+		50,
+	).writeTo(board)
+	board.SetVar(config.BoardVarLLMUsage, inference.Usage{
+		InputTokens: 90000,
+		Model: model.ModelRef{ID: model.ModelID{
+			Provider: "openai", Name: "gpt-6-astra",
+		}},
+	})
+
+	usage, ok := ContextUsageFromBoard(board)
+	if !ok {
+		t.Fatal("a folding turn still measured a prompt, so it has a snapshot")
+	}
+	if usage.MeasuredTokens != 90000 {
+		t.Fatalf("measured = %d, want the provider's 90000", usage.MeasuredTokens)
+	}
+	if got := usage.TotalTokens(); got != 90000 {
+		t.Fatalf("total = %d, want the measurement, not the pre-fold estimate", got)
+	}
+	if !usage.Scaled {
+		t.Fatal("a split scaled back to the measurement was not marked")
+	}
+	if got := usage.Token(ocsessions.ContextCategoryTools); got != 0 {
+		t.Fatalf("residual = %d, want 0 when the estimates overshoot", got)
+	}
+}
+
 // TestContextUsageFromBoardSkipsUnpreparedTurns pins the guard the hook
 // relies on: a turn that never rendered a prompt (a custom graph, a turn
 // that failed before its first call) has nothing to describe.

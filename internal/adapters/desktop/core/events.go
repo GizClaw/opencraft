@@ -135,15 +135,22 @@ type ContextUsageEvent struct {
 	MeasuredTokens int64 `json:"measured_tokens"`
 	// Categories always sums to what the meter shows as used: the
 	// measurement when there is one (the residual category absorbing the
-	// difference), the estimates otherwise.
+	// difference, or the estimates scaled down to it), the estimates
+	// otherwise.
 	Categories []ContextCategoryEvent `json:"categories"`
 	// Model is the model that served the measured call.
 	Model string `json:"model,omitempty"`
 	// LimitTokens is that model's input window, zero when the deployment
 	// declares none and the catalog cannot say. A meter with no window
 	// shows the absolute count and no percentage.
-	LimitTokens int    `json:"limit_tokens,omitempty"`
-	At          string `json:"at,omitempty"`
+	LimitTokens int `json:"limit_tokens,omitempty"`
+	// Scaled says the categories were shrunk to the measurement (see
+	// sessions.ContextUsage.Normalize): the total is the provider's count,
+	// the split is the estimates' proportions. A turn that folded the
+	// conversation mid-way produces one, and the popover says so instead
+	// of drawing those proportions as an account of the request.
+	Scaled bool   `json:"scaled,omitempty"`
+	At     string `json:"at,omitempty"`
 }
 
 // NewContextUsageEvent maps a persisted context snapshot to the wire shape.
@@ -154,6 +161,7 @@ func NewContextUsageEvent(
 		MeasuredTokens: usage.MeasuredTokens,
 		Model:          usage.Model,
 		LimitTokens:    limit,
+		Scaled:         usage.Scaled,
 	}
 	if !usage.At.IsZero() {
 		ev.At = usage.At.UTC().Format(time.RFC3339)
