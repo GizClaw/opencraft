@@ -114,6 +114,28 @@ func TestHostRunCheckpointsCarryRecoveryAnnotations(t *testing.T) {
 		t.Fatalf("request message = %q, want the original user text", got)
 	}
 
+	// The persisted board is the turn, not the board: the world-state
+	// sections stay out of it (they are model context), the boundary
+	// counters are zeroed so recovery reads the stored channel as the
+	// turn, and the conversation marker still rides along for the
+	// board-var fallback.
+	channel := cp.Board.Channels[agent.MainChannel]
+	if len(channel) == 0 {
+		t.Fatal("checkpoint board carries no turn messages")
+	}
+	for _, m := range channel {
+		if m.Role == message.RoleSystem {
+			t.Fatalf("checkpoint kept the world section: %q", m.Content.Text())
+		}
+	}
+	if got, ok := cp.Board.Vars["world.sections.count"]; !ok || got != float64(0) {
+		t.Fatalf("checkpoint world.sections.count = %v (present %v), want 0", got, ok)
+	}
+	if got, ok := cp.Board.Vars["oc_thread_id"]; !ok || got != "oc-"+run.ContextID() {
+		t.Fatalf("checkpoint oc_thread_id = %v (present %v), want the conversation marker",
+			got, ok)
+	}
+
 	gate.Release()
 	if _, err := run.Wait(ctx); err != nil {
 		t.Fatalf("wait run: %v", err)
