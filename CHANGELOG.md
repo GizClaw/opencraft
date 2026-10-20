@@ -6,156 +6,141 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-20
+
+### Upgrade notes
+
+- A user layer that copies the delegation resources carries the session
+  store with them: `delegate.tools` declares an optional `sessions:
+  sessions` dependency and the engine's own `delegate.service` requires
+  one, which is how a subagent learns its caller's permission mode. A
+  copied tool resource without it still assembles, and its delegate calls
+  run under the store's default (confined) rather than the caller's mode.
+  (#261)
+
 ### Changed
 
 - A model round no longer re-reads the whole conversation to size its
   prompt. The compaction node projected the entire channel into script
   objects before every round — on a long replayed conversation the most
-  expensive thing a turn did, once per round, thrown away right after. A
-  round now reads a count and the last message, and the channel is
-  projected only on a round that actually folds. Measured on a
-  1200-message, ~3 MB channel, through the engine's own script runtime:
-  0.54 MB allocated a round instead of 143 MB. (#254)
-- The world node no longer hands the engine board to the script runtime.
-  Merging the world state onto the channel is Go now (`worldstate.Merge`,
-  reached from the graph as the `ocworld` global), so a turn stops paying
-  a JSON projection per message in each direction: reading and rewriting
-  the whole transcript cost ~35 microseconds per KB of conversation —
-  ~70 ms of time-to-first-token per turn at 2 MB, ~280 ms at 8 MB. The
-  node stays the graph's entry point and is one call; the script surface
-  it runs on ships as `agent.ScriptBindings/opencraft`, the standard
-  bridges plus that global. The cross-language fixture
-  (`world_cases.json` + `worldNodeMirror.test.ts`) went with the JS merge:
-  the same cases are Go tests against `Merge` now.
+  expensive thing a turn did, thrown away right after. A round reads a
+  count and the last message now, and the channel is projected only on a
+  round that actually folds: 0.54 MB allocated a round instead of 143 MB,
+  measured through the engine's own script runtime on a 1200-message, ~3 MB
+  channel. (#254)
 - The compaction node measures the prompt in Go. `compact.js` keeps the
-  policy (when to fold, which slice, how the summary lands) and asks for
-  the number through the `occompact` global (`capabilities/compaction` ->
-  `summarytext.EstimateTokens`), the same rule the memory hooks, the
-  context meter and the fold tool use. The JS mirror was a per-character
-  CJK scan through goja, ~80x the native cost - 62 ms per sizing pass on
-  a 230 KB channel, 171 ms on a 560 KB one, twice a round - and it went
-  with the `compact_cases.json` fixture: the estimate's golden numbers are
-  Go tests now, and the summary prefix the frontend must match is pinned
-  directly. The estimate a fold is budgeted against is the number every
-  other reader sees, so a custom graph no longer has to track it. (#257)
+  policy (when to fold, which slice, how the summary lands) and asks for the
+  number through the `occompact` global, so the estimate a fold is budgeted
+  against is the one every other reader sees. The JS mirror was a
+  per-character CJK scan through goja at ~80x the native cost — 62 ms per
+  sizing pass on a 230 KB channel, 171 ms on a 560 KB one, twice a round —
+  and it went with its cross-language fixture: the golden numbers are Go
+  tests now. (#257)
 - Sizing a prompt no longer renders it. The estimate is defined on a
   message's rendered form, and the implementation built exactly that before
   walking it: the transcript's text joined into strings, then converted to
-  UTF-16, for a number. On the 1200-message, ~3 MB channel the benchmarks
-  use, one pass cost 13.4 MB of garbage and ~8 ms, twice a round, in the
-  compaction node and again in the prepare hook's context meter. It counts
-  the parts instead - text and tool results straight from the content,
-  anything the fast path does not model through the renderer, so the rule
-  still has one definition - and walks runes without materialising UTF-16:
-  ~1.3 ms and 50 KB, the same number to the token. A seeded corpus of every
-  part shape (pointer parts, tool activity beside text, media, CJK, astral,
-  invalid UTF-8, arguments that are not JSON) holds the counter to the
-  renderer case by case. (#259)
-- The newest answer in the transcript never folds. A settled markdown block
-  past 2k characters still renders its first section and puts the rest
-  behind one control, but the fold reads the block's position and nothing
-  else: the transcript's newest reply is whole whether its deltas arrived in
-  this window, came back from the archive on a reload, or landed while
-  another conversation was on screen. An answer a newer one has pushed above
-  is history, and history folds. The `streamed` marker that used to record
-  "this window watched it grow" - and the paging pass that carried it across
-  the archive handoff - went with the old rule. (#251)
+  UTF-16, for a number — 13.4 MB of garbage and ~8 ms per pass, twice a
+  round. It counts the parts instead, through the renderer only where the
+  fast path does not model a part, and walks runes without materialising
+  UTF-16: ~1.3 ms and 50 KB, the same number to the token. A seeded corpus
+  of every part shape holds the counter to the renderer case by case.
+  (#259)
+- The world state is merged in Go. The world node used to hand the engine
+  board to the script runtime, so a turn paid a JSON projection per message
+  in each direction: reading and rewriting the whole transcript cost ~35
+  microseconds per KB of conversation — ~70 ms of time-to-first-token per
+  turn at 2 MB, ~280 ms at 8 MB. `worldstate.Merge` is reached from the
+  graph as the `ocworld` global, the node is still one call, and the
+  cross-language fixture went with the JS merge: the same cases are Go tests
+  against `Merge`. (#256)
 - A wave checkpoint is the turn it recovers, not the whole board. The graph
   stamps the board once per completed wave and the store upserts by run id,
   so a long turn re-serialized the same board hundreds of times (895 in the
   run that measured this) for a record recovery reads two things off: the
   conversation annotation and the turn's messages. With full-history replay
-  on that board is the whole conversation - one row here was 37.3 MB. The
-  trim rides the checkpoint store the host already owns and takes its slice
-  from the recovery path itself, so the same turn comes back message for
-  message, folded rounds included: the row is 0.17 MB and the write 2.3 ms
+  on, that board is the whole conversation — one row here was 37.3 MB. The
+  trim takes its slice from the recovery path itself, so the same turn comes
+  back message for message, folded rounds included: 0.17 MB and 2.3 ms
   instead of 352 ms. `runtime.sessions.resume: true` keeps whole boards,
   because a resume seeds the next turn from one. (#253)
-
-- Core is v0.8.1, and a session now declares whether it has an input
-  side. Every non-TTY session used to get a stdin pipe whether or not
-  anyone would ever write to it, so a child that branches on what fd 0
-  is read the pipe: `rg pattern` with no path operand searched the
-  stream instead of the working tree, `cat` blocked, `test -p /dev/fd/0`
-  answered true. `SessionSpec.Stdin` is the only declaration now - false
-  leaves fd 0 on `/dev/null`, and `Write` on such a session answers
-  `NotAvailable` instead of `ErrSessionClosed`. Both places this repo
-  starts a session accept a write from their caller, so both declare it:
-  the `exec_session` tool and the execd child. The bump alone left
-  `write` dead on non-TTY sessions, which execd's
-  `TestWriteIdempotentAndCloseInput` caught running `/bin/cat`;
-  `TestWriteDeclaresInputOnANonTTYSession` pins the tool's half, where
-  nothing had exercised `write` at all. (#260)
+- The newest answer in the transcript never folds. A settled markdown block
+  past 2k characters still shows its first section and puts the rest behind
+  one control, but the fold reads the block's position and nothing else: the
+  newest reply is whole whether its deltas arrived in this window, came back
+  from the archive on a reload, or landed while another conversation was on
+  screen. The `streamed` marker that recorded "this window watched it grow",
+  and the paging pass that carried it across the archive handoff, went with
+  the old rule. (#251)
+- Core is v0.8.1, and a session declares whether it has an input side. Every
+  non-TTY session used to get a stdin pipe whether or not anyone would write
+  to it, so a child that branches on fd 0 read the pipe: `rg pattern` with no
+  path operand searched the stream instead of the working tree, `cat`
+  blocked, `test -p /dev/fd/0` answered true. `SessionSpec.Stdin` is the only
+  declaration now — false leaves fd 0 on `/dev/null`, and `Write` answers
+  `NotAvailable` rather than `ErrSessionClosed` — and both places this repo
+  starts a session declare it: the `exec_session` tool and the execd child.
+  (#260)
 
 ### Fixed
 
-- The world-state guidance no longer steers a delegation to `mode: sync`.
-  #244 fixed the mechanism the old habit was built on - a `sync` delegate
-  was cut at the assembly's 5m default like every other call, so async
-  plus a `sleep` poll was the only posture that survived - but the bullet
-  it added then covered one case (the result is needed before
-  continuing) and read as the default for all of them: the first `sync`
-  calls in this machine's rollouts appear in the hour it shipped, every
-  delegation before it `async`. The mode is the caller's judgement, and
-  the cost it turns on is the wait, not whether the result is wanted:
-  `sync` when the work is short enough that the round trip would cost
-  more than the block, `async` for long work and for anything that can
-  start while other work is in hand, however short. `mode` is a required
-  enum with no default in the tool definition, so the prompt is the only
-  thing that was picking one. The no-poll rule stays. (#258)
-- The turn-end bullet no longer tells a turn to wait for running
-  subagents. That instruction came from the pre-#244 world, where the
-  only way to see a result was to poll for it: for `async` it asked for
-  exactly the loop the guidance forbids, and for `sync` it described a
-  wait the call had already completed. It now says what the runtime
-  does - a `sync` worker has returned and its result is in hand, an
-  `async` worker is meant to outlive the turn, so name it and end the
-  turn; the note lands in the conversation on its own. (#258)
 - The composer's context meter reads the prompt that was actually sent on
-  the turn that folds the conversation. Prepare estimated the transcript
-  the turn opened with, the fold then moved the older rounds out, and the
-  clamp left the slices summing past the measurement — so a long
-  conversation drew a prompt bigger than the window that served it
-  (582.6k of estimates against an 89.8k measurement). The conversation row
-  is now what the provider's own count left once the rows the harness
-  rendered are subtracted — which is exactly where a fold lands — and
-  those rows keep their own numbers: scaling every slice proportionally,
-  as this first did, drew a 2.4k instruction layer that was 22% of the
-  prompt as six tokens. The popover says the conversation row is a
-  remainder, and snapshots already stored are repaired on read. (#250,
-  #252)
-- The context meter's header no longer rounds a prompt that ran past the
-  model window down to "100%". That line divides the prompt by the window
-  — the one ratio in the meter that can pass its whole, which an
-  estimate-only snapshot from an unfolded full-history replay or a provider
-  counting past the window it enforces both do — but it shared the slice
-  rounding, whose 99.95% floor exists to stop a nearly-full slice reading
-  as 100%. A 4.24M prompt against a 1M window read "100% of 1M" next to a
-  full, red bar; it now prints the multiple it is. The slice percentages
-  are unchanged. (#252)
-- A tool answer now carries the text the tool already had. `apply_patch`
-  failed one call in twenty (394 of 7,643) on "no match for the first
-  context line" and nothing else, so the retry was another guess from
-  memory; the error looks the hunk's own lines up in the file and quotes
-  it - where they do appear, up to seven numbered lines around them, the
-  hunk lines the file has nowhere, and, when every line is there and only
-  the indentation moved, that whitespace is the whole difference. A hunk
-  after the first says that its numbers count the file as the earlier
-  hunks left it. `read_file` and `exec_command` sent results through
-  `encoding/json`, whose HTML escaping turned the file's own `<`, `&` and
-  `>` into `\u003c`, `\u0026` and `\u003e` in three reads out of four
-  (5,964 of 7,851 reads, 1,715 of 2,248 files) - and 45 of the 7,648
-  `apply_patch` calls write one of those escapes into the patch itself,
-  where it can match only a file that holds the escape; those results go
-  through an encoder that escapes only what JSON syntax needs. The
-  `read_file` description names both ways to read (a known region is
-  `offset` + `limit`, an unknown one follows `next_offset`) instead of
-  pushing every read towards whole files, which is how 9,997 `sed -n`
-  peeks stacked up beside 7,851 reads. `update_plan` says where an
-  item-level explanation goes, and `exec_command` says the shell is not a
-  terminal and that `rg -r` is `--replace` while `grep -r` recurses -
-  1,050 of the 11,272 commands that run `rg` pass a flag carrying both
-  letters. (#255)
+  the turn that folds the conversation, and its header prints the multiple
+  when the prompt ran past the window. Prepare estimated the transcript the
+  turn opened with, the fold then moved the older rounds out, and the clamp
+  left the slices summing past the measurement, so a long conversation drew
+  a prompt bigger than the window that served it (582.6k of estimates
+  against an 89.8k measurement). The conversation row is now what the
+  provider's count left once the harness rows are subtracted — which is
+  exactly where a fold lands — and those rows keep their own numbers, rather
+  than being scaled proportionally, which drew a 2.4k instruction layer as
+  six tokens. The header shared the slice rounding, whose 99.95% floor
+  exists to stop a nearly-full slice reading as 100%, so a 4.24M prompt
+  against a 1M window read "100% of 1M"; it now prints the multiple it is.
+  The popover calls the conversation row a remainder, and snapshots already
+  stored are repaired on read. (#250, #252)
+- A tool answer carries the text the tool already had. `apply_patch` failed
+  one call in twenty (394 of 7,643) on "no match for the first context line"
+  and nothing else, so the retry was another guess from memory; the error
+  now looks the hunk's own lines up in the file and quotes it — where they
+  do appear, up to seven numbered lines around them, the hunk lines the file
+  has nowhere, and, when every line is there and only the indentation moved,
+  that whitespace as the whole difference. `read_file` and `exec_command`
+  no longer send results through `encoding/json`, whose HTML escaping turned
+  the file's own `<`, `&` and `>` into `\u003c`, `\u0026` and `\u003e` in
+  three reads out of four, and 45 of the 7,648 `apply_patch` calls wrote one
+  of those escapes into the patch itself, where it can match only a file
+  that holds the escape. The descriptions that sent callers down the wrong
+  path are corrected too: `read_file` names both ways to read a file,
+  `update_plan` says where an item-level explanation goes, and
+  `exec_command` says the shell is not a terminal and that `rg -r` is
+  `--replace` while `grep -r` recurses — 1,050 of the 11,272 commands that
+  run `rg` pass a flag carrying both letters. (#255)
+- The world-state guidance describes what the runtime does, not the
+  workaround the poll-era one was built on. It no longer steers a delegation
+  to `mode: sync`: #244 removed the mechanism the old habit rested on — a
+  `sync` delegate cut at the assembly's 5m default — but the bullet it added
+  covered one case and read as the default for all of them. `sync` is for
+  work short enough that the round trip would cost more than the block, and
+  `async` for long work and for anything that can start while other work is
+  in hand. The turn-end bullet no longer asks a turn to wait for running
+  subagents, which for `async` is exactly the loop the guidance forbids: a
+  `sync` worker has returned and its result is in hand, an `async` worker is
+  meant to outlive the turn, and its note lands in the conversation on its
+  own. The no-poll rule stays. (#258)
+- A delegated run inherits its caller's permission mode. A subagent always
+  gets a fresh session id, so the settings document its sandbox and tool
+  policies read was empty and the store handed it the confined workspace
+  mode: a yolo caller's subagent ran confined, and since the caller is the
+  only session with a user behind it, every approval the child asked for was
+  refused on the caller's behalf. The mode makes one hop per seam — the tool
+  assembly stamps the caller's mode on each delegate call as a run
+  attribute, the tool copies it onto its request, and the delegation
+  service's session initializer writes it into the child's session before
+  its turn starts — and a grandchild inherits the same way, one hop at a
+  time. The mode is read from the caller's session row, never from the tool
+  arguments, so a subagent cannot widen its own policy, and an attribute
+  that cannot be applied fails the delegation instead of running the child
+  under a wider default. (#261)
 
 ## [0.7.0] - 2026-10-19
 
