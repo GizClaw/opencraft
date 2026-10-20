@@ -40,6 +40,7 @@ interface WorldCase {
   sections: string;
   history?: string;
   tail_block?: string;
+  base_len: number;
   existing: BoardMessage[];
 }
 
@@ -90,6 +91,12 @@ describe('world node mirrors the Go board payload', () => {
       // from the user's own turn.
       expect(vars['world.sections.count']).toBe(sections.length);
       expect(vars['world.history.count']).toBe(history.length);
+      // The compaction node sizes every round against the prefix Go
+      // published as world.compact.base_len: it renders only what sits
+      // after it. That number has to be exactly the messages this node
+      // prepends — one message short and every round under-estimates the
+      // prompt it is about to send.
+      expect(testCase.base_len).toBe(sections.length + history.length);
 
       // Sections first, then replayed history, then whatever the
       // channel already held. The per-turn tail block (plan, skills) has

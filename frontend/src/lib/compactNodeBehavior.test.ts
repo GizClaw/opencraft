@@ -66,6 +66,13 @@ function boardStub(main: BoardMessage[], vars: Vars = {}) {
       store[key] = value;
     },
     channel: (name: string) => channels[name] ?? [],
+    channelLen: (name: string) => (channels[name] ?? []).length,
+    channelTail: (name: string, count: number) =>
+      count <= 0 ? [] : (channels[name] ?? []).slice(-count),
+    lastMessage: (name: string) => {
+      const msgs = channels[name] ?? [];
+      return msgs.length > 0 ? msgs[msgs.length - 1] : null;
+    },
     setChannel: (name: string, next: BoardMessage[]) => {
       channels[name] = next;
     },
@@ -187,6 +194,10 @@ describe('compact node channel handling', () => {
     expect(store['world.compact.turn_start']).toBe(1);
     expect(store['world.compact.failed_end']).toBe(-1);
     expect(store['world.compact.count']).toBe(1);
+    // The fold rewrote the prefix the prepare-time base described, so the
+    // node dropped it: the next round measures the new prefix once instead
+    // of sizing against a shape that no longer exists.
+    expect(store['world.compact.base_len']).toBe(-1);
   });
 
   it('folds later rounds without splitting the ask or a tool pair', () => {
