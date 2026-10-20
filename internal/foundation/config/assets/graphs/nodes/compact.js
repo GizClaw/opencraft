@@ -38,12 +38,12 @@
 // not deferred: that request would simply fail.
 //
 // Reading cost: this node runs before every round, so it reads the channel
-// by count and tail (board.channelLen / channelTail / lastMessage) and
-// projects the whole conversation only on a round that actually folds. The
-// bulk of the estimate is never rendered here at all: the prepare hook
-// publishes the token count of the prefix this turn opens with
-// (world.compact.base_tokens / base_len), so a round renders only what it
-// appended since (worldstate/compactbase.go).
+// by count and last message (board.channelLen / lastMessage) and projects
+// it into script objects only on a round that actually folds. The number
+// itself is not this node's: sizing is summarytext.EstimateTokens, reached
+// through occompact.estimate (capabilities/compaction) — the same rule the
+// memory hooks, the context meter and the fold tool budget with. Only the
+// fold crosses back into Go, as the compact tool call below.
 var cfg = config || {};
 var PRESERVE = cfg.preserve_recent || 10;
 var BUDGET = cfg.budget_chars || 4096;
@@ -73,8 +73,9 @@ var NOTICE_PREFIX = "Context notice:";
 // silently disabled.
 var FALLBACK_MAX_INPUT_TOKENS = 128000;
 // The default graph carries no static system_prompt: base instructions
-// are world-state sections counted below. system_prompt_tokens is kept
-// for custom graphs that still configure a static prompt.
+// are world-state sections, which the channel estimate below covers.
+// system_prompt_tokens is kept for custom graphs that still configure a
+// static prompt.
 var SYS_PROMPT_TOKENS = cfg.system_prompt_tokens || 0;
 // len is this round's channel length; the messages themselves stay in Go
 // until a decision needs them (messages() below).
@@ -155,44 +156,10 @@ function isSummary(m, prevSummary) {
   return messageText(m).indexOf(prefix) === 0;
 }
 
-// renderText estimates one MainChannel message's prompt footprint.
-// It mirrors summarytext.RenderMessage
-// (internal/foundation/utils/summarytext): text parts keep their content
-// and tool activity is rendered as tool_call / tool_result lines, so
-// the estimate covers what the model will actually pay for. The fold
-// itself is passed to the compact tool as full messages (role + content
-// parts) — rendering happens in Go.
-function renderText(m) {
-  var parts = (m && m.content && m.content.parts) || [];
-  var text = "";
-  var lines = [];
-  for (var i = 0; i < parts.length; i++) {
-    var p = parts[i];
-    if (!p) continue;
-    if (p.type === "text") {
-      text += p.text || "";
-    } else if (p.type === "tool_call" && p.call) {
-      // JSON.stringify matches the Go side's compacted arguments
-      // (summarytext.compactJSON). Both sides cover the same text; only
-      // an exotic spelling (an explicit \uXXXX escape, an HTML-escaped
-      // character) can be written out differently, by a few characters.
-      lines.push("tool_call: " + p.call.name + " " + JSON.stringify(p.call.arguments));
-    } else if (p.type === "tool_result" && p.result) {
-      lines.push("tool_result: " + resultText(p.result.content));
-    }
-  }
-  if (lines.length > 0) {
-    var trimmed = text.trim();
-    if (trimmed === "") return lines.join("\n");
-    return trimmed + "\n" + lines.join("\n");
-  }
-  return text;
-}
-
 // resultText mirrors the Go side's Content.Text() for a tool result:
 // text parts are concatenated in order and every other part kind is
-// skipped. A result whose content was read as an opaque value would
-// make the estimate cover the wrong text entirely.
+// skipped. Only the fold's own patch is read here (see the apply branch
+// below); sizing a message is Go's job.
 function resultText(content) {
   var parts = (content && content.parts) || [];
   var text = "";
@@ -211,59 +178,14 @@ function resultPayload(content) {
   return resultText(content);
 }
 
-// imageTokens charges the prompt footprint of one image part, mirroring
-// summarytext.EstimateImageTokens. Text rendering cannot see this cost —
-// the prompt carries the payload, not words — but a conversation full of
-// screenshots is far larger than its text, and under-estimating is what
-// lets a request past the model window. The unit is the base64 character
-// count because that is the shape this node holds; Go counts the encoded
-// length of the decoded bytes, which is the same number.
-var IMAGE_FLOOR = 1024;
-var IMAGE_CHARS_PER_TOKEN = 16;
-
-function imageTokenCost(part) {
-  var src = (part && part.source) || {};
-  var chars = src.kind === "inline" && typeof src.data === "string"
-    ? src.data.length
-    : 0;
-  return Math.max(IMAGE_FLOOR, Math.floor(chars / IMAGE_CHARS_PER_TOKEN));
-}
-
-// imageTokensInParts descends into tool results: a screenshot arrives as
-// an image part inside the result's content, not beside it.
-function imageTokensInParts(parts) {
-  var total = 0;
-  for (var i = 0; i < parts.length; i++) {
-    var p = parts[i];
-    if (!p) continue;
-    if (p.type === "image") {
-      total += imageTokenCost(p);
-    } else if (p.type === "tool_result" && p.result) {
-      total += imageTokensInParts(
-        (p.result.content && p.result.content.parts) || []);
-    }
-  }
-  return total;
-}
-
-function estimateTokens(msgs) {
-  var tokens = 0;
-  for (var i = 0; i < msgs.length; i++) {
-    var s = renderText(msgs[i]);
-    var cjk = 0;
-    for (var j = 0; j < s.length; j++) {
-      var c = s.charCodeAt(j);
-      if ((c >= 0x4e00 && c <= 0x9fff) ||
-          (c >= 0x3400 && c <= 0x4dbf) ||
-          (c >= 0x3040 && c <= 0x30ff)) {
-        cjk++;
-      }
-    }
-    var parts = (msgs[i] && msgs[i].content && msgs[i].content.parts) || [];
-    tokens += cjk + Math.ceil((s.length - cjk) / 4) + 8 +
-      imageTokensInParts(parts);
-  }
-  return tokens;
+// estimateTokens sizes MainChannel[from:] through the Go rule that the
+// memory hooks, the context meter and the fold tool share
+// (summarytext.EstimateTokens, exposed as occompact.estimate). Sizing a
+// prompt by walking every character through the interpreter was this
+// node's dominant cost (~120 ms a round on a 230 KB conversation) as
+// well as a second copy of a rule Go already owns.
+function estimateTokens(from) {
+  return occompact.estimate(from);
 }
 
 // parseUsage reads the llm node's usage record (inference.Usage). It is
@@ -289,7 +211,7 @@ function parseUsage(value) {
 // exists. Every path covers the whole channel: the measurement plus the
 // estimate of the messages appended since it was taken.
 //
-// plainEstimate is this round's character estimate. It is the floor for
+// plainEstimate is this round's whole-channel estimate. It is the floor for
 // the previous turn's measurement: that measurement describes a channel
 // shape the memory window may have slid away from, so the two are combined
 // rather than swapped.
@@ -301,56 +223,15 @@ function measuredPrompt(plainEstimate) {
       anchoredEpoch === cumulativeFolds()) {
     // Exact: the measured call saw exactly this channel's first `anchored`
     // messages, and nothing was folded since.
-    return usage.tokens + estimateTokens(tailFrom(anchored));
+    return usage.tokens + estimateTokens(anchored);
   }
   var previous = previousAnchor;
   if (previous && previous.messages <= len) {
     var covered =
-      previous.tokens + estimateTokens(tailFrom(previous.messages));
+      previous.tokens + estimateTokens(previous.messages);
     return Math.max(covered, plainEstimate);
   }
   return 0;
-}
-
-// tailFrom projects the messages after index `start` (the last len-start of
-// the channel). Everything before it is already accounted for — by a
-// measurement, or by the prepare-time base — so it is the only part of a
-// long conversation a sizing round has to look at.
-function tailFrom(start) {
-  var n = len - start;
-  if (n <= 0) return [];
-  return board.channelTail(board.MAIN_CHANNEL, n) || [];
-}
-
-// plainEstimateTokens is the round's character estimate of the whole
-// prompt, in the same estimate the Go side budgets with (summarytext).
-//
-// The bulk of the prompt — the world sections and the replayed history —
-// was rendered once by the prepare hook, which publishes its token count
-// and the prefix length it covers as world.compact.base_tokens/base_len.
-// This round renders only what was appended since: the turn's own message
-// plus whatever the last rounds exchanged.
-//
-// The base dies with the prefix it describes. A fold rewrites that prefix
-// (the fold path drops the base), and so does a turn that opens without a
-// published one: the fallback below measures the whole channel once and
-// re-stamps the pair, which is exact for every later round of the same run
-// because the channel only grows.
-function plainEstimateTokens() {
-  var baseLen = Number(board.getVar("world.compact.base_len"));
-  var baseTokens = Number(board.getVar("world.compact.base_tokens"));
-  if (baseLen >= 0 && baseLen <= len && baseTokens > 0) {
-    return SYS_PROMPT_TOKENS + baseTokens + estimateTokens(tailFrom(baseLen));
-  }
-  // Go through messages(), not board.channel(): if this round goes on to
-  // fold, the fold path wants the same projection and must not pay for a
-  // second one.
-  var total = estimateTokens(messages());
-  if (total > 0) {
-    board.setVar("world.compact.base_len", len);
-    board.setVar("world.compact.base_tokens", total);
-  }
-  return SYS_PROMPT_TOKENS + total;
 }
 
 // Resolve the selected model's max input tokens once per turn via the
@@ -518,10 +399,6 @@ if (board.getVar("world.compact.pending")) {
   board.setVar("world.compact.fold_start", 0);
   board.setVar("world.compact.fold_end", -1);
   board.setVar("tool_pending", false);
-  // The published base described the prefix this fold just rewrote (or
-  // moved, on a failure): drop it, so the next round measures the new
-  // prefix once instead of sizing against a shape that is gone.
-  board.setVar("world.compact.base_len", -1);
   stampAnchor();
   return;
 }
@@ -529,7 +406,9 @@ if (board.getVar("world.compact.pending")) {
 // Check mode: fold only when the prompt is measured (or, past the whole
 // window, estimated) to exceed the model's budget.
 var maxTokens = resolveMaxInputTokens();
-var plainEstimate = plainEstimateTokens();
+// Sizing is Go's (see estimateTokens): the world prefix and the
+// conversation are one channel, so one call covers both.
+var plainEstimate = SYS_PROMPT_TOKENS + estimateTokens(0);
 var measured = measuredPrompt(plainEstimate);
 var estimate = measured > 0 ? measured : plainEstimate;
 var threshold = Math.floor(maxTokens * RATIO);

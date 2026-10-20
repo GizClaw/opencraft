@@ -10,19 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A model round no longer re-reads the whole conversation to size its
   prompt. The compaction node projected the entire channel into script
-  objects and rendered every message into a character estimate before
-  every round — on a long replayed conversation the most expensive thing a
-  turn did, once per round, thrown away right after. The prepare hook
-  already renders the world sections and the replayed transcript, so it
-  now hands the node their token count and the message count it spans
-  (`world.compact.base_tokens` / `base_len`), and a round measures only
-  what was appended since: a length, a tail, the last message. The whole
-  channel is projected only on a round that actually folds, and a fold
-  drops the base because it rewrote the prefix it describes. Measured on a
-  1200-message, ~3 MB channel, through the engine's own script runtime: a
-  round now costs 0.63 ms and 0.54 MB instead of 600 ms and 143 MB. The
-  fold decision is unchanged — the base and the tail are additive, and a
-  test runs the same channel with and without it. (#254)
+  objects before every round — on a long replayed conversation the most
+  expensive thing a turn did, once per round, thrown away right after. A
+  round now reads a count and the last message, and the channel is
+  projected only on a round that actually folds. Measured on a
+  1200-message, ~3 MB channel, through the engine's own script runtime:
+  0.54 MB allocated a round instead of 143 MB. (#254)
 - The world node no longer hands the engine board to the script runtime.
   Merging the world state onto the channel is Go now (`worldstate.Merge`,
   reached from the graph as the `ocworld` global), so a turn stops paying
@@ -34,6 +27,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bridges plus that global. The cross-language fixture
   (`world_cases.json` + `worldNodeMirror.test.ts`) went with the JS merge:
   the same cases are Go tests against `Merge` now.
+- The compaction node measures the prompt in Go. `compact.js` keeps the
+  policy (when to fold, which slice, how the summary lands) and asks for
+  the number through the `occompact` global (`capabilities/compaction` ->
+  `summarytext.EstimateTokens`), the same rule the memory hooks, the
+  context meter and the fold tool use. The JS mirror was a per-character
+  CJK scan through goja, ~80x the native cost - 62 ms per sizing pass on
+  a 230 KB channel, 171 ms on a 560 KB one, twice a round - and it went
+  with the `compact_cases.json` fixture: the estimate's golden numbers are
+  Go tests now, and the summary prefix the frontend must match is pinned
+  directly. The estimate a fold is budgeted against is the number every
+  other reader sees, so a custom graph no longer has to track it. (#257)
 - The newest answer in the transcript never folds. A settled markdown block
   past 2k characters still renders its first section and puts the rest
   behind one control, but the fold reads the block's position and nothing

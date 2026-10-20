@@ -198,10 +198,6 @@ func (s *Service) RenderTurn(
 	// estimate the compaction node budgets with. Bounded mode replays
 	// its raw window as sections instead, so this stays zero there.
 	historyTokens := 0
-	// historyCount is how many channel messages that becomes once the
-	// world node prepends it; together with len(sections) it is the
-	// prefix the compaction node may skip rendering (compactbase.go).
-	historyCount := 0
 	if s.memory != nil {
 		if rp, ok := s.memory.(interface {
 			ReplayFullHistory() bool
@@ -212,7 +208,6 @@ func (s *Service) RenderTurn(
 			if history := s.replayHistory(ctx, id.ConversationID); len(history) > 0 {
 				if data, err := json.Marshal(history); err == nil {
 					board.SetVar("world.history", string(data))
-					historyCount = len(history)
 				}
 				historyTokens = summarytext.EstimateTokens(history)
 			}
@@ -282,9 +277,6 @@ func (s *Service) RenderTurn(
 	estimateContextUsage(
 		sections, tailBlock, historyTokens, requestTextTokens(reqText),
 	).writeTo(board)
-	// The other half of that prompt: what the compaction node would have
-	// to render per round if this hook did not hand it over.
-	publishCompactionBase(board, sections, historyTokens, historyCount)
 	// The previous turn's own measurement of this conversation, for the
 	// graph's compaction node. It rides the board rather than the sections
 	// above: it is a number the harness budgets with, not content the model
