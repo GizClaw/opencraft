@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   round now costs 0.63 ms and 0.54 MB instead of 600 ms and 143 MB. The
   fold decision is unchanged — the base and the tail are additive, and a
   test runs the same channel with and without it. (#254)
+- The world node no longer hands the engine board to the script runtime.
+  Merging the world state onto the channel is Go now (`worldstate.Merge`,
+  reached from the graph as the `ocworld` global), so a turn stops paying
+  a JSON projection per message in each direction: reading and rewriting
+  the whole transcript cost ~35 microseconds per KB of conversation —
+  ~70 ms of time-to-first-token per turn at 2 MB, ~280 ms at 8 MB. The
+  node stays the graph's entry point and is one call; the script surface
+  it runs on ships as `agent.ScriptBindings/opencraft`, the standard
+  bridges plus that global. The cross-language fixture
+  (`world_cases.json` + `worldNodeMirror.test.ts`) went with the JS merge:
+  the same cases are Go tests against `Merge` now.
 - The newest answer in the transcript never folds. A settled markdown block
   past 2k characters still renders its first section and puts the rest
   behind one control, but the fold reads the block's position and nothing

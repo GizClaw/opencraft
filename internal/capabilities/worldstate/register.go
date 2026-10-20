@@ -16,20 +16,22 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
-// Register adds the opencraft.prepare hook factory (the worldstate
-// injection hook) to r.
+// Register adds this package's factories to r: the opencraft.prepare
+// hook (the worldstate injection hook), its per-session companions, and
+// the script surface carrying the "ocworld" global.
 func Register(r *resource.Registry) error {
 	return errors.Join(
 		r.Register(prepareFactory{}),
 		r.Register(activateObserverFactory{}),
 		r.Register(usageAnchorCommitFactory{}),
+		r.Register(scriptBindingsFactory{}),
 	)
 }
 
 // prepareFactory builds the opencraft.prepare hook: it gathers the
 // world state (AGENTS.md, permissions, environment, memory summary)
-// into board vars; the graph's world script node renders the final
-// model-facing message list.
+// into board vars; the graph's world node merges them into the final
+// model-facing message list (see Merge).
 type prepareFactory struct{}
 
 var _ resource.Factory = prepareFactory{}
