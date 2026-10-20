@@ -140,7 +140,11 @@ func BenchmarkCompactRoundProjection(b *testing.B) {
 // estimate of the whole channel, out of the script interpreter. The
 // difference against BenchmarkCompactRound is what a round pays besides it;
 // the difference against the old per-character scan is what moving the rule
-// to Go bought.
+// to Go bought. It is also where the estimate's own cost lives: it used to
+// render every message into a string and convert that to UTF-16 (13 MB of
+// garbage a pass on this board), and now counts the parts instead
+// (summarytext.EstimateTokens), which is why the number below is a fifth of
+// what it was and allocates nothing.
 func BenchmarkCompactRoundEstimate(b *testing.B) {
 	board := benchBoard(b)
 	b.ReportAllocs()
