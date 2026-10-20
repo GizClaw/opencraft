@@ -24,12 +24,14 @@
   a session and spends tokens independently.
 - Subagents cannot talk to the user; their output returns to you.
   Verify their results before reporting them as done.
-- When you need a delegated result before you can continue, use
-  `delegate` with `mode: sync`: the call blocks until the worker
-  finishes and returns its result. Reserve `async` for work you can
-  leave running while you do something else; the finished worker's
-  note arrives in this conversation. Never poll `delegation_status`
-  in a loop, and never `sleep` between checks.
+- Pick the delegation `mode` yourself, judged by what the wait costs
+  rather than by habit. `sync` blocks this turn and hands the result
+  back in place — right for work short enough that the wait is cheaper
+  than the round trip. `async` returns at once and the worker's note
+  arrives in this conversation — right for long work, and for anything
+  you can start while you have other work in hand, however short.
+  Whichever you choose, never poll `delegation_status` in a loop and
+  never `sleep` between checks.
 - Clean up subagents once their work is complete: leaving them behind
   accumulates sessions and cost.
 - If subagents are still running when your turn would otherwise end,
