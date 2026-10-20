@@ -50,6 +50,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The world-state guidance no longer steers a delegation to `mode: sync`.
+  #244 fixed the mechanism the old habit was built on - a `sync` delegate
+  was cut at the assembly's 5m default like every other call, so async
+  plus a `sleep` poll was the only posture that survived - but the bullet
+  it added then covered one case (the result is needed before
+  continuing) and read as the default for all of them: the first `sync`
+  calls in this machine's rollouts appear in the hour it shipped, every
+  delegation before it `async`. The mode is the caller's judgement, and
+  the cost it turns on is the wait, not whether the result is wanted:
+  `sync` when the work is short enough that the round trip would cost
+  more than the block, `async` for long work and for anything that can
+  start while other work is in hand, however short. `mode` is a required
+  enum with no default in the tool definition, so the prompt is the only
+  thing that was picking one. The no-poll rule stays. (#258)
+- The turn-end bullet no longer tells a turn to wait for running
+  subagents. That instruction came from the pre-#244 world, where the
+  only way to see a result was to poll for it: for `async` it asked for
+  exactly the loop the guidance forbids, and for `sync` it described a
+  wait the call had already completed. It now says what the runtime
+  does - a `sync` worker has returned and its result is in hand, an
+  `async` worker is meant to outlive the turn, so name it and end the
+  turn; the note lands in the conversation on its own. (#258)
 - The composer's context meter reads the prompt that was actually sent on
   the turn that folds the conversation. Prepare estimated the transcript
   the turn opened with, the fold then moved the older rounds out, and the
