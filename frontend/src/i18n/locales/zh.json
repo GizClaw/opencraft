@@ -870,7 +870,7 @@
     "contextOfWindow": "占 {{limit}} 的 {{percent}}",
     "contextNoWindow": "累计已用",
     "contextEstimated": "按本轮提示词估算：provider 没有返回这一轮的用量。",
-    "contextScaled": "分项已按 provider 的计数等比缩放：本轮的估算超过了实测——折叠会话的那一轮就是这样。",
+    "contextConversationCapped": "对话内容是 provider 的计数减去上面各项后剩下的部分：本轮实际发出的对话比估算的少——折叠过的会话就是这样。上面各项是各自的估算。",
     "contextToolsHint": "工具 JSON schema、provider 侧封装，以及上面各项估算的误差。",
     "contextInstructions": "系统提示",
     "contextEnvironment": "环境与权限",

@@ -99,6 +99,18 @@ function percentLabel(part: number, whole: number): string {
   return `${pct.toFixed(1)}%`;
 }
 
+// windowPercent is percentLabel for the one ratio in the popover that can
+// pass its whole. A prompt can run past the model window — an unfolded
+// full-history replay, or a provider that counts past the window it
+// enforces — and percentLabel would round 424% down to "100%", the one
+// number that must not stand next to a full, red bar: it would say the
+// prompt exactly filled a window it overflowed four times.
+function windowPercent(total: number, limit: number): string {
+  const pct = limit > 0 ? (total / limit) * 100 : 0;
+  if (pct > 100.5) return `${Math.round(pct)}%`;
+  return percentLabel(total, limit);
+}
+
 function Ring({ share, color }: { share: number; color: string }) {
   const radius = 6;
   const circumference = 2 * Math.PI * radius;
@@ -174,10 +186,12 @@ export function ContextMeter({ usage }: { usage: ContextUsageDTO }) {
         ? 'var(--color-warn)'
         : 'var(--color-accent)';
   const estimated = (usage.measured_tokens ?? 0) <= 0;
-  // A measured prompt whose estimates ran past the measurement is scaled
-  // onto it: the total is exact, the split is a proportion. Saying so is
-  // the difference between a meter and a guess that looks like a meter.
-  const scaled = !estimated && usage.scaled === true;
+  // The conversation row is what the provider's count left once the rows
+  // the harness rendered are subtracted, so it reads as a remainder rather
+  // than as a size whenever the prompt carried less of the conversation
+  // than prepare estimated - which is what folding does. Saying so is the
+  // difference between a meter and a guess that looks like a meter.
+  const capped = !estimated && usage.conversation_capped === true;
 
   if (total <= 0) return null;
 
@@ -238,7 +252,7 @@ export function ContextMeter({ usage }: { usage: ContextUsageDTO }) {
             <span className="text-micro text-dim">
               {limit > 0
                 ? t('chat.contextOfWindow', {
-                    percent: percentLabel(total, limit),
+                    percent: windowPercent(total, limit),
                     limit: limitLabel,
                   })
                 : t('chat.contextNoWindow')}
@@ -297,9 +311,9 @@ export function ContextMeter({ usage }: { usage: ContextUsageDTO }) {
               {t('chat.contextEstimated')}
             </p>
           )}
-          {scaled && (
+          {capped && (
             <p className="mt-2 border-t border-edge pt-2 text-micro leading-snug text-faint">
-              {t('chat.contextScaled')}
+              {t('chat.contextConversationCapped')}
             </p>
           )}
         </Popover>

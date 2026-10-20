@@ -65,6 +65,24 @@ describe('ContextMeter', () => {
     expect(within(dialog).getByText('claude-sonnet-4')).toBeInTheDocument();
   });
 
+  it('a prompt past the window says how far past it ran', async () => {
+    render(
+      <ContextMeter
+        usage={{
+          ...usage,
+          measured_tokens: 0,
+          limit_tokens: 10000,
+          categories: [{ id: 'conversation', tokens: 42400 }],
+        }}
+      />,
+    );
+    const dialog = await open();
+    // The slice percentages share the prompt and stop at 100%, but this
+    // one divides by the window and can pass it. Rounding 424% down to
+    // "100%" would draw four windows of prompt as exactly one.
+    expect(within(dialog).getByText('424% of 10k')).toBeInTheDocument();
+  });
+
   it('a category this build does not know is counted but not drawn', async () => {
     render(
       <ContextMeter
@@ -117,21 +135,23 @@ describe('ContextMeter', () => {
     expect(within(dialog).queryByText(/Estimated from/)).toBeNull();
   });
 
-  it('a split scaled back to the measurement says it is a proportion', async () => {
-    render(<ContextMeter usage={{ ...usage, scaled: true }} />);
+  it('a conversation row that is a remainder says so', async () => {
+    render(<ContextMeter usage={{ ...usage, conversation_capped: true }} />);
     const dialog = await open();
     expect(
-      within(dialog).getByText(/Scaled to the provider's count/),
+      within(dialog).getByText(
+        /Conversation is what the provider's count left/,
+      ),
     ).toBeInTheDocument();
     // The total is still the measurement, so the estimate disclaimer does
     // not apply: the two footnotes answer different questions.
     expect(within(dialog).queryByText(/Estimated from/)).toBeNull();
   });
 
-  it('a split that fits the measurement carries no scaling note', async () => {
+  it('a conversation that fits the measurement carries no remainder note', async () => {
     render(<ContextMeter usage={usage} />);
     const dialog = await open();
-    expect(within(dialog).queryByText(/Scaled to/)).toBeNull();
+    expect(within(dialog).queryByText(/Conversation is what/)).toBeNull();
   });
 
   it('draws nothing before the conversation has been metered', () => {

@@ -26,14 +26,18 @@ import (
 // its prompt, so the difference between the two numbers becomes the one
 // residual category instead of being spread over the estimates.
 //
-// What the estimates describe is the prompt the turn *opened* with. A
-// turn that folds mid-way rewrites the conversation prefix it was given
-// (compact.js moves the folded rounds to another channel), so on that turn
-// the conversation slice is a generation old and the estimates run past
-// what the call carried. Normalize scales them back onto the measurement
-// and marks the snapshot Scaled: the total stays the provider's count, and
-// the split says it is a proportion. The next turn's prepare measures the
-// folded prompt from scratch.
+// What the estimates describe is the prompt the turn *opened* with. A turn
+// that folds mid-way rewrites the conversation prefix it was given
+// (compact.js moves the folded rounds to another channel), so the
+// conversation slice it estimated is a generation old and routinely an
+// order of magnitude wider than what the call carried. That miss is
+// expected rather than exceptional: a full-history deployment replays the
+// transcript at the start of every turn and folds it again for that turn's
+// window, so the estimate describes the input to compaction, not its
+// output. Normalize therefore lets the measurement settle that one slice —
+// the conversation gets what the count left after the rows rendered here —
+// and leaves those rows at their own numbers, which are the ones the meter
+// exists to show.
 
 // contextEstimate is the board form of the prepare-time half: one token
 // estimate per category id.
