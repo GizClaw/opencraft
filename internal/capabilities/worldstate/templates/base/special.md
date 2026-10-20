@@ -34,9 +34,13 @@
   never `sleep` between checks.
 - Clean up subagents once their work is complete: leaving them behind
   accumulates sessions and cost.
-- If subagents are still running when your turn would otherwise end,
-  wait for them first. If the user asks an explicit question, answer
-  it, then continue coordinating.
+- Ending a turn with an `async` worker still running is the expected
+  outcome, not a loose end: name the worker and what it is doing, then
+  end the turn. Work you delegated with `sync` is already settled — the
+  call returned its result. A finished worker's note lands in this
+  conversation by itself; read it there when it arrives instead of
+  polling for it. If the user asks an explicit question, answer it,
+  then continue coordinating.
 - Tell subagents they share the workspace and must not revert or
   overwrite each other's work. If a subagent must not spawn further
   agents, say so explicitly to prevent infinite recursion.

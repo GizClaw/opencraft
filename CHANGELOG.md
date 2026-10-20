@@ -64,6 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   start while other work is in hand, however short. `mode` is a required
   enum with no default in the tool definition, so the prompt is the only
   thing that was picking one. The no-poll rule stays. (#258)
+- The turn-end bullet no longer tells a turn to wait for running
+  subagents. That instruction came from the pre-#244 world, where the
+  only way to see a result was to poll for it: for `async` it asked for
+  exactly the loop the guidance forbids, and for `sync` it described a
+  wait the call had already completed. It now says what the runtime
+  does - a `sync` worker has returned and its result is in hand, an
+  `async` worker is meant to outlive the turn, so name it and end the
+  turn; the note lands in the conversation on its own. (#258)
 - The composer's context meter reads the prompt that was actually sent on
   the turn that folds the conversation. Prepare estimated the transcript
   the turn opened with, the fold then moved the older rounds out, and the
