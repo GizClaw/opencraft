@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `write` dead on non-TTY sessions, which execd's
   `TestWriteIdempotentAndCloseInput` caught running `/bin/cat`;
   `TestWriteDeclaresInputOnANonTTYSession` pins the tool's half, where
-  nothing had exercised `write` at all.
+  nothing had exercised `write` at all. (#260)
 
 ### Fixed
 
