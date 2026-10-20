@@ -2,6 +2,7 @@ package summarytext
 
 import (
 	"encoding/json"
+	"math/rand"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/message"
@@ -183,6 +184,30 @@ func TestEstimateTokens(t *testing.T) {
 				message.ImagePart{Source: imageSource(t)},
 			}},
 		}}, 1032},
+		// The part shapes arrive both as values and as pointers (a decoded
+		// wire form may hold either); the rendering resolves both, so the
+		// estimate charges both the same.
+		{"pointer text part", []message.Message{{
+			Role: message.RoleUser,
+			Content: message.Content{Parts: []message.Part{
+				&message.TextPart{Text: "hello there"},
+			}},
+		}}, 11},
+		{"pointer tool result", []message.Message{{
+			Role: message.RoleTool,
+			Content: message.Content{Parts: []message.Part{
+				&message.ToolResultPart{Result: message.ToolResult{
+					CallID:  "c1",
+					Content: message.NewTextContent("file body"),
+				}},
+			}},
+		}}, 14},
+		// A nil part is not content: Content.Text drops it and the estimate
+		// charges only the per-message overhead.
+		{"nil part", []message.Message{{
+			Role:    message.RoleUser,
+			Content: message.Content{Parts: []message.Part{nil}},
+		}}, 8},
 		{"summary marker", []message.Message{
 			text(message.RoleUser, SummaryPrefix+"\nfolded older rounds"),
 		}, 38},
@@ -202,6 +227,106 @@ func TestEstimateTokens(t *testing.T) {
 				t.Fatalf("EstimateTokens = %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// renderedEstimate is the rule as it was first written: render every
+// message, then walk the result. EstimateTokens counts instead of rendering
+// (see its comment), so this stays here as the reference the counter has to
+// agree with — for every shape, including the ones the fast path declines.
+func renderedEstimate(msgs []message.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += EstimateText(RenderMessage(m)) + estimatePerMessage +
+			imageTokensInParts(m.Content.Parts)
+	}
+	return total
+}
+
+// corpusMessage builds one message out of a seeded pick of every part shape
+// the rendering distinguishes: plain and pointer parts, text beside tool
+// activity, results with and without media, arguments that are compact,
+// pretty-printed or not JSON at all, CJK, astral and invalid UTF-8.
+func corpusMessage(r *rand.Rand, src media.ImageSource) message.Message {
+	texts := []string{
+		"", " ", "\n\t ", "hello there", "请把这段代码重构一下",
+		"done — 已完成 3 files", "ship it 🚀", string([]byte{0xff, 0xfe}),
+		"lorem ipsum dolor sit amet", "argument with \"quotes\" and \\slashes",
+	}
+	pick := func() string { return texts[r.Intn(len(texts))] }
+	roles := []message.Role{
+		message.RoleUser, message.RoleAssistant,
+		message.RoleSystem, message.RoleTool,
+	}
+	args := []string{
+		`{"cmd":"go build ./..."}`,
+		"{\n  \"cmd\": \"go test ./...\",\n  \"cwd\": \"/w\"\n}",
+		"not json at all",
+		`{"pattern": "func \\w+\\(", "path": "internal"}`,
+	}
+	var parts []message.Part
+	for i := r.Intn(4); i > 0; i-- {
+		switch r.Intn(7) {
+		case 0:
+			parts = append(parts, message.TextPart{Text: pick()})
+		case 1:
+			parts = append(parts, &message.TextPart{Text: pick()})
+		case 2:
+			call := message.ToolCallPart{Call: message.ToolCall{
+				ID:        "c1",
+				Name:      "exec_command",
+				Arguments: json.RawMessage(args[r.Intn(len(args))]),
+			}}
+			if r.Intn(2) == 0 {
+				parts = append(parts, call)
+			} else {
+				parts = append(parts, &call)
+			}
+		case 3:
+			parts = append(parts, message.ToolResultPart{Result: message.ToolResult{
+				CallID:  "c1",
+				Content: message.NewTextContent(pick()),
+			}})
+		case 4:
+			parts = append(parts, &message.ToolResultPart{Result: message.ToolResult{
+				CallID: "c1",
+				Content: message.Content{Parts: []message.Part{
+					message.TextPart{Text: pick()},
+					message.ImagePart{Source: src},
+				}},
+			}})
+		case 5:
+			parts = append(parts, message.ReasoningPart{Text: pick()})
+		case 6:
+			parts = append(parts, nil)
+		}
+	}
+	return message.Message{
+		Role:    roles[r.Intn(len(roles))],
+		Content: message.Content{Parts: parts},
+	}
+}
+
+// TestEstimateTokensAgreesWithRenderer holds the counter to the renderer on
+// shapes the golden table cannot enumerate: whatever parts arrive, counting
+// them must produce the number rendering them produces. This is the test
+// that lets the fast path exist.
+func TestEstimateTokensAgreesWithRenderer(t *testing.T) {
+	r := rand.New(rand.NewSource(7))
+	src := imageBytes(t, 8192)
+	var msgs []message.Message
+	for i := 0; i < 500; i++ {
+		msgs = append(msgs, corpusMessage(r, src))
+	}
+	for i, m := range msgs {
+		got := EstimateTokens([]message.Message{m})
+		want := renderedEstimate([]message.Message{m})
+		if got != want {
+			t.Fatalf("message %d (%+v): counted %d, rendered %d", i, m, got, want)
+		}
+	}
+	if got, want := EstimateTokens(msgs), renderedEstimate(msgs); got != want {
+		t.Fatalf("corpus: counted %d, rendered %d", got, want)
 	}
 }
 

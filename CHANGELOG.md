@@ -38,6 +38,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Go tests now, and the summary prefix the frontend must match is pinned
   directly. The estimate a fold is budgeted against is the number every
   other reader sees, so a custom graph no longer has to track it. (#257)
+- Sizing a prompt no longer renders it. The estimate is defined on a
+  message's rendered form, and the implementation built exactly that before
+  walking it: the transcript's text joined into strings, then converted to
+  UTF-16, for a number. On the 1200-message, ~3 MB channel the benchmarks
+  use, one pass cost 13.4 MB of garbage and ~8 ms, twice a round, in the
+  compaction node and again in the prepare hook's context meter. It counts
+  the parts instead - text and tool results straight from the content,
+  anything the fast path does not model through the renderer, so the rule
+  still has one definition - and walks runes without materialising UTF-16:
+  ~1.3 ms and 50 KB, the same number to the token. A seeded corpus of every
+  part shape (pointer parts, tool activity beside text, media, CJK, astral,
+  invalid UTF-8, arguments that are not JSON) holds the counter to the
+  renderer case by case. (#259)
 - The newest answer in the transcript never folds. A settled markdown block
   past 2k characters still renders its first section and puts the rest
   behind one control, but the fold reads the block's position and nothing

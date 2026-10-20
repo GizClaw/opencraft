@@ -9,7 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strings"
-	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
@@ -45,16 +45,25 @@ func IsContextNotice(text string) bool {
 func ToolActivity(m message.Message) []string {
 	var lines []string
 	for _, p := range m.Content.Parts {
-		switch part := p.(type) {
-		case message.ToolCallPart:
+		if part, ok := toolCallPart(p); ok {
 			lines = append(lines,
-				"tool_call: "+part.Call.Name+" "+compactJSON(part.Call.Arguments))
-		case message.ToolResultPart:
-			lines = append(lines, "tool_result: "+part.Result.Content.Text())
+				toolCallLabel+part.Call.Name+" "+compactJSON(part.Call.Arguments))
+			continue
+		}
+		if part, ok := toolResultPart(p); ok {
+			lines = append(lines, toolResultLabel+part.Result.Content.Text())
 		}
 	}
 	return lines
 }
+
+// The labels a tool activity line starts with, shared by the renderer and
+// the estimate's counter so the two cannot describe the same line
+// differently.
+const (
+	toolCallLabel   = "tool_call: "
+	toolResultLabel = "tool_result: "
+)
 
 // RenderMessage flattens one conversation message into its prompt
 // form: text parts keep their content, and tool activity is rendered
@@ -107,14 +116,63 @@ const (
 // is charged two units — the same way a provider's tokenizer and the
 // UI's own measurements see it.
 func EstimateText(text string) int {
-	units := utf16.Encode([]rune(text))
-	cjk := 0
-	for _, unit := range units {
-		if isCJKUnit(unit) {
+	units, cjk := countUnits(text)
+	return charge(units, cjk)
+}
+
+// unitCount is a text's UTF-16 code units split by script: one token per
+// CJK unit, one per estimateCharsPerToken of the rest. Tokens are additive
+// over a concatenation apart from the final division, so the split is
+// carried as a pair and charged once at the end — which is what lets the
+// estimate walk a message in pieces instead of building its rendered form.
+type unitCount struct {
+	units int
+	cjk   int
+}
+
+// addString charges one piece of text.
+func (c *unitCount) addString(text string) {
+	units, cjk := countUnits(text)
+	c.units += units
+	c.cjk += cjk
+}
+
+func (c unitCount) tokens() int {
+	return charge(c.units, c.cjk)
+}
+
+// countUnits walks text once and reports its UTF-16 code units and how many
+// of those units are CJK. An astral code point is two units, neither of them
+// CJK: every block isCJKUnit covers is below BMP. Invalid UTF-8 decodes to
+// one U+FFFD per byte here, which is what converting the text to []rune
+// reports too. The walk is the whole point of the function: converting a
+// 3 MB conversation to []rune and then to UTF-16 cost 5 ms and 11 MB of
+// garbage per sizing pass.
+func countUnits(text string) (units, cjk int) {
+	for _, r := range text {
+		if r < utf8.RuneSelf {
+			units++
+			continue
+		}
+		if r >= 0x10000 {
+			units += 2
+			continue
+		}
+		units++
+		if isCJKUnit(uint16(r)) {
 			cjk++
 		}
 	}
-	rest := len(units) - cjk
+	return units, cjk
+}
+
+// charge turns a (units, cjk) split into tokens: one per CJK unit, one per
+// estimateCharsPerToken of the rest, rounded up.
+func charge(units, cjk int) int {
+	rest := units - cjk
+	if rest < 0 {
+		rest = 0
+	}
 	return cjk + (rest+estimateCharsPerToken-1)/estimateCharsPerToken
 }
 
@@ -127,13 +185,130 @@ func EstimateText(text string) int {
 // Go; it now reaches this function through the occompact script binding
 // (capabilities/compaction), so the estimate the node budgets a fold
 // against is the number every other reader sees.
+//
+// It counts rather than renders. The rule is defined on RenderMessage's
+// output, and the obvious implementation — render every message, then walk
+// it — hands a long transcript's worth of text to the allocator on every
+// sizing pass for a number: 3 MB of conversation was 1.9 MB of rendered
+// strings plus 11 MB of UTF-16 conversion, ~8 ms per pass, twice a round
+// (foundation/config's CompactRound benchmarks). Counting the parts costs
+// ~1.3 ms on the same board and 50 KB, and the shapes it does not model
+// fall back to the renderer below, so this stays one rule with a fast
+// path, never two.
 func EstimateTokens(msgs []message.Message) int {
 	total := 0
 	for _, m := range msgs {
-		total += EstimateText(RenderMessage(m)) + estimatePerMessage +
+		total += estimateMessage(m) + estimatePerMessage +
 			imageTokensInParts(m.Content.Parts)
 	}
 	return total
+}
+
+// estimateMessage is EstimateTokens's per-message term: the rendered
+// prompt cost of one message, counted where it can be and rendered where
+// it cannot.
+func estimateMessage(m message.Message) int {
+	if count, ok := countPlainParts(m.Content.Parts); ok {
+		return count
+	}
+	return EstimateText(RenderMessage(m))
+}
+
+// countPlainParts counts the two shapes a conversation is nearly all made
+// of, straight from the parts:
+//
+//   - text parts, concatenated without a separator (Content.Text);
+//   - tool results, one "tool_result: " line per result, joined with a
+//     newline (ToolActivity, then RenderMessage).
+//
+// It declines everything else. A message that narrates its own call has
+// both text and tool activity, and the renderer trims that text and joins
+// it to the lines; reimplementing the trim here would be a second copy of
+// the rendering rule, and those messages are a few hundred bytes, so they
+// keep costing exactly what they always did.
+//
+// Parts that are neither text nor tool activity do not break a shape:
+// reasoning contributes nothing to the rendered form, and media is charged
+// by payload in imageTokensInParts, not by words.
+func countPlainParts(parts []message.Part) (int, bool) {
+	var c unitCount
+	texts, results := 0, 0
+	for _, p := range parts {
+		if tp, ok := textPart(p); ok {
+			texts++
+			c.addString(tp.Text)
+			continue
+		}
+		if result, ok := toolResultPart(p); ok {
+			results++
+			if results > 1 {
+				c.addString("\n")
+			}
+			c.addString(toolResultLabel)
+			c.addContent(result.Result.Content.Parts)
+			continue
+		}
+		if _, ok := toolCallPart(p); ok {
+			return 0, false
+		}
+	}
+	if texts > 0 && results > 0 {
+		return 0, false
+	}
+	return c.tokens(), true
+}
+
+// addContent counts a content's text the way Content.Text renders it:
+// text parts in order, no separator, everything else skipped.
+func (c *unitCount) addContent(parts []message.Part) {
+	for _, p := range parts {
+		if tp, ok := textPart(p); ok {
+			c.addString(tp.Text)
+		}
+	}
+}
+
+// textPart resolves one part to its text, following NormalizePart's rule
+// for the shapes a caller can build: the value form and the pointer form,
+// with a nil pointer reading as "not text". Any other part kind is not
+// text.
+func textPart(part message.Part) (message.TextPart, bool) {
+	switch typed := part.(type) {
+	case message.TextPart:
+		return typed, true
+	case *message.TextPart:
+		if typed != nil {
+			return *typed, true
+		}
+	}
+	return message.TextPart{}, false
+}
+
+// toolResultPart resolves one part to its tool result, like textPart.
+func toolResultPart(part message.Part) (message.ToolResultPart, bool) {
+	switch typed := part.(type) {
+	case message.ToolResultPart:
+		return typed, true
+	case *message.ToolResultPart:
+		if typed != nil {
+			return *typed, true
+		}
+	}
+	return message.ToolResultPart{}, false
+}
+
+// toolCallPart reports whether one part is a tool call, the shape
+// countPlainParts cannot count.
+func toolCallPart(part message.Part) (message.ToolCallPart, bool) {
+	switch typed := part.(type) {
+	case message.ToolCallPart:
+		return typed, true
+	case *message.ToolCallPart:
+		if typed != nil {
+			return *typed, true
+		}
+	}
+	return message.ToolCallPart{}, false
 }
 
 // EstimateImageTokens approximates the prompt footprint of one image
