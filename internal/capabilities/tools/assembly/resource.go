@@ -24,6 +24,7 @@ import (
 	toolmiddleware "github.com/GizClaw/flowcraft/core/tool/middleware"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
 )
 
@@ -65,6 +66,11 @@ func (AssemblyFactory) Spec() resource.Spec {
 			// Optional: the curated delegation target policy, enforced
 			// on delegate calls by a middleware of this chain.
 			Name: "policy", Type: subagents.PolicyResourceKind, Required: false,
+		}, {
+			// Optional: the workspace session store the delegate
+			// tool's caller mode is resolved from. Without it a
+			// delegation carries no permission mode.
+			Name: "sessions", Type: sessions.ResourceKind, Required: false,
 		}},
 	}
 }
@@ -110,7 +116,14 @@ func (AssemblyFactory) New(ctx context.Context, in resource.Input) (any, error) 
 			policy = p
 		}
 	}
-	mws, catTimeout, err := buildMiddleware(settings.Middlewares, hookMgr, policy)
+	var store *sessions.Store
+	if dep, ok := in.Dep("sessions"); ok {
+		if s, ok := dep.(*sessions.Store); ok {
+			store = s
+		}
+	}
+	mws, catTimeout, err := buildMiddleware(
+		settings.Middlewares, hookMgr, policy, store)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +148,7 @@ func buildMiddleware(
 	s *middlewareSettings,
 	hookMgr *hooks.Manager,
 	policy *subagents.Policy,
+	store *sessions.Store,
 ) ([]tool.Middleware, *catalogTimeout, error) {
 	var mws []tool.Middleware
 	core := toolmiddleware.Settings{}
@@ -186,6 +200,12 @@ func buildMiddleware(
 	// delegate call still passes recover/timeout/metrics, so one
 	// refusal looks exactly like any other rejected tool call.
 	if mw := delegationMiddleware(policy); mw != nil {
+		mws = append(mws, mw)
+	}
+	// The caller's permission mode rides the call as a run attribute, and
+	// the delegation service turns it into the subagent session's own
+	// mode. Inner to the policy: a refused call never gets that far.
+	if mw := delegationModeMiddleware(store); mw != nil {
 		mws = append(mws, mw)
 	}
 	if s == nil {

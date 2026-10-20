@@ -15,7 +15,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
 	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	corenet "github.com/GizClaw/flowcraft/core/utils/net"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -216,36 +218,36 @@ var _ coresandbox.Runner = (*HostSandbox)(nil)
 // so tool-level policies (e.g. the web_fetch gate) apply the same
 // mode semantics.
 func IsYOLO(ctx context.Context, store *sessions.Store) bool {
-	if store == nil {
-		return false
+	mode, ok, err := sessions.ModeFromContext(ctx, store)
+	if err != nil {
+		// Unresolvable is not the same as unconfined: an unreadable row
+		// keeps the sandbox on, and says so instead of silently
+		// downgrading a yolo session.
+		telemetry.WarnErr(ctx, "sandbox: resolve session mode failed", err,
+			attribute.String(telemetry.AttrConversationID, conversationID(ctx)))
 	}
-	sessionID := ""
-	if info, ok := agent.RunInfoFromContext(ctx); ok {
-		sessionID = info.ConversationID
-	}
-	if sessionID == "" {
-		return false
-	}
-	mode, err := store.Mode(ctx, sessionID)
-	return err == nil && mode.IsYOLO()
+	return ok && mode.IsYOLO()
 }
 
 // isReadOnly resolves the current session's read-only flag from the
 // execution context, mirroring IsYOLO. Sessions without a persisted
 // mode run workspace-write and return false.
 func isReadOnly(ctx context.Context, store *sessions.Store) bool {
-	if store == nil {
-		return false
+	mode, ok, err := sessions.ModeFromContext(ctx, store)
+	if err != nil {
+		telemetry.WarnErr(ctx, "sandbox: resolve session mode failed", err,
+			attribute.String(telemetry.AttrConversationID, conversationID(ctx)))
 	}
-	sessionID := ""
+	return ok && mode.IsReadOnly()
+}
+
+// conversationID is the session the context belongs to, for log
+// attributes. Empty when the context carries no run info.
+func conversationID(ctx context.Context) string {
 	if info, ok := agent.RunInfoFromContext(ctx); ok {
-		sessionID = info.ConversationID
+		return info.ConversationID
 	}
-	if sessionID == "" {
-		return false
-	}
-	mode, err := store.Mode(ctx, sessionID)
-	return err == nil && mode.IsReadOnly()
+	return ""
 }
 
 // HostSandboxSettings is the deploy-document shape of the sandbox.Runner

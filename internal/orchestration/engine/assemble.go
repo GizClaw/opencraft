@@ -365,7 +365,11 @@ func appCapabilities(o *Options) []craft.Capability {
 				opts = append(opts,
 					sdkdelegation.WithStreamTargetExporter(o.DelegationStreamExporter))
 			}
-			return r.Register(sdkdelegation.NewServiceFactory(opts...))
+			// The session initializer rides along: a delegated run is
+			// handed the caller's sandbox mode instead of starting on
+			// the store's confined default (see
+			// ocsessions.ModeInitializer).
+			return r.Register(delegationServiceFactory{opts: opts})
 		}},
 		registrar{"delegation-tool", func(r *resource.Registry) error {
 			return r.Register(tooldelegation.NewSourceFactory())
