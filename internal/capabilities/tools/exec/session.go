@@ -233,13 +233,18 @@ func (t *SessionTool) start(ctx context.Context, a args) (any, error) {
 	t.sessions[a.ProcessID] = sessionEntry{epoch: epoch}
 	t.mu.Unlock()
 
+	// The tool exposes write for every session it starts, so a non-TTY
+	// one declares its input side up front: without that the child gets
+	// /dev/null on fd 0 and Write fails with NotAvailable instead of
+	// reaching the process.
 	proc, err := t.runner.Start(ctx, sandbox.SessionSpec{
-		ID:   a.ProcessID,
-		Argv: a.Argv,
-		TTY:  a.TTY,
-		Rows: a.Rows,
-		Cols: a.Cols,
-		Opts: sandbox.ExecOptions{WorkDir: a.Workdir},
+		ID:    a.ProcessID,
+		Argv:  a.Argv,
+		TTY:   a.TTY,
+		Stdin: true,
+		Rows:  a.Rows,
+		Cols:  a.Cols,
+		Opts:  sandbox.ExecOptions{WorkDir: a.Workdir},
 	})
 	if err != nil {
 		t.releaseClaim(a.ProcessID, epoch)

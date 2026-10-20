@@ -4,7 +4,7 @@ go 1.26.9
 
 require (
 	github.com/GizClaw/flowcraft/backends/secret v0.1.0
-	github.com/GizClaw/flowcraft/core v0.5.1
+	github.com/GizClaw/flowcraft/core v0.8.1
 	github.com/GizClaw/flowcraft/craft v0.0.0-20261012083040-8c197bb961df
 	github.com/GizClaw/flowcraft/driver/anthropic v0.3.4
 	github.com/GizClaw/flowcraft/driver/bytedance v0.3.4
