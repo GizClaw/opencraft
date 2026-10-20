@@ -60,6 +60,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is history, and history folds. The `streamed` marker that used to record
   "this window watched it grow" - and the paging pass that carried it across
   the archive handoff - went with the old rule. (#251)
+- A wave checkpoint is the turn it recovers, not the whole board. The graph
+  stamps the board once per completed wave and the store upserts by run id,
+  so a long turn re-serialized the same board hundreds of times (895 in the
+  run that measured this) for a record recovery reads two things off: the
+  conversation annotation and the turn's messages. With full-history replay
+  on that board is the whole conversation - one row here was 37.3 MB. The
+  trim rides the checkpoint store the host already owns and takes its slice
+  from the recovery path itself, so the same turn comes back message for
+  message, folded rounds included: the row is 0.17 MB and the write 2.3 ms
+  instead of 352 ms. `runtime.sessions.resume: true` keeps whole boards,
+  because a resume seeds the next turn from one. (#253)
 
 ### Fixed
 

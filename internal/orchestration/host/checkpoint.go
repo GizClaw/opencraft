@@ -6,9 +6,13 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 
+	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
 )
 
@@ -110,6 +114,68 @@ func checkpointRequest(ctx context.Context, cp *agent.Checkpoint) *agent.Request
 		return nil
 	}
 	return &request
+}
+
+// trimCheckpoint shrinks a wave checkpoint to the turn recovery will
+// reconstruct from it.
+//
+// The graph stamps the whole board once per completed wave (see
+// flowcraft's graph stampCheckpoint), and the store upserts by run id, so
+// what survives is the last wave's board. Recovery reads exactly two
+// things off it: the conversation annotation and the turn's messages
+// ([opmemory.ExtractTurnMessages] with the request annotation, which
+// re-anchors the user message in its pre-inline form). Everything else —
+// the world-state sections, the full-history replay prefix that
+// replay_full_history puts on MainChannel, the board vars — is context
+// for the model, not for recovery, and re-serializing it per wave is how
+// one long turn ends up writing gigabytes.
+//
+// The trim is derived from the recovery path rather than from a second
+// slicing rule: [opmemory.TurnSnapshot] runs the same extraction, and
+// restoring the trimmed board and extracting again yields the same
+// messages (the fixpoint the package tests pin).
+func trimCheckpoint(ctx context.Context, cp agent.Checkpoint) agent.Checkpoint {
+	trimmed, ok := opmemory.TurnSnapshot(cp.Board, checkpointRequest(ctx, &cp))
+	if !ok {
+		// No turn boundary on this board yet (a wave that has not
+		// reached the world node). It carries almost nothing, so keeping
+		// it costs nothing and recovery keeps its current behavior.
+		return cp
+	}
+	if v, ok := cp.Board.Vars[boardVarThreadID]; ok {
+		trimmed.Vars[boardVarThreadID] = v
+	}
+	cp.Board = trimmed
+	return cp
+}
+
+// applyCheckpointTrim decides whether this configuration may persist
+// trimmed wave checkpoints and installs (or clears) the store's hook. It
+// runs at assembly and on every in-place reload, so a document that
+// flips the decision takes effect with the generation that carries it.
+//
+// sessions.resume is the one setting that keeps whole boards: a resume
+// seeds the turn from the checkpoint's board, where the trim keeps only
+// what recovery reads. The deployments this repository ships leave it
+// off, and turning it on trades the per-wave bytes back. An undecodable
+// document leaves the store as it is; assembly fails on it separately.
+func applyCheckpointTrim(
+	ctx context.Context, store *sessions.Store, view *config.View,
+) {
+	if store == nil || view == nil {
+		return
+	}
+	cfg, err := runtimecore.DecodeConfig(ctx, view.Document)
+	if err != nil {
+		telemetry.WarnErr(ctx,
+			"host: decode runtime config for checkpoint trimming failed", err)
+		return
+	}
+	if cfg.Sessions.Resume {
+		store.SetCheckpointTrimmer(nil)
+		return
+	}
+	store.SetCheckpointTrimmer(trimCheckpoint)
 }
 
 // dropRunCheckpoint removes one run's crash-recovery checkpoint once the
