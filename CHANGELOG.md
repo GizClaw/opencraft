@@ -72,6 +72,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of 352 ms. `runtime.sessions.resume: true` keeps whole boards,
   because a resume seeds the next turn from one. (#253)
 
+- Core is v0.8.1, and a session now declares whether it has an input
+  side. Every non-TTY session used to get a stdin pipe whether or not
+  anyone would ever write to it, so a child that branches on what fd 0
+  is read the pipe: `rg pattern` with no path operand searched the
+  stream instead of the working tree, `cat` blocked, `test -p /dev/fd/0`
+  answered true. `SessionSpec.Stdin` is the only declaration now - false
+  leaves fd 0 on `/dev/null`, and `Write` on such a session answers
+  `NotAvailable` instead of `ErrSessionClosed`. Both places this repo
+  starts a session accept a write from their caller, so both declare it:
+  the `exec_session` tool and the execd child. The bump alone left
+  `write` dead on non-TTY sessions, which execd's
+  `TestWriteIdempotentAndCloseInput` caught running `/bin/cat`;
+  `TestWriteDeclaresInputOnANonTTYSession` pins the tool's half, where
+  nothing had exercised `write` at all. (#260)
+
 ### Fixed
 
 - The world-state guidance no longer steers a delegation to `mode: sync`.

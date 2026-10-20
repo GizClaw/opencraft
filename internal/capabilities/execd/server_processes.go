@@ -161,13 +161,17 @@ func (s *Server) start(
 	if err != nil {
 		return nil, errorResponse(CodeInvalid, "start: %v", err)
 	}
+	// The protocol carries Write for every process this server starts,
+	// so a non-TTY session declares its input side up front: without it
+	// the child gets /dev/null on fd 0 and Write answers NotAvailable.
 	spec := sandbox.SessionSpec{
-		ID:   p.GetProcessId(),
-		Argv: p.GetArgv(),
-		TTY:  p.GetTty(),
-		Rows: int(p.GetRows()),
-		Cols: int(p.GetCols()),
-		Opts: opts,
+		ID:    p.GetProcessId(),
+		Argv:  p.GetArgv(),
+		TTY:   p.GetTty(),
+		Stdin: true,
+		Rows:  int(p.GetRows()),
+		Cols:  int(p.GetCols()),
+		Opts:  opts,
 	}
 	// The working directory has exactly one source: the sandbox options
 	// the client encodes from spec.Opts.WorkDir. Start.cwd stays as a

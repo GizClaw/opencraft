@@ -143,6 +143,33 @@ func TestStartReadClose(t *testing.T) {
 	}
 }
 
+// TestWriteDeclaresInputOnANonTTYSession pins the declaration the tool
+// has to make: it accepts action=write for every session it starts, so
+// a non-TTY one must ask the runner for an input side. Without it the
+// child gets /dev/null on fd 0 and the write fails with NotAvailable
+// instead of reaching the process.
+func TestWriteDeclaresInputOnANonTTYSession(t *testing.T) {
+	tool, runner := newSessionTool()
+	ctx := context.Background()
+
+	if _, err := tool.Execute(ctx,
+		`{"action":"start","process_id":"s1","argv":["/bin/cat"]}`); err != nil {
+		t.Fatal(err)
+	}
+	if runner.started.TTY || !runner.started.Stdin {
+		t.Fatalf("spec = %+v, want a non-TTY session that declares stdin",
+			runner.started)
+	}
+	out, err := tool.Execute(ctx,
+		`{"action":"write","process_id":"s1","data":"x\n"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.Text(), `"written":true`) {
+		t.Errorf("write = %s", out)
+	}
+}
+
 func TestUnknownSession(t *testing.T) {
 	tool, _ := newSessionTool()
 	if _, err := tool.Execute(context.Background(),
