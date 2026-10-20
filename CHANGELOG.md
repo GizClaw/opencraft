@@ -8,6 +8,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A model round no longer re-reads the whole conversation to size its
+  prompt. The compaction node projected the entire channel into script
+  objects before every round — on a long replayed conversation the most
+  expensive thing a turn did, once per round, thrown away right after. A
+  round now reads a count and the last message, and the channel is
+  projected only on a round that actually folds. Measured on a
+  1200-message, ~3 MB channel, through the engine's own script runtime:
+  0.54 MB allocated a round instead of 143 MB. (#254)
+- The world node no longer hands the engine board to the script runtime.
+  Merging the world state onto the channel is Go now (`worldstate.Merge`,
+  reached from the graph as the `ocworld` global), so a turn stops paying
+  a JSON projection per message in each direction: reading and rewriting
+  the whole transcript cost ~35 microseconds per KB of conversation —
+  ~70 ms of time-to-first-token per turn at 2 MB, ~280 ms at 8 MB. The
+  node stays the graph's entry point and is one call; the script surface
+  it runs on ships as `agent.ScriptBindings/opencraft`, the standard
+  bridges plus that global. The cross-language fixture
+  (`world_cases.json` + `worldNodeMirror.test.ts`) went with the JS merge:
+  the same cases are Go tests against `Merge` now.
+- The compaction node measures the prompt in Go. `compact.js` keeps the
+  policy (when to fold, which slice, how the summary lands) and asks for
+  the number through the `occompact` global (`capabilities/compaction` ->
+  `summarytext.EstimateTokens`), the same rule the memory hooks, the
+  context meter and the fold tool use. The JS mirror was a per-character
+  CJK scan through goja, ~80x the native cost - 62 ms per sizing pass on
+  a 230 KB channel, 171 ms on a 560 KB one, twice a round - and it went
+  with the `compact_cases.json` fixture: the estimate's golden numbers are
+  Go tests now, and the summary prefix the frontend must match is pinned
+  directly. The estimate a fold is budgeted against is the number every
+  other reader sees, so a custom graph no longer has to track it. (#257)
+- Sizing a prompt no longer renders it. The estimate is defined on a
+  message's rendered form, and the implementation built exactly that before
+  walking it: the transcript's text joined into strings, then converted to
+  UTF-16, for a number. On the 1200-message, ~3 MB channel the benchmarks
+  use, one pass cost 13.4 MB of garbage and ~8 ms, twice a round, in the
+  compaction node and again in the prepare hook's context meter. It counts
+  the parts instead - text and tool results straight from the content,
+  anything the fast path does not model through the renderer, so the rule
+  still has one definition - and walks runes without materialising UTF-16:
+  ~1.3 ms and 50 KB, the same number to the token. A seeded corpus of every
+  part shape (pointer parts, tool activity beside text, media, CJK, astral,
+  invalid UTF-8, arguments that are not JSON) holds the counter to the
+  renderer case by case. (#259)
 - The newest answer in the transcript never folds. A settled markdown block
   past 2k characters still renders its first section and puts the rest
   behind one control, but the fold reads the block's position and nothing
@@ -31,6 +74,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The world-state guidance no longer steers a delegation to `mode: sync`.
+  #244 fixed the mechanism the old habit was built on - a `sync` delegate
+  was cut at the assembly's 5m default like every other call, so async
+  plus a `sleep` poll was the only posture that survived - but the bullet
+  it added then covered one case (the result is needed before
+  continuing) and read as the default for all of them: the first `sync`
+  calls in this machine's rollouts appear in the hour it shipped, every
+  delegation before it `async`. The mode is the caller's judgement, and
+  the cost it turns on is the wait, not whether the result is wanted:
+  `sync` when the work is short enough that the round trip would cost
+  more than the block, `async` for long work and for anything that can
+  start while other work is in hand, however short. `mode` is a required
+  enum with no default in the tool definition, so the prompt is the only
+  thing that was picking one. The no-poll rule stays. (#258)
+- The turn-end bullet no longer tells a turn to wait for running
+  subagents. That instruction came from the pre-#244 world, where the
+  only way to see a result was to poll for it: for `async` it asked for
+  exactly the loop the guidance forbids, and for `sync` it described a
+  wait the call had already completed. It now says what the runtime
+  does - a `sync` worker has returned and its result is in hand, an
+  `async` worker is meant to outlive the turn, so name it and end the
+  turn; the note lands in the conversation on its own. (#258)
 - The composer's context meter reads the prompt that was actually sent on
   the turn that folds the conversation. Prepare estimated the transcript
   the turn opened with, the fold then moved the older rounds out, and the
@@ -40,6 +105,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scaled onto the measurement now, keeping their shares, and the popover
   says the split is a proportion; snapshots already stored are repaired on
   read. (#250)
+- A tool answer now carries the text the tool already had. `apply_patch`
+  failed one call in twenty (394 of 7,643) on "no match for the first
+  context line" and nothing else, so the retry was another guess from
+  memory; the error looks the hunk's own lines up in the file and quotes
+  it - where they do appear, up to seven numbered lines around them, the
+  hunk lines the file has nowhere, and, when every line is there and only
+  the indentation moved, that whitespace is the whole difference. A hunk
+  after the first says that its numbers count the file as the earlier
+  hunks left it. `read_file` and `exec_command` sent results through
+  `encoding/json`, whose HTML escaping turned the file's own `<`, `&` and
+  `>` into `\u003c`, `\u0026` and `\u003e` in three reads out of four
+  (5,964 of 7,851 reads, 1,715 of 2,248 files) - and 45 of the 7,648
+  `apply_patch` calls write one of those escapes into the patch itself,
+  where it can match only a file that holds the escape; those results go
+  through an encoder that escapes only what JSON syntax needs. The
+  `read_file` description names both ways to read (a known region is
+  `offset` + `limit`, an unknown one follows `next_offset`) instead of
+  pushing every read towards whole files, which is how 9,997 `sed -n`
+  peeks stacked up beside 7,851 reads. `update_plan` says where an
+  item-level explanation goes, and `exec_command` says the shell is not a
+  terminal and that `rg -r` is `--replace` while `grep -r` recurses -
+  1,050 of the 11,272 commands that run `rg` pass a flag carrying both
+  letters. (#255)
 
 ## [0.7.0] - 2026-10-19
 

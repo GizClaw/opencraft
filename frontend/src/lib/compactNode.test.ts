@@ -1,8 +1,14 @@
-// Cross-language gate for the compaction node.
+// Policy gate for the compaction node.
 //
-// Go renders the prompt and the harness measures it; the graph's compact
-// node decides whether to fold it into a summary. The node cannot import
-// Go, so the board-var contract is pinned here against a stub board:
+// Go renders the prompt and measures it; the graph's compact node decides
+// whether to fold it into a summary. Two contracts are pinned here against
+// a stub board:
+//
+//   - occompact.estimate(from): the measurement itself, which is Go's rule
+//     (capabilities/compaction -> summarytext.EstimateTokens) and is
+//     injected here so these cases assert the policy rather than the
+//     arithmetic;
+//   - the board vars the node reads and writes:
 //
 //   - llm_usage + world.compact.anchor_len/anchor_epoch: this turn's
 //     previous call measured the prompt this node is sizing;
@@ -18,6 +24,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { estimateTokensOf } from '../test/compactEstimate';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const NODE_SOURCE = join(
@@ -48,6 +55,8 @@ interface NodeResult {
   channel: BoardMessage[];
   /** The side channel folded messages move onto before leaving the model view. */
   archive: BoardMessage[];
+  /** How many times the node projected the whole channel into objects. */
+  projections: number;
 }
 
 function text(role: string, body: string): BoardMessage {
@@ -172,13 +181,28 @@ function runNode(opts: RunOptions): NodeResult {
   const channels: Record<string, BoardMessage[]> = {
     main: structuredClone(opts.channel),
   };
+  let projections = 0;
   const board = {
     MAIN_CHANNEL: 'main',
     getVar: (key: string) => vars[key],
     setVar: (key: string, value: unknown) => {
       vars[key] = value;
     },
-    channel: (name: string) => channels[name] ?? [],
+    // The projection is the read this node must not make on a round that
+    // folds nothing (one object graph per message), so the stub counts it.
+    channel: (name: string) => {
+      projections += 1;
+      return channels[name] ?? [];
+    },
+    // The narrow reads mirror core's board bridge: a count, the tail, and
+    // one message, none of which copy the conversation.
+    channelLen: (name: string) => (channels[name] ?? []).length,
+    channelTail: (name: string, count: number) =>
+      count <= 0 ? [] : (channels[name] ?? []).slice(-count),
+    lastMessage: (name: string) => {
+      const msgs = channels[name] ?? [];
+      return msgs.length > 0 ? msgs[msgs.length - 1] : null;
+    },
     setChannel: (name: string, next: BoardMessage[]) => {
       channels[name] = next;
     },
@@ -190,15 +214,24 @@ function runNode(opts: RunOptions): NodeResult {
     },
   };
   const run = { get_context_id: () => 's-test' };
-  new Function('board', 'run', 'config', readFileSync(NODE_SOURCE, 'utf8'))(
-    board,
-    run,
-    {},
-  );
+  // The node sizes the channel through Go (occompact.estimate ->
+  // summarytext.EstimateTokens); these tests pin the fold policy, so the
+  // measurement is injected here.
+  const occompact = {
+    estimate: (from: number) => estimateTokensOf(channels.main.slice(from)),
+  };
+  new Function(
+    'board',
+    'run',
+    'config',
+    'occompact',
+    readFileSync(NODE_SOURCE, 'utf8'),
+  )(board, run, {}, occompact);
   return {
     vars,
     channel: channels.main,
     archive: channels['opencraft.compact_archive'] ?? [],
+    projections,
   };
 }
 
@@ -420,5 +453,37 @@ describe('compaction node', () => {
     // The next round's measurement starts from the channel as it stands.
     expect(result.vars['world.compact.anchor_len']).toBe(result.channel.length);
     expect(result.vars['world.compact.anchor_epoch']).toBe(1);
+  });
+
+  it('projects the channel only on a round that folds', () => {
+    // The expensive read this node can make is the projection of the whole
+    // conversation into script objects — one object graph per message. A
+    // sizing round needs a count, the last message, and Go's number; only a
+    // round that goes on to fold needs the messages themselves.
+    const history = 40;
+    const channel = midTurn(history, text('tool', 'short output'));
+    const fits = runNode({ channel, history });
+    expect(fits.projections).toBe(0);
+    expect(foldRequested(fits)).toBe(false);
+    // The number the llm node is about to be measured against is this
+    // round's channel, count for count.
+    expect(fits.vars['world.compact.anchor_len']).toBe(channel.length);
+
+    // Over budget: the fold path reads the messages once, and the sizing
+    // call in front of it did not pay for a second projection.
+    const foldChannel = midTurn(history, bigToolResult());
+    const folds = runNode({
+      channel: foldChannel,
+      history,
+      vars: {
+        'world.usage.anchor': {
+          input_tokens: 9500,
+          anchored_messages: foldChannel.length - 2,
+          compact_count: 0,
+        },
+      },
+    });
+    expect(foldRequested(folds)).toBe(true);
+    expect(folds.projections).toBe(1);
   });
 });

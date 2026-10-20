@@ -7,7 +7,6 @@ package files
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/fshidden"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/jsonout"
 )
 
 const (
@@ -136,11 +136,12 @@ func (t *readFileTool) Definition() message.ToolDefinition {
 			"{file_path, content, offset, limit, total_lines, "+
 			"is_truncated, next_offset}. A window carries as much as one "+
 			"result can hold (about 20000 characters, fewer when the "+
-			"text needs escaping, or limit lines if that is smaller); "+
-			"when lines remain, next_offset is where "+
-			"the next read continues. Read a file whole when it fits, and "+
-			"continue from next_offset otherwise: probing in small "+
-			"ranges costs a round per probe.",
+			"text needs escaping, or limit lines if that is smaller). "+
+			"Two ways to use it: when you already know the region - the "+
+			"lines around a grep hit, a symbol you can place - pass "+
+			"offset and limit for exactly those lines; otherwise read "+
+			"from offset 1 and continue from next_offset until "+
+			"is_truncated is false.",
 		message.ToolProperty("file_path", "string",
 			"The file to read: relative to the workspace root, or an "+
 				"absolute path under an allowed root (workspace, skill "+
@@ -251,7 +252,7 @@ func (t *readFileTool) execute(ctx context.Context, arguments string) (string, e
 	if reached < total {
 		result["next_offset"] = reached + 1
 	}
-	payload, err := json.Marshal(result)
+	payload, err := jsonout.Marshal(result)
 	if err != nil {
 		return "", errdefs.Internalf("%s: encode result: %v", ReadFileName, err)
 	}
@@ -321,14 +322,15 @@ func joinLineRange(data []byte, start, end, budget int) (string, int) {
 }
 
 // jsonStringLen returns the bytes a JSON string literal holding b takes,
-// which is what the read budget is measured in. It mirrors encoding/json
-// for a string value: the quote, the backslash and the short escapes
-// cost two bytes, other control characters and the line separators cost
-// six, and so do the HTML set (Marshal escapes it by default) and every
-// byte of invalid UTF-8, which the encoder replaces with \ufffd. The two
-// must agree exactly: a cheaper estimate lets a window grow past the
-// result policy's cap, and a dearer one hands back windows shorter than
-// the result could carry. TestJSONStringLenMatchesMarshal pins them.
+// which is what the read budget is measured in. It mirrors the encoder
+// the result actually goes through (jsonout, which keeps <, > and & as
+// they are): the quote, the backslash and the short escapes cost two
+// bytes, other control characters and the line separators cost six, and
+// so does every byte of invalid UTF-8, which the encoder replaces with
+// \ufffd. The two must agree exactly: a cheaper estimate lets a window
+// grow past the result policy's cap, and a dearer one hands back windows
+// shorter than the result could carry. TestJSONStringLenMatchesMarshal
+// pins them.
 func jsonStringLen(b []byte) int {
 	n := 0
 	for i := 0; i < len(b); {
@@ -342,11 +344,7 @@ func jsonStringLen(b []byte) int {
 			n += 6
 			i++
 		case c < utf8.RuneSelf:
-			if c == '<' || c == '>' || c == '&' {
-				n += 6
-			} else {
-				n++
-			}
+			n++
 			i++
 		default:
 			r, size := utf8.DecodeRune(b[i:])
@@ -417,7 +415,7 @@ func (t *writeFileTool) execute(ctx context.Context, arguments string) (string, 
 	if err := t.ws.Write(ctx, args.FilePath, []byte(args.Content)); err != nil {
 		return "", err
 	}
-	payload, err := json.Marshal(map[string]any{
+	payload, err := jsonout.Marshal(map[string]any{
 		"file_path": args.FilePath,
 		"bytes":     len(args.Content),
 	})
@@ -553,7 +551,7 @@ func (t *listDirTool) execute(ctx context.Context, arguments string) (string, er
 	if err != nil && !errors.Is(err, errStopWalk) {
 		return "", err
 	}
-	payload, err := json.Marshal(map[string]any{
+	payload, err := jsonout.Marshal(map[string]any{
 		"path":      root,
 		"entries":   entries,
 		"truncated": truncated,
@@ -682,7 +680,7 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 	if len(scan.matches) > scan.maxMatches {
 		scan.matches = scan.matches[:scan.maxMatches]
 	}
-	payload, err := json.Marshal(map[string]any{
+	payload, err := jsonout.Marshal(map[string]any{
 		"matches":       scan.matches,
 		"truncated":     scan.truncated,
 		"skipped_large": scan.skippedLarge,
@@ -954,7 +952,7 @@ func (t *globTool) execute(ctx context.Context, arguments string) (string, error
 		matches = matches[:maxGlobMatches]
 		truncated = true
 	}
-	payload, err := json.Marshal(map[string]any{
+	payload, err := jsonout.Marshal(map[string]any{
 		// Paths are workspace-relative, the namespace every other file
 		// tool reports in.
 		"matches":   matches,

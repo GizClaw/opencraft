@@ -15,6 +15,10 @@ agents:
         workspace: ws
         sandbox: box
         script_runtime: js
+        # The script surface every script node of this graph runs on:
+        # the standard bridges plus the "ocworld" global the world node
+        # merges the channel with (assets/opencraft.yaml).
+        script_bindings: script.opencraft
       settings:
         # The default graph ships embedded (graph + node scripts +
         # system prompt all resolve from the binary). To use your own,
