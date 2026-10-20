@@ -400,3 +400,29 @@ func TestFilesToolReadsReadonlySkillRoot(t *testing.T) {
 		t.Fatal("write_file to readonly root must fail")
 	}
 }
+
+// TestIsYOLOStaysConfinedWhenTheStoreCannotAnswer pins the failure
+// direction of the mode resolution the sandbox and the tool-level gates
+// share: an unreadable session row keeps the sandbox on. Reading it as
+// "this run has no policy" would upgrade a session nobody could
+// identify, which is the same downgrade the delegation wiring refuses.
+func TestIsYOLOStaysConfinedWhenTheStoreCannotAnswer(t *testing.T) {
+	skipIfYoloOnly(t)
+	store := newTestStore(t)
+	if err := store.SetMode(
+		context.Background(), "s1", sessions.ModeYOLO,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !IsYOLO(sessionCtx("s1"), store) {
+		t.Fatal("a yolo session read as confined")
+	}
+	// Closing twice is a no-op, so the cleanup registered by the helper
+	// still succeeds.
+	if err := store.CloseDB(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	if IsYOLO(sessionCtx("s1"), store) {
+		t.Fatal("an unreadable session row read as yolo")
+	}
+}

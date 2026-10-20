@@ -169,6 +169,11 @@ resources:
     deps:
       backend: delegate.backend
       directory: delegate.directory
+      # The workspace session store: the service's session initializer
+      # writes the caller's sandbox mode onto each subagent session, so a
+      # delegated run is not confined because it was never told its
+      # caller's mode.
+      sessions: sessions
     settings:
       max_concurrency: 4
       max_depth: 8

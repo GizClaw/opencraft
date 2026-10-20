@@ -357,3 +357,44 @@ func TestEmbeddedToolsSetTheToolTimeout(t *testing.T) {
 		t.Fatalf("middlewares.timeout.default %q is not a positive bound", spec)
 	}
 }
+
+// TestEmbeddedToolsWireDelegateMode pins the two deploy dependencies a
+// subagent's permission mode travels through, because both fail
+// silently: a tool assembly without the session store stamps no mode on
+// the delegate call, and a delegation service without it writes none to
+// the child session. Either way the subagent quietly runs confined under
+// its caller, which is exactly the bug this wiring exists to prevent —
+// and every factory test still passes, because they inject the store by
+// hand.
+func TestEmbeddedToolsWireDelegateMode(t *testing.T) {
+	mgr, err := Open(Options{UserDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mgr.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, ok := view.Document.Resources["sessions"]
+	if !ok {
+		t.Fatal("the session store resource is not declared")
+	}
+	if store.Kind != "session.Store" {
+		t.Fatalf("sessions kind = %q, want session.Store", store.Kind)
+	}
+	for name, want := range map[string]string{
+		// Stamping side: the assembly reads the caller's mode.
+		"tools": "sessions",
+		// Applying side: the service writes it to the child session.
+		"delegate": "sessions",
+	} {
+		res, ok := view.Document.Resources[name]
+		if !ok {
+			t.Fatalf("resource %q is not declared", name)
+		}
+		if got := string(res.Deps["sessions"]); got != want {
+			t.Fatalf("%s deps[sessions] = %q, want %q (all deps: %+v)",
+				name, got, want, res.Deps)
+		}
+	}
+}

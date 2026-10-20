@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strings"
 
+	sdkdelegation "github.com/GizClaw/flowcraft/core/delegation"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/tool"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/subagents"
 )
 
@@ -71,4 +73,61 @@ func delegationTarget(arguments string) (string, bool) {
 	}
 	target := strings.TrimSpace(args.Target)
 	return target, target != ""
+}
+
+// delegationModeMiddleware stamps the caller's permission mode onto every
+// delegate call as a run attribute, so the subagent's own session can
+// start under it (see sessions.ModeInitializer).
+//
+// Why here: the tool call is the last seam that still sees the caller's
+// context — the delegate tool copies the attributes stamped there onto
+// its request, and core deliberately does not propagate a parent's
+// request attributes on its own (they carry run-scoped payloads, such as
+// checkpoint recovery blobs, that must not leak into a subagent). The
+// delegate tool's arguments are the model's, so a mode that came from
+// them would let a subagent widen its own policy; this one comes from the
+// caller's session row instead.
+//
+// The mode is layered onto whatever a deployment stamped further out
+// rather than replacing it: run attributes are the channel for any
+// caller-declared execution policy, and dropping an outer producer's
+// keys would break it without a word.
+func delegationModeMiddleware(store *sessions.Store) tool.Middleware {
+	if store == nil {
+		return nil
+	}
+	return func(next tool.Dispatch) tool.Dispatch {
+		return func(
+			ctx context.Context, call message.ToolCall,
+		) message.ToolResult {
+			if call.Name != delegatedToolID {
+				return next(ctx, call)
+			}
+			mode, ok, err := sessions.ModeFromContext(ctx, store)
+			if err != nil {
+				// The caller has a session and the store cannot say what
+				// mode it is in. Delegating anyway would hand the child
+				// the confined default, which is the failure this
+				// middleware exists to prevent, so the call fails
+				// instead.
+				return message.ToolResult{
+					CallID:  call.ID,
+					IsError: true,
+					Content: message.NewTextContent(fmt.Sprintf(
+						"cannot read the caller's permission mode, so the "+
+							"delegation would run under the wrong policy: %v",
+						err)),
+				}
+			}
+			if !ok {
+				return next(ctx, call)
+			}
+			attributes, _ := sdkdelegation.RunAttributesFromContext(ctx)
+			if attributes == nil {
+				attributes = make(map[string]string, 1)
+			}
+			attributes[sessions.ModeAttribute] = string(mode)
+			return next(sdkdelegation.WithRunAttributes(ctx, attributes), call)
+		}
+	}
 }

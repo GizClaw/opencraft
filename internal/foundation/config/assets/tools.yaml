@@ -186,6 +186,10 @@ resources:
       # enforces it on delegate calls, so a deployment without the
       # resource simply allows every registered target.
       policy: delegate.policy
+      # Optional: the caller's session store. The assembly reads the
+      # delegate caller's permission mode from it and stamps it on the
+      # call, so the subagent runs under the mode its caller is under.
+      sessions: sessions
       tool: tool.exec
       tool.applypatch: tool.applypatch
       tool.webfetch: tool.webfetch

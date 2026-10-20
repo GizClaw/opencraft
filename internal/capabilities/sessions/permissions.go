@@ -3,6 +3,7 @@ package sessions
 import (
 	"context"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
@@ -73,4 +74,30 @@ func (s *Store) Mode(ctx context.Context, id string) (Mode, error) {
 	default:
 		return ModeWorkspace, nil
 	}
+}
+
+// ModeFromContext resolves the permission mode of the session the
+// execution context belongs to (flowcraft puts the run's identity there
+// before any handler or tool runs).
+//
+// ok is false when there is nothing to resolve: no store, or no run info
+// on the context. Callers that would act on a guess must treat that as
+// "unknown" instead of as the store's default — a delegate call outside
+// any session has no caller mode to hand a subagent. A store that cannot
+// answer is a different thing and comes back as an error: folding it into
+// ok would turn a transient read failure into "this run has no policy",
+// which is how a caller's mode gets dropped without anyone noticing.
+func ModeFromContext(ctx context.Context, s *Store) (Mode, bool, error) {
+	if s == nil {
+		return ModeWorkspace, false, nil
+	}
+	info, ok := agent.RunInfoFromContext(ctx)
+	if !ok || info.ConversationID == "" {
+		return ModeWorkspace, false, nil
+	}
+	mode, err := s.Mode(ctx, info.ConversationID)
+	if err != nil {
+		return ModeWorkspace, false, err
+	}
+	return mode, true, nil
 }
