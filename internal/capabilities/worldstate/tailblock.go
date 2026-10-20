@@ -3,8 +3,8 @@ package worldstate
 import "strings"
 
 // The per-turn context block. Go renders it into one string
-// (world.tail_block) and the world node appends it to the user's own
-// message as a final text part.
+// (world.tail_block) and Merge appends it to the user's own message as
+// a final text part.
 //
 // Two design rules are encoded here:
 //
@@ -25,7 +25,7 @@ const (
 )
 
 // renderTailBlock renders the per-turn sections into the single text
-// block the world node appends to the user's message. Empty sections are
+// block Merge appends to the user's message. Empty sections are
 // skipped, and a fully empty tail returns "" so the node leaves the turn
 // message untouched.
 func renderTailBlock(sections []Section) string {

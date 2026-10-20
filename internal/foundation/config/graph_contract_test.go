@@ -1,7 +1,6 @@
 package config
 
 import (
-	"regexp"
 	"strings"
 	"testing"
 
@@ -39,22 +38,67 @@ func TestContextNoticePrefixMatchesGraphAsset(t *testing.T) {
 	}
 }
 
-// TestCompactionBoardVarsMatchGraphAssets pins the board vars the graph's
-// script nodes exchange with Go against the names Go reads. The Go side is
+// TestCompactionBoardVarsMatchGraphAssets pins the board vars the compact
+// node exchanges with Go against the names Go reads. The Go side is
 // single-sourced in graph_contract.go (a typo there is a compile error at
 // the read site), so what this test catches is the other direction: a rename
 // in the asset, which would silently drop the anchor's measurement and the
 // UI's compaction notice.
 func TestCompactionBoardVarsMatchGraphAssets(t *testing.T) {
 	compact := readAsset(t, "assets/graphs/nodes/compact.js")
-	world := readAsset(t, "assets/graphs/nodes/world.js")
 	for _, name := range CompactionBoardVars {
 		if !strings.Contains(compact, `"`+name+`"`) {
 			t.Fatalf("compact.js never mentions %q, which Go reads", name)
 		}
 	}
-	if !strings.Contains(world, `"`+BoardVarTailBlock+`"`) {
-		t.Fatalf("world.js never reads %q, which Go writes", BoardVarTailBlock)
+}
+
+// TestWorldNodeMergesThroughItsGoBridge pins the split between the
+// graph's world node and the merge itself: the node seeds the channel
+// through the "ocworld" global (worldstate.Merge), never through the
+// board bridge. board.channel() and board.setChannel() project every
+// message through JSON in each direction, and the world node rewrites
+// the whole transcript every turn — doing that from script is what made
+// a long conversation pay ~70 ms per turn at 2 MB, ~280 ms at 8 MB,
+// before the model saw a token. The node staying a one-line entry point
+// is the intended shape, not an accident of the port.
+//
+// The board vars the merge reads are Go-only now (writer and reader are
+// both internal/capabilities/worldstate), so a rename there is a
+// compile error rather than something this test has to catch. The
+// global's name is checked by the e2e test that runs this graph.
+func TestWorldNodeMergesThroughItsGoBridge(t *testing.T) {
+	js := readAsset(t, "assets/graphs/nodes/world.js")
+	if !strings.Contains(js, "ocworld.merge(") {
+		t.Fatal("world.js does not call ocworld.merge")
+	}
+	for _, forbidden := range []string{"board.channel(", "board.setChannel("} {
+		if strings.Contains(js, forbidden) {
+			t.Fatalf("world.js calls %s: the channel must not cross the script bridge",
+				forbidden)
+		}
+	}
+}
+
+// TestCompactNodeSizesThroughItsGoBridge pins the split between the
+// graph's compaction node and the estimate: the node decides on
+// "occompact" (capabilities/compaction), never on a local copy of the
+// rule. Mirroring summarytext in JS was a per-character CJK scan through
+// goja, ~80x the native number: 62 ms per sizing pass on a 230 KB
+// channel, 171 ms on a 560 KB one, and the node sizes twice a round. It
+// also needed a shared fixture to keep two copies of one rule in step.
+// The node keeps the policy (when to fold, which slice, how the result
+// lands) and calls Go only for the number.
+func TestCompactNodeSizesThroughItsGoBridge(t *testing.T) {
+	js := readAsset(t, "assets/graphs/nodes/compact.js")
+	if !strings.Contains(js, "occompact.estimate(") {
+		t.Fatal("compact.js does not size the channel through occompact.estimate")
+	}
+	for _, forbidden := range []string{"charCodeAt(", "JSON.stringify("} {
+		if strings.Contains(js, forbidden) {
+			t.Fatalf("compact.js still renders text through %s: the estimate "+
+				"is Go's rule, and a second renderer drifts from it", forbidden)
+		}
 	}
 }
 
@@ -96,20 +140,6 @@ func TestCompactionBoardVarsAreNamespaced(t *testing.T) {
 		default:
 			t.Fatalf("board var %q is outside the world.* / llm_usage contract", name)
 		}
-	}
-}
-
-// TestTailBlockVarIsNotAWireName keeps the writer honest: the tail block is
-// board state, never a message of its own on the channel.
-func TestTailBlockVarIsNotAWireName(t *testing.T) {
-	js := readAsset(t, "assets/graphs/nodes/world.js")
-	if strings.Contains(js, "role: \""+BoardVarTailBlock+"\"") {
-		t.Fatal("the tail block must not be used as a message role")
-	}
-	// The block is always user-role content: it carries the user's own turn
-	// context, and the model must not read it as another agent's words.
-	if !regexp.MustCompile(`role: "user"`).MatchString(js) {
-		t.Fatal("world.js no longer emits a user-role message for the tail block")
 	}
 }
 

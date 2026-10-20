@@ -1,7 +1,6 @@
 // Behaviour gate for the compaction node.
 //
-// The estimate mirror (compactMirror.test.ts) only pins the pure
-// functions. This file runs the real node script
+// This file runs the real node script
 // (internal/foundation/config/assets/graphs/nodes/compact.js) against a
 // stub board and checks what it does to the channels: the folded prefix
 // must move to the side channel and leave MainChannel, the turn's user
@@ -13,6 +12,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { COMPACT_SUMMARY_PREFIX } from './compact';
+import { estimateTokensOf } from '../test/compactEstimate';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const NODE_SOURCE = join(
@@ -66,6 +66,13 @@ function boardStub(main: BoardMessage[], vars: Vars = {}) {
       store[key] = value;
     },
     channel: (name: string) => channels[name] ?? [],
+    channelLen: (name: string) => (channels[name] ?? []).length,
+    channelTail: (name: string, count: number) =>
+      count <= 0 ? [] : (channels[name] ?? []).slice(-count),
+    lastMessage: (name: string) => {
+      const msgs = channels[name] ?? [];
+      return msgs.length > 0 ? msgs[msgs.length - 1] : null;
+    },
     setChannel: (name: string, next: BoardMessage[]) => {
       channels[name] = next;
     },
@@ -97,11 +104,22 @@ function runNode(board: unknown, maxInputTokens = 1): void {
     // past it, so check mode folds without waiting for a measurement.
     routeExplain: () => ({ limits: { max_input_tokens: maxInputTokens } }),
   };
-  new Function('board', 'config', 'run', 'inference', source)(
+  // The estimate is Go's in production (occompact.estimate); folding
+  // geometry does not depend on how it counts, so it is injected.
+  const occompact = {
+    estimate: (from: number) =>
+      estimateTokensOf(
+        (board as { channel: (n: string) => BoardMessage[] })
+          .channel(MAIN)
+          .slice(from),
+      ),
+  };
+  new Function('board', 'config', 'run', 'inference', 'occompact', source)(
     board,
     config,
     run,
     inference,
+    occompact,
   );
 }
 

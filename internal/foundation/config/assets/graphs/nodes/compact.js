@@ -36,6 +36,14 @@
 // crude in both directions and a fold costs a summarization call plus a
 // prompt-cache invalidation. An estimate at or past the whole window is
 // not deferred: that request would simply fail.
+//
+// Reading cost: this node runs before every round, so it reads the channel
+// by count and last message (board.channelLen / lastMessage) and projects
+// it into script objects only on a round that actually folds. The number
+// itself is not this node's: sizing is summarytext.EstimateTokens, reached
+// through occompact.estimate (capabilities/compaction) — the same rule the
+// memory hooks, the context meter and the fold tool budget with. Only the
+// fold crosses back into Go, as the compact tool call below.
 var cfg = config || {};
 var PRESERVE = cfg.preserve_recent || 10;
 var BUDGET = cfg.budget_chars || 4096;
@@ -65,10 +73,21 @@ var NOTICE_PREFIX = "Context notice:";
 // silently disabled.
 var FALLBACK_MAX_INPUT_TOKENS = 128000;
 // The default graph carries no static system_prompt: base instructions
-// are world-state sections counted below. system_prompt_tokens is kept
-// for custom graphs that still configure a static prompt.
+// are world-state sections, which the channel estimate below covers.
+// system_prompt_tokens is kept for custom graphs that still configure a
+// static prompt.
 var SYS_PROMPT_TOKENS = cfg.system_prompt_tokens || 0;
-var channel = board.channel(board.MAIN_CHANNEL) || [];
+// len is this round's channel length; the messages themselves stay in Go
+// until a decision needs them (messages() below).
+var len = board.channelLen(board.MAIN_CHANNEL);
+var channel = null;
+// messages projects the channel into script objects. It is the most
+// expensive read this node can make — one object graph per message — so it
+// is taken only on the rounds that fold.
+function messages() {
+  if (channel === null) channel = board.channel(board.MAIN_CHANNEL) || [];
+  return channel;
+}
 var count = Number(board.getVar("world.sections.count") || 0);
 var compactCount = Number(board.getVar("world.compact.count") || 0);
 // epoch counts folds applied in THIS turn. A fold rewrites the channel
@@ -137,44 +156,10 @@ function isSummary(m, prevSummary) {
   return messageText(m).indexOf(prefix) === 0;
 }
 
-// renderText estimates one MainChannel message's prompt footprint.
-// It mirrors summarytext.RenderMessage
-// (internal/foundation/utils/summarytext): text parts keep their content
-// and tool activity is rendered as tool_call / tool_result lines, so
-// the estimate covers what the model will actually pay for. The fold
-// itself is passed to the compact tool as full messages (role + content
-// parts) — rendering happens in Go.
-function renderText(m) {
-  var parts = (m && m.content && m.content.parts) || [];
-  var text = "";
-  var lines = [];
-  for (var i = 0; i < parts.length; i++) {
-    var p = parts[i];
-    if (!p) continue;
-    if (p.type === "text") {
-      text += p.text || "";
-    } else if (p.type === "tool_call" && p.call) {
-      // JSON.stringify matches the Go side's compacted arguments
-      // (summarytext.compactJSON). Both sides cover the same text; only
-      // an exotic spelling (an explicit \uXXXX escape, an HTML-escaped
-      // character) can be written out differently, by a few characters.
-      lines.push("tool_call: " + p.call.name + " " + JSON.stringify(p.call.arguments));
-    } else if (p.type === "tool_result" && p.result) {
-      lines.push("tool_result: " + resultText(p.result.content));
-    }
-  }
-  if (lines.length > 0) {
-    var trimmed = text.trim();
-    if (trimmed === "") return lines.join("\n");
-    return trimmed + "\n" + lines.join("\n");
-  }
-  return text;
-}
-
 // resultText mirrors the Go side's Content.Text() for a tool result:
 // text parts are concatenated in order and every other part kind is
-// skipped. A result whose content was read as an opaque value would
-// make the estimate cover the wrong text entirely.
+// skipped. Only the fold's own patch is read here (see the apply branch
+// below); sizing a message is Go's job.
 function resultText(content) {
   var parts = (content && content.parts) || [];
   var text = "";
@@ -193,59 +178,14 @@ function resultPayload(content) {
   return resultText(content);
 }
 
-// imageTokens charges the prompt footprint of one image part, mirroring
-// summarytext.EstimateImageTokens. Text rendering cannot see this cost —
-// the prompt carries the payload, not words — but a conversation full of
-// screenshots is far larger than its text, and under-estimating is what
-// lets a request past the model window. The unit is the base64 character
-// count because that is the shape this node holds; Go counts the encoded
-// length of the decoded bytes, which is the same number.
-var IMAGE_FLOOR = 1024;
-var IMAGE_CHARS_PER_TOKEN = 16;
-
-function imageTokenCost(part) {
-  var src = (part && part.source) || {};
-  var chars = src.kind === "inline" && typeof src.data === "string"
-    ? src.data.length
-    : 0;
-  return Math.max(IMAGE_FLOOR, Math.floor(chars / IMAGE_CHARS_PER_TOKEN));
-}
-
-// imageTokensInParts descends into tool results: a screenshot arrives as
-// an image part inside the result's content, not beside it.
-function imageTokensInParts(parts) {
-  var total = 0;
-  for (var i = 0; i < parts.length; i++) {
-    var p = parts[i];
-    if (!p) continue;
-    if (p.type === "image") {
-      total += imageTokenCost(p);
-    } else if (p.type === "tool_result" && p.result) {
-      total += imageTokensInParts(
-        (p.result.content && p.result.content.parts) || []);
-    }
-  }
-  return total;
-}
-
-function estimateTokens(msgs) {
-  var tokens = 0;
-  for (var i = 0; i < msgs.length; i++) {
-    var s = renderText(msgs[i]);
-    var cjk = 0;
-    for (var j = 0; j < s.length; j++) {
-      var c = s.charCodeAt(j);
-      if ((c >= 0x4e00 && c <= 0x9fff) ||
-          (c >= 0x3400 && c <= 0x4dbf) ||
-          (c >= 0x3040 && c <= 0x30ff)) {
-        cjk++;
-      }
-    }
-    var parts = (msgs[i] && msgs[i].content && msgs[i].content.parts) || [];
-    tokens += cjk + Math.ceil((s.length - cjk) / 4) + 8 +
-      imageTokensInParts(parts);
-  }
-  return tokens;
+// estimateTokens sizes MainChannel[from:] through the Go rule that the
+// memory hooks, the context meter and the fold tool share
+// (summarytext.EstimateTokens, exposed as occompact.estimate). Sizing a
+// prompt by walking every character through the interpreter was this
+// node's dominant cost (~120 ms a round on a 230 KB conversation) as
+// well as a second copy of a rule Go already owns.
+function estimateTokens(from) {
+  return occompact.estimate(from);
 }
 
 // parseUsage reads the llm node's usage record (inference.Usage). It is
@@ -271,7 +211,7 @@ function parseUsage(value) {
 // exists. Every path covers the whole channel: the measurement plus the
 // estimate of the messages appended since it was taken.
 //
-// plainEstimate is this round's character estimate. It is the floor for
+// plainEstimate is this round's whole-channel estimate. It is the floor for
 // the previous turn's measurement: that measurement describes a channel
 // shape the memory window may have slid away from, so the two are combined
 // rather than swapped.
@@ -279,16 +219,16 @@ function measuredPrompt(plainEstimate) {
   var usage = parseUsage(board.getVar("llm_usage"));
   var anchored = Number(board.getVar("world.compact.anchor_len") || 0);
   var anchoredEpoch = Number(board.getVar("world.compact.anchor_epoch") || 0);
-  if (usage && anchored > 0 && anchored <= channel.length &&
+  if (usage && anchored > 0 && anchored <= len &&
       anchoredEpoch === cumulativeFolds()) {
     // Exact: the measured call saw exactly this channel's first `anchored`
     // messages, and nothing was folded since.
-    return usage.tokens + estimateTokens(channel.slice(anchored));
+    return usage.tokens + estimateTokens(anchored);
   }
   var previous = previousAnchor;
-  if (previous && previous.messages <= channel.length) {
+  if (previous && previous.messages <= len) {
     var covered =
-      previous.tokens + estimateTokens(channel.slice(previous.messages));
+      previous.tokens + estimateTokens(previous.messages);
     return Math.max(covered, plainEstimate);
   }
   return 0;
@@ -332,7 +272,9 @@ function resolveMaxInputTokens() {
 // Paired with the usage that node records, it is what makes the next
 // round's measurement exact.
 function stampAnchor() {
-  board.setVar("world.compact.anchor_len", channel.length);
+  // Re-read the length: a fold in this round rewrote the channel after len
+  // was taken, and this stamp decides what the llm node is about to send.
+  board.setVar("world.compact.anchor_len", board.channelLen(board.MAIN_CHANNEL));
   board.setVar("world.compact.anchor_epoch", cumulativeFolds());
   // The two counts the turn-end hook reads: the conversation's fold
   // generation (so a later turn can tell whether a stored measurement is
@@ -351,7 +293,7 @@ function stampAnchor() {
 // providers reject). Both wait for the next round.
 function appendNotice(text) {
   if (board.getVar("world.compact.notice_sent") === true) return;
-  var last = channel[channel.length - 1];
+  var last = board.lastMessage(board.MAIN_CHANNEL);
   if (!last || last.role === "user" || hasUnansweredToolCall(last)) return;
   board.appendChannel(board.MAIN_CHANNEL, {
     role: "user",
@@ -381,7 +323,7 @@ function hasUnansweredToolCall(m) {
 // the same fold.
 if (board.getVar("world.compact.pending")) {
   var patch = null;
-  var last = channel[channel.length - 1];
+  var last = board.lastMessage(board.MAIN_CHANNEL);
   if (last && last.role === "tool") {
     var parts = last.content.parts || [];
     for (var i = 0; i < parts.length; i++) {
@@ -400,7 +342,7 @@ if (board.getVar("world.compact.pending")) {
   }
   // Tail is [synthetic assistant, compact result]; everything before
   // them is the conversation this node last saw.
-  var base = channel.slice(0, Math.max(count, channel.length - 2));
+  var base = messages().slice(0, Math.max(count, len - 2));
   var foldStart = Number(board.getVar("world.compact.fold_start") || count);
   var foldEnd = Number(board.getVar("world.compact.fold_end") || -1);
   var prevSummary = board.getVar("world.compact.summary_text") || "";
@@ -457,22 +399,16 @@ if (board.getVar("world.compact.pending")) {
   board.setVar("world.compact.fold_start", 0);
   board.setVar("world.compact.fold_end", -1);
   board.setVar("tool_pending", false);
-  // The channel the llm node is about to see is settled here: the write
-  // above (rebuilt, or base for a failed fold) decides it, and only its
-  // length is read below. Keep the array that was just written instead
-  // of projecting the whole channel back for one number.
-  channel = applied ? rebuilt : base;
   stampAnchor();
   return;
 }
 
 // Check mode: fold only when the prompt is measured (or, past the whole
 // window, estimated) to exceed the model's budget.
-var worldPrefix = channel.slice(0, count);
-var conversation = channel.slice(count);
 var maxTokens = resolveMaxInputTokens();
-var plainEstimate = SYS_PROMPT_TOKENS + estimateTokens(worldPrefix) +
-  estimateTokens(conversation);
+// Sizing is Go's (see estimateTokens): the world prefix and the
+// conversation are one channel, so one call covers both.
+var plainEstimate = SYS_PROMPT_TOKENS + estimateTokens(0);
 var measured = measuredPrompt(plainEstimate);
 var estimate = measured > 0 ? measured : plainEstimate;
 var threshold = Math.floor(maxTokens * RATIO);
@@ -496,37 +432,42 @@ if (board.getVar("world.compact.turn_start_seeded") !== true) {
 }
 if (turnStart < count) turnStart = count;
 
-var foldStart = count;
-if (turnStart === foldStart) foldStart = count + 1;
-var foldEnd = Math.max(foldStart, channel.length - PRESERVE);
-if (turnStart > foldStart && turnStart < foldEnd) {
-  // Fold everything before the user message first; later rounds may
-  // fold what follows it.
-  foldEnd = turnStart;
-}
-// Keep tool calls with their results: the preserved side must not start
-// with a tool message whose call is being folded away.
-while (
-  foldEnd > foldStart &&
-  channel[foldEnd] &&
-  channel[foldEnd].role === "tool"
-) {
-  foldEnd--;
-}
+// The boundary is about messages, not counts: project the channel only on
+// the rounds that can fold.
+if (shouldCompact) {
+  var foldStart = count;
+  if (turnStart === foldStart) foldStart = count + 1;
+  var msgs = messages();
+  var foldEnd = Math.max(foldStart, len - PRESERVE);
+  if (turnStart > foldStart && turnStart < foldEnd) {
+    // Fold everything before the user message first; later rounds may
+    // fold what follows it.
+    foldEnd = turnStart;
+  }
+  // Keep tool calls with their results: the preserved side must not start
+  // with a tool message whose call is being folded away.
+  while (
+    foldEnd > foldStart &&
+    msgs[foldEnd] &&
+    msgs[foldEnd].role === "tool"
+  ) {
+    foldEnd--;
+  }
 
-// A failed fold is not retried against an unchanged boundary: the next
-// new message moves the boundary and makes the retry meaningful. Past the
-// whole window that rule inverts — the request cannot be sent as it
-// stands, so the retry is the only way back inside the window (the compact
-// tool degrades to a mechanical digest when no model summary can be
-// produced, so the retry has a path to succeed).
-var failedEnd = Number(board.getVar("world.compact.failed_end") || -1);
-if (shouldCompact && failedEnd >= 0 && failedEnd === foldEnd && !overWindow) {
-  shouldCompact = false;
+  // A failed fold is not retried against an unchanged boundary: the next
+  // new message moves the boundary and makes the retry meaningful. Past the
+  // whole window that rule inverts — the request cannot be sent as it
+  // stands, so the retry is the only way back inside the window (the compact
+  // tool degrades to a mechanical digest when no model summary can be
+  // produced, so the retry has a path to succeed).
+  var failedEnd = Number(board.getVar("world.compact.failed_end") || -1);
+  if (failedEnd >= 0 && failedEnd === foldEnd && !overWindow) {
+    shouldCompact = false;
+  }
 }
 
 if (shouldCompact) {
-  var fold = channel.slice(foldStart, foldEnd);
+  var fold = messages().slice(foldStart, foldEnd);
   if (fold.length > 0) {
     var args = {
       conversation: fold.map(function (m) {
