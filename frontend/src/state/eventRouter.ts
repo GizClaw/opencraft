@@ -69,6 +69,12 @@ interface StreamPayload {
   run_id?: string;
   conversation_id?: string;
   workspace?: string;
+  /**
+   * parent_run_id names the run that delegated this one. A delegated
+   * run streams into the conversation that spawned it but is not a
+   * turn of it — see isDelegatedStream.
+   */
+  parent_run_id?: string;
   delta?: {
     part?: {
       type?: string;
@@ -117,6 +123,34 @@ function streamStage(delta: StreamPayload['delta']): string | undefined {
 }
 
 /**
+ * isDelegatedStream reports that a stream event belongs to a run some
+ * other run delegated, rather than to a turn of the conversation it
+ * arrives in.
+ *
+ * Such a delta rides on the caller's sink (that is how a subagent's
+ * work is reachable at all), but it must never drive the transcript:
+ *
+ *  - the turn machine only ever gets a turn_end for the run this app
+ *    started, so a delegated run has no terminal. Adopting one as a new
+ *    turn left the conversation running forever: an async subagent
+ *    outlives the turn that spawned it, and its deltas arrive after that
+ *    turn's turn_end, which put the phase back to `running` with a run
+ *    id nothing would ever settle;
+ *  - the writer has no strip for that run, so it folded the subagent's
+ *    text into the caller's live answer (or opened a phantom strip of
+ *    its own, out of step with the archive).
+ *
+ * The event stays on the wire: the subagent dock and the pet read the
+ * raw stream for live activity, and the delegation note the app appends
+ * at completion is the transcript's record of what the subagent did.
+ */
+export function isDelegatedStream(ev: UIEvent): boolean {
+  if (ev.type !== UIEventType.stream) return false;
+  const parent = (ev.data as StreamPayload | undefined)?.parent_run_id;
+  return typeof parent === 'string' && parent !== '';
+}
+
+/**
  * Maps a backend event to the corresponding conversation actor event,
  * or undefined for data-only events.
  */
@@ -131,7 +165,7 @@ export function toConversationEvent(
     }
     case UIEventType.stream: {
       const data = ev.data as StreamPayload;
-      if (!data.run_id) return undefined;
+      if (!data.run_id || isDelegatedStream(ev)) return undefined;
       return {
         type: 'STREAM',
         runID: data.run_id,
@@ -197,6 +231,11 @@ function routeToConversation(
   ev: UIEvent,
   deps: EventRouterDeps,
 ) {
+  // A delegated run's delta is neither this conversation's state nor its
+  // transcript (see isDelegatedStream); dropping it here is what keeps
+  // it out of both, and out of ensure() as well — a subagent must not
+  // register an actor for a conversation the window is not showing.
+  if (isDelegatedStream(ev)) return;
   if (deps.root.registry.isDeleted(conversationID)) return;
   const bound = eventWorkspace(ev);
   const actor = deps.root.registry.ensure(conversationID, {

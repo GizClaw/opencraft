@@ -191,3 +191,79 @@ func TestRegisterNormalizesAndWraps(t *testing.T) {
 		t.Fatal("a nil sink was registered")
 	}
 }
+
+// TestReleaseClosesTheTurnsSink is the regression for a delegated run
+// outliving its caller: the worker resolves the conversation target
+// while the caller's turn runs and then holds the sink object, so the
+// release at turn end has to close it. A sink kept open streamed the
+// subagent's deltas into a conversation whose turn had already ended,
+// which the window read as a new turn that could never finish (no
+// turn_end ever names a delegated run).
+func TestReleaseClosesTheTurnsSink(t *testing.T) {
+	targets := NewStreamTargets()
+	inner := &countingSink{}
+	release := targets.Register("s-1", inner)
+	// The worker's resolution: the destination as it looked mid-turn.
+	sink, ok := targets.Sink("s-1")
+	if !ok {
+		t.Fatal("register did not store a sink")
+	}
+	if err := sink.OnDelta(context.Background(), event.Envelope{}, agent.StreamDeltaPayload{}); err != nil {
+		t.Fatalf("OnDelta before release: %v", err)
+	}
+	if inner.deltas != 1 {
+		t.Fatalf("deltas before release = %d, want 1", inner.deltas)
+	}
+
+	release()
+	if err := sink.OnDelta(context.Background(), event.Envelope{}, agent.StreamDeltaPayload{}); err != nil {
+		t.Fatalf("OnDelta after release: %v", err)
+	}
+	if inner.deltas != 1 {
+		t.Fatalf("deltas after release = %d, want the closed sink to drop the delta",
+			inner.deltas)
+	}
+	// A closed sink is also not a destination a new delegation may pick.
+	provider, ok := sink.(delegation.StreamTargetProvider)
+	if !ok {
+		t.Fatalf("registered sink %T cannot describe a target", sink)
+	}
+	if target, ok := provider.StreamTarget(); ok {
+		t.Fatalf("a closed sink still described %+v", target)
+	}
+
+	// The next turn of the same conversation is a new sink and streams:
+	// closing is per turn, not per conversation.
+	next := &countingSink{}
+	defer targets.Register("s-1", next)()
+	live, ok := targets.Sink("s-1")
+	if !ok {
+		t.Fatal("the next turn's sink is not registered")
+	}
+	if err := live.OnDelta(context.Background(), event.Envelope{}, agent.StreamDeltaPayload{}); err != nil {
+		t.Fatalf("OnDelta on the next turn: %v", err)
+	}
+	if next.deltas != 1 {
+		t.Fatalf("next turn deltas = %d, want 1", next.deltas)
+	}
+}
+
+// TestClosedSinkDropsThroughDecorators pins that the close survives a
+// decorator in front of the sink: the host wraps the turn's sink in its
+// own observer, and the delegated run may be delivering through that
+// wrapper rather than through the object the registry holds.
+func TestClosedSinkDropsThroughDecorators(t *testing.T) {
+	inner := &countingSink{}
+	sink := &ConversationSink{ConversationID: "s-1", Next: inner}
+	decorated := &forwardingSink{next: sink}
+	sink.Close()
+	if err := decorated.OnDelta(context.Background(), event.Envelope{}, agent.StreamDeltaPayload{}); err != nil {
+		t.Fatalf("OnDelta: %v", err)
+	}
+	if inner.deltas != 0 {
+		t.Fatalf("a closed sink forwarded %d deltas", inner.deltas)
+	}
+	if !sink.Closed() {
+		t.Fatal("Closed did not report the sink as closed")
+	}
+}

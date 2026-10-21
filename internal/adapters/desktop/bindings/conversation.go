@@ -104,6 +104,11 @@ func (b *Conversation) StartTurn(
 		if !agent.IsStreamDelta(env.Subject) {
 			return nil
 		}
+		// ParentRunID is what tells the window this delta belongs to a
+		// run this conversation delegated rather than to a turn of it:
+		// a delegated run has no turn_end here, so the transcript
+		// leaves its deltas to the subagent dock and the pet (see
+		// isDelegatedStream in the window's event router).
 		b.core.Shell.EmitStream(core.StreamEvent{
 			RunID:          interact.StreamRunID(env.Subject),
 			ConversationID: contextID,
@@ -121,6 +126,12 @@ func (b *Conversation) StartTurn(
 	// exactly as long as the turn does, and the registry hands back the
 	// wrapped, describable sink: the turn has to stream through that
 	// same object, or the exporter cannot describe it at all.
+	//
+	// Releasing it also closes it: a subagent that outlived this turn
+	// (async delegation does not end with its caller) must not keep
+	// writing into the conversation once the turn's own ending has gone
+	// out. That is why the release runs after waitTurn returns and never
+	// before.
 	sink, releaseSink := b.core.RegisterConversationSink(contextID, rawSink)
 	opts := host.RunOptions{
 		Message:   req.Message,
