@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   canApplyEvent,
+  isDelegatedStream,
   routeBackendEvent,
   toConversationEvent,
   type EventDataSink,
@@ -460,6 +461,84 @@ describe('event router', () => {
     expect(calls.filter((c) => c === 'conversation-data')).toHaveLength(1);
   });
 
+  // A delegated subagent streams into the conversation that spawned it,
+  // but it is not a turn of it: this window only ever gets a turn_end
+  // for the run it started, and an async subagent outlives that run by
+  // minutes. Folding its deltas in reopened the settled turn as
+  // `running` under a run nothing would ever settle — the "Working…"
+  // that never stopped — and wrote the subagent's words into the
+  // caller's answer.
+  it('never lets a delegated run reopen a settled turn', () => {
+    const root = new StateRoot();
+    const { sink, calls } = fakeSink();
+    routeBackendEvent(
+      {
+        type: 'automation_run_started',
+        data: { run_id: 'r-parent', conversation_id: 's-1' },
+      },
+      { root, data: sink },
+    );
+    routeBackendEvent(
+      {
+        type: 'turn_end',
+        data: {
+          run_id: 'r-parent',
+          conversation_id: 's-1',
+          status: 'completed',
+        },
+      },
+      { root, data: sink },
+    );
+    const settled = calls.filter((c) => c === 'conversation-data').length;
+
+    routeBackendEvent(
+      {
+        type: 'stream',
+        data: {
+          run_id: 'subagent:card-1',
+          parent_run_id: 'r-parent',
+          conversation_id: 's-1',
+          delta: { part: { type: 'text', text: 'subagent work' } },
+        },
+      },
+      { root, data: sink },
+    );
+
+    const snapshot = root.registry.get('s-1')?.getSnapshot();
+    expect(snapshot?.value).toMatchObject({ turn: 'succeeded' });
+    expect(snapshot?.context).toMatchObject({ currentRunID: undefined });
+    // Nothing was written either: the data layer opens the phantom strip
+    // this test exists to prevent.
+    expect(calls.filter((c) => c === 'conversation-data')).toHaveLength(
+      settled,
+    );
+  });
+
+  // The dock and the pet subscribe to the channel themselves, so a
+  // delegated delta still has to be answerable — it just must not create
+  // window state on its way past: an actor registered for a conversation
+  // the window never opened would file that conversation under whatever
+  // workspace happened to be active.
+  it('does not register an actor for a delegated stream', () => {
+    const root = new StateRoot();
+    const { sink, calls } = fakeSink();
+    routeBackendEvent(
+      {
+        type: 'stream',
+        data: {
+          run_id: 'subagent:card-1',
+          parent_run_id: 'r-parent',
+          conversation_id: 's-ghost',
+          delta: { part: { type: 'text', text: 'hi' } },
+        },
+      },
+      { root, data: sink },
+    );
+
+    expect(root.registry.get('s-ghost')).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
   // A barge-in replaces a run without that run ever becoming the last
   // one to end - the replacement's own ending is. Judging staleness by
   // one slot let the replaced run's late delta back in, where it opened
@@ -561,6 +640,41 @@ describe('toConversationEvent', () => {
     expect(
       toConversationEvent({ type: 'automation_run_started', data: {} }),
     ).toBeUndefined();
+  });
+
+  // The producer already says which run delegated this one; the router
+  // is where that turns into "this is not a turn of that conversation"
+  // (see isDelegatedStream). Only a stream can be delegated: the
+  // delegated run's own ending never reaches this conversation.
+  it('never maps a delegated stream to a turn event', () => {
+    expect(
+      toConversationEvent({
+        type: 'stream',
+        data: {
+          run_id: 'subagent:card-1',
+          parent_run_id: 'r-parent',
+          delta: { part: { type: 'text' } },
+        },
+      }),
+    ).toBeUndefined();
+    // A run id equal to its own parent is a malformed edge, not a
+    // delegation: the field says the run has a caller, so it is dropped
+    // all the same.
+    expect(
+      isDelegatedStream({
+        type: 'stream',
+        data: { run_id: 'r-1', parent_run_id: 'r-1' },
+      }),
+    ).toBe(true);
+    expect(
+      isDelegatedStream({
+        type: 'stream',
+        data: { run_id: 'r-1', parent_run_id: '' },
+      }),
+    ).toBe(false);
+    expect(
+      isDelegatedStream({ type: 'turn_end', data: { run_id: 'r-1' } }),
+    ).toBe(false);
   });
 
   it('maps the wire status and carries the error and its kind', () => {

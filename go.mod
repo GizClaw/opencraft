@@ -1,6 +1,6 @@
 module github.com/GizClaw/opencraft
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/GizClaw/flowcraft/backends/secret v0.1.0

@@ -32,6 +32,12 @@ func (c *Core) StreamTargets() *subagents.StreamTargets {
 // turn must stream through: the delegation exporter matches by
 // capability, so a turn that streams through the bare closure would
 // describe nothing and cross-process delivery would silently degrade.
+//
+// The release ends the sink as well as its registration: an async
+// delegation resolves the destination while the turn runs and keeps
+// the object, so releasing only the registry entry would leave that
+// worker streaming into a conversation whose turn is over. A turn must
+// therefore defer the release only once its own run has settled.
 func (c *Core) RegisterConversationSink(
 	conversationID string, sink agent.StreamSink,
 ) (agent.StreamSink, func()) {

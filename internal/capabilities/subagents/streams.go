@@ -43,9 +43,19 @@ type StreamTargets struct {
 // ConversationSink is a live sink that can describe its durable
 // destination: the conversation it belongs to. It is what the exporter
 // recognizes, and what the desktop wraps its per-turn sink in.
+//
+// It belongs to one turn and outlives only that turn's registry entry:
+// a delegated run resolves the target once and then holds this object,
+// which for an async delegation can be minutes after the turn that
+// registered it ended. Close is what ends that hold — deltas arriving
+// afterwards are dropped instead of being streamed into a conversation
+// whose turn is over.
 type ConversationSink struct {
 	ConversationID string
 	Next           agent.StreamSink
+
+	mu     sync.RWMutex
+	closed bool
 }
 
 // OnDelta implements agent.StreamSink.
@@ -53,6 +63,9 @@ func (s *ConversationSink) OnDelta(
 	ctx context.Context, env event.Envelope, delta agent.StreamDeltaPayload,
 ) error {
 	if s == nil || s.Next == nil {
+		return nil
+	}
+	if s.Closed() {
 		return nil
 	}
 	return s.Next.OnDelta(ctx, env, delta)
@@ -66,10 +79,39 @@ func (s *ConversationSink) StreamTarget() (delegation.StreamTarget, bool) {
 	if s == nil || strings.TrimSpace(s.ConversationID) == "" {
 		return delegation.StreamTarget{}, false
 	}
+	// A closed conversation is not a destination anyone can stream to
+	// any more: describing it would let a new delegation pick a target
+	// that silently swallows every delta.
+	if s.Closed() {
+		return delegation.StreamTarget{}, false
+	}
 	return delegation.StreamTarget{
 		Kind: delegation.StreamTargetKindConversation,
 		ID:   s.ConversationID,
 	}, true
+}
+
+// Close ends the sink's life. Every delta that arrives afterwards is
+// dropped, which is what stops a delegated run that resolved this sink
+// while its caller was still running from writing into the
+// conversation after that turn ended.
+func (s *ConversationSink) Close() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+}
+
+// Closed reports whether the sink was closed.
+func (s *ConversationSink) Closed() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.closed
 }
 
 var (
@@ -100,6 +142,14 @@ func Wrap(conversationID string, next agent.StreamSink) agent.StreamSink {
 // twice replaces the entry: the newest turn owns the sink, and the
 // previous run's unregister must not remove the new entry — which is
 // what the returned closer checks for.
+//
+// The closer also closes the sink, because the sink is the turn's: an
+// async delegation resolves the destination once and keeps the object,
+// so without this a subagent that outlived its caller would keep
+// streaming into a conversation whose turn is long over. A sink belongs
+// to exactly one turn, so closing it on release is unconditional — a
+// caller that registers one sink for two turns has made the deltas of
+// the second indistinguishable from the first's.
 func (t *StreamTargets) Register(
 	conversationID string, sink agent.StreamSink,
 ) func() {
@@ -119,6 +169,22 @@ func (t *StreamTargets) Register(
 			delete(t.sinks, id)
 		}
 		t.mu.Unlock()
+		closeSink(sink)
+	}
+}
+
+// closer is a sink that can be shut off when the turn that registered
+// it is over.
+type closer interface {
+	Close()
+}
+
+// closeSink closes a registered sink when it knows how to be closed. A
+// decorator that has no such notion is left alone: it forwards to a
+// sink that does, or to one this package does not own.
+func closeSink(sink agent.StreamSink) {
+	if c, ok := sink.(closer); ok {
+		c.Close()
 	}
 }
 
