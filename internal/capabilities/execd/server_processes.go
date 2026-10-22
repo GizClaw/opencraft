@@ -22,7 +22,7 @@ type processEntry struct {
 	writeIDs *recentWrites
 	actor    *processActor
 	// acting is set while the actor runs an operation, so a concurrent
-	// read can degrade to a non-blocking peek.
+	// read can be served straight off the ring instead of queueing.
 	acting atomic.Bool
 
 	mu            sync.Mutex
@@ -236,14 +236,23 @@ func (s *Server) read(
 			p.GetProcessId())
 	}
 	// A read that lands while the actor is busy must not queue behind a
-	// long-poll read or an outstanding wait: serve it as a non-blocking
-	// peek and let the caller re-poll from the cursor it got back.
+	// long-poll read or an outstanding wait: it reads the ring directly
+	// instead. It is still a read, though, so the wait window travels
+	// with it — answering the moment the request arrives would tell a
+	// caller nothing it can act on.
+	//
+	// That distinction is load-bearing. A drain loop with no pacing of
+	// its own (the engine's one-shot exec reads until EOF and comes
+	// straight back for more) cannot tell an instant empty answer from
+	// "no output yet, ask again", so it re-issues the request as fast as
+	// the round trip allows: about 3k frames a second per session through
+	// the real channel on a running desktop (142k in the in-process
+	// regression test), the child at 22-44% of a core, and 208 GB of the
+	// 802 GB that process allocated over 51 hours — a pending channel, an
+	// encoded frame and a decoded one per iteration. The window is the
+	// only thing that paces such a caller.
 	if entry.busy() {
-		value, errResp := s.readOp(ctx, entry, &Read{
-			ProcessId: p.GetProcessId(),
-			AfterSeq:  p.GetAfterSeq(),
-			MaxBytes:  p.GetMaxBytes(),
-		})
+		value, errResp := s.readOp(ctx, entry, p)
 		if errResp != nil {
 			return nil, errResp
 		}

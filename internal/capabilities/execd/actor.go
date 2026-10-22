@@ -138,8 +138,10 @@ func (e *processEntry) clearCurrent() {
 }
 
 // busy reports whether the actor is running an operation right now, so a
-// read that arrives meanwhile can be served as a non-blocking peek
-// instead of queueing behind a long-poll.
+// read that arrives meanwhile can be served off the ring instead of
+// queueing behind a long-poll. It still holds its own wait window (see
+// Server.read): reading inline is about not queueing, not about
+// answering early.
 func (e *processEntry) busy() bool { return e.acting.Load() }
 
 func (e *processEntry) setBusy(busy bool) { e.acting.Store(busy) }

@@ -22,9 +22,9 @@ import (
 //
 // The count the lane reports is one less than the number of call sites
 // below: soak_test.go is behind `//go:build soak`, so its guard never
-// fires in the lane's build. 26 of the 44 cases skip on Windows (the
-// 2026-09-26 windows run is where that number comes from, not from
-// reading this file).
+// fires in the lane's build. 27 of the 45 cases skip on Windows (the
+// 2026-09-26 windows run reported 26 of 44, and one guarded case has been
+// added since; read the count out of a `-v` run rather than this file).
 func requirePOSIXChild(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
