@@ -640,14 +640,10 @@ func TestStderrTailKeepsRecentLines(t *testing.T) {
 // waitActorIdle blocks until the named process's actor has finished the
 // operation it was running.
 //
-// A read that lands while the actor is busy is answered by a
-// non-blocking peek, without consulting the in-flight table at all: the
-// peek returns an empty success within microseconds, i.e. before the
-// Cancel notification written behind the request has even been decoded.
-// That is the documented behavior (see TestInterruptedWaitIsCanceledAndReadsPeek),
-// so a test that asserts "the Cancel wins" has to make sure the read it
-// cancels is the one holding the actor rather than a peek racing a
-// previous read's teardown.
+// A cancellation case wants the read it cancels to be the actor's own long
+// poll: a read that lands on a busy actor is served inline (it holds its
+// window but does not queue), so it would be a read racing a previous
+// read's teardown rather than the queueing this helper is here to pin.
 func waitActorIdle(t *testing.T, srv *Server, processID string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -665,8 +661,8 @@ func waitActorIdle(t *testing.T, srv *Server, processID string) {
 // TestCancelNotificationBeatsHandlerStart pins the registration order:
 // a Cancel that arrives right behind its request must find the request
 // already registered instead of being dropped on the floor. Each attempt
-// waits for the actor to go idle first, so the read it cancels is a real
-// long poll instead of a peek (see waitActorIdle).
+// waits for the actor to go idle first, so the read it cancels is the
+// actor's own long poll rather than one served inline (see waitActorIdle).
 func TestCancelNotificationBeatsHandlerStart(t *testing.T) {
 	requirePOSIXChild(t)
 	client, srv := testPair(t)
@@ -866,21 +862,21 @@ func TestBindAdvertisesBackendCapabilities(t *testing.T) {
 	}
 }
 
-// TestInterruptedWaitIsCanceledAndReadsPeek pins two behaviours a queued
-// caller depends on: a read that arrives while the actor is busy is
-// served as a non-blocking peek instead of queueing behind the
-// outstanding wait, and interrupting that wait reports a cancellation
-// rather than a server fault.
-func TestInterruptedWaitIsCanceledAndReadsPeek(t *testing.T) {
-	requirePOSIXChild(t)
-	client, _ := testPair(t)
+// busyPair starts one process and holds its actor with a Wait, so a read
+// that arrives now is served inline (see Server.read) rather than taking
+// the actor itself. It returns only once the actor is busy, not about to
+// be: a read that arrives a moment early takes the actor and would pass
+// the same assertions for the wrong reason.
+func busyPair(t *testing.T, argv ...string) (*Client, chan error) {
+	t.Helper()
+	client, srv := testPair(t)
 	ctx := context.Background()
 	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Start(ctx, &Start{
 		ProcessId: "busy",
-		Argv:      []string{"/bin/sh", "-c", "sleep 30"},
+		Argv:      argv,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -889,21 +885,32 @@ func TestInterruptedWaitIsCanceledAndReadsPeek(t *testing.T) {
 		_, err := client.Wait(ctx, "busy")
 		waitDone <- err
 	}()
-	time.Sleep(200 * time.Millisecond) // let the wait reach the actor
+	waitActorBusy(t, srv, "busy")
+	return client, waitDone
+}
 
-	start := time.Now()
-	read, err := client.Read(ctx, &Read{ProcessId: "busy", WaitMs: 500})
-	if err != nil {
-		t.Fatalf("peek read: %v", err)
+// waitActorBusy is waitActorIdle's inverse: it blocks until the named
+// process's actor is running an operation, i.e. until a read that lands
+// is served inline.
+func waitActorBusy(t *testing.T, srv *Server, processID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if state := srv.bound(); state != nil {
+			if entry, ok := state.sess.get(processID); ok && entry.busy() {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
 	}
-	if elapsed := time.Since(start); elapsed > 400*time.Millisecond {
-		t.Fatalf("read behind a wait took %v, want a non-blocking peek",
-			elapsed)
-	}
-	if len(read.GetChunks()) != 0 || read.GetEof() {
-		t.Fatalf("peek read = %+v, want an empty non-EOF result", read)
-	}
+	t.Fatalf("process %q never went busy", processID)
+}
 
+// stopBusy terminates what busyPair started and asserts that interrupting
+// its outstanding wait reports a cancellation rather than a server fault.
+func stopBusy(t *testing.T, client *Client, waitDone chan error) {
+	t.Helper()
+	ctx := context.Background()
 	if _, err := client.Terminate(ctx, "busy", true); err != nil {
 		t.Fatal(err)
 	}
@@ -915,6 +922,148 @@ func TestInterruptedWaitIsCanceledAndReadsPeek(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("interrupted wait did not return")
 	}
+}
+
+// chunkText is the output of one read, joined for assertions.
+func chunkText(out *ReadOk) string {
+	var text strings.Builder
+	for _, chunk := range out.GetChunks() {
+		text.WriteString(string(chunk.GetData()))
+	}
+	return text.String()
+}
+
+// TestReadBehindBusyActorDeliversOutputThenHoldsItsWindow pins both halves
+// of the inline read path: a read that lands while the actor is busy is
+// served off the ring instead of queueing behind the actor, it returns the
+// moment there is something to return, and otherwise it waits out the
+// window it asked for instead of answering at once.
+//
+// The last part is what a whole class of callers depends on. The engine's
+// one-shot exec reads until EOF and comes straight back for more; it cannot
+// tell an early empty answer from "no output yet", so a server that answers
+// at once turns that loop into a spin — 142,489 reads in one second when
+// measured against the old behaviour, and 208 GB of a 51-hour allocation
+// profile on a running desktop. The complementary mistake, always holding
+// the window even when output is buffered, would put up to a window of
+// latency in front of every chunk of a chatty command, which is why the
+// fast half is asserted too.
+func TestReadBehindBusyActorDeliversOutputThenHoldsItsWindow(t *testing.T) {
+	requirePOSIXChild(t)
+	client, waitDone := busyPair(t, "/bin/sh", "-c", "echo hi; sleep 30")
+	ctx := context.Background()
+
+	// The window is deliberately not defaultReadWaitMs: a server that
+	// ignored the field and held its own constant would miss the lower
+	// bound below.
+	const (
+		window = 1200 * time.Millisecond
+		waitMs = 1200
+	)
+
+	start := time.Now()
+	out, err := client.Read(ctx, &Read{ProcessId: "busy", WaitMs: waitMs})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed >= window/2 {
+		t.Fatalf("a read that found output took %v, want it back well inside its %v window",
+			elapsed, window)
+	}
+	if got := chunkText(out); !strings.Contains(got, "hi") {
+		t.Fatalf("read = %q, want the process's output", got)
+	}
+	// The cursor travels between reads: the drain loop keeps it, so a
+	// second read asks only for what came after the first.
+	after := out.GetNextSeq()
+
+	// The ring is empty from here on, so the same read has to hold the
+	// window. The outstanding wait it is not queueing behind is 30s.
+	start = time.Now()
+	out, err = client.Read(ctx, &Read{
+		ProcessId: "busy", WaitMs: waitMs, AfterSeq: after,
+	})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed < window/2 {
+		t.Fatalf("an empty read returned in %v, want it to hold its %v window",
+			elapsed, window)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("an empty read took %v, want at most its %v window",
+			elapsed, window)
+	}
+	if len(out.GetChunks()) != 0 || out.GetEof() {
+		t.Fatalf("read = %+v, want an empty non-EOF result", out)
+	}
+
+	stopBusy(t, client, waitDone)
+}
+
+// TestReadLoopBehindBusyActorDoesNotSpin pins what an unpaced drain loop
+// costs against a busy actor. The engine's one-shot exec reads until EOF
+// and re-issues immediately; while a command runs the ring is empty most of
+// the time, so every one of those reads lands on the inline path. If that
+// path answers at once, the loop runs at the speed of the round trip —
+// thousands of frames a second, a core busy in the child, and a frame
+// allocated per iteration. The wait window is the only thing pacing it, so
+// a second of looping must cost a handful of reads: the band catches both
+// failures, a server that dropped the window and one that substituted its
+// own for the caller's.
+func TestReadLoopBehindBusyActorDoesNotSpin(t *testing.T) {
+	requirePOSIXChild(t)
+	client, waitDone := busyPair(t, "/bin/sh", "-c", "sleep 30")
+	ctx := context.Background()
+
+	const (
+		window  = 100 * time.Millisecond
+		measure = time.Second
+	)
+	deadline := time.Now().Add(measure)
+	reads := 0
+	for time.Now().Before(deadline) {
+		out, err := client.Read(ctx, &Read{
+			ProcessId: "busy",
+			WaitMs:    int64(window / time.Millisecond),
+		})
+		if err != nil {
+			t.Fatalf("read %d: %v", reads, err)
+		}
+		if len(out.GetChunks()) != 0 || out.GetEof() {
+			t.Fatalf("read %d = %+v, want an empty non-EOF result", reads, out)
+		}
+		reads++
+	}
+	// Ten is what a 100ms window allows in one second. The band is wide
+	// because a loaded machine stretches each iteration, but it stays two
+	// orders of magnitude below a spin and above the two reads a server
+	// holding a constant 500ms window would allow.
+	if reads < 6 || reads > 25 {
+		t.Fatalf("%d reads in %v behind a busy actor, want a %v window to pace them (about %d)",
+			reads, measure, window, measure/window)
+	}
+
+	// The request's own deadline is the other bound: a caller that cannot
+	// afford its window (the process feed asks for 250ms) has to be able
+	// to cut the read short.
+	readCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := client.Read(readCtx, &Read{ProcessId: "busy", WaitMs: 5000})
+	if err == nil {
+		t.Fatal("read past its deadline succeeded")
+	}
+	if !IsCode(err, CodeDeadlineExceeded) && !IsCanceled(err) {
+		t.Fatalf("read past its deadline = %v, want a deadline error", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("deadline took %v, want the caller's 100ms to bound the read",
+			elapsed)
+	}
+
+	stopBusy(t, client, waitDone)
 }
 
 func pgrepMarker(marker string) string {

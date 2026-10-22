@@ -28,7 +28,8 @@ const (
 	// processReadWindow bounds one drain read. A window (instead of an
 	// open-ended read) keeps the feed from holding a backend's single
 	// blocking read slot: on the execd child every other operation of
-	// that process queues behind an in-flight read.
+	// that process queues behind an in-flight read (another read does
+	// not, it is served off the ring, but write, signal and terminate do).
 	processReadWindow = 250 * time.Millisecond
 	// processIdleGap paces the drain after a read that brought nothing.
 	// An empty read is the normal answer for a silent process, and it
