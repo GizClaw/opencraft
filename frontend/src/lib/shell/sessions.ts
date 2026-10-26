@@ -55,6 +55,17 @@ export function createShellSessions(
   const { switchWorkspace } = ws;
   const { waitForWorkspaceRestore } = ws;
 
+  // opensInFlight is the single-flight slot for opening a conversation.
+  // Opening reads the newest page of the archive, which on a long session
+  // is megabytes crossing the bridge twice (Go DTOs, then the bridge's
+  // JSON) — and the open is reachable from several places at once: a
+  // double click, a retried focus switch, a resume whose own events name
+  // the same id. A profile of one turn on a 42 MB conversation put 605 MB
+  // of allocation on that binding, all of it the same session opened
+  // again. One open per id at a time; the next click after it settles
+  // opens normally.
+  const opensInFlight = new Map<string, Promise<void>>();
+
   // clearTurnAttention drops the sidebar's failure marker for one
   // conversation: opening the row is the reader answering it, and a
   // delete takes the row away for good.
@@ -125,8 +136,10 @@ export function createShellSessions(
       stateRoot.sendFocus({ type: 'BACK' });
     },
 
-    resume: (id) =>
-      measureInteraction('resume', async () => {
+    resume: (id) => {
+      const inFlight = opensInFlight.get(id);
+      if (inFlight) return inFlight;
+      const open = measureInteraction('resume', async () => {
         clearTurnAttention(id);
         if (activeConversationID() === id) {
           // Returning to the already-active conversation means closing
@@ -323,7 +336,15 @@ export function createShellSessions(
             error: errorMessage(err),
           });
         }
-      }),
+      });
+      opensInFlight.set(id, open);
+      // A failed open must stay retryable, so the slot is released
+      // whichever way it settled.
+      void open.finally(() => {
+        if (opensInFlight.get(id) === open) opensInFlight.delete(id);
+      });
+      return open;
+    },
 
     deleteSession: async (id) => {
       try {

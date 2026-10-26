@@ -63,6 +63,19 @@ func TestMergeSeedsTheChannelFromRenderedWorldState(t *testing.T) {
 		UserDir:           userDir,
 		CollaborationMode: "workspace",
 	})
+	// What full-history replay hands the world node: the messages
+	// themselves, and (since the handoff replaced the board var) the same
+	// slice the channel is expected to carry.
+	replayed := []message.Message{
+		{
+			Role:    message.RoleUser,
+			Content: message.NewTextContent("replayed user turn"),
+		},
+		{
+			Role:    message.RoleAssistant,
+			Content: message.NewTextContent("replayed assistant turn"),
+		},
+	}
 	replay.memory = replayMemory{stubMemory{items: []corememory.ContextItem{
 		{
 			Kind:        corememory.ContextRawMessage,
@@ -106,14 +119,15 @@ func TestMergeSeedsTheChannelFromRenderedWorldState(t *testing.T) {
 		// channel; ownMessage says it must be emitted after it.
 		ridesLast  bool
 		ownMessage bool
-		// historyLen is how many replayed messages the turn renders; the
-		// replay mode is the only one that sets world.history at all.
-		historyLen int
+		// history is what the turn replays ahead of its own message; only
+		// the replay mode has one, and it reaches the node through the
+		// in-memory handoff rather than a board var.
+		history []message.Message
 	}{
 		{name: "plain turn", svc: plain, channel: []message.Message{turn}},
 		{
 			name: "full-history replay", svc: replay,
-			channel: []message.Message{turn}, historyLen: 2,
+			channel: []message.Message{turn}, history: replayed,
 		},
 		{
 			name: "per-turn tail (plan + skills)", svc: tail,
@@ -130,14 +144,14 @@ func TestMergeSeedsTheChannelFromRenderedWorldState(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			board := mergeBoard(t, tc.svc, "use $review", tc.channel)
 			sections := boardSections(t, board)
-			history := boardHistory(t, board)
+			history := tc.history
 			tailBlock := board.GetVarString(config.BoardVarTailBlock)
 			if len(sections) == 0 {
 				t.Fatal("the turn rendered no world sections")
 			}
-			if len(history) != tc.historyLen {
-				t.Fatalf("%s carries %d replayed messages, want %d",
-					BoardVarHistory, len(history), tc.historyLen)
+			if raw := board.GetVarString(BoardVarHistory); raw != "" {
+				t.Fatalf("%s is set (%d bytes), want the in-memory handoff",
+					BoardVarHistory, len(raw))
 			}
 			if (tc.ridesLast || tc.ownMessage) && tailBlock == "" {
 				t.Fatal("the tail case rendered no world.tail_block")
@@ -331,17 +345,6 @@ func boardSections(t *testing.T, board *agent.Board) []Section {
 		}
 	}
 	return sections
-}
-
-func boardHistory(t *testing.T, board *agent.Board) []message.Message {
-	t.Helper()
-	var history []message.Message
-	if raw := board.GetVarString(BoardVarHistory); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &history); err != nil {
-			t.Fatalf("decode %s: %v", BoardVarHistory, err)
-		}
-	}
-	return history
 }
 
 // boardMessages is what the merge puts on the channel for a section: its

@@ -726,3 +726,32 @@ describe('init session bootstrap', () => {
     );
   });
 });
+
+describe('opening a conversation once', () => {
+  // Opening reads the newest page of the archive, and on a long session
+  // that page is megabytes crossing the bridge twice. The open is
+  // reachable from several places at once (a double click, a retried
+  // focus switch, a resume whose own events name the same id), so the
+  // second caller joins the open in flight instead of re-reading.
+
+  it('joins an open already in flight', async () => {
+    let releaseTurns!: (turns: unknown[]) => void;
+    apiMock.sessionTurns.mockReturnValue(
+      new Promise((resolve) => {
+        releaseTurns = resolve;
+      }),
+    );
+
+    const first = useStore.getState().resume('s-2');
+    const second = useStore.getState().resume('s-2');
+
+    releaseTurns([historyTurn(1, 'history user', 'history answer')]);
+    await Promise.all([first, second]);
+
+    // One open: the backend switch and the archive page each happen once,
+    // and the conversation still lands ready.
+    expect(apiMock.resumeSession).toHaveBeenCalledTimes(1);
+    expect(apiMock.sessionTurns).toHaveBeenCalledTimes(1);
+    expect(actorValue('s-2')?.transcript).toBe('ready');
+  });
+});

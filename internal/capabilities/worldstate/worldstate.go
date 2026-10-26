@@ -204,11 +204,14 @@ func (s *Service) RenderTurn(
 		}); ok && rp.ReplayFullHistory() {
 			// Full-history replay: the graph's world node prepends the
 			// history right after the world sections, and the compact
-			// node owns folding when the model window is exceeded.
+			// node owns folding when the model window is exceeded. The
+			// messages are handed over as they are (see pendingHistory):
+			// a board var would have to be a JSON string, and marshalling
+			// the whole transcript on one side of the world node to
+			// unmarshal it back on the other is two copies of it for a
+			// value nothing else reads.
 			if history := s.replayHistory(ctx, id.ConversationID); len(history) > 0 {
-				if data, err := json.Marshal(history); err == nil {
-					board.SetVar("world.history", string(data))
-				}
+				pendingHistory.put(board, history)
 				historyTokens = summarytext.EstimateTokens(history)
 			}
 		} else {

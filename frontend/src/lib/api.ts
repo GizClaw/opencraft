@@ -287,14 +287,16 @@ export const api = {
   // "nothing measured yet".
   sessionContextUsage: (id: string) =>
     Session.ContextUsage(id) as unknown as Promise<ContextUsageDTO>,
-  // sessionTurns returns archived turns oldest first. limit <= 0 reads
-  // every turn; beforeSeq pages backwards from a cursor. Startup
-  // hydration only asks for the newest turns so a long session does not
-  // cross the desktop bridge in one payload.
+  // sessionTurns returns one page of a conversation's archived turns,
+  // oldest first; beforeSeq pages backwards from a cursor. limit <= 0
+  // reads one page, not the whole conversation: the binding clamps it
+  // (bindings.maxTurnPage), because a long session's whole transcript is
+  // tens of megabytes on both sides of the bridge.
   sessionTurns: (id: string, limit = 0, beforeSeq = 0) =>
     Session.Turns(id, limit, beforeSeq) as unknown as Promise<SessionTurn[]>,
   // turnsSince reads the tail of the archive: the turns appended after
-  // the newest seq the transcript holds. It is how a conversation that
+  // the newest seq the transcript holds (also clamped to one page). It is
+  // how a conversation that
   // is already on screen picks up a turn the app wrote on its own (a
   // delegation note lands when its subagent finishes, long after the
   // turn that spawned it ended) without re-reading what it has.

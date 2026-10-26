@@ -3,6 +3,7 @@ package worldstate
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
@@ -19,7 +20,10 @@ const (
 	// cache-stable prefix the model sees before the conversation.
 	BoardVarSections = "world.sections"
 	// BoardVarHistory carries the JSON full-history replay, which sits
-	// after the sections and before the turn's own messages.
+	// after the sections and before the turn's own messages. It is the
+	// fallback: RenderTurn hands the messages over through pendingHistory,
+	// so only a board seeded by other means (a test, a caller that builds
+	// its own channel) still carries them here.
 	BoardVarHistory = "world.history"
 	// BoardVarSectionsCount is how many messages Merge prepended from
 	// BoardVarSections.
@@ -37,6 +41,84 @@ type MergeCounts struct {
 	Sections int
 	// History is the number of replayed history messages.
 	History int
+}
+
+// pendingHistoryDepth bounds how many rendered replays the handoff holds
+// at once. A turn stashes one entry and the world node takes it back; the
+// depth only covers a board whose graph never reached that node (a custom
+// graph, a turn cancelled before the first wave).
+const pendingHistoryDepth = 4
+
+// pendingHistory carries the rendered replay from the prepare hook to the
+// world node.
+//
+// The two halves share the board, but the board is the wrong place for the
+// messages themselves. A var holding []message.Message is deep-copied by
+// every snapshot the graph takes (agent.Board.Snapshot → deepCopyVars →
+// message.CloneMessages), and a var holding the JSON string costs a
+// marshal on one side and an unmarshal on the other: on a 42 MB transcript
+// that round trip was ~850 MB of allocation per turn in the profile that
+// motivated this, for a value no graph node reads — Merge is its only
+// consumer. Handing it over here keeps the messages as they are and drops
+// the entry the moment the world node takes it.
+var pendingHistory = newHistoryHandoff(pendingHistoryDepth)
+
+// historyHandoff is a small bounded registry keyed by the board a turn's
+// prepare hook rendered for.
+type historyHandoff struct {
+	depth int
+	mu    sync.Mutex
+	order []*agent.Board
+	items map[*agent.Board][]message.Message
+}
+
+func newHistoryHandoff(depth int) *historyHandoff {
+	return &historyHandoff{
+		depth: depth,
+		items: map[*agent.Board][]message.Message{},
+	}
+}
+
+// put records one rendered replay, evicting the oldest entry when the
+// registry is full.
+func (h *historyHandoff) put(board *agent.Board, history []message.Message) {
+	if board == nil || len(history) == 0 {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, ok := h.items[board]; !ok {
+		h.order = append(h.order, board)
+	}
+	h.items[board] = history
+	for len(h.order) > h.depth {
+		oldest := h.order[0]
+		h.order = h.order[1:]
+		delete(h.items, oldest)
+	}
+}
+
+// take removes and returns the replay rendered for the board. The world
+// node merges once per turn, so consuming on read is what keeps a long
+// session from pinning every transcript it has rendered.
+func (h *historyHandoff) take(board *agent.Board) ([]message.Message, bool) {
+	if board == nil {
+		return nil, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	history, ok := h.items[board]
+	if !ok {
+		return nil, false
+	}
+	delete(h.items, board)
+	for i, entry := range h.order {
+		if entry == board {
+			h.order = append(h.order[:i], h.order[i+1:]...)
+			break
+		}
+	}
+	return history, true
 }
 
 // Merge replays the rendered world state onto the MainChannel: the
@@ -67,9 +149,14 @@ func Merge(board *agent.Board) (MergeCounts, error) {
 	if err != nil {
 		return counts, err
 	}
-	history, err := decodeVar[[]message.Message](board, BoardVarHistory)
-	if err != nil {
-		return counts, err
+	history, ok := pendingHistory.take(board)
+	if !ok {
+		// No handoff for this board: a test or a caller that seeded the
+		// channel itself put the replay in the var instead.
+		history, err = decodeVar[[]message.Message](board, BoardVarHistory)
+		if err != nil {
+			return counts, err
+		}
 	}
 
 	rest := board.ChannelView(agent.MainChannel)

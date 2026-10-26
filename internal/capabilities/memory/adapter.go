@@ -155,19 +155,54 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 	defer func() {
 		telemetry.WarnErr(ctx, "memory: close transcript rows failed", rows.Close())
 	}()
+	projected, err := projectTranscriptRows(ctx, conversationID, rows)
+	if err != nil {
+		return transcriptPage{}, err
+	}
+	for i, j := 0, len(projected.Messages)-1; i < j; i, j = i+1, j-1 {
+		projected.Messages[i], projected.Messages[j] =
+			projected.Messages[j], projected.Messages[i]
+	}
+	return transcriptPage{
+		Messages:     projected.Messages,
+		OldestRawSeq: projected.OldestRawSeq,
+		More:         limit > 0 && projected.Read == limit,
+	}, nil
+}
+
+// projectedRows is one transcript read after the projection ran: the
+// rows the projection kept, in the order the query returned them, plus
+// what the read itself saw.
+type projectedRows struct {
+	// Messages are the rows the projection kept, in query order.
+	Messages []summary.StoredMessage
+	// Read is how many transcript rows the query returned.
+	Read int
+	// OldestRawSeq is the seq of the last row read, or -1 when the query
+	// returned nothing. A backward read therefore reports the oldest row
+	// it saw and a forward read the newest.
+	OldestRawSeq int64
+}
+
+// projectTranscriptRows applies the projection to one transcript read.
+// It is the only place a stored row becomes a model-visible message, so
+// an incremental read (LoadAfter) and a full one (LoadAll) cannot drift:
+// the query decides which rows are candidates, this decides what each of
+// them becomes.
+func projectTranscriptRows(
+	ctx context.Context, conversationID string, rows *sql.Rows,
+) (projectedRows, error) {
 	var placeholders, undecodable, empty int
-	read := 0
-	oldest := int64(-1)
-	var desc []summary.StoredMessage
+	out := projectedRows{OldestRawSeq: -1}
 	for rows.Next() {
 		var seq int64
 		var role, payload string
 		if err := rows.Scan(&seq, &role, &payload); err != nil {
-			return transcriptPage{},
+			return projectedRows{},
 				fmt.Errorf("memory: scan transcript row: %w", err)
 		}
-		read++
-		oldest = seq
+		out.Read++
+		out.OldestRawSeq = seq
 		var content message.Content
 		if err := json.Unmarshal([]byte(payload), &content); err != nil {
 			// Canonical content carries at least one valid part, so a
@@ -192,14 +227,14 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 		if projected.Placeholder {
 			placeholders++
 		}
-		desc = append(desc, summary.StoredMessage{
+		out.Messages = append(out.Messages, summary.StoredMessage{
 			Seq:     seq,
 			Role:    message.Role(role),
 			Content: projected.Message.Content,
 		})
 	}
 	if err := rows.Err(); err != nil {
-		return transcriptPage{}, err
+		return projectedRows{}, err
 	}
 	if placeholders > 0 {
 		telemetry.Info(ctx,
@@ -213,14 +248,34 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 			attribute.Int("undecodable", undecodable),
 			attribute.Int("unrenderable", empty))
 	}
-	for i, j := 0, len(desc)-1; i < j; i, j = i+1, j-1 {
-		desc[i], desc[j] = desc[j], desc[i]
+	return out, nil
+}
+
+// LoadAfter returns the replayable rows appended after afterSeq, oldest
+// first: the incremental half of LoadAll, for a reader that already holds
+// the prefix. The transcript is append-only, so the same projection over
+// the rows after a cursor yields exactly the rows a full read would have
+// produced past it.
+func (a *sqliteTurnStore) LoadAfter(
+	ctx context.Context, conversationID string, afterSeq int64,
+) ([]summary.StoredMessage, error) {
+	rows, err := a.db.SQLDB().QueryContext(ctx, `
+		SELECT m.seq, m.role, m.content_json
+		FROM archive_messages m
+		WHERE m.conversation_id = ? AND m.role != 'system' AND m.seq > ?
+		ORDER BY m.seq`, conversationID, afterSeq)
+	if err != nil {
+		return nil, fmt.Errorf("memory: load transcript rows after %d: %w",
+			afterSeq, err)
 	}
-	return transcriptPage{
-		Messages:     desc,
-		OldestRawSeq: oldest,
-		More:         limit > 0 && read == limit,
-	}, nil
+	defer func() {
+		telemetry.WarnErr(ctx, "memory: close transcript rows failed", rows.Close())
+	}()
+	projected, err := projectTranscriptRows(ctx, conversationID, rows)
+	if err != nil {
+		return nil, err
+	}
+	return projected.Messages, nil
 }
 
 // UpsertSummaryNode writes one fold node, unless its conversation is
