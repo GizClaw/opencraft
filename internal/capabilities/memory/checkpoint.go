@@ -26,7 +26,7 @@ func (b liveBoard) channel(name string) []message.Message {
 }
 
 func (b liveBoard) varValue(name string) (any, bool) {
-	return b.board.GetVar(name)
+	return b.board.Var(name)
 }
 
 // snapshotBoard reads a board that went through a checkpoint. The

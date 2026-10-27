@@ -186,7 +186,7 @@ func ContextUsageFromBoard(board *agent.Board) (ocsessions.ContextUsage, bool) {
 	if board == nil {
 		return ocsessions.ContextUsage{}, false
 	}
-	raw, _ := board.GetVar(config.BoardVarContextUsage)
+	raw, _ := board.Var(config.BoardVarContextUsage)
 	text, _ := raw.(string)
 	if text == "" {
 		return ocsessions.ContextUsage{}, false

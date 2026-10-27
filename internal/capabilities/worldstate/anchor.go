@@ -14,7 +14,6 @@ import (
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // The board-var contract between this package, the graph's compaction node
@@ -44,7 +43,7 @@ func boardInt(board *agent.Board, key string) (int, bool) {
 	if board == nil {
 		return 0, false
 	}
-	v, _ := board.GetVar(key)
+	v, _ := board.Var(key)
 	switch v := v.(type) {
 	case int:
 		return v, true
@@ -66,7 +65,7 @@ func boardUsage(board *agent.Board) (inference.Usage, bool) {
 	if board == nil {
 		return inference.Usage{}, false
 	}
-	raw, _ := board.GetVar(config.BoardVarLLMUsage)
+	raw, _ := board.Var(config.BoardVarLLMUsage)
 	switch v := raw.(type) {
 	case inference.Usage:
 		return v, v.InputTokens > 0
@@ -156,20 +155,20 @@ func (s *Service) replaysFullHistory() bool {
 // deploy document names it, and a user layer may too.
 type usageAnchorCommitFactory struct{}
 
-var _ resource.Factory = usageAnchorCommitFactory{}
+var _ resource.Factory[agent.CommitterFunc] = usageAnchorCommitFactory{}
+
+var depAnchorSessions = resource.Require[*ocsessions.Store]("sessions")
 
 func (usageAnchorCommitFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "hook.commit",
 		Impl: "opencraft.usageanchor",
-		Deps: []resource.DepSpec{
-			{Name: "sessions", Type: ocsessions.ResourceKind, Required: true},
-		},
+		Deps: []resource.Requirement{depAnchorSessions.Spec()},
 	}
 }
 
-func (usageAnchorCommitFactory) New(_ context.Context, in resource.Input) (any, error) {
-	store, err := resourcedep.Required[*ocsessions.Store](in, "usageanchor", "sessions")
+func (usageAnchorCommitFactory) New(_ context.Context, in resource.Input) (agent.CommitterFunc, error) {
+	store, err := depAnchorSessions.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +303,7 @@ func CompactionReportFromBoard(board *agent.Board) (CompactionReport, bool) {
 		return CompactionReport{}, false
 	}
 	failures, _ := boardInt(board, config.BoardVarFailStreak)
-	noticeSent, _ := board.GetVar(config.BoardVarNoticeSent)
+	noticeSent, _ := board.Var(config.BoardVarNoticeSent)
 	notified, _ := noticeSent.(bool)
 	return CompactionReport{
 		Folds:    folds,

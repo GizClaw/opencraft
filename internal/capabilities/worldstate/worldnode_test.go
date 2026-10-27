@@ -362,7 +362,7 @@ func boardMessages(sections []Section) []message.Message {
 
 func countVar(t *testing.T, board *agent.Board, name string) int {
 	t.Helper()
-	value, ok := board.GetVar(name)
+	value, ok := board.Var(name)
 	if !ok {
 		t.Fatalf("%s is unset", name)
 	}

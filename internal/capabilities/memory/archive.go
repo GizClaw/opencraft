@@ -15,7 +15,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // archiveObserverFactory builds the opencraft.archive observe hook: it
@@ -25,25 +24,23 @@ import (
 // double-write the same turn.
 type archiveObserverFactory struct{}
 
-var _ resource.Factory = archiveObserverFactory{}
+var _ resource.Factory[*archiveObserver] = archiveObserverFactory{}
+
 
 func (archiveObserverFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "hook.observe",
 		Impl: "opencraft.archive",
-		Deps: []resource.DepSpec{
-			{Name: "memory", Type: ResourceKind, Required: true},
-			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
-		},
+		Deps: []resource.Requirement{depSink.Spec(), depSessions.Spec()},
 	}
 }
 
-func (archiveObserverFactory) New(ctx context.Context, in resource.Input) (any, error) {
-	sink, err := resourcedep.Required[corememory.TurnSink](in, "archive", "memory")
+func (archiveObserverFactory) New(ctx context.Context, in resource.Input) (*archiveObserver, error) {
+	sink, err := depSink.Get(in)
 	if err != nil {
 		return nil, err
 	}
-	store, err := resourcedep.Required[*sessions.Store](in, "archive", "sessions")
+	store, err := depSessions.Get(in)
 	if err != nil {
 		return nil, err
 	}

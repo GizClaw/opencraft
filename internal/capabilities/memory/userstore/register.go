@@ -46,21 +46,21 @@ type Settings = config.UserMemorySettings
 // failing.
 type Factory struct{}
 
-var _ resource.Factory = Factory{}
+var _ resource.Factory[*Binding] = Factory{}
+
+var depStore = resource.Require[Memory]("store")
 
 // Spec implements resource.Factory.
 func (Factory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: ResourceKind,
 		Impl: ResourceImpl,
-		Deps: []resource.DepSpec{
-			{Name: "store", Type: StoreContract, Required: true},
-		},
+		Deps: []resource.Requirement{depStore.Spec()},
 	}
 }
 
 // New implements resource.Factory.
-func (f Factory) New(ctx context.Context, in resource.Input) (any, error) {
+func (f Factory) New(ctx context.Context, in resource.Input) (*Binding, error) {
 	settings, err := resource.DecodeTyped[Settings](ctx, in.Settings)
 	if err != nil {
 		return nil, err
@@ -69,7 +69,7 @@ func (f Factory) New(ctx context.Context, in resource.Input) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	memory, err := resourcedep.Required[Memory](in, "user memory", "store")
+	memory, err := depStore.Get(in)
 	if err != nil {
 		return nil, err
 	}
