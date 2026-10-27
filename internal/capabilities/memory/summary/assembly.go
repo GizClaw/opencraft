@@ -50,10 +50,6 @@ type TurnStore interface {
 	LoadBack(ctx context.Context, conversationID string, beforeSeq int64, n int) ([]StoredMessage, error)
 	// LoadAll returns every replayable row, oldest first.
 	LoadAll(ctx context.Context, conversationID string) ([]StoredMessage, error)
-	// LoadAfter returns the replayable rows appended after afterSeq,
-	// oldest first. The transcript is append-only, so a reader that
-	// already holds the prefix only has to read what came after it.
-	LoadAfter(ctx context.Context, conversationID string, afterSeq int64) ([]StoredMessage, error)
 	UpsertSummaryNode(ctx context.Context, node SummaryNode) error
 	// CondenseSummaryNode replaces the stored copy of want with
 	// replacement, but only while the row still holds want exactly
@@ -83,9 +79,6 @@ type Assembly struct {
 	usage             func(context.Context, inference.Usage)
 	now               func() time.Time
 	replayFullHistory bool
-	// replay keeps the unbudgeted full-history prefix each conversation
-	// has already rendered (see replayContext).
-	replay *replayCache
 	// workWG tracks everything that can still write: the in-flight
 	// folds and the condensation goroutines they launch. Close flips
 	// closed under closeMu and then waits here, so a teardown blocks
@@ -167,7 +160,6 @@ func NewAssembly(store TurnStore, opts ...AssemblyOption) *Assembly {
 		policy:       Policy{},
 		now:          time.Now,
 		condensePerm: make(chan struct{}, 1),
-		replay:       newReplayCache(replayCacheDepth),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -801,146 +793,25 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 // sets a budget still gets it honored; the opencraft worldstate passes
 // an empty budget in replay mode so the graph compact node owns the
 // fold decision.
-// replayCacheDepth bounds how many conversations keep a rendered replay.
-// One entry is a conversation's replayable prefix held as context items;
-// two or three turns of a session in flight is the working set, and a
-// workspace switch should not pin the previous conversations.
-const replayCacheDepth = 4
-
-// replayCache keeps the unbudgeted replay prefix a conversation has
-// already rendered, so the next turn pays for the rows it appended
-// rather than for the whole transcript.
-//
-// Full-history replay means the transcript is decoded into the model
-// window on every turn. On a 42 MB conversation (14,041 archived
-// messages) that decode was 731 MB of allocation per turn — the largest
-// single item in a measure of one turn's 6.78 GB. The transcript is
-// append-only and the projection is per row, so the prefix never
-// changes and never has to be decoded twice.
-type replayCache struct {
-	depth int
-	mu    sync.Mutex
-	order []string
-	items map[string]*replayEntry
-}
-
-type replayEntry struct {
-	// seq is the newest transcript row the items cover.
-	seq   int64
-	chars int
-	items []memory.ContextItem
-}
-
-func newReplayCache(depth int) *replayCache {
-	return &replayCache{depth: depth, items: map[string]*replayEntry{}}
-}
-
-// state returns the cached prefix for one conversation.
-func (c *replayCache) state(conversationID string) (*replayEntry, bool) {
-	if c == nil {
-		return nil, false
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	entry, ok := c.items[conversationID]
-	return entry, ok
-}
-
-// put records (or replaces) one conversation's rendered prefix.
-func (c *replayCache) put(conversationID string, entry *replayEntry) {
-	if c == nil || entry == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, ok := c.items[conversationID]; !ok {
-		c.order = append(c.order, conversationID)
-	}
-	c.items[conversationID] = entry
-	for len(c.order) > c.depth {
-		oldest := c.order[0]
-		c.order = c.order[1:]
-		delete(c.items, oldest)
-	}
-}
-
-// drop forgets one conversation's prefix.
-func (c *replayCache) drop(conversationID string) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.items, conversationID)
-	for i, id := range c.order {
-		if id == conversationID {
-			c.order = append(c.order[:i], c.order[i+1:]...)
-			break
-		}
-	}
-}
-
 // replayContext renders the full transcript as one raw-message item per
 // replayable row.
 //
-// The prefix is cached: an unbudgeted request asks only for the rows
-// appended since the last render, which is what keeps a long session's
-// per-turn cost proportional to its newest turn instead of to the whole
-// conversation. A budgeted request cannot share that prefix, because
-// what it returns depends on where the budget ran out.
+// The rendered form is what gets cached — by the caller that renders it
+// (worldstate keeps the messages, keyed by the transcript cursor), not here:
+// holding both the decoded items and the messages kept one transcript resident
+// twice. A budgeted request cannot use that cache, because what it returns
+// depends on where the budget ran out.
 func (a *Assembly) replayContext(
 	ctx context.Context,
 	req memory.ContextRequest,
 ) (memory.ContextResult, error) {
-	if req.Budget.MaxItems > 0 || req.Budget.MaxChars > 0 {
-		rows, err := a.store.LoadAll(ctx, req.ConversationID)
-		if err != nil {
-			return memory.ContextResult{}, memory.NewError(
-				memory.KindInternal, "context", err)
-		}
-		items, _, truncated := replayItems(nil, 0, rows, req.Budget)
-		return memory.ContextResult{Items: items, Truncated: truncated}, nil
-	}
-	maxSeq, err := a.store.MaxSeq(ctx, req.ConversationID)
+	rows, err := a.store.LoadAll(ctx, req.ConversationID)
 	if err != nil {
 		return memory.ContextResult{}, memory.NewError(
 			memory.KindInternal, "context", err)
 	}
-	entry, cached := a.replay.state(req.ConversationID)
-	switch {
-	case cached && entry.seq == maxSeq:
-		// Nothing was appended: the rendered prefix is the answer.
-		return memory.ContextResult{Items: entry.items}, nil
-	case cached && entry.seq < maxSeq:
-		rows, err := a.store.LoadAfter(ctx, req.ConversationID, entry.seq)
-		if err != nil {
-			return memory.ContextResult{}, memory.NewError(
-				memory.KindInternal, "context", err)
-		}
-		items, chars, _ := replayItems(entry.items, entry.chars, rows, req.Budget)
-		a.replay.put(req.ConversationID, &replayEntry{
-			seq: maxSeq, chars: chars, items: items,
-		})
-		return memory.ContextResult{Items: items}, nil
-	default:
-		// First read, or a transcript that shrank under us (a deleted
-		// conversation): render from the start.
-		rows, err := a.store.LoadAll(ctx, req.ConversationID)
-		if err != nil {
-			return memory.ContextResult{}, memory.NewError(
-				memory.KindInternal, "context", err)
-		}
-		items, chars, truncated := replayItems(nil, 0, rows, req.Budget)
-		if truncated {
-			// Partial results are not a prefix of the transcript.
-			a.replay.drop(req.ConversationID)
-			return memory.ContextResult{Items: items, Truncated: true}, nil
-		}
-		a.replay.put(req.ConversationID, &replayEntry{
-			seq: maxSeq, chars: chars, items: items,
-		})
-		return memory.ContextResult{Items: items}, nil
-	}
+	items, _, truncated := replayItems(nil, 0, rows, req.Budget)
+	return memory.ContextResult{Items: items, Truncated: truncated}, nil
 }
 
 // replayItems appends the rows to the prefix, cloning what enters so the

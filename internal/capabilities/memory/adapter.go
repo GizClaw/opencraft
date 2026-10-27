@@ -186,7 +186,7 @@ type projectedRows struct {
 
 // projectTranscriptRows applies the projection to one transcript read.
 // It is the only place a stored row becomes a model-visible message, so
-// an incremental read (LoadAfter) and a full one (LoadAll) cannot drift:
+// every read (LoadAll, LoadBack) goes through it, so they cannot drift:
 // the query decides which rows are candidates, this decides what each of
 // them becomes.
 func projectTranscriptRows(
@@ -249,33 +249,6 @@ func projectTranscriptRows(
 			attribute.Int("unrenderable", empty))
 	}
 	return out, nil
-}
-
-// LoadAfter returns the replayable rows appended after afterSeq, oldest
-// first: the incremental half of LoadAll, for a reader that already holds
-// the prefix. The transcript is append-only, so the same projection over
-// the rows after a cursor yields exactly the rows a full read would have
-// produced past it.
-func (a *sqliteTurnStore) LoadAfter(
-	ctx context.Context, conversationID string, afterSeq int64,
-) ([]summary.StoredMessage, error) {
-	rows, err := a.db.SQLDB().QueryContext(ctx, `
-		SELECT m.seq, m.role, m.content_json
-		FROM archive_messages m
-		WHERE m.conversation_id = ? AND m.role != 'system' AND m.seq > ?
-		ORDER BY m.seq`, conversationID, afterSeq)
-	if err != nil {
-		return nil, fmt.Errorf("memory: load transcript rows after %d: %w",
-			afterSeq, err)
-	}
-	defer func() {
-		telemetry.WarnErr(ctx, "memory: close transcript rows failed", rows.Close())
-	}()
-	projected, err := projectTranscriptRows(ctx, conversationID, rows)
-	if err != nil {
-		return nil, err
-	}
-	return projected.Messages, nil
 }
 
 // UpsertSummaryNode writes one fold node, unless its conversation is
