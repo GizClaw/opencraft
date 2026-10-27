@@ -715,6 +715,23 @@ func (s *Store) scanArchiveTurns(
 	return out, nil
 }
 
+// MaxSeq reports the newest transcript sequence number of one conversation,
+// or -1 when it has no rows. It is the cursor the replay cache compares
+// against: a reader that already holds a rendered prefix asks for this scalar
+// instead of for the rows again.
+func (s *Store) MaxSeq(ctx context.Context, conversationID string) (int64, error) {
+	var seq sql.NullInt64
+	if err := s.db.SQLDB().QueryRowContext(ctx,
+		`SELECT MAX(seq) FROM archive_messages WHERE conversation_id = ?`,
+		conversationID).Scan(&seq); err != nil {
+		return -1, fmt.Errorf("state: max transcript seq: %w", err)
+	}
+	if !seq.Valid {
+		return -1, nil
+	}
+	return seq.Int64, nil
+}
+
 // ListArchiveMessages returns every archived message in conversation
 // order.
 func (s *Store) ListArchiveMessages(
