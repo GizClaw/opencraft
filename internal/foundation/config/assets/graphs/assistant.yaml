@@ -17,7 +17,7 @@ nodes:
       config:
         # Keep the latest rounds raw so the pending tool result stays
         # the channel tail for the next LLM call.
-        preserve_recent: 10
+        retain_ratio: 0.16
         budget_chars: 4096
         threshold_ratio: 0.85
         # Consecutive failed folds before folding stops for the turn

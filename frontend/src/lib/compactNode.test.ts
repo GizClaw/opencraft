@@ -226,7 +226,15 @@ function runNode(opts: RunOptions): NodeResult {
     'config',
     'occompact',
     readFileSync(NODE_SOURCE, 'utf8'),
-  )(board, run, {}, occompact);
+  )(
+    board,
+    run,
+    // The retained tail is a token budget with a floor of messages; a budget
+    // of one token can only pay for the floor, so these fixtures pin the floor
+    // instead of an estimate.
+    { retain_tokens: 1, min_keep_messages: 10 },
+    occompact,
+  );
   return {
     vars,
     channel: channels.main,
@@ -297,7 +305,7 @@ describe('compaction node', () => {
     expect(result.vars['world.compact.pending']).toBe(true);
     expect(result.vars[TOOL_PENDING]).toBe(true);
     expect(result.vars['world.compact.fold_start']).toBe(SECTIONS);
-    // The newest rounds stay raw (preserve_recent), so the fold covers the
+    // The newest rounds stay raw (the retained-tail floor), so the fold covers the
     // older part of the replayed history and stops before the ask.
     expect(result.vars['world.compact.fold_end']).toBe(channel.length - 10);
   });

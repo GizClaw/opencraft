@@ -93,7 +93,10 @@ function runNode(board: unknown, maxInputTokens = 1): void {
   // the stop conditions themselves). This file pins the fold geometry, so
   // it sets the budget explicitly instead of riding the defaults.
   const config = {
-    preserve_recent: 2,
+    // The retained tail is a token budget with a floor; a budget of one token
+    // can only pay for the floor, which is what these fixtures pin.
+    retain_tokens: 1,
+    min_keep_messages: 2,
     max_consecutive_failures: 3,
     max_folds_per_turn: 3,
     budget_chars: 4096,
