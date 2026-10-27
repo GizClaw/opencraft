@@ -514,5 +514,10 @@ func (s *Service) replayHistory(
 			raws = append(raws, item)
 		}
 	}
+	// A fold recorded on an earlier turn replaces the rows it covered with
+	// its summary (fold.go). This is what keeps the transcript from being
+	// replayed and folded again on every turn: the model reads the folded
+	// view, the archive keeps the rows.
+	raws = applyFold(ctx, s.sessionStore, contextID, raws)
 	return normalizeRawItemsWithSeqs(raws)
 }

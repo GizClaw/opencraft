@@ -7,10 +7,13 @@ import (
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/memory"
+	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
 // foldSeqsDepth bounds how many conversations keep the row pairing this
@@ -157,4 +160,86 @@ func recordFold(
 		attribute.Int("rows", doc.Rows),
 		attribute.Int("summary_chars", len(doc.Summary)))
 	return nil
+}
+
+// applyFold replaces the rows a durable fold covers with the fold's summary.
+//
+// The model-visible history becomes "summary, then everything the fold did not
+// touch" — the same view on every turn, whether or not this turn appended
+// anything. That is what stops the transcript being folded again each turn: the
+// rows are still in the archive (search, export and the timeline read them),
+// they are simply behind the summary for the model.
+//
+// The summary sits at the first covered row's position, so a preserved message
+// that came after the folded span keeps its order, and it carries that row's
+// number: a later fold that covers the summary records the same start.
+func applyFold(
+	ctx context.Context,
+	store *sessions.Store,
+	conversationID string,
+	raws []memory.ContextItem,
+) []memory.ContextItem {
+	if store == nil || len(raws) == 0 {
+		return raws
+	}
+	var doc foldDocument
+	if err := store.ReadState(conversationID, sessions.DocumentCompactFold, &doc); err != nil {
+		return raws
+	}
+	if doc.Version != 1 || doc.CoveredTo < doc.CoveredFrom || doc.Summary == "" {
+		telemetry.Warn(ctx, "worldstate: ignoring a malformed fold document",
+			attribute.String("conversation.id", conversationID),
+			attribute.Int("version", doc.Version))
+		return raws
+	}
+	covered := func(seq int64) bool {
+		return seq >= doc.CoveredFrom && seq <= doc.CoveredTo
+	}
+	out := make([]memory.ContextItem, 0, len(raws)+1)
+	inserted := false
+	removed := 0
+	for _, item := range raws {
+		seq := int64(item.Sequence)
+		if covered(seq) {
+			if !inserted {
+				out = append(out, foldSummaryItem(doc))
+				inserted = true
+			}
+			removed++
+			continue
+		}
+		if !inserted && seq > doc.CoveredTo {
+			// The covered rows are behind this one (a replay that starts
+			// after them): the summary still belongs in front.
+			out = append(out, foldSummaryItem(doc))
+			inserted = true
+		}
+		out = append(out, item)
+	}
+	if !inserted && removed == 0 {
+		return raws
+	}
+	telemetry.Info(ctx, "worldstate: replayed a folded history",
+		attribute.String("conversation.id", conversationID),
+		attribute.Int64("covered_from", doc.CoveredFrom),
+		attribute.Int64("covered_to", doc.CoveredTo),
+		attribute.Int("rows_hidden", removed))
+	return out
+}
+
+// foldSummaryItem renders one fold's summary as the user-side context the model
+// reads in place of the covered rows. It uses the same marker as the bounded
+// memory mode and the compaction result itself (summarytext.SummaryPrefix), so
+// a summary reads the same whichever path produced it.
+func foldSummaryItem(doc foldDocument) memory.ContextItem {
+	return memory.ContextItem{
+		Kind:        memory.ContextRawMessage,
+		SourceClass: memory.ContextSourceSummary,
+		MessageRole: message.RoleUser,
+		Content: message.NewTextContent(
+			summarytext.SummaryPrefix + "\n" + doc.Summary),
+		// The row the covered span starts at: ordering for this replay, and
+		// the start a later fold records when it covers the summary in turn.
+		Sequence: uint64(doc.CoveredFrom),
+	}
 }
