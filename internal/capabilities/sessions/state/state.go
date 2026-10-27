@@ -10,11 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
-	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/foundation/db"
@@ -142,29 +140,15 @@ func (s *Store) Save(ctx context.Context, cp agent.Checkpoint) error {
 
 // Load implements agent.CheckpointStore. A missing record returns
 // (nil, nil); the returned checkpoint is caller-owned.
+//
+// A record is a base plus its append-only chain (see
+// checkpoint_journal.go): the chain is folded in before the caller sees
+// the record, so a reader never learns whether it cost one row or many.
 func (s *Store) Load(ctx context.Context, execID string) (*agent.Checkpoint, error) {
-	if strings.TrimSpace(execID) == "" {
-		return nil, errdefs.Validation(
-			errors.New("state: checkpoint exec_id is required"))
+	if err := validateExecID(execID); err != nil {
+		return nil, err
 	}
-	var data string
-	err := s.db.SQLDB().QueryRowContext(ctx,
-		`SELECT data FROM agent_checkpoints WHERE exec_id = ?`, execID,
-	).Scan(&data)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("state: load checkpoint %s: %w", execID, err)
-	}
-	var cp agent.Checkpoint
-	if err := json.Unmarshal([]byte(data), &cp); err != nil {
-		return nil, fmt.Errorf("state: decode checkpoint %s: %w", execID, err)
-	}
-	if err := cp.Validate(); err != nil {
-		return nil, fmt.Errorf("state: corrupt checkpoint %s: %w", execID, err)
-	}
-	return &cp, nil
+	return s.loadCheckpoint(ctx, execID)
 }
 
 // List implements agent.CheckpointLister.
@@ -191,17 +175,13 @@ func (s *Store) List(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
-// Delete implements agent.CheckpointDeleter.
+// Delete implements agent.CheckpointDeleter: the base record and its chain
+// go together, so a chain never outlives the base it extends.
 func (s *Store) Delete(ctx context.Context, execID string) error {
-	if strings.TrimSpace(execID) == "" {
-		return errdefs.Validation(
-			errors.New("state: checkpoint exec_id is required"))
+	if err := validateExecID(execID); err != nil {
+		return err
 	}
-	if _, err := s.db.SQLDB().ExecContext(ctx,
-		`DELETE FROM agent_checkpoints WHERE exec_id = ?`, execID); err != nil {
-		return fmt.Errorf("state: delete checkpoint %s: %w", execID, err)
-	}
-	return nil
+	return s.deleteCheckpoint(ctx, execID)
 }
 
 var (

@@ -119,6 +119,13 @@ func checkpointRequest(ctx context.Context, cp *agent.Checkpoint) *agent.Request
 // trimCheckpoint shrinks a wave checkpoint to the turn recovery will
 // reconstruct from it.
 //
+// Since core/v0.10.0 the store is also a checkpoint journal: the graph
+// writes one base record per run and then only the board's writes at each
+// wave, so this hook sees a base at the three moments a base is written
+// (the first boundary, after a resume, when the chain reaches its cap).
+// The trim still matters there — a base is the record that carries the
+// whole board — and it is inert on deltas, which never pass through here.
+//
 // The graph stamps the whole board once per completed wave (see
 // flowcraft's graph stampCheckpoint), and the store upserts by run id, so
 // what survives is the last wave's board. Recovery reads exactly two

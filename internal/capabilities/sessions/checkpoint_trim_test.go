@@ -105,3 +105,42 @@ func TestStoreCheckpointTrimmer(t *testing.T) {
 		t.Fatal("empty board persisted")
 	}
 }
+
+// TestStoreTrimmerAppliesToABase pins the other half of the trimmer's
+// contract after the journalling store: a base record is the one record that
+// carries the whole board, so it is the one the trimmer shrinks. The deltas
+// that follow only carry writes and are stored as they arrive.
+func TestStoreTrimmerAppliesToABase(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions")
+	store, err := newMigratedStore(root, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	ctx := context.Background()
+
+	store.SetCheckpointTrimmer(func(_ context.Context, cp agent.Checkpoint) agent.Checkpoint {
+		cp.Attributes = map[string]string{"trimmed": "yes"}
+		return cp
+	})
+	full := agent.Checkpoint{
+		ExecID: "run-base-trim",
+		Steps:  []string{"world"},
+		Board: &agent.BoardSnapshot{Vars: map[string]any{
+			"keep": "yes",
+			"drop": "no",
+		}},
+		Attributes: map[string]string{"trimmed": "no"},
+		Timestamp:  time.Now().UTC(),
+	}
+	if err := store.WriteBase(ctx, full); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	loaded, err := store.Load(ctx, "run-base-trim")
+	if err != nil || loaded == nil {
+		t.Fatalf("load = %+v, %v", loaded, err)
+	}
+	if loaded.Attributes["trimmed"] != "yes" {
+		t.Fatalf("attributes = %+v, want the trimmer's record", loaded.Attributes)
+	}
+}
