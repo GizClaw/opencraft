@@ -617,7 +617,7 @@ func (e *processEntry) snapshot() Process {
 // ProcessFeedFactory builds the opencraft.processes resource.
 type ProcessFeedFactory struct{}
 
-var _ resource.Factory = ProcessFeedFactory{}
+var _ resource.Factory[*ProcessFeed] = ProcessFeedFactory{}
 
 func (ProcessFeedFactory) Spec() resource.Spec {
 	return resource.Spec{
@@ -628,6 +628,6 @@ func (ProcessFeedFactory) Spec() resource.Spec {
 
 func (ProcessFeedFactory) New(
 	context.Context, resource.Input,
-) (any, error) {
+) (*ProcessFeed, error) {
 	return NewProcessFeed(), nil
 }

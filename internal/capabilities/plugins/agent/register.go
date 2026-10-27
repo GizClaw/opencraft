@@ -50,7 +50,7 @@ type Factory struct {
 	Host *Host
 }
 
-var _ resource.Factory = Factory{}
+var _ resource.Factory[*Host] = Factory{}
 
 // Spec implements resource.Factory.
 func (Factory) Spec() resource.Spec {
@@ -58,7 +58,7 @@ func (Factory) Spec() resource.Spec {
 }
 
 // New implements resource.Factory.
-func (f Factory) New(_ context.Context, _ resource.Input) (any, error) {
+func (f Factory) New(_ context.Context, _ resource.Input) (*Host, error) {
 	if f.Host == nil {
 		return NewEmpty(), nil
 	}
