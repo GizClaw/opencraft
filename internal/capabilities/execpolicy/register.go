@@ -38,22 +38,23 @@ func Register(r *resource.Registry) error {
 	return r.Register(execPolicyResource{})
 }
 
-var _ resource.Factory = execPolicyResource{}
+var _ resource.Factory[*Manager] = execPolicyResource{}
+
+// depHooks is the optional hook manager the policy reports decisions to.
+var depHooks = resource.Optional[*hooks.Manager]("hooks")
 
 func (execPolicyResource) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: ResourceKind,
 		Impl: "manager",
-		Deps: []resource.DepSpec{{
-			Name: "hooks", Type: hooks.ResourceKind, Required: false,
-		}},
+		Deps: []resource.Requirement{depHooks.Spec()},
 	}
 }
 
 func (execPolicyResource) New(
 	ctx context.Context,
 	in resource.Input,
-) (any, error) {
+) (*Manager, error) {
 	settings, err := resource.DecodeTyped[execPolicySettings](
 		ctx, in.Settings)
 	if err != nil {
@@ -65,10 +66,10 @@ func (execPolicyResource) New(
 	if err != nil {
 		return nil, err
 	}
-	if dep, ok := in.Dep("hooks"); ok {
-		if hookMgr, ok := dep.(*hooks.Manager); ok {
-			mgr.SetHooks(hookMgr)
-		}
+	if hookMgr, ok, err := depHooks.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		mgr.SetHooks(hookMgr)
 	}
 	return mgr, nil
 }

@@ -21,7 +21,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // execdPolicy renders the workspace sandbox policy for the execd wire.
@@ -279,19 +278,24 @@ func (s HostSandboxSettings) Env() coresandbox.EnvPolicy {
 // opencraft) from settings plus the execpolicy and sessions deps.
 type HostSandboxFactory struct{}
 
-var _ resource.Factory = HostSandboxFactory{}
+var _ resource.Factory[*HostSandbox] = HostSandboxFactory{}
+
+var (
+	depSandboxPolicy   = resource.Require[Approver]("execpolicy")
+	depSandboxSessions = resource.Require[*sessions.Store]("sessions")
+	depSandboxNet      = resource.Optional[Policy]("netpolicy")
+	// Optional: the conversation-scoped process tap. Without it sessions
+	// run exactly as before, untapped.
+	depSandboxProcesses = resource.Optional[*ProcessFeed]("processes")
+)
 
 func (HostSandboxFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "sandbox.Runner",
 		Impl: "opencraft",
-		Deps: []resource.DepSpec{
-			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: true},
-			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
-			{Name: "netpolicy", Type: NetPolicyResourceKind, Required: false},
-			// Optional: the conversation-scoped process tap. Without
-			// it sessions run exactly as before, untapped.
-			{Name: "processes", Type: ProcessFeedResourceKind, Required: false},
+		Deps: []resource.Requirement{
+			depSandboxPolicy.Spec(), depSandboxSessions.Spec(),
+			depSandboxNet.Spec(), depSandboxProcesses.Spec(),
 		},
 	}
 }
@@ -299,7 +303,7 @@ func (HostSandboxFactory) Spec() resource.Spec {
 func (HostSandboxFactory) New(
 	ctx context.Context,
 	in resource.Input,
-) (any, error) {
+) (*HostSandbox, error) {
 	s, err := resource.DecodeTyped[HostSandboxSettings](
 		ctx, in.Settings)
 	if err != nil {
@@ -310,8 +314,7 @@ func (HostSandboxFactory) New(
 		return nil, errdefs.Validationf(
 			"opencraft sandbox: settings.root is required")
 	}
-	approver, err := resourcedep.Required[Approver](
-		in, "opencraft sandbox", "execpolicy")
+	approver, err := depSandboxPolicy.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -330,25 +333,24 @@ func (HostSandboxFactory) New(
 	if store, ok := approver.(coresandbox.EscalationRules); ok {
 		rules = store
 	}
-	store, err := resourcedep.Required[*sessions.Store](
-		in, "opencraft sandbox", "sessions")
+	store, err := depSandboxSessions.Get(in)
 	if err != nil {
 		return nil, err
 	}
 	var feed *ProcessFeed
-	if dep, ok := in.Dep("processes"); ok {
-		if f, ok := dep.(*ProcessFeed); ok {
-			feed = f
-		}
+	if f, ok, err := depSandboxProcesses.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		feed = f
 	}
 	// The configured exec network posture becomes the runner default:
 	// WithDefaults pins Net onto every call, so deny-all / allow-list /
 	// proxy apply to all sandboxed commands without touching each tool.
 	var execNet corenet.NetPolicy
-	if dep, ok := in.Dep("netpolicy"); ok {
-		if pol, ok := dep.(Policy); ok {
-			execNet = pol.Exec
-		}
+	if pol, ok, err := depSandboxNet.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		execNet = pol.Exec
 	}
 
 	// The OS-level backend: platform sandbox locally, or the execd

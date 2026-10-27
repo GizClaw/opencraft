@@ -12,10 +12,10 @@ import (
 func Register(r *resource.Registry) error {
 	return errors.Join(
 		registerNetPolicy(r),
-		r.Register(ArtifactObserverFactory{}),
-		r.Register(ProcessFeedFactory{}),
-		r.Register(ObservingWorkspaceFactory{}),
-		r.Register(HostSandboxFactory{}),
-		r.Register(HostWorkspaceFactory{}),
+		resource.Register(r, ArtifactObserverFactory{}),
+		resource.Register(r, ProcessFeedFactory{}),
+		resource.Register(r, ObservingWorkspaceFactory{}),
+		resource.Register(r, HostSandboxFactory{}),
+		resource.Register(r, HostWorkspaceFactory{}),
 	)
 }

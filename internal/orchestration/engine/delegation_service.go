@@ -28,26 +28,25 @@ type delegationServiceFactory struct {
 	opts []sdkdelegation.Option
 }
 
-var _ resource.Factory = delegationServiceFactory{}
+var _ resource.Factory[*sdkdelegation.LocalService] = delegationServiceFactory{}
+
+// depDelegationSessions is the session store the delegated runs are
+// initialized against.
+var depDelegationSessions = resource.Require[*ocsessions.Store](delegationSessionsDep)
 
 // Spec implements resource.Factory: the core service's deps plus the
 // session store.
 func (f delegationServiceFactory) Spec() resource.Spec {
 	spec := sdkdelegation.NewServiceFactory().Spec()
-	spec.Deps = append(spec.Deps, resource.DepSpec{
-		Name:     delegationSessionsDep,
-		Type:     ocsessions.ResourceKind,
-		Required: true,
-	})
+	spec.Deps = append(spec.Deps, depDelegationSessions.Spec())
 	return spec
 }
 
 // New implements resource.Factory.
 func (f delegationServiceFactory) New(
 	ctx context.Context, in resource.Input,
-) (any, error) {
-	store, err := resourcedep.Required[*ocsessions.Store](
-		in, "delegation service", delegationSessionsDep)
+) (*sdkdelegation.LocalService, error) {
+	store, err := depDelegationSessions.Get(in)
 	if err != nil {
 		return nil, err
 	}

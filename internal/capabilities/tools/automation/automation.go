@@ -82,30 +82,29 @@ func (emptyHost) Empty() bool { return true }
 // resource.
 type SourceFactory struct{}
 
-var _ resource.Factory = SourceFactory{}
+var _ resource.Factory[source] = SourceFactory{}
+
+// depHost is the automation host whose tools this source publishes.
+var depHost = resource.Require[Host]("automation.host")
 
 // Spec implements resource.Factory.
 func (SourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: ResourceImpl,
-		Deps: []resource.DepSpec{
-			{Name: "automation.host", Type: ResourceKind, Required: true},
-		},
+		Deps: []resource.Requirement{depHost.Spec()},
 	}
 }
 
 // New implements resource.Factory. An empty host contributes no tools.
-func (SourceFactory) New(_ context.Context, in resource.Input) (any, error) {
-	dep, ok := in.Dep("automation.host")
-	if !ok {
-		return nil, errdefs.Validationf(
-			"automation tools: automation.host dependency is required")
+func (SourceFactory) New(_ context.Context, in resource.Input) (source, error) {
+	host, err := depHost.Get(in)
+	if err != nil {
+		return source{}, err
 	}
-	host, ok := dep.(Host)
-	if !ok || host == nil {
-		return nil, errdefs.Validationf(
-			"automation tools: automation.host dep is %T, want Host", dep)
+	if host == nil {
+		return source{}, errdefs.Validationf(
+			"automation tools: automation.host dependency is nil")
 	}
 	if empty, ok := host.(interface{ Empty() bool }); ok && empty.Empty() {
 		return source{}, nil

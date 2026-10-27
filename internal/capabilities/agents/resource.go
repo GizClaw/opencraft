@@ -13,7 +13,7 @@ import (
 // without re-binding.
 type Factory struct{}
 
-var _ resource.Factory = Factory{}
+var _ resource.Factory[*Lifecycle] = Factory{}
 
 // Spec declares the resource contract.
 func (Factory) Spec() resource.Spec {
@@ -24,7 +24,7 @@ func (Factory) Spec() resource.Spec {
 }
 
 // New creates the lifecycle rooted at settings.dir.
-func (f Factory) New(ctx context.Context, in resource.Input) (any, error) {
+func (f Factory) New(ctx context.Context, in resource.Input) (*Lifecycle, error) {
 	settings, err := resource.DecodeTyped[Settings](ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf(

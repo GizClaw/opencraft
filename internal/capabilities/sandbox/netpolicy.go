@@ -152,5 +152,5 @@ func buildExecNet(s ExecNetSettings) (corenet.NetPolicy, error) {
 
 // Register adds the netpolicy factory to r.
 func registerNetPolicy(r *resource.Registry) error {
-	return r.Register(NetPolicyFactory{})
+	return resource.Register(r, NetPolicyFactory{})
 }
