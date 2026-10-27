@@ -7,7 +7,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
-	corenet "github.com/GizClaw/flowcraft/core/utils/net"
+	corenet "github.com/GizClaw/flowcraft/core/utils/netpolicy"
 )
 
 // NetPolicyResourceKind is the deploy resource kind for the assembled

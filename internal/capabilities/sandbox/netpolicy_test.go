@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/resource"
-	corenet "github.com/GizClaw/flowcraft/core/utils/net"
+	corenet "github.com/GizClaw/flowcraft/core/utils/netpolicy"
 )
 
 func TestNetPolicyFactoryDefaults(t *testing.T) {

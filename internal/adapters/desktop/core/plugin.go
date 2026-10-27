@@ -3,7 +3,7 @@ package core
 import (
 	"path/filepath"
 
-	"github.com/GizClaw/flowcraft/backends/secret/keychain"
+	"github.com/GizClaw/flowcraft/core/secret/keychain"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins/kraft"

@@ -16,7 +16,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/GizClaw/flowcraft/backends/secret/keychain"
+	"github.com/GizClaw/flowcraft/core/secret/keychain"
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/agent/scriptrt"
 	sdkdelegation "github.com/GizClaw/flowcraft/core/delegation"
