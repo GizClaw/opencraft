@@ -807,6 +807,15 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 // workspace switch should not pin the previous conversations.
 const replayCacheDepth = 4
 
+// replayCacheChars bounds the rendered text the cache keeps across all its
+// conversations, in characters. A conversation can be arbitrarily large (the
+// transcript this cache exists for is 45 MB of text), so the depth alone is
+// not a bound: four of those is 180 MB resident for a feature whose whole
+// point is to avoid re-decoding. Once the budget is spent the oldest entries
+// go, and the next turn renders from the store again — the cost the cache
+// saves on a hit, paid once when a conversation comes back.
+const replayCacheChars = 8 << 20
+
 // replayCache keeps the unbudgeted replay prefix a conversation has
 // already rendered, so the next turn pays for the rows it appended
 // rather than for the whole transcript.
@@ -819,9 +828,14 @@ const replayCacheDepth = 4
 // changes and never has to be decoded twice.
 type replayCache struct {
 	depth int
-	mu    sync.Mutex
-	order []string
-	items map[string]*replayEntry
+	// maxChars is the whole cache's text budget (see replayCacheChars).
+	maxChars int
+	mu       sync.Mutex
+	order    []string
+	items    map[string]*replayEntry
+	// chars is what the entries hold together; kept beside the map so an
+	// eviction does not re-walk every entry.
+	chars int
 }
 
 type replayEntry struct {
@@ -832,7 +846,11 @@ type replayEntry struct {
 }
 
 func newReplayCache(depth int) *replayCache {
-	return &replayCache{depth: depth, items: map[string]*replayEntry{}}
+	return &replayCache{
+		depth:    depth,
+		maxChars: replayCacheChars,
+		items:    map[string]*replayEntry{},
+	}
 }
 
 // state returns the cached prefix for one conversation.
@@ -853,15 +871,25 @@ func (c *replayCache) put(conversationID string, entry *replayEntry) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.items[conversationID]; !ok {
+	if previous, ok := c.items[conversationID]; ok {
+		c.chars -= previous.chars
+	} else {
 		c.order = append(c.order, conversationID)
 	}
 	c.items[conversationID] = entry
-	for len(c.order) > c.depth {
+	c.chars += entry.chars
+	for len(c.order) > 1 &&
+		(len(c.order) > c.depth || c.chars > c.maxChars) {
 		oldest := c.order[0]
 		c.order = c.order[1:]
-		delete(c.items, oldest)
+		if evicted, ok := c.items[oldest]; ok {
+			c.chars -= evicted.chars
+			delete(c.items, oldest)
+		}
 	}
+	// An entry that alone exceeds the budget is still worth keeping: the
+	// alternative is re-rendering it on every turn of the conversation the
+	// reader is looking at.
 }
 
 // drop forgets one conversation's prefix.
@@ -871,7 +899,10 @@ func (c *replayCache) drop(conversationID string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.items, conversationID)
+	if dropped, ok := c.items[conversationID]; ok {
+		c.chars -= dropped.chars
+		delete(c.items, conversationID)
+	}
 	for i, id := range c.order {
 		if id == conversationID {
 			c.order = append(c.order[:i], c.order[i+1:]...)

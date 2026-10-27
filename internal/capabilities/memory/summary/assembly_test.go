@@ -1305,3 +1305,68 @@ func TestAssemblyReplayBudgetNeverUsesThePrefix(t *testing.T) {
 			store.afterLoads)
 	}
 }
+
+// The replay cache is bounded in bytes as well as in conversations: a
+// transcript can be tens of megabytes, and four of those resident is the
+// memory cost the cache was supposed to trade for churn. These cases pin the
+// budget, the accounting that follows it, and the one entry that survives a
+// budget smaller than itself.
+
+func replayEntryWithChars(chars int, seq int64) *replayEntry {
+	return &replayEntry{
+		seq:   seq,
+		chars: chars,
+		items: []memory.ContextItem{{Content: message.NewTextContent("x")}},
+	}
+}
+
+func TestReplayCacheEvictsByCharBudget(t *testing.T) {
+	cache := newReplayCache(4)
+	cache.maxChars = 100
+	cache.put("s-1", replayEntryWithChars(60, 10))
+	cache.put("s-2", replayEntryWithChars(60, 20))
+	if _, ok := cache.state("s-1"); ok {
+		t.Fatal("the oldest entry survived a budget overrun")
+	}
+	kept, ok := cache.state("s-2")
+	if !ok || kept.seq != 20 {
+		t.Fatalf("newest entry = %+v, %v; want it kept", kept, ok)
+	}
+	if cache.chars != 60 {
+		t.Fatalf("cache chars = %d, want the surviving entry's 60", cache.chars)
+	}
+}
+
+func TestReplayCacheKeepsOneEntryLargerThanTheBudget(t *testing.T) {
+	cache := newReplayCache(4)
+	cache.maxChars = 100
+	cache.put("s-big", replayEntryWithChars(500, 5))
+	if _, ok := cache.state("s-big"); !ok {
+		t.Fatal("an entry larger than the budget was dropped; the reader would re-render it every turn")
+	}
+	// The next conversation still evicts the oversized one rather than
+	// stacking another over-budget entry on top of it.
+	cache.put("s-2", replayEntryWithChars(60, 6))
+	if _, ok := cache.state("s-big"); ok {
+		t.Fatal("the oversized entry was kept once another conversation arrived")
+	}
+}
+
+func TestReplayCacheAccountingFollowsReplacementAndDrop(t *testing.T) {
+	cache := newReplayCache(4)
+	cache.maxChars = 1000
+	cache.put("s-1", replayEntryWithChars(300, 1))
+	cache.put("s-1", replayEntryWithChars(100, 2))
+	if cache.chars != 100 {
+		t.Fatalf("chars after replacing an entry = %d, want 100", cache.chars)
+	}
+	cache.drop("s-1")
+	if cache.chars != 0 {
+		t.Fatalf("chars after drop = %d, want 0", cache.chars)
+	}
+	// A drop of something that was never cached changes nothing.
+	cache.drop("s-missing")
+	if cache.chars != 0 {
+		t.Fatalf("chars after a missing drop = %d, want 0", cache.chars)
+	}
+}
