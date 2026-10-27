@@ -106,6 +106,28 @@ func (c *foldStashMap) get(board *agent.Board) (*foldEntry, bool) {
 	return entry, ok
 }
 
+// seqRange maps a channel index range onto the transcript rows behind it.
+// The compact node counts in channel positions; the rows a fold covers are
+// addressed by seq, so the pairing the replay stashed is what turns one into
+// the other — that is what lets the fold tool name a range instead of
+// receiving the conversation as an argument.
+func (c *foldStashMap) seqRange(
+	board *agent.Board, sectionsCount, start, end int,
+) (int64, int64, error) {
+	entry, ok := c.get(board)
+	if !ok || len(entry.seqs) == 0 {
+		return 0, 0, fmt.Errorf(
+			"worldstate: no replay pairing for this turn, so a fold range has no rows")
+	}
+	from, to := start-sectionsCount, end-sectionsCount
+	if from < 0 || to > len(entry.seqs) || to <= from {
+		return 0, 0, fmt.Errorf(
+			"worldstate: fold range [%d,%d) is outside the %d replayed rows (sections %d)",
+			from, to, len(entry.seqs), sectionsCount)
+	}
+	return entry.seqs[from], entry.seqs[to-1], nil
+}
+
 // recordFold writes the durable fold document for the board's conversation.
 //
 // start and end are the channel indexes compact.js folded, counted from the

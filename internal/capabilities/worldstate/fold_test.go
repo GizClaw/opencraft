@@ -216,3 +216,41 @@ func TestReplayFoldIgnoresAMalformedDocument(t *testing.T) {
 		t.Fatalf("a malformed fold hid rows: %d messages", len(msgs))
 	}
 }
+
+// TestFoldStashSeqRangeMapsRowsOntoTranscriptSeqs pins the lookup the compact
+// node uses to name a range instead of shipping the conversation: channel
+// positions (after the sections) become the seqs the store addresses, and a
+// range that does not line up with this turn's replay is refused rather than
+// quietly resolved to the wrong rows.
+func TestFoldStashSeqRangeMapsRowsOntoTranscriptSeqs(t *testing.T) {
+	board := agent.NewBoard()
+	stashReplaySeqs(board, nil, []int64{10, 11, 14, 15})
+
+	from, to, err := foldStash.seqRange(board, 0, 1, 3)
+	if err != nil {
+		t.Fatalf("seqRange: %v", err)
+	}
+	if from != 11 || to != 14 {
+		t.Fatalf("seqRange(1,3) = [%d,%d], want [11,14]", from, to)
+	}
+
+	for _, tc := range []struct {
+		name       string
+		sections   int
+		start, end int
+	}{
+		{"outside the replay", 0, 2, 9},
+		{"empty range", 0, 2, 2},
+		{"ends before the sections", 5, 1, 3},
+	} {
+		if _, _, err := foldStash.seqRange(board, tc.sections, tc.start, tc.end); err == nil {
+			t.Errorf("%s: want a refusal for [%d,%d) with %d sections",
+				tc.name, tc.start, tc.end, tc.sections)
+		}
+	}
+
+	// A board this turn never replayed has no pairing at all.
+	if _, _, err := foldStash.seqRange(agent.NewBoard(), 0, 0, 1); err == nil {
+		t.Error("want a refusal without a replay pairing")
+	}
+}

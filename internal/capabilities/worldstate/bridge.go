@@ -49,6 +49,19 @@ func (WorldBridge) Bind(inv bindings.Invocation) ([]bindings.Binding, error) {
 			// recording it is what lets a later turn replay the condensed
 			// conversation instead of replaying the transcript and folding
 			// it again.
+			// foldSeq answers "which transcript rows are behind this
+			// channel range": the compact node counts channel positions,
+			// the store addresses rows by seq. Naming a range is what
+			// keeps the fold from shipping the conversation to the tool
+			// as an argument.
+			"foldSeq": func(start, end float64) (map[string]any, error) {
+				from, to, err := foldStash.seqRange(
+					board, sectionsCount(board), int(start), int(end))
+				if err != nil {
+					return nil, err
+				}
+				return map[string]any{"from": from, "to": to}, nil
+			},
 			"markFold": func(start, end float64, summary string) error {
 				if err := recordFold(
 					inv.Context, board, conversationID(inv),
