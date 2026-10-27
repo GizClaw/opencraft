@@ -1,20 +1,14 @@
 // Package compact provides the internal compact tool: it condenses a
-// conversation prefix into a short summary and persists the artifact
+// conversation prefix into a short summary
 // per conversation, so repeated compactions reuse previous work instead
 // of re-summarizing the same messages.
 package compact
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
-	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -27,8 +21,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/foundation/ids"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
@@ -62,22 +54,16 @@ const maxCondenseParallel = 4
 
 // Args is the compact tool input.
 type Args struct {
-	// Conversation is the messages to fold into the summary. Only the
-	// newest overflow is expected here; messages already covered by a
-	// previous compaction are merged in from the persisted artifact.
+	// Conversation is the messages to fold into the summary. A summary
+	// message left by an earlier fold may be among them (the replay hands
+	// the condensed view back): it is carried as the previous summary
+	// instead of being summarized as if it were conversation.
 	Conversation []message.Message `json:"conversation"`
 	// BudgetChars caps the summary length in characters.
 	BudgetChars int `json:"budget_chars,omitempty"`
-	// ConversationID identifies the per-conversation artifact store.
+	// ConversationID identifies the conversation being folded (telemetry
+	// and sharding; the fold keeps no state of its own).
 	ConversationID string `json:"conversation_id,omitempty"`
-}
-
-// artifact is the persisted compaction result for one conversation.
-type artifact struct {
-	// Covered is the cumulative set of folded message ids. Stored in
-	// fold order so the union stays deterministic.
-	Covered []string `json:"covered"`
-	Summary string   `json:"summary"`
 }
 
 // generateFunc is the condensation entry; production wires the router,
@@ -102,24 +88,20 @@ type condenseProbe struct {
 // inject their own; production wires the router.
 type probeFunc func(ctx context.Context, req inference.GenerateRequest) condenseProbe
 
-// Tool condenses conversation prefixes and persists the artifact. It
-// is safe for concurrent use.
+// Tool condenses conversation prefixes. It is safe for concurrent use.
 type Tool struct {
-	store    *sessions.Store
 	generate generateFunc
 	probe    probeFunc
 	observer func(context.Context, inference.Usage)
-	mu       sync.Mutex
 }
 
 // New builds a compact tool whose condensation goes through the
 // deployment router (same model selection/fallback as agent turns).
 func New(
 	router *route.Router,
-	store *sessions.Store,
 	observer func(context.Context, inference.Usage),
 ) *Tool {
-	t := &Tool{store: store, observer: observer, probe: routerProbe(router)}
+	t := &Tool{observer: observer, probe: routerProbe(router)}
 	if router != nil {
 		t.generate = func(
 			ctx context.Context,
@@ -202,51 +184,27 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 		}
 	}
 
-	messageIDs := make([]string, len(args.Conversation))
-	covered := map[string]bool{}
-	for i, m := range args.Conversation {
-		messageIDs[i] = stableID(m)
-		covered[messageIDs[i]] = true
-	}
-
-	var art artifact
-	// Delegated subagent runs mint ephemeral "ctx-" ids the session store
-	// rejects (see the writer below): skip the load instead of warning on
-	// every fold they run.
-	if ids.IsSession(args.ConversationID) {
-		if err := t.store.ReadStateStrict(
-			args.ConversationID, sessions.DocumentCompact, &art,
-		); err != nil && !errors.Is(err, os.ErrNotExist) {
-			// Unreadable, and the store reported the row: drop whatever
-			// the failed decode left behind, so this fold condenses from
-			// scratch and rewrites the document below instead of trusting
-			// half of it.
-			art = artifact{}
-		}
-	}
-	if art.Summary != "" && setsEqual(art.Covered, messageIDs) {
-		return encodePatch(art.Summary)
-	}
-
-	// Only the messages this artifact does not cover yet need to be
-	// condensed; the previous summary already holds the rest. Marked
-	// summary messages are skipped too: their content is already part
-	// of the previous summary merged below.
+	// A summary message in the input is an earlier fold's output: the replay
+	// hands the condensed view back, so the summary travels as the previous
+	// summary instead of being condensed a second time. Everything else is
+	// fresh — the fold keeps no state between rounds, so there is no
+	// "already covered" set to merge against.
 	var fresh []message.Message
-	for i, m := range args.Conversation {
-		if art.Summary != "" &&
-			summarytext.IsSummaryText(summarytext.RenderMessage(m)) {
+	prevSummary := ""
+	for _, m := range args.Conversation {
+		if text := m.Content.Text(); summarytext.IsSummaryText(text) {
+			// The marker is rendering scaffolding, not content: the model
+			// reads the summary body it was derived from.
+			prevSummary = strings.TrimPrefix(text, summarytext.SummaryPrefix+"\n")
 			continue
 		}
-		if !containsID(art.Covered, messageIDs[i]) {
-			fresh = append(fresh, m)
-		}
+		fresh = append(fresh, m)
 	}
 	if len(fresh) == 0 {
-		if art.Summary != "" {
-			return encodePatch(art.Summary)
+		if prevSummary != "" {
+			return encodePatch(prevSummary)
 		}
-		return "", errdefs.Validationf("compact: nothing new to compact")
+		return "", errdefs.Validationf("compact: nothing to compact")
 	}
 	if t.generate == nil {
 		return "", errdefs.NotAvailablef("compact: condensation not configured")
@@ -255,7 +213,7 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	summary := t.condenseFold(ctx, condenseInput{
 		conversationID: args.ConversationID,
 		fresh:          fresh,
-		prevSummary:    art.Summary,
+		prevSummary:    prevSummary,
 		budget:         budget,
 	})
 	// Identifiers the summarizer is entitled to paraphrase away ride
@@ -269,22 +227,9 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	// summary", so an unbudgeted append would grow the conversation's
 	// compaction state on every fold.
 	index := summarytext.ExtractAnchors(fresh)
-	index.AddText(art.Summary)
+	index.AddText(prevSummary)
 	summary = fitSummary(summary, index.Render(), budget)
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	merged := mergeIDs(art.Covered, messageIDs)
-	// Delegated subagent runs mint ephemeral "ctx-" ids the session store
-	// rejects. Their fold still applies to the channel; it just cannot
-	// remember the artifact between rounds.
-	if ids.IsSession(args.ConversationID) {
-		telemetry.WarnErr(ctx, "compact: persist compaction state failed",
-			t.store.WriteState(args.ConversationID, sessions.DocumentCompact, artifact{
-				Covered: merged,
-				Summary: summary,
-			}), attribute.String("conversation.id", args.ConversationID))
-	}
 	return encodePatch(summary)
 }
 
@@ -307,12 +252,6 @@ func encodePatch(summary string) (string, error) {
 	}
 	return string(raw), nil
 }
-
-func stableID(m message.Message) string {
-	sum := sha256.Sum256([]byte(string(m.Role) + "\x00" + summarytext.RenderMessage(m)))
-	return hex.EncodeToString(sum[:])
-}
-
 func renderMessages(msgs []message.Message) string {
 	var b strings.Builder
 	for _, m := range msgs {
@@ -632,24 +571,32 @@ func (t *Tool) condenseAll(
 		out[0] = t.condenseText(ctx, inputs[0])
 		return out
 	}
+	// Shards write to their own slot, but the writes happen here rather than
+	// inside the goroutines: that says so structurally instead of relying on
+	// the index discipline holding.
+	type shardOut struct {
+		index int
+		text  string
+	}
 	sem := make(chan struct{}, maxCondenseParallel)
-	var wg sync.WaitGroup
+	done := make(chan shardOut, len(inputs))
 	for i, input := range inputs {
-		wg.Add(1)
 		go func(i int, input condenseInput) {
-			defer wg.Done()
 			select {
 			case sem <- struct{}{}:
 			case <-ctx.Done():
-				out[i] = summarytext.MechanicalSummary(
-					input.fresh, input.prevSummary, input.budget)
+				done <- shardOut{i, summarytext.MechanicalSummary(
+					input.fresh, input.prevSummary, input.budget)}
 				return
 			}
 			defer func() { <-sem }()
-			out[i] = t.condenseText(ctx, input)
+			done <- shardOut{i, t.condenseText(ctx, input)}
 		}(i, input)
 	}
-	wg.Wait()
+	for range inputs {
+		r := <-done
+		out[r.index] = r.text
+	}
 	return out
 }
 
@@ -811,10 +758,6 @@ func reasoningTokens(resp inference.GenerateResponse) int64 {
 	return -1
 }
 
-func containsID(ids []string, want string) bool {
-	return slices.Contains(ids, want)
-}
-
 // fitSummary fits generated prose plus its identifier block into the
 // node's summary budget. The budget is a cap, not a target: the artifact is
 // stored as the conversation's compaction state and handed back as the
@@ -855,33 +798,4 @@ func truncateRunes(s string, n int) string {
 		return s
 	}
 	return string(runes[:n])
-}
-
-func setsEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	seen := make(map[string]bool, len(a))
-	for _, id := range a {
-		seen[id] = true
-	}
-	for _, id := range b {
-		if !seen[id] {
-			return false
-		}
-	}
-	return true
-}
-
-func mergeIDs(prev, next []string) []string {
-	seen := map[string]bool{}
-	out := make([]string, 0, len(prev)+len(next))
-	for _, id := range append(append([]string(nil), prev...), next...) {
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		out = append(out, id)
-	}
-	return out
 }

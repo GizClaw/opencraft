@@ -3,7 +3,6 @@ package compact
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,9 +11,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
-	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
 func patchSummary(t *testing.T, out string) string {
@@ -44,10 +41,6 @@ func convMsg(role, text string) string {
 // merged, so no single provider call carries the whole transcript, while
 // every message still ends up covered by the fold.
 func TestExecuteShardsOversizedFolds(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// The fold's shards are condensed concurrently, so the probe is
 	// deliberately shared across goroutines.
 	var (
@@ -55,7 +48,6 @@ func TestExecuteShardsOversizedFolds(t *testing.T) {
 		maxPrompt atomic.Int64
 	)
 	tool := &Tool{
-		store: store,
 		generate: func(
 			_ context.Context, req inference.GenerateRequest,
 		) (inference.GenerateResponse, error) {
@@ -109,17 +101,12 @@ func TestExecuteShardsOversizedFolds(t *testing.T) {
 // parallel with the fold's other shards — so no single provider call
 // carries more than the cap and the fold keeps the text.
 func TestExecuteSplitsOversizedMessagesInsteadOfTruncating(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var (
 		calls     atomic.Int64
 		promptSum atomic.Int64
 		maxPrompt atomic.Int64
 	)
 	tool := &Tool{
-		store: store,
 		generate: func(
 			_ context.Context, req inference.GenerateRequest,
 		) (inference.GenerateResponse, error) {
@@ -167,154 +154,27 @@ func TestExecuteSplitsOversizedMessagesInsteadOfTruncating(t *testing.T) {
 	}
 }
 
-func TestExecuteCondensesAndPersistsArtifact(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+// TestExecuteCarriesTheMarkedSummaryAsThePreviousSummary verifies the fold
+// keeps no state of its own: the summary an earlier fold left arrives inside
+// the conversation (the replay hands the condensed view back), so it is
+// carried as the previous summary — never condensed as if it were a message,
+// and never handed to the model with its rendering marker attached.
+func TestExecuteCarriesTheMarkedSummaryAsThePreviousSummary(t *testing.T) {
 	var calls int
 	tool := &Tool{
-		store: store,
-		generate: func(
-			_ context.Context, req inference.GenerateRequest,
-		) (inference.GenerateResponse, error) {
-			calls++
-			if len(req.Context) != 1 ||
-				req.Context[0].Role != message.RoleSystem ||
-				!strings.Contains(req.Context[0].Content.Text(),
-					"CONTEXT CHECKPOINT COMPACTION") {
-				t.Errorf("condense request missing system instruction: %+v",
-					req.Context)
-			}
-			if !strings.Contains(req.Input.Content.Text(), "m1") {
-				t.Errorf("condense input missing conversation: %q",
-					req.Input.Content.Text())
-			}
-			return inference.GenerateResponse{
-				Message: message.NewTextMessage(message.RoleAssistant, "S1"),
-			}, nil
-		},
-	}
-	ctx := context.Background()
-	args := `{"conversation":[` +
-		convMsg("user", "m1") + `,` +
-		convMsg("assistant", "m2") + `],` +
-		`"budget_chars":100,"conversation_id":"s-1"}`
-
-	out, err := tool.Execute(ctx, args)
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if got := patchSummary(t, out.Text()); got != "S1" {
-		t.Fatalf("summary = %q, want S1", got)
-	}
-	if calls != 1 {
-		t.Fatalf("generate calls = %d, want 1", calls)
-	}
-
-	// Re-compacting the same set must reuse the persisted artifact
-	// instead of condensing again.
-	out2, err := tool.Execute(ctx, args)
-	if err != nil {
-		t.Fatalf("execute again: %v", err)
-	}
-	if got := patchSummary(t, out2.Text()); got != "S1" || calls != 1 {
-		t.Fatalf("reuse = %q calls=%d, want S1 calls=1", got, calls)
-	}
-}
-
-func TestExecuteMergesNewMessagesWithArtifact(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var calls int
-	tool := &Tool{
-		store: store,
-		generate: func(
-			_ context.Context, req inference.GenerateRequest,
-		) (inference.GenerateResponse, error) {
-			text := req.Input.Content.Text()
-			calls++
-			if calls == 1 {
-				return inference.GenerateResponse{
-					Message: message.NewTextMessage(message.RoleAssistant, "S1"),
-				}, nil
-			}
-			if !strings.Contains(text, "S1") {
-				t.Errorf("condense input must merge previous summary: %q", text)
-			}
-			if !strings.Contains(text, "m3") {
-				t.Errorf("condense input must contain new message: %q", text)
-			}
-			return inference.GenerateResponse{
-				Message: message.NewTextMessage(message.RoleAssistant, "S2"),
-			}, nil
-		},
-	}
-	ctx := context.Background()
-	first := `{"conversation":[` + convMsg("user", "m1") + `,` + convMsg("assistant", "m2") + `],` +
-		`"budget_chars":100,"conversation_id":"s-1"}`
-	if _, err := tool.Execute(ctx, first); err != nil {
-		t.Fatal(err)
-	}
-	second := `{"conversation":[` +
-		convMsg("user", "m1") + `,` + convMsg("assistant", "m2") + `,` +
-		convMsg("tool", "m3") + `],` +
-		`"budget_chars":100,"conversation_id":"s-1"}`
-	out, err := tool.Execute(ctx, second)
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if got := patchSummary(t, out.Text()); got != "S2" {
-		t.Fatalf("summary = %q, want S2", got)
-	}
-
-	// The artifact now covers all three messages.
-	var art artifact
-	if err := store.ReadState("s-1", sessions.DocumentCompact, &art); err != nil {
-		t.Fatal(err)
-	}
-	if len(art.Covered) != 3 {
-		t.Fatalf("covered = %v, want 3 ids", art.Covered)
-	}
-	if art.Summary != "S2" {
-		t.Fatalf("artifact summary = %q, want S2", art.Summary)
-	}
-}
-
-// TestExecuteSkipsSummaryMarkedMessages verifies that messages carrying
-// the compaction summary marker are not fed back into the condensation:
-// re-running with the same messages plus the injected summary returns
-// the persisted artifact without another LLM call, and a genuine new
-// message is condensed together with the stored summary.
-func TestExecuteSkipsSummaryMarkedMessages(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var calls int
-	tool := &Tool{
-		store: store,
 		generate: func(
 			_ context.Context, req inference.GenerateRequest,
 		) (inference.GenerateResponse, error) {
 			text := req.Input.Content.Text()
 			calls++
 			if strings.Contains(text, summarytext.SummaryPrefix) {
-				t.Errorf("condense input must skip marked summary message: %q", text)
-			}
-			if calls == 1 {
-				return inference.GenerateResponse{
-					Message: message.NewTextMessage(message.RoleAssistant, "S1"),
-				}, nil
+				t.Errorf("condense input leaked the summary marker: %q", text)
 			}
 			if !strings.Contains(text, "S1") {
-				t.Errorf("condense input must merge previous summary: %q", text)
+				t.Errorf("condense input must carry the previous summary: %q", text)
 			}
 			if !strings.Contains(text, "m3") {
-				t.Errorf("condense input must contain new message: %q", text)
+				t.Errorf("condense input must carry the fresh message: %q", text)
 			}
 			return inference.GenerateResponse{
 				Message: message.NewTextMessage(message.RoleAssistant, "S2"),
@@ -323,40 +183,25 @@ func TestExecuteSkipsSummaryMarkedMessages(t *testing.T) {
 	}
 	ctx := context.Background()
 	marked := summarytext.SummaryPrefix + "\nS1"
-	first := `{"conversation":[` + convMsg("user", "m1") + `,` + convMsg("assistant", "m2") + `],` +
-		`"budget_chars":100,"conversation_id":"s-1"}`
-	if _, err := tool.Execute(ctx, first); err != nil {
-		t.Fatal(err)
+	args := `{"conversation":[` + convMsg("user", marked) + `,` +
+		convMsg("user", "m3") + `],"budget_chars":100}`
+	out, err := tool.Execute(ctx, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if got := patchSummary(t, out.Text()); got != "S2" || calls != 1 {
+		t.Fatalf("summary = %q calls=%d, want S2 once", got, calls)
 	}
 
-	// Same fold plus the injected summary: nothing new to condense, so
-	// the persisted summary is reused without another LLM call.
-	reuse := `{"conversation":[` +
-		convMsg("user", "m1") + `,` + convMsg("assistant", "m2") + `,` +
-		convMsg("user", marked) + `],` +
-		`"budget_chars":100,"conversation_id":"s-1"}`
-	out, err := tool.Execute(ctx, reuse)
+	// Nothing but the summary: the condensed view is already the answer, so
+	// there is nothing to fold and no model call to make.
+	only := `{"conversation":[` + convMsg("user", marked) + `],"budget_chars":100}`
+	out, err = tool.Execute(ctx, only)
 	if err != nil {
-		t.Fatalf("execute reuse: %v", err)
+		t.Fatalf("execute summary-only: %v", err)
 	}
 	if got := patchSummary(t, out.Text()); got != "S1" || calls != 1 {
-		t.Fatalf("reuse = %q calls=%d, want S1 calls=1", got, calls)
-	}
-
-	// A genuine new message alongside the marked summary: condensed
-	// once, with the stored summary merged but the marked message not
-	// repeated in the input.
-	next := `{"conversation":[` +
-		convMsg("user", "m1") + `,` + convMsg("assistant", "m2") + `,` +
-		convMsg("user", marked) + `,` +
-		convMsg("tool", "m3") + `],` +
-		`"budget_chars":100,"conversation_id":"s-1"}`
-	out, err = tool.Execute(ctx, next)
-	if err != nil {
-		t.Fatalf("execute next: %v", err)
-	}
-	if got := patchSummary(t, out.Text()); got != "S2" || calls != 2 {
-		t.Fatalf("next = %q calls=%d, want S2 calls=2", got, calls)
+		t.Fatalf("summary-only = %q calls=%d, want S1 without a call", got, calls)
 	}
 }
 
@@ -365,13 +210,8 @@ func TestExecuteSkipsSummaryMarkedMessages(t *testing.T) {
 // are rendered as tool_call / tool_result text lines instead of being
 // silently dropped.
 func TestExecuteRendersToolActivity(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var got string
 	tool := &Tool{
-		store: store,
 		generate: func(
 			_ context.Context, req inference.GenerateRequest,
 		) (inference.GenerateResponse, error) {
@@ -435,11 +275,7 @@ func TestRenderSystemPrompt(t *testing.T) {
 }
 
 func TestExecuteRejectsEmptyConversation(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tool := &Tool{store: store}
+	tool := &Tool{}
 	if _, err := tool.Execute(context.Background(), `{"conversation":[]}`); err == nil {
 		t.Fatal("empty conversation must fail")
 	}

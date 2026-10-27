@@ -145,7 +145,6 @@ resources:
     impl: opencraft/compact
     deps:
       router: router
-      sessions: sessions
   tool.permissions:
     kind: tool.Source
     impl: opencraft/permissions

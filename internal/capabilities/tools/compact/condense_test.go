@@ -2,16 +2,12 @@ package compact
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/message"
-
-	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
 // textResponse is one successful condensation answer.
@@ -65,13 +61,8 @@ func itoa(n int) string {
 // shape: a model that publishes a reasoning toggle gets reasoning switched
 // off, so the whole output cap is available for the summary.
 func TestCondenseDisablesReasoningWhenTheDeploymentAllowsIt(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var intent *inference.TextIntent
 	tool := &Tool{
-		store: store,
 		probe: func(context.Context, inference.GenerateRequest) condenseProbe {
 			return condenseProbe{reasoningCanBeDisabled: true}
 		},
@@ -110,13 +101,8 @@ func TestCondenseDisablesReasoningWhenTheDeploymentAllowsIt(t *testing.T) {
 // so the cap has to carry a reserve for it and the request asks for the
 // smallest effort the model publishes.
 func TestCondenseUsesTheSmallestEffortWhenReasoningCannotBeSwitchedOff(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var intent *inference.TextIntent
 	tool := &Tool{
-		store: store,
 		probe: func(context.Context, inference.GenerateRequest) condenseProbe {
 			return condenseProbe{effortNative: true}
 		},
@@ -154,14 +140,9 @@ func TestCondenseUsesTheSmallestEffortWhenReasoningCannotBeSwitchedOff(t *testin
 // failure that killed a real turn: the first attempt spends the whole cap
 // thinking, so the retry has to cover that spend plus the prose.
 func TestCondenseRetriesWithTheObservedReasoningSpend(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var caps []int
 	var calls int
 	tool := &Tool{
-		store: store,
 		probe: func(context.Context, inference.GenerateRequest) condenseProbe {
 			return condenseProbe{reasoningCanBeDisabled: true}
 		},
@@ -198,13 +179,8 @@ func TestCondenseRetriesWithTheObservedReasoningSpend(t *testing.T) {
 // marked, the covered ids are persisted — so the channel shrinks instead of
 // the next round sending an over-window request.
 func TestCondenseFoldsAMechanicalDigestWhenNoModelSummaryArrives(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var calls int
 	tool := &Tool{
-		store: store,
 		probe: func(context.Context, inference.GenerateRequest) condenseProbe {
 			return condenseProbe{reasoningCanBeDisabled: true}
 		},
@@ -228,17 +204,6 @@ func TestCondenseFoldsAMechanicalDigestWhenNoModelSummaryArrives(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("generate calls = %d, want the retry before degrading", calls)
-	}
-
-	var art artifact
-	if err := store.ReadState("s-1", sessions.DocumentCompact, &art); err != nil {
-		t.Fatalf("read state: %v", err)
-	}
-	if len(art.Covered) != 2 {
-		t.Fatalf("covered = %d ids, want both folded messages", len(art.Covered))
-	}
-	if !strings.Contains(art.Summary, "mechanical digest") {
-		t.Fatalf("artifact did not record the digest:\n%s", art.Summary)
 	}
 }
 
@@ -276,34 +241,3 @@ func TestCondenseRespectsTheDeclaredOutputLimit(t *testing.T) {
 // TestCondenseSkipsArtifactStateForEphemeralContexts covers a delegated
 // subagent run: the session store rejects "ctx-" ids, so the fold must
 // neither warn nor remember an artifact it cannot own.
-func TestCondenseSkipsArtifactStateForEphemeralContexts(t *testing.T) {
-	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var calls int
-	tool := &Tool{
-		store: store,
-		generate: func(
-			_ context.Context, _ inference.GenerateRequest,
-		) (inference.GenerateResponse, error) {
-			calls++
-			return textResponse("S1"), nil
-		},
-	}
-	args := condenseArgs(t, "ctx-0123456789abcdef", 4096)
-	for i := 0; i < 2; i++ {
-		out, err := tool.Execute(context.Background(), args)
-		if err != nil {
-			t.Fatalf("execute %d: %v", i, err)
-		}
-		if got := patchSummary(t, out.Text()); got != "S1" {
-			t.Fatalf("execute %d summary = %q, want S1", i, got)
-		}
-	}
-	// No artifact was persisted, so the second call condensed again
-	// instead of reusing the first result.
-	if calls != 2 {
-		t.Fatalf("generate calls = %d, want 2 (no persisted artifact)", calls)
-	}
-}

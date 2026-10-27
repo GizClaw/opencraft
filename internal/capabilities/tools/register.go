@@ -101,7 +101,7 @@ func (compactSourceFactory) Spec() resource.Spec {
 		Kind: "tool.Source",
 		Impl: "opencraft/compact",
 		Deps: []resource.Requirement{
-			depRouter.Spec(), depSessions.Spec(), depObserver.Spec(),
+			depRouter.Spec(), depObserver.Spec(),
 		},
 	}
 }
@@ -114,17 +114,13 @@ func (compactSourceFactory) New(_ context.Context, in resource.Input) (toolList,
 	if err != nil {
 		return nil, err
 	}
-	store, err := depSessions.Get(in)
-	if err != nil {
-		return nil, err
-	}
 	var observer func(context.Context, inference.Usage)
 	if obs, ok, err := depObserver.TryGet(in); err != nil {
 		return toolList{}, err
 	} else if ok {
 		observer = obs.ReportUsage
 	}
-	return toolList{compact.New(router, store, observer)}, nil
+	return toolList{compact.New(router, observer)}, nil
 }
 
 // execSourceFactory contributes the sandbox-backed exec tools.
