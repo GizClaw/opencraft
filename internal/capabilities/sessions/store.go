@@ -255,16 +255,6 @@ func (s *Store) Append(ctx context.Context, delta agent.CheckpointDelta) error {
 	return s.db.Append(ctx, delta)
 }
 
-// MaxSeq reports the newest transcript sequence number of one conversation,
-// or -1 when it has no rows.
-//
-// It is the cursor the worldstate's rendered-replay cache compares against: a
-// turn asks for a scalar instead of asking memory for the whole prefix, so a
-// cache hit costs one row lookup rather than a decode of the transcript.
-func (s *Store) MaxSeq(ctx context.Context, conversationID string) (int64, error) {
-	return s.db.MaxSeq(ctx, conversationID)
-}
-
 // Load implements agent.CheckpointStore.
 func (s *Store) Load(ctx context.Context, execID string) (*agent.Checkpoint, error) {
 	return s.db.Load(ctx, execID)
