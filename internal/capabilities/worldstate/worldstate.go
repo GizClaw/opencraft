@@ -78,9 +78,6 @@ type Service struct {
 	memory       memory.ContextProvider // optional; set after deploy resolves it
 	prefixes     PrefixProvider         // optional; live allowlist rules
 	sessionStore *ocsessions.Store      // optional; per-session sandbox mode
-	// replay caches the rendered full-history replay per conversation, so a
-	// turn that appended nothing does not re-decode the transcript.
-	replay *replayCache
 }
 
 // New creates a world-state service.
@@ -98,8 +95,7 @@ func New(opts Options) *Service {
 		opts.MemoryMaxChars = 1 << 16 // 64 KiB
 	}
 	return &Service{
-		opts:   opts,
-		replay: newReplayCache(),
+		opts: opts,
 	}
 }
 
@@ -500,15 +496,6 @@ func (s *Service) replayHistory(
 	ctx context.Context,
 	contextID string,
 ) []message.Message {
-	// The cache is keyed by the transcript's newest row: the same conversation
-	// with nothing appended is the previous render, and asking the session
-	// store for one scalar is far cheaper than decoding it again.
-	cursor, haveCursor := s.replayCursor(ctx, contextID)
-	if haveCursor {
-		if cached, ok := s.replay.get(contextID, cursor); ok {
-			return cached
-		}
-	}
 	res, err := s.memory.Context(ctx, memory.ContextRequest{
 		Scope:          memory.Scope{RuntimeID: "opencraft"},
 		ConversationID: contextID,
@@ -523,29 +510,5 @@ func (s *Service) replayHistory(
 			raws = append(raws, item)
 		}
 	}
-	rendered := renderHistoryMessages(raws)
-	if haveCursor {
-		s.replay.put(contextID, cursor, rendered)
-	}
-	return rendered
-}
-
-// replayCursor reports the conversation's newest transcript row, which is what
-// tells the replay cache whether its render is still current. A deployment
-// without a session store (the bounded-memory mode, tests) simply renders every
-// time.
-func (s *Service) replayCursor(
-	ctx context.Context, contextID string,
-) (int64, bool) {
-	if s.sessionStore == nil {
-		return 0, false
-	}
-	seq, err := s.sessionStore.MaxSeq(ctx, contextID)
-	if err != nil {
-		telemetry.WarnErr(ctx,
-			"worldstate: read transcript cursor for the replay cache failed",
-			err, attribute.String("conversation.id", contextID))
-		return 0, false
-	}
-	return seq, true
+	return renderHistoryMessages(raws)
 }
