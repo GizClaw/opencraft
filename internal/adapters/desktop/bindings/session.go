@@ -394,7 +394,85 @@ func (b *Session) Delete(id string) (SessionDeleteResult, error) {
 	return result, nil
 }
 
-// Turns returns every archived turn of one conversation.
+// maxTurnPage bounds one paged read of the archive.
+//
+// The transcript is the largest payload the UI asks for and it is
+// serialized twice on the way out (DTO, then the bridge's JSON): asking
+// for a whole 42 MB conversation was measured at ~80 MB of DTOs per call,
+// and a frontend that pages anyway only needs one page at a time. The rest
+// is one "load earlier" away.
+const maxTurnPage = 64
+
+// clampTurnPage applies maxTurnPage. A limit of zero (or less) used to mean
+// "every turn", which is the unbounded read this guards against: callers
+// that want more page backwards with beforeSeq.
+func clampTurnPage(limit int) int {
+	if limit <= 0 || limit > maxTurnPage {
+		return maxTurnPage
+	}
+	return limit
+}
+
+// turnPageSize reports what one page carries, without building any of it:
+// the number of turns, messages and text bytes (part text, tool arguments
+// and tool results). A hydration loop shows up here as turns/messages
+// climbing a page at a time while nothing on screen changes, which is why
+// the page log names all three.
+func turnPageSize(turns []SessionTurnDTO) (count, messages, bytes int) {
+	for _, turn := range turns {
+		messages += len(turn.Messages)
+		for _, msg := range turn.Messages {
+			bytes += contentBytes(msg.Content)
+		}
+	}
+	return len(turns), messages, bytes
+}
+
+// contentBytes sums the text a content carries. It walks parts instead of
+// calling Content.Text, which would concatenate them: the measurement must
+// not allocate on a path that runs for every transcript page.
+func contentBytes(content message.Content) int {
+	total := 0
+	for _, part := range content.Parts {
+		normalized, err := message.NormalizePart(part)
+		if err != nil {
+			// A nil or non-canonical part carries no text the page could
+			// show; the transcript's own rendering reports it.
+			continue
+		}
+		switch typed := normalized.(type) {
+		case message.TextPart:
+			total += len(typed.Text)
+		case message.ToolCallPart:
+			total += len(typed.Call.Name) + len(typed.Call.Arguments)
+		case message.ToolResultPart:
+			total += contentBytes(typed.Result.Content)
+		}
+	}
+	return total
+}
+
+// logTurnPage records one paged read at debug level. The frontend opens a
+// conversation from several places at once (a click, a retried focus
+// switch, an event naming the same id), and a repeat shows up as pages of
+// the same conversation arriving in a stream.
+func logTurnPage(
+	ctx context.Context, method, conversationID string, limit int, beforeSeq int64,
+	turns []SessionTurnDTO,
+) {
+	count, messages, bytes := turnPageSize(turns)
+	telemetry.Debug(ctx, "session: "+method,
+		attribute.String("conversation.id", conversationID),
+		attribute.Int("limit", limit),
+		attribute.Int64("before_seq", beforeSeq),
+		attribute.Int("turns", count),
+		attribute.Int("messages", messages),
+		attribute.Int("text_bytes", bytes))
+}
+
+// Turns returns one page of a conversation's archived turns, oldest first.
+// A limit of zero or less reads one page (see maxTurnPage), not the whole
+// conversation.
 func (b *Session) Turns(
 	id string,
 	limit int,
@@ -405,7 +483,8 @@ func (b *Session) Turns(
 	if h == nil || h.Sessions() == nil {
 		return nil, errNotReady("session")
 	}
-	turns, err := h.Sessions().TurnsPage(ctx, id, limit, beforeSeq)
+	page := clampTurnPage(limit)
+	turns, err := h.Sessions().TurnsPage(ctx, id, page, beforeSeq)
 	if err != nil {
 		return nil, err
 	}
@@ -413,6 +492,7 @@ func (b *Session) Turns(
 	for _, turn := range turns {
 		out = append(out, toSessionTurnDTO(ctx, id, turn))
 	}
+	logTurnPage(ctx, "turns", id, page, beforeSeq, out)
 	return out, nil
 }
 
@@ -431,7 +511,8 @@ func (b *Session) TurnsSince(
 	if h == nil || h.Sessions() == nil {
 		return nil, errNotReady("session")
 	}
-	turns, err := h.Sessions().TurnsSince(ctx, id, afterSeq, limit)
+	page := clampTurnPage(limit)
+	turns, err := h.Sessions().TurnsSince(ctx, id, afterSeq, page)
 	if err != nil {
 		return nil, err
 	}
@@ -439,6 +520,7 @@ func (b *Session) TurnsSince(
 	for _, turn := range turns {
 		out = append(out, toSessionTurnDTO(ctx, id, turn))
 	}
+	logTurnPage(ctx, "turns_since", id, page, afterSeq, out)
 	return out, nil
 }
 

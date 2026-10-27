@@ -80,6 +80,10 @@ type recordingStore struct {
 	*fakeTurnStore
 	fullLoads int
 	backLoads int
+	// afterLoads counts incremental reads and remembers the cursor they
+	// asked for.
+	afterLoads  int
+	afterCursor int64
 	// oldest is the oldest Seq any LoadBack walked back to.
 	oldest     int64
 	walkedBack bool
@@ -88,6 +92,14 @@ type recordingStore struct {
 func (r *recordingStore) LoadAll(ctx context.Context, conversationID string) ([]StoredMessage, error) {
 	r.fullLoads++
 	return r.fakeTurnStore.LoadAll(ctx, conversationID)
+}
+
+func (r *recordingStore) LoadAfter(
+	ctx context.Context, conversationID string, afterSeq int64,
+) ([]StoredMessage, error) {
+	r.afterLoads++
+	r.afterCursor = afterSeq
+	return r.fakeTurnStore.LoadAfter(ctx, conversationID, afterSeq)
 }
 
 func (r *recordingStore) LoadBack(ctx context.Context, conversationID string, beforeSeq int64, n int) ([]StoredMessage, error) {
@@ -110,6 +122,20 @@ func (f *fakeTurnStore) LoadAll(_ context.Context, conversationID string) ([]Sto
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.msgs[conversationID], nil
+}
+
+func (f *fakeTurnStore) LoadAfter(
+	_ context.Context, conversationID string, afterSeq int64,
+) ([]StoredMessage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []StoredMessage
+	for _, row := range f.msgs[conversationID] {
+		if row.Seq > afterSeq {
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeTurnStore) LoadBack(_ context.Context, conversationID string, beforeSeq int64, n int) ([]StoredMessage, error) {
@@ -1135,4 +1161,147 @@ func TestAssemblyCloseRacesFolds(t *testing.T) {
 		_ = a.Close()
 	}()
 	wg.Wait()
+}
+
+// The replay prefix is cached: a turn pays for the rows it appended, not
+// for the whole transcript. These cases pin the three paths — nothing new,
+// an appended tail, and a transcript that shrank under the cache — plus
+// the rule that a budgeted request never shares the prefix.
+
+func TestAssemblyReplayReusesTheRenderedPrefix(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
+	store := &recordingStore{fakeTurnStore: fake}
+	a := NewAssembly(store, WithReplayFullHistory(true))
+	fake.appendRows("s-1",
+		message.NewTextMessage(message.RoleUser, "hello"),
+		message.NewTextMessage(message.RoleAssistant, "hi there"),
+	)
+	request := memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt"},
+		ConversationID: "s-1",
+	}
+
+	first, err := a.Context(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.fullLoads != 1 || store.afterLoads != 0 {
+		t.Fatalf("first render: full=%d after=%d, want one full read",
+			store.fullLoads, store.afterLoads)
+	}
+
+	// Nothing appended: no read at all, same items.
+	again, err := a.Context(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.fullLoads != 1 || store.afterLoads != 0 {
+		t.Fatalf("unchanged transcript: full=%d after=%d, want no new read",
+			store.fullLoads, store.afterLoads)
+	}
+	if len(again.Items) != len(first.Items) {
+		t.Fatalf("items = %d, want the cached %d", len(again.Items), len(first.Items))
+	}
+
+	// One turn appended: one incremental read from the cached cursor.
+	fake.appendRows("s-1", message.NewTextMessage(message.RoleUser, "and again"))
+	grown, err := a.Context(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.fullLoads != 1 || store.afterLoads != 1 {
+		t.Fatalf("appended turn: full=%d after=%d, want one incremental read",
+			store.fullLoads, store.afterLoads)
+	}
+	if store.afterCursor != int64(len(first.Items)-1) {
+		t.Fatalf("incremental read started after seq %d, want %d",
+			store.afterCursor, len(first.Items)-1)
+	}
+	if len(grown.Items) != len(first.Items)+1 {
+		t.Fatalf("items = %d, want %d", len(grown.Items), len(first.Items)+1)
+	}
+	// The incremental result must be the one a full render would produce.
+	want, err := fake.LoadAll(ctx, "s-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(want) != len(grown.Items) {
+		t.Fatalf("full read has %d rows, incremental items %d",
+			len(want), len(grown.Items))
+	}
+	for i, row := range want {
+		if grown.Items[i].Sequence != uint64(row.Seq) {
+			t.Fatalf("item %d seq = %d, want %d",
+				i, grown.Items[i].Sequence, row.Seq)
+		}
+	}
+}
+
+func TestAssemblyReplayRerendersWhenTheTranscriptShrank(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
+	store := &recordingStore{fakeTurnStore: fake}
+	a := NewAssembly(store, WithReplayFullHistory(true))
+	fake.appendRows("s-1",
+		message.NewTextMessage(message.RoleUser, "hello"),
+		message.NewTextMessage(message.RoleAssistant, "hi there"),
+	)
+	request := memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt"},
+		ConversationID: "s-1",
+	}
+	if _, err := a.Context(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+
+	// A deleted conversation (or one replaced by a shorter transcript):
+	// the cached prefix describes rows that no longer exist.
+	fake.mu.Lock()
+	fake.msgs["s-1"] = storedRows(message.NewTextMessage(message.RoleUser, "new"))
+	fake.mu.Unlock()
+	res, err := a.Context(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.fullLoads != 2 || store.afterLoads != 0 {
+		t.Fatalf("shrunk transcript: full=%d after=%d, want a full re-render",
+			store.fullLoads, store.afterLoads)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want the rewritten transcript's 1 row", len(res.Items))
+	}
+}
+
+func TestAssemblyReplayBudgetNeverUsesThePrefix(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeTurnStore{msgs: map[string][]StoredMessage{}}
+	store := &recordingStore{fakeTurnStore: fake}
+	a := NewAssembly(store, WithReplayFullHistory(true))
+	for i := 0; i < 4; i++ {
+		fake.appendRows("s-1", message.NewTextMessage(message.RoleUser, "turn"))
+	}
+	request := memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt"},
+		ConversationID: "s-1",
+	}
+	if _, err := a.Context(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	bounded := request
+	bounded.Budget = memory.Budget{MaxItems: 2}
+	res, err := a.Context(ctx, bounded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Truncated {
+		t.Fatal("a budgeted replay must report the truncation")
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("items = %d, want the budget's 2", len(res.Items))
+	}
+	if store.afterLoads != 0 {
+		t.Fatalf("budgeted request used the prefix cache (%d incremental reads)",
+			store.afterLoads)
+	}
 }

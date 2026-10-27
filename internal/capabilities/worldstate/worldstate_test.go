@@ -727,10 +727,28 @@ func TestRenderToBoardReplayFullHistory(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	history := board.GetVarString("world.history")
+	// The replay is handed to the world node as messages, not as a board
+	// var: a var would be re-marshalled on one side and unmarshalled on
+	// the other. Merge is what proves the handoff landed where the node
+	// reads it.
+	if raw := board.GetVarString(BoardVarHistory); raw != "" {
+		t.Fatalf("%s is set (%d bytes), want the in-memory handoff",
+			BoardVarHistory, len(raw))
+	}
+	board.SetChannel(agent.MainChannel, []message.Message{
+		message.NewTextMessage(message.RoleUser, "current turn"),
+	})
+	if _, err := Merge(board); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	var replayed []string
+	for _, msg := range board.Channel(agent.MainChannel) {
+		replayed = append(replayed, msg.Content.Text())
+	}
+	joined := strings.Join(replayed, "\n")
 	for _, want := range []string{"early user turn", "early assistant turn"} {
-		if !strings.Contains(history, want) {
-			t.Fatalf("world.history missing %q: %s", want, history)
+		if !strings.Contains(joined, want) {
+			t.Fatalf("merged channel missing %q: %q", want, joined)
 		}
 	}
 
