@@ -57,6 +57,10 @@ var RETAIN_TOKENS = cfg.retain_tokens || 0;
 // would leave the model a summary and nothing to continue from.
 var MIN_KEEP = cfg.min_keep_messages || 2;
 var BUDGET = cfg.budget_chars || 4096;
+// SUMMARY_PREFIX mirrors summarytext.SummaryPrefix: the marker line the replay
+// puts in front of a fold's summary.
+var SUMMARY_PREFIX =
+  "Another language model started to solve this problem and produced a summary of its thinking process.";
 var RATIO = cfg.threshold_ratio || 0.85;
 // Consecutive failed folds before folding stops for the turn. A failure
 // costs a summarization call and tells us nothing about the next attempt,
@@ -521,15 +525,29 @@ if (shouldCompact) {
 }
 
 if (shouldCompact) {
-  var fold = messages().slice(foldStart, foldEnd);
-  if (fold.length > 0) {
+  if (foldEnd > foldStart) {
+    // The tool reads the rows itself: naming the range keeps the conversation
+    // off the tool-call payload (thousands of messages of JSON on a long
+    // session, marshalled and parsed on every fold).
+    var range = ocworld.foldSeq(foldStart, foldEnd);
+    // The summary an earlier fold left is no longer among the rows, so the
+    // node passes its text along: it is the first replayed message carrying
+    // the Go marker.
+    var prevSummary = "";
+    for (var p = 0; p < foldStart; p++) {
+      var head = messageText(msgs[p]);
+      if (head.indexOf(SUMMARY_PREFIX) === 0) {
+        prevSummary = head.slice(SUMMARY_PREFIX.length + 1);
+        break;
+      }
+    }
     var args = {
-      conversation: fold.map(function (m) {
-        return { role: m.role, content: m.content };
-      }),
-      budget_chars: BUDGET,
-      conversation_id: run.get_context_id()
+      conversation_id: run.get_context_id(),
+      from_seq: range.from,
+      to_seq: range.to,
+      budget_chars: BUDGET
     };
+    if (prevSummary) args.prev_summary = prevSummary;
     board.appendChannel(board.MAIN_CHANNEL, {
       role: "assistant",
       content: {

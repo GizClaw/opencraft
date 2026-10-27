@@ -117,13 +117,22 @@ function runNode(board: unknown, maxInputTokens = 1): void {
           .slice(from),
       ),
   };
-  new Function('board', 'config', 'run', 'inference', 'occompact', source)(
-    board,
-    config,
-    run,
-    inference,
-    occompact,
-  );
+  // The node names the row range it folds instead of shipping the
+  // conversation: ocworld.foldSeq maps channel positions onto transcript seqs
+  // (in production, the replay pairing). These fixtures record no fold, so a
+  // channel position is its own row, one-based.
+  const ocworld = {
+    foldSeq: (start: number, end: number) => ({ from: start + 1, to: end }),
+  };
+  new Function(
+    'board',
+    'config',
+    'run',
+    'inference',
+    'occompact',
+    'ocworld',
+    source,
+  )(board, config, run, inference, occompact, ocworld);
 }
 
 /** Appends the compact tool result the tools node would have written. */

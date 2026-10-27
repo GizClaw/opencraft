@@ -3,6 +3,7 @@ package compact
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
@@ -28,12 +30,43 @@ func patchSummary(t *testing.T, out string) string {
 	return text[len(summarytext.SummaryPrefix)+1:]
 }
 
-// convMsg renders one wire message with a single text part, JSON-escaped.
-func convMsg(role, text string) string {
-	esc := strings.ReplaceAll(text, "\\", "\\\\")
-	esc = strings.ReplaceAll(esc, "\"", "\\\"")
-	esc = strings.ReplaceAll(esc, "\n", "\\n")
-	return `{"role":"` + role + `","content":{"parts":[{"type":"text","text":"` + esc + `"}]}}`
+// fakeRows is the transcript a fold reads: the tool names a range and loads the
+// rows behind it instead of receiving the conversation as an argument.
+type fakeRows []summary.StoredMessage
+
+func (f fakeRows) LoadAfter(
+	_ context.Context, _ string, afterSeq int64,
+) ([]summary.StoredMessage, error) {
+	out := make([]summary.StoredMessage, 0, len(f))
+	for _, row := range f {
+		if row.Seq > afterSeq {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+// rowsOf builds a transcript whose seqs count from 1.
+func rowsOf(msgs ...message.Message) fakeRows {
+	out := make(fakeRows, 0, len(msgs))
+	for i, m := range msgs {
+		out = append(out, summary.StoredMessage{
+			Seq: int64(i + 1), Role: m.Role, Content: m.Content,
+		})
+	}
+	return out
+}
+
+// foldArgs names a range over rows as the tool's input.
+func foldArgs(cid string, rows fakeRows, budget int) string {
+	return fmt.Sprintf(
+		`{"conversation_id":%q,"from_seq":1,"to_seq":%d,"budget_chars":%d}`,
+		cid, len(rows), budget)
+}
+
+// textMessage is one row of a fixture transcript.
+func textMessage(role message.Role, text string) message.Message {
+	return message.NewTextMessage(role, text)
 }
 
 // TestExecuteShardsOversizedFolds pins the bound on one condensation
@@ -70,12 +103,14 @@ func TestExecuteShardsOversizedFolds(t *testing.T) {
 	// Four messages of ~300 KiB each render to ~1.2 MiB, three times the
 	// per-request cap.
 	body := strings.Repeat("x", 300<<10)
-	args := `{"budget_chars":4096,"conversation":[` +
-		convMsg("user", body+" one") + `,` +
-		convMsg("assistant", body+" two") + `,` +
-		convMsg("user", body+" three") + `,` +
-		convMsg("assistant", body+" four") + `]}`
-	out, err := tool.Execute(context.Background(), args)
+	rows := rowsOf(
+		textMessage(message.RoleUser, body+" one"),
+		textMessage(message.RoleAssistant, body+" two"),
+		textMessage(message.RoleUser, body+" three"),
+		textMessage(message.RoleAssistant, body+" four"),
+	)
+	tool.rows = rows
+	out, err := tool.Execute(context.Background(), foldArgs("s-1", rows, 4096))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -130,9 +165,9 @@ func TestExecuteSplitsOversizedMessagesInsteadOfTruncating(t *testing.T) {
 	// One message three times the per-request cap: nothing else can be
 	// split, so every request has to come from this message.
 	body := strings.Repeat("x", 1200<<10)
-	args := `{"budget_chars":4096,"conversation":[` +
-		convMsg("user", body) + `]}`
-	out, err := tool.Execute(context.Background(), args)
+	rows := rowsOf(textMessage(message.RoleUser, body))
+	tool.rows = rows
+	out, err := tool.Execute(context.Background(), foldArgs("s-1", rows, 4096))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -183,8 +218,11 @@ func TestExecuteCarriesTheMarkedSummaryAsThePreviousSummary(t *testing.T) {
 	}
 	ctx := context.Background()
 	marked := summarytext.SummaryPrefix + "\nS1"
-	args := `{"conversation":[` + convMsg("user", marked) + `,` +
-		convMsg("user", "m3") + `],"budget_chars":100}`
+	rows := rowsOf(textMessage(message.RoleUser, "m3"))
+	tool.rows = rows
+	args := fmt.Sprintf(
+		`{"conversation_id":"c1","from_seq":1,"to_seq":%d,"budget_chars":100,"prev_summary":%q}`,
+		len(rows), marked)
 	out, err := tool.Execute(ctx, args)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -195,7 +233,10 @@ func TestExecuteCarriesTheMarkedSummaryAsThePreviousSummary(t *testing.T) {
 
 	// Nothing but the summary: the condensed view is already the answer, so
 	// there is nothing to fold and no model call to make.
-	only := `{"conversation":[` + convMsg("user", marked) + `],"budget_chars":100}`
+	only := fmt.Sprintf(
+		`{"conversation_id":"c1","from_seq":1,"to_seq":1,"budget_chars":100,"prev_summary":%q}`,
+		marked)
+	tool.rows = fakeRows{}
 	out, err = tool.Execute(ctx, only)
 	if err != nil {
 		t.Fatalf("execute summary-only: %v", err)
@@ -221,34 +262,29 @@ func TestExecuteRendersToolActivity(t *testing.T) {
 			}, nil
 		},
 	}
-	args := map[string]any{
-		"conversation": []message.Message{
-			{
-				Role: message.RoleAssistant,
-				Content: message.Content{Parts: []message.Part{
-					message.ToolCallPart{Call: message.ToolCall{
-						ID: "c1", Name: "exec_command",
-						Arguments: json.RawMessage(`{"cmd":"go test ./..."}`),
-					}},
+	rows := rowsOf(
+		message.Message{
+			Role: message.RoleAssistant,
+			Content: message.Content{Parts: []message.Part{
+				message.ToolCallPart{Call: message.ToolCall{
+					ID: "c1", Name: "exec_command",
+					Arguments: json.RawMessage(`{"cmd":"go test ./..."}`),
 				}},
-			},
-			{
-				Role: message.RoleTool,
-				Content: message.Content{Parts: []message.Part{
-					message.ToolResultPart{Result: message.ToolResult{
-						CallID: "c1", Content: message.NewTextContent("build ok"),
-					}},
-				}},
-			},
+			}},
 		},
-		"budget_chars":    100,
-		"conversation_id": "s-1",
-	}
-	data, err := json.Marshal(args)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tool.Execute(context.Background(), string(data)); err != nil {
+		message.Message{
+			Role: message.RoleTool,
+			Content: message.Content{Parts: []message.Part{
+				message.ToolResultPart{Result: message.ToolResult{
+					CallID: "c1", Content: message.NewTextContent("build ok"),
+				}},
+			}},
+		},
+	)
+	tool.rows = rows
+	if _, err := tool.Execute(
+		context.Background(), foldArgs("s-1", rows, 100),
+	); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if !strings.Contains(got, `tool_call: exec_command {"cmd":"go test ./..."}`) {
@@ -274,10 +310,21 @@ func TestRenderSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestExecuteRejectsEmptyConversation(t *testing.T) {
-	tool := &Tool{}
-	if _, err := tool.Execute(context.Background(), `{"conversation":[]}`); err == nil {
-		t.Fatal("empty conversation must fail")
+func TestExecuteRejectsAnEmptyRange(t *testing.T) {
+	tool := &Tool{rows: fakeRows{}}
+	if _, err := tool.Execute(context.Background(),
+		`{"conversation_id":"c1","from_seq":1,"to_seq":1}`); err == nil {
+		t.Fatal("a range with no rows must fail")
+	}
+	if _, err := tool.Execute(context.Background(),
+		`{"conversation_id":"c1","from_seq":0,"to_seq":0}`); err == nil {
+		t.Fatal("an inverted range must fail")
+	}
+	// A deployment without a transcript reader has nothing to fold.
+	bare := &Tool{}
+	if _, err := bare.Execute(context.Background(),
+		`{"conversation_id":"c1","from_seq":1,"to_seq":2}`); err == nil {
+		t.Fatal("no reader must fail")
 	}
 }
 

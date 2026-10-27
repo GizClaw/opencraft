@@ -14,6 +14,16 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
 
+// RowsAfter projects the transcript rows appended after afterSeq, rendered the
+// same way the replay renders them. It is the read the fold tool needs: the
+// rows a range covers, so the tool never receives the conversation as an
+// argument.
+func RowsAfter(
+	ctx context.Context, database *db.DB, conversationID string, afterSeq int64,
+) ([]summary.StoredMessage, error) {
+	return (&sqliteTurnStore{db: database}).LoadAfter(ctx, conversationID, afterSeq)
+}
+
 // sqliteTurnStore is the memory-owned TurnStore over foundation/db.
 type sqliteTurnStore struct {
 	db *db.DB

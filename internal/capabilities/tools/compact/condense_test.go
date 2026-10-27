@@ -36,25 +36,16 @@ func reasoningOnlyResponse(reasoningTokens int64) inference.GenerateResponse {
 	}
 }
 
-func condenseArgs(t *testing.T, conversationID string, budget int) string {
+// condenseArgs wires the tool's transcript reader and returns the range that
+// fold covers: the two messages these cases condense.
+func condenseArgs(t *testing.T, tool *Tool, conversationID string, budget int) string {
 	t.Helper()
-	return `{"conversation":[` +
-		convMsg("user", "m1") + `,` +
-		convMsg("assistant", "m2") + `],` +
-		`"budget_chars":` + itoa(budget) + `,"conversation_id":"` +
-		conversationID + `"}`
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var digits []byte
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-	return string(digits)
+	rows := rowsOf(
+		textMessage(message.RoleUser, "m1"),
+		textMessage(message.RoleAssistant, "m2"),
+	)
+	tool.rows = rows
+	return foldArgs(conversationID, rows, budget)
 }
 
 // TestCondenseDisablesReasoningWhenTheDeploymentAllowsIt pins the preferred
@@ -73,7 +64,7 @@ func TestCondenseDisablesReasoningWhenTheDeploymentAllowsIt(t *testing.T) {
 			return textResponse("S1"), nil
 		},
 	}
-	out, err := tool.Execute(context.Background(), condenseArgs(t, "s-1", 4096))
+	out, err := tool.Execute(context.Background(), condenseArgs(t, tool, "s-1", 4096))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -114,7 +105,7 @@ func TestCondenseUsesTheSmallestEffortWhenReasoningCannotBeSwitchedOff(t *testin
 		},
 	}
 	if _, err := tool.Execute(
-		context.Background(), condenseArgs(t, "s-1", 4096),
+		context.Background(), condenseArgs(t, tool, "s-1", 4096),
 	); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -157,7 +148,7 @@ func TestCondenseRetriesWithTheObservedReasoningSpend(t *testing.T) {
 			return textResponse("S1"), nil
 		},
 	}
-	out, err := tool.Execute(context.Background(), condenseArgs(t, "s-1", 4096))
+	out, err := tool.Execute(context.Background(), condenseArgs(t, tool, "s-1", 4096))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -191,7 +182,7 @@ func TestCondenseFoldsAMechanicalDigestWhenNoModelSummaryArrives(t *testing.T) {
 			return reasoningOnlyResponse(1365), nil
 		},
 	}
-	out, err := tool.Execute(context.Background(), condenseArgs(t, "s-1", 4096))
+	out, err := tool.Execute(context.Background(), condenseArgs(t, tool, "s-1", 4096))
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

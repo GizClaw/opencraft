@@ -137,14 +137,15 @@ resources:
     impl: opencraft/automation
     deps:
       automation.host: automation.host
-  # Internal conversation compaction: folds the loop's older rounds into
-  # a summary (router condensation) and persists the artifact per
-  # conversation via the session store.
+  # Internal conversation compaction: folds the loop's older rounds into a
+  # summary (router condensation). The session store is the transcript it
+  # reads: a fold names a row range instead of receiving the conversation.
   tool.compact:
     kind: tool.Source
     impl: opencraft/compact
     deps:
       router: router
+      sessions: sessions
   tool.permissions:
     kind: tool.Source
     impl: opencraft/permissions

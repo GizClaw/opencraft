@@ -225,6 +225,7 @@ function runNode(opts: RunOptions): NodeResult {
     'run',
     'config',
     'occompact',
+    'ocworld',
     readFileSync(NODE_SOURCE, 'utf8'),
   )(
     board,
@@ -234,6 +235,9 @@ function runNode(opts: RunOptions): NodeResult {
     // instead of an estimate.
     { retain_tokens: 1, min_keep_messages: 10 },
     occompact,
+    // The fold names a row range; these fixtures record no fold, so a channel
+    // position is its own row, one-based.
+    { foldSeq: (start: number, end: number) => ({ from: start + 1, to: end }) },
   );
   return {
     vars,

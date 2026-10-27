@@ -21,6 +21,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
@@ -53,17 +54,35 @@ const maxCondenseRounds = 3
 const maxCondenseParallel = 4
 
 // Args is the compact tool input.
+//
+// The tool never receives the conversation: it names a range and reads the rows
+// behind it. A fold over a long session covers thousands of messages, and
+// shipping them through a tool argument meant marshalling, parsing and
+// re-rendering the transcript on every fold.
 type Args struct {
-	// Conversation is the messages to fold into the summary. A summary
-	// message left by an earlier fold may be among them (the replay hands
-	// the condensed view back): it is carried as the previous summary
-	// instead of being summarized as if it were conversation.
-	Conversation []message.Message `json:"conversation"`
+	// ConversationID identifies the conversation being folded. The fold keeps
+	// no state of its own; this is the transcript it reads and the key its
+	// telemetry carries.
+	ConversationID string `json:"conversation_id"`
+	// FromSeq is the first transcript row the fold covers (inclusive).
+	FromSeq int64 `json:"from_seq"`
+	// ToSeq is the last transcript row the fold covers (inclusive).
+	ToSeq int64 `json:"to_seq"`
+	// PrevSummary is the summary an earlier fold left. It arrives as an
+	// argument because the rows it replaces are no longer in the conversation:
+	// the replay hands the model the condensed view, and the node passes the
+	// summary text along.
+	PrevSummary string `json:"prev_summary,omitempty"`
 	// BudgetChars caps the summary length in characters.
 	BudgetChars int `json:"budget_chars,omitempty"`
-	// ConversationID identifies the conversation being folded (telemetry
-	// and sharding; the fold keeps no state of its own).
-	ConversationID string `json:"conversation_id,omitempty"`
+}
+
+// RowReader reads the transcript rows a fold covers. The tool only reads: the
+// durable fold document is the world node's to write.
+type RowReader interface {
+	// LoadAfter returns the replayable rows after afterSeq, oldest first.
+	LoadAfter(ctx context.Context, conversationID string, afterSeq int64) (
+		[]summary.StoredMessage, error)
 }
 
 // generateFunc is the condensation entry; production wires the router,
@@ -93,6 +112,7 @@ type Tool struct {
 	generate generateFunc
 	probe    probeFunc
 	observer func(context.Context, inference.Usage)
+	rows     RowReader
 }
 
 // New builds a compact tool whose condensation goes through the
@@ -100,8 +120,9 @@ type Tool struct {
 func New(
 	router *route.Router,
 	observer func(context.Context, inference.Usage),
+	rows RowReader,
 ) *Tool {
-	t := &Tool{observer: observer, probe: routerProbe(router)}
+	t := &Tool{observer: observer, probe: routerProbe(router), rows: rows}
 	if router != nil {
 		t.generate = func(
 			ctx context.Context,
@@ -171,34 +192,40 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return "", errdefs.Validationf("compact: parse arguments: %v", err)
 	}
-	if len(args.Conversation) == 0 {
-		return "", errdefs.Validationf("compact: conversation is required")
+	if args.ConversationID == "" {
+		return "", errdefs.Validationf("compact: conversation_id is required")
+	}
+	if args.ToSeq < args.FromSeq || args.FromSeq <= 0 {
+		return "", errdefs.Validationf(
+			"compact: range [%d,%d] is not a transcript range", args.FromSeq, args.ToSeq)
 	}
 	budget := args.BudgetChars
 	if budget <= 0 {
 		budget = DefaultBudgetChars
 	}
-	for i := range args.Conversation {
-		if args.Conversation[i].Role == "" {
-			args.Conversation[i].Role = message.RoleUser
-		}
+	if t.rows == nil {
+		return "", errdefs.NotAvailablef("compact: no transcript reader configured")
 	}
-
-	// A summary message in the input is an earlier fold's output: the replay
-	// hands the condensed view back, so the summary travels as the previous
-	// summary instead of being condensed a second time. Everything else is
-	// fresh — the fold keeps no state between rounds, so there is no
-	// "already covered" set to merge against.
-	var fresh []message.Message
-	prevSummary := ""
-	for _, m := range args.Conversation {
-		if text := m.Content.Text(); summarytext.IsSummaryText(text) {
-			// The marker is rendering scaffolding, not content: the model
-			// reads the summary body it was derived from.
-			prevSummary = strings.TrimPrefix(text, summarytext.SummaryPrefix+"\n")
-			continue
+	// The rows the fold covers, read from the transcript. FromSeq-1 is the
+	// cursor: LoadAfter is exclusive, and the range is inclusive on both ends.
+	rows, err := t.rows.LoadAfter(ctx, args.ConversationID, args.FromSeq-1)
+	if err != nil {
+		return "", fmt.Errorf("compact: read transcript rows: %w", err)
+	}
+	fresh := make([]message.Message, 0, len(rows))
+	for _, row := range rows {
+		if row.Seq > args.ToSeq {
+			break
 		}
-		fresh = append(fresh, m)
+		msg := row.Message()
+		if msg.Role == "" {
+			msg.Role = message.RoleUser
+		}
+		fresh = append(fresh, msg)
+	}
+	prevSummary := strings.TrimSpace(args.PrevSummary)
+	if summarytext.IsSummaryText(prevSummary) {
+		prevSummary = strings.TrimPrefix(prevSummary, summarytext.SummaryPrefix+"\n")
 	}
 	if len(fresh) == 0 {
 		if prevSummary != "" {
