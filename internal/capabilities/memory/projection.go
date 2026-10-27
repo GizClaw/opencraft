@@ -1,8 +1,6 @@
 package memory
 
 import (
-	"strings"
-
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
@@ -41,48 +39,6 @@ import (
 // (memory_items) was retired: a note is now visible to the model, and a
 // row that has no prompt form is reported rather than lost.
 
-// placeholderFor names what a text-less row carries, so the model sees
-// that something was there instead of a hole in the conversation.
-func placeholderFor(content message.Content) string {
-	kinds := make([]string, 0, len(content.Parts))
-	seen := make(map[string]bool, len(content.Parts))
-	add := func(kind string) {
-		if kind == "" || seen[kind] {
-			return
-		}
-		seen[kind] = true
-		kinds = append(kinds, kind)
-	}
-	for _, part := range content.Parts {
-		normalized, err := message.NormalizePart(part)
-		if err != nil {
-			continue
-		}
-		switch normalized.(type) {
-		case message.TextPart, message.ReasoningPart:
-			// Empty text: nothing to say, and nothing to name.
-		case message.ImagePart:
-			add("image")
-		case message.AudioPart:
-			add("audio")
-		case message.VideoPart:
-			add("video")
-		case message.FilePart:
-			add("file")
-		case message.DataPart:
-			add("data")
-		case message.ToolCallPart, message.ToolResultPart:
-			add("tool")
-		default:
-			add("unknown")
-		}
-	}
-	if len(kinds) == 0 {
-		return ""
-	}
-	return "[attachment: " + strings.Join(kinds, ", ") + "]"
-}
-
 // projectMessage returns the prompt projection of one stored message:
 // canonical parts, plus the rendered tool activity as a text part when the
 // message carries any. Tool calls and results are structured parts the
@@ -91,12 +47,7 @@ func placeholderFor(content message.Content) string {
 // through this function, so a message cannot be stored in one shape and
 // read back in another.
 func projectMessage(m message.Message) *message.Message {
-	rendered := m.Clone()
-	if len(summarytext.ToolActivity(m)) == 0 {
-		return &rendered
-	}
-	rendered.Content.Parts = append(rendered.Content.Parts,
-		message.TextPart{Text: summarytext.RenderMessage(m)})
+	rendered := summarytext.RenderPrompt(m)
 	return &rendered
 }
 
@@ -127,7 +78,7 @@ func projectRow(
 	if text := projected.Content.Text(); text != "" {
 		return projection{Message: *projected}, true
 	}
-	placeholder := placeholderFor(content)
+	placeholder := summarytext.PlaceholderFor(content)
 	if placeholder == "" {
 		return projection{}, false
 	}

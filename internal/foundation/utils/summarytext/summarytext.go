@@ -81,6 +81,23 @@ func RenderMessage(m message.Message) string {
 	return trimmed + "\n" + strings.Join(lines, "\n")
 }
 
+// RenderPrompt returns the prompt projection of one message: canonical parts
+// plus the rendered tool activity as a text part, so a provider that speaks
+// text still reads what the call and its result were.
+//
+// It is the projection rule itself, with no policy: the archive writes it (one
+// row's prompt form) and the window reads it, so a message cannot be stored in
+// one shape and projected in another.
+func RenderPrompt(m message.Message) message.Message {
+	rendered := m.Clone()
+	if len(ToolActivity(m)) == 0 {
+		return rendered
+	}
+	rendered.Content.Parts = append(rendered.Content.Parts,
+		message.TextPart{Text: RenderMessage(m)})
+	return rendered
+}
+
 // IsSummaryText reports whether text is a marked compaction summary.
 func IsSummaryText(text string) bool {
 	return strings.HasPrefix(text, SummaryPrefix+"\n")
@@ -370,4 +387,46 @@ func compactJSON(raw json.RawMessage) string {
 		return string(raw)
 	}
 	return buf.String()
+}
+
+// PlaceholderFor names what a text-less row carries, so the window says
+// "something was here" instead of leaving a hole in the conversation.
+func PlaceholderFor(content message.Content) string {
+	kinds := make([]string, 0, len(content.Parts))
+	seen := make(map[string]bool, len(content.Parts))
+	add := func(kind string) {
+		if kind == "" || seen[kind] {
+			return
+		}
+		seen[kind] = true
+		kinds = append(kinds, kind)
+	}
+	for _, part := range content.Parts {
+		normalized, err := message.NormalizePart(part)
+		if err != nil {
+			continue
+		}
+		switch normalized.(type) {
+		case message.TextPart, message.ReasoningPart:
+			// Empty text: nothing to say, and nothing to name.
+		case message.ImagePart:
+			add("image")
+		case message.AudioPart:
+			add("audio")
+		case message.VideoPart:
+			add("video")
+		case message.FilePart:
+			add("file")
+		case message.DataPart:
+			add("data")
+		case message.ToolCallPart, message.ToolResultPart:
+			add("tool")
+		default:
+			add("unknown")
+		}
+	}
+	if len(kinds) == 0 {
+		return ""
+	}
+	return "[attachment: " + strings.Join(kinds, ", ") + "]"
 }
