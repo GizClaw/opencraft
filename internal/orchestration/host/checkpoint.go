@@ -116,6 +116,25 @@ func checkpointRequest(ctx context.Context, cp *agent.Checkpoint) *agent.Request
 	return &request
 }
 
+// CheckpointCapabilities implements agent.CheckpointTarget: it is what tells
+// the engine whether this host persists checkpoints and whether the store
+// takes increments.
+//
+// The answer is the store's, not a constant: the session store implements
+// agent.CheckpointJournal, so the engine writes one base per run and then only
+// the board's writes at each wave. Without this method the runtime falls back
+// to "persists, no increments" and re-serializes the whole board at every
+// wave — the cost the journal exists to remove (a profile of one turn on a
+// 45 MB conversation attributed 55% of its allocation to that path).
+func (h *Host) CheckpointCapabilities() agent.CheckpointCapabilities {
+	if h == nil || h.store == nil {
+		return agent.CheckpointCapabilities{}
+	}
+	return agent.CheckpointCapabilitiesForStore(h.store)
+}
+
+var _ agent.CheckpointTarget = (*Host)(nil)
+
 // trimCheckpoint shrinks a wave checkpoint to the turn recovery will
 // reconstruct from it.
 //
