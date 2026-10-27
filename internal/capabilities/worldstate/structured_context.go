@@ -109,6 +109,9 @@ type pendingCall struct {
 	id string
 	// at is the index of the assistant call message in out.
 	at int
+	// seq is the transcript row the call came from; a synthetic result
+	// inserted for it inherits it.
+	seq int64
 }
 
 // normalizeRawItems converts stored raw messages into provider-valid
@@ -120,10 +123,34 @@ type pendingCall struct {
 //     short "aborted" tool message right after the call, matching
 //     codex-rs ensure_call_outputs_present.
 func normalizeRawItems(items []memory.ContextItem) []message.Message {
+	out, _ := normalizeRawItemsWithSeqs(items)
+	return out
+}
+
+// normalizeRawItemsWithSeqs is normalizeRawItems plus the transcript row each
+// rendered message came from.
+//
+// The two slices are aligned, which they cannot be derived into afterwards: the
+// pipeline drops orphan tool results and empty messages and inserts a synthetic
+// result for a call that never got one, so "rendered[i]" is not "items[i]". A
+// synthetic result inherits the seq of the call it answers — it exists because
+// of that row.
+//
+// Callers that map a rendered index back to a row (the durable fold, see
+// fold.go) need exactly this pairing.
+func normalizeRawItemsWithSeqs(
+	items []memory.ContextItem,
+) ([]message.Message, []int64) {
 	available := map[string]bool{}
 	out := make([]message.Message, 0, len(items))
+	seqs := make([]int64, 0, len(items))
 	var pending []pendingCall
+	appendMsg := func(msg message.Message, seq int64) {
+		out = append(out, msg)
+		seqs = append(seqs, seq)
+	}
 	for _, item := range items {
+		seq := int64(item.Sequence)
 		rc := rawContextFor(item)
 		switch rc.msg.Role {
 		case message.RoleAssistant:
@@ -131,14 +158,14 @@ func normalizeRawItems(items []memory.ContextItem) []message.Message {
 				if rc.msg.Content.Text() == "" {
 					continue
 				}
-				out = append(out, rc.msg)
+				appendMsg(rc.msg, seq)
 				continue
 			}
 			for _, id := range rc.calls {
 				available[id] = true
-				pending = append(pending, pendingCall{id: id, at: len(out)})
+				pending = append(pending, pendingCall{id: id, at: len(out), seq: seq})
 			}
-			out = append(out, rc.msg)
+			appendMsg(rc.msg, seq)
 		case message.RoleTool:
 			if len(rc.msg.Content.Parts) == 0 ||
 				!allAvailable(rc.needs, available) {
@@ -148,12 +175,12 @@ func normalizeRawItems(items []memory.ContextItem) []message.Message {
 			for _, id := range rc.needs {
 				removePending(&pending, id)
 			}
-			out = append(out, rc.msg)
+			appendMsg(rc.msg, seq)
 		default:
 			if rc.msg.Content.Text() == "" {
 				continue
 			}
-			out = append(out, rc.msg)
+			appendMsg(rc.msg, seq)
 		}
 	}
 
@@ -175,8 +202,10 @@ func normalizeRawItems(items []memory.ContextItem) []message.Message {
 		}
 		out = append(out[:insertAt],
 			append([]message.Message{synthetic}, out[insertAt:]...)...)
+		seqs = append(seqs[:insertAt],
+			append([]int64{p.seq}, seqs[insertAt:]...)...)
 	}
-	return out
+	return out, seqs
 }
 
 func removePending(pending *[]pendingCall, id string) {

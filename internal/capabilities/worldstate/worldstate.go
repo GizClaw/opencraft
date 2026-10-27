@@ -210,8 +210,12 @@ func (s *Service) RenderTurn(
 			// the whole transcript on one side of the world node to
 			// unmarshal it back on the other is two copies of it for a
 			// value nothing else reads.
-			if history := s.replayHistory(ctx, id.ConversationID); len(history) > 0 {
+			if history, seqs := s.replayHistory(ctx, id.ConversationID); len(history) > 0 {
 				pendingHistory.put(board, history)
+				// The rows behind those messages, in the same order: the
+				// durable fold maps a channel range back to transcript rows
+				// through this pairing (see fold.go).
+				stashReplaySeqs(board, s.sessionStore, seqs)
 				historyTokens = summarytext.EstimateTokens(history)
 			}
 		} else {
@@ -495,14 +499,14 @@ func (s *Service) memorySections(ctx context.Context, contextID string) []Sectio
 func (s *Service) replayHistory(
 	ctx context.Context,
 	contextID string,
-) []message.Message {
+) ([]message.Message, []int64) {
 	res, err := s.memory.Context(ctx, memory.ContextRequest{
 		Scope:          memory.Scope{RuntimeID: "opencraft"},
 		ConversationID: contextID,
 		Budget:         memory.Budget{},
 	})
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var raws []memory.ContextItem
 	for _, item := range res.Items {
@@ -510,5 +514,5 @@ func (s *Service) replayHistory(
 			raws = append(raws, item)
 		}
 	}
-	return renderHistoryMessages(raws)
+	return normalizeRawItemsWithSeqs(raws)
 }

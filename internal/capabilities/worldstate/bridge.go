@@ -3,8 +3,10 @@ package worldstate
 import (
 	"context"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/agent/bindings"
 	"github.com/GizClaw/flowcraft/core/resource"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/compaction"
 )
@@ -40,8 +42,54 @@ func (WorldBridge) Bind(inv bindings.Invocation) ([]bindings.Binding, error) {
 					"history":  counts.History,
 				}, nil
 			},
+			// markFold records a fold the compact node just applied as a
+			// fact about the transcript (worldstate/fold.go): the channel
+			// range it replaced, in transcript rows. The model-visible
+			// history is the summary plus the rows outside that range, and
+			// recording it is what lets a later turn replay the condensed
+			// conversation instead of replaying the transcript and folding
+			// it again.
+			"markFold": func(start, end float64, summary string) error {
+				if err := recordFold(
+					inv.Context, board, conversationID(inv),
+					sectionsCount(board), int(start), int(end), summary,
+				); err != nil {
+					telemetry.WarnErr(inv.Context,
+						"worldstate: record the durable fold failed", err)
+					return err
+				}
+				return nil
+			},
 		},
 	}}, nil
+}
+
+// conversationID reports the run's conversation from the ambient run identity
+// (the compact node runs inside a turn, so it is always there).
+func conversationID(inv bindings.Invocation) string {
+	if info, ok := agent.RunInfoFromContext(inv.Context); ok {
+		return info.ConversationID
+	}
+	return ""
+}
+
+// sectionsCount reports how many messages the world merge prepended, which is
+// where the replayed history starts on the channel.
+func sectionsCount(board *agent.Board) int {
+	value, ok := board.Var(BoardVarSectionsCount)
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	default:
+		return 0
+	}
 }
 
 // scriptBindingsFactory extends the standard script surface with the

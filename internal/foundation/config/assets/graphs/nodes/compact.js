@@ -374,6 +374,18 @@ if (board.getVar("world.compact.pending")) {
     board.setChannel(board.MAIN_CHANNEL, rebuilt);
     board.setVar("world.compact.summary_text", messageText(patch.message));
     board.setVar("world.compact.failed_end", -1);
+    // Record the fold as a fact about the transcript, not just about this
+    // turn's channel: the range it replaced, in transcript rows. A later
+    // turn replays the summary plus the content outside that range instead
+    // of replaying the whole transcript and folding it again.
+    //
+    // Best effort: a deployment without the bridge (an older harness) keeps
+    // the in-turn-only behaviour, which is what it had before.
+    try {
+      ocworld.markFold(foldStart, foldEnd, messageText(patch.message));
+    } catch (e) {
+      // Nothing to do: the fold itself already landed below.
+    }
     // The ask's index moves down with the messages that just left: the
     // next fold must still find it where it now sits.
     var shiftedAsk = Number(board.getVar("world.compact.turn_start") || -1);

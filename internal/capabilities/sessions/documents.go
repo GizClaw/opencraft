@@ -34,6 +34,11 @@ const (
 	// DocumentCompact is the most recent compaction artifact
 	// (tools/compact): the summary and the messages it already covers.
 	DocumentCompact = "compact"
+	// DocumentCompactFold is the durable form of the same fold, keyed by
+	// transcript row instead of content hash (worldstate/fold.go): the rows
+	// a fold replaced with a summary. Nothing reads it yet — it is written
+	// so the read side can be switched on against data already on disk.
+	DocumentCompactFold = "compact_fold"
 	// DocumentContextUsage is the last measurement of the prompt one
 	// turn sent, split by what filled it (contextusage.go). It is what
 	// lets the chat meter describe a conversation this process has not
@@ -93,6 +98,11 @@ var Documents = []StateDocument{
 	{
 		Name:       DocumentCompact,
 		Owner:      "capabilities/tools/compact",
+		Generation: 1,
+	},
+	{
+		Name:       DocumentCompactFold,
+		Owner:      "capabilities/worldstate (fold.go)",
 		Generation: 1,
 	},
 	{
