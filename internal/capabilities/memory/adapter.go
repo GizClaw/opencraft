@@ -220,27 +220,38 @@ func projectTranscriptRows(
 				empty++
 				continue
 			}
-			// An empty prompt_json with a recorded state means the projection
-			// was identical to the content, so the content *is* the prompt
-			// form: decode it and hand it over without rendering it again.
-			payloadJSON := promptJSON
-			if payloadJSON == "" {
-				payloadJSON = payload
+			// The two columns hold different shapes: prompt_json is a whole
+			// message (role + content), content_json is bare parts. Decoding
+			// content_json as a message yields an empty message with a role —
+			// which is how a transcript of blank turns reaches the provider.
+			if promptState == summarytext.PromptPlaceholder {
+				placeholders++
 			}
-			var stored message.Message
-			if err := json.Unmarshal([]byte(payloadJSON), &stored); err == nil {
-				if promptState == summarytext.PromptPlaceholder {
-					placeholders++
+			if promptJSON != "" {
+				var stored message.Message
+				if err := json.Unmarshal([]byte(promptJSON), &stored); err == nil {
+					if stored.Role == "" {
+						stored.Role = message.Role(role)
+					}
+					out.Messages = append(out.Messages, summary.StoredMessage{
+						Seq:     seq,
+						Role:    stored.Role,
+						Content: stored.Content,
+					})
+					continue
 				}
-				if stored.Role == "" {
-					stored.Role = message.Role(role)
+			} else {
+				// No second copy: the projection is identical to the content,
+				// so the content *is* the prompt form.
+				var content message.Content
+				if err := json.Unmarshal([]byte(payload), &content); err == nil {
+					out.Messages = append(out.Messages, summary.StoredMessage{
+						Seq:     seq,
+						Role:    message.Role(role),
+						Content: content,
+					})
+					continue
 				}
-				out.Messages = append(out.Messages, summary.StoredMessage{
-					Seq:     seq,
-					Role:    stored.Role,
-					Content: stored.Content,
-				})
-				continue
 			}
 			// Fall through to the content projection: a prompt form that
 			// does not decode is treated like a row written before the

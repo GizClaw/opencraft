@@ -358,3 +358,47 @@ func TestSQLiteTurnStoreIsolation(t *testing.T) {
 		}
 	}
 }
+
+// TestSQLiteTurnStoreReadsRowsWhoseProjectionEqualsTheContent pins the shape
+// difference between the two stored columns: content_json holds bare parts and
+// prompt_json holds a whole message. A row whose projection was identical to
+// its content stores an empty prompt_json, and reading it must decode the
+// content — decoding content_json as a message yields an empty message with a
+// role, which is a transcript of blank turns that a provider rejects when it
+// opens the stream.
+func TestSQLiteTurnStoreReadsRowsWhoseProjectionEqualsTheContent(t *testing.T) {
+	adapter, store := newSQLiteTurnStore(t)
+	ctx := context.Background()
+	commitTurn(t, store, "s-1", "run-1", []message.Message{
+		message.NewTextMessage(message.RoleUser, "hello there"),
+		message.NewTextMessage(message.RoleAssistant, "hi"),
+	})
+
+	var prompt, promptState string
+	if err := store.Handle().SQLDB().QueryRowContext(ctx,
+		`SELECT prompt_json, prompt_state FROM archive_messages WHERE seq = 0`,
+	).Scan(&prompt, &promptState); err != nil {
+		t.Fatalf("read stored projection: %v", err)
+	}
+	if prompt != "" || promptState != "ok" {
+		t.Fatalf("a plain text row stores no second copy: prompt_json=%q state=%q",
+			prompt, promptState)
+	}
+
+	rows, err := adapter.LoadAll(ctx, "s-1")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	if got := rows[0].Content.Text(); got != "hello there" {
+		t.Fatalf("row 0 text = %q, want the archived content", got)
+	}
+	if rows[0].Role != message.RoleUser {
+		t.Fatalf("row 0 role = %q, want user", rows[0].Role)
+	}
+	if got := rows[1].Content.Text(); got != "hi" {
+		t.Fatalf("row 1 text = %q, want hi", got)
+	}
+}

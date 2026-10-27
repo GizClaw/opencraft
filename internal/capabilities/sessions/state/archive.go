@@ -591,11 +591,20 @@ func (s *Store) CommitConversationTurn(
 		// reader can do just as well.
 		prompt := ""
 		if promptState != summarytext.PromptSkip {
-			raw, err := json.Marshal(projected)
+			// The comparison is against the *content*, not the message: the
+			// two columns hold different shapes (content_json is bare parts,
+			// prompt_json is a message), so comparing the marshalled message
+			// with the marshalled content never matches and every row would
+			// carry a second copy.
+			projectedContent, err := json.Marshal(projected.Content)
 			if err != nil {
-				return fmt.Errorf("state: marshal prompt projection: %w", err)
+				return fmt.Errorf("state: marshal prompt content: %w", err)
 			}
-			if string(raw) != string(content) {
+			if string(projectedContent) != string(content) {
+				raw, err := json.Marshal(projected)
+				if err != nil {
+					return fmt.Errorf("state: marshal prompt projection: %w", err)
+				}
 				prompt = string(raw)
 			}
 		}
