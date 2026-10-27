@@ -15,26 +15,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
-func TestConfigMemoryRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	b := NewConfig(core.NewCore(dir, dir, ""))
-
-	if err := b.SaveMemory(config.MemorySettings{
-		MaxRawMessages:  48,
-		PreserveRecent:  6,
-		MaxSummaryBytes: 8192,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := b.MemoryConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.MaxRawMessages != 48 || got.PreserveRecent != 6 {
-		t.Fatalf("memory config = %+v", got)
-	}
-}
-
 // TestInferenceCatalogResolvesTemplates pins the catalog binding the
 // settings page reads: every template must arrive with its models
 // already resolved, and every model must name a provider the instance

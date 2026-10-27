@@ -1003,13 +1003,6 @@ export interface GitHubPRDetail {
   truncated: boolean;
 }
 
-export interface MemorySettings {
-  max_raw_messages: number;
-  preserve_recent: number;
-  max_summary_bytes: number;
-  replay_full_history: boolean;
-}
-
 /**
  * ToolOptionFieldView is one provider-specific knob the tools settings
  * tab renders; the host owns the vocabulary, the label comes from i18n.
