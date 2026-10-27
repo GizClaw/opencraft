@@ -195,9 +195,13 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	if args.ConversationID == "" {
 		return "", errdefs.Validationf("compact: conversation_id is required")
 	}
-	if args.ToSeq < args.FromSeq || args.FromSeq <= 0 {
+	// A transcript's first row is seq 0, so FromSeq == 0 is a valid range and
+	// not an absent one: a fold that starts at the beginning of the
+	// conversation is the common case for a conversation that was never
+	// folded. Only an inverted range is meaningless.
+	if args.ToSeq < args.FromSeq {
 		return "", errdefs.Validationf(
-			"compact: range [%d,%d] is not a transcript range", args.FromSeq, args.ToSeq)
+			"compact: range [%d,%d] is inverted", args.FromSeq, args.ToSeq)
 	}
 	budget := args.BudgetChars
 	if budget <= 0 {

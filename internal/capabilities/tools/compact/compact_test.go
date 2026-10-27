@@ -391,3 +391,32 @@ func TestTruncateRunesNeverSplitsARune(t *testing.T) {
 		t.Fatal("a budget past the input must return it unchanged")
 	}
 }
+
+// TestExecuteFoldsFromTheFirstRow pins the boundary the replay actually
+// produces: a transcript's first row is seq 0, so a fold of the whole
+// conversation starts at 0. Treating that as "no range" is what made every
+// long conversation fail to fold and overflow the model window instead.
+func TestExecuteFoldsFromTheFirstRow(t *testing.T) {
+	var calls int
+	tool := &Tool{
+		generate: func(
+			_ context.Context, _ inference.GenerateRequest,
+		) (inference.GenerateResponse, error) {
+			calls++
+			return inference.GenerateResponse{
+				Message: message.NewTextMessage(message.RoleAssistant, "S1"),
+			}, nil
+		},
+	}
+	rows := fakeRows{{Seq: 0, Role: message.RoleUser, Content: message.NewTextContent("first")},
+		{Seq: 1, Role: message.RoleAssistant, Content: message.NewTextContent("reply")}}
+	tool.rows = rows
+	out, err := tool.Execute(context.Background(),
+		`{"conversation_id":"c1","from_seq":0,"to_seq":1,"budget_chars":100}`)
+	if err != nil {
+		t.Fatalf("execute from seq 0: %v", err)
+	}
+	if got := patchSummary(t, out.Text()); got != "S1" || calls != 1 {
+		t.Fatalf("summary = %q calls=%d, want S1 once", got, calls)
+	}
+}
