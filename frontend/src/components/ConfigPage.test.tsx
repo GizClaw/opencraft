@@ -802,7 +802,6 @@ describe('ConfigPage inference', () => {
   });
 });
 
-
 describe('ConfigPage usage', () => {
   it('defaults the trend to the all-models aggregate', async () => {
     useStore.setState({ configTab: 'usage' });

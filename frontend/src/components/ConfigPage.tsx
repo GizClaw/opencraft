@@ -171,7 +171,6 @@ function limitToRow(v: number | undefined): number | '' {
   return v === undefined || !Number.isFinite(v) || v <= 0 ? '' : v;
 }
 
-
 // modelLifecyclePayload renders one row's discovery metadata, dropping
 // the whole block when the model is active (an active model must not
 // carry retirement facts).
@@ -707,7 +706,6 @@ export function ConfigPage() {
       .catch((err) => setError(String(err)));
   }, [tab]);
 
-
   useEffect(() => {
     if (tab !== 'diagnostics') return;
     void api
@@ -773,7 +771,6 @@ export function ConfigPage() {
       setDiagBusy(false);
     }
   };
-
 
   // Any edit invalidates the saved check, so the bar never claims the
   // form on screen is what the runtime is using.
