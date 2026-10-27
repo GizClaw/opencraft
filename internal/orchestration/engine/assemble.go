@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 
+	checkpointstore "github.com/GizClaw/flowcraft/backends/checkpoint/sqlite"
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/agent/scriptrt"
 	sdkdelegation "github.com/GizClaw/flowcraft/core/delegation"
@@ -295,6 +296,10 @@ func (r registrar) Register(reg *resource.Registry) error { return r.fn(reg) }
 func coreCapabilities() []craft.Capability {
 	return []craft.Capability{
 		registrar{"events", event.Register},
+		// The journalling checkpoint store (core/agent.CheckpointJournal):
+		// one base record per run plus append-only deltas, so a long turn
+		// no longer rewrites its whole board at every wave.
+		registrar{"checkpoint-store", checkpointstore.Register},
 		registrar{"graph", graphresource.Register},
 		registrar{"workspace", workspace.Register},
 		registrar{"tools", tool.Register},
