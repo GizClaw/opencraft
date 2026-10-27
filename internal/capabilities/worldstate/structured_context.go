@@ -217,20 +217,3 @@ func removePending(pending *[]pendingCall, id string) {
 	}
 	*pending = kept
 }
-
-// renderRawSections converts stored raw messages into memory_raw
-// sections using the shared normalizeRawItems pipeline.
-func renderRawSections(items []memory.ContextItem) []Section {
-	out := make([]Section, 0, len(items))
-	for _, msg := range normalizeRawItems(items) {
-		out = append(out, Section{ID: "memory_raw", Message: msg})
-	}
-	return out
-}
-
-// renderHistoryMessages is renderRawSections' counterpart for
-// full-history replay: the same pairing rules apply, and output is the
-// message list world.js appends after the world sections.
-func renderHistoryMessages(items []memory.ContextItem) []message.Message {
-	return normalizeRawItems(items)
-}

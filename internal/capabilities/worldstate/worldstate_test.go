@@ -177,20 +177,18 @@ func TestRenderToBoardGroupsAllSystemBeforeUserContent(t *testing.T) {
 		t.Fatalf("sections = %q: %v", rawBoard, err)
 	}
 	assertSystemFirst(t, sections)
-	var summaryAt, agentsAt, rawAt = -1, -1, -1
+	// Memory is no longer a section: the replayed history (which is where a
+	// fold's summary and the rows around it live) is handed to the world node
+	// separately and merged onto the channel, so the sections end with the
+	// user-side context this turn renders.
+	var agentsAt = -1
 	for i, sec := range sections {
-		switch sec.ID {
-		case "memory_summary":
-			summaryAt = i
-		case "agents_md":
+		if sec.ID == "agents_md" {
 			agentsAt = i
-		case "memory_raw":
-			rawAt = i
 		}
 	}
-	if summaryAt < 0 || agentsAt < 0 || rawAt < 0 ||
-		agentsAt >= summaryAt || summaryAt >= rawAt {
-		t.Fatalf("order = %v, want agents_md < memory_summary < memory_raw",
+	if agentsAt < 0 {
+		t.Fatalf("order = %v, want agents_md among the sections",
 			sectionIDs(sections))
 	}
 }
@@ -242,7 +240,7 @@ func TestRenderToBoardFullSectionOrder(t *testing.T) {
 	// conversation prefix (folded summary, raw window) in stable-first
 	// order; the per-turn tail is asserted below.
 	want := []string{
-		"agents_md", "memory_summary", "memory_raw",
+		"agents_md",
 	}
 	pos := -1
 	for _, id := range want {
@@ -559,148 +557,15 @@ type replayMemory struct {
 
 func (replayMemory) ReplayFullHistory() bool { return true }
 
-func TestMemorySectionsIncludeSummariesAndRaw(t *testing.T) {
-	svc := New(Options{WorkBase: t.TempDir()})
-	svc.memory = stubMemory{items: []corememory.ContextItem{
-		{
-			Kind: corememory.ContextSummary,
-			Content: message.Content{Parts: []message.Part{
-				message.TextPart{Text: "folded summary"},
-			}},
-		},
-		{
-			Kind:        corememory.ContextRawMessage,
-			MessageRole: message.RoleAssistant,
-			Content: message.Content{Parts: []message.Part{
-				message.TextPart{Text: "recent raw message"},
-			}},
-		},
-	}}
-	got := svc.memorySections(context.Background(), "s-c1")
-	if len(got) != 2 {
-		t.Fatalf("sections = %+v, want summary + raw", got)
-	}
-	if got[0].ID != "memory_summary" || got[0].Role != "user" || !contains(got[0].Content.Text(), "folded summary") {
-		t.Fatalf("summary section = %+v", got[0])
-	}
-	if got[1].ID != "memory_raw" || got[1].Role != message.RoleAssistant || !contains(got[1].Content.Text(), "recent raw message") {
-		t.Fatalf("raw section = %+v", got[1])
-	}
-}
-
 // TestMemorySectionsDropsToolTextWithoutPair verifies a text-only
 // role=tool row (no ToolResultPart and no matching call in the batch)
 // is treated as an orphan and omitted instead of becoming an invalid
 // tool message or a misleading user turn.
-func TestMemorySectionsDropsToolTextWithoutPair(t *testing.T) {
-	svc := New(Options{WorkBase: t.TempDir()})
-	svc.memory = stubMemory{items: []corememory.ContextItem{
-		{
-			Kind:        corememory.ContextRawMessage,
-			MessageRole: message.RoleTool,
-			Content: message.Content{Parts: []message.Part{
-				message.TextPart{Text: "tool_result: build ok"},
-			}},
-		},
-	}}
-	got := svc.memorySections(context.Background(), "s-c1")
-	if len(got) != 0 {
-		t.Fatalf("sections = %+v, want orphan tool text dropped", got)
-	}
-}
-
-func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
-	svc := New(Options{WorkBase: t.TempDir()})
-	svc.memory = stubMemory{items: []corememory.ContextItem{
-		{
-			Kind: corememory.ContextSummary,
-			Content: message.Content{Parts: []message.Part{
-				message.TextPart{Text: "folded summary"},
-			}},
-		},
-		{
-			Kind:        corememory.ContextRawMessage,
-			MessageRole: message.RoleUser,
-			Content: message.Content{Parts: []message.Part{
-				message.TextPart{Text: "latest user turn"},
-			}},
-		},
-	}}
-	board := agent.NewBoard()
-	if err := svc.RenderToBoard(
-		context.Background(), "assistant", "s-c1", "latest user turn", nil, board,
-	); err != nil {
-		t.Fatal(err)
-	}
-	raw := board.VarString("world.sections")
-	var sections []Section
-	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
-		t.Fatalf("sections = %q: %v", raw, err)
-	}
-	var summary, rawMsg *Section
-	for i := range sections {
-		switch sections[i].ID {
-		case "memory_summary":
-			summary = &sections[i]
-		case "memory_raw":
-			rawMsg = &sections[i]
-		case "history":
-			t.Fatalf("history section must not be injected (memory is the single source): %+v", sections[i])
-		}
-	}
-	assertSystemFirst(t, sections)
-	if summary == nil || !contains(summary.Content.Text(), "folded summary") {
-		t.Fatalf("missing summary section in %+v", sections)
-	}
-	if rawMsg == nil || rawMsg.Role != message.RoleUser || !contains(rawMsg.Content.Text(), "latest user turn") {
-		t.Fatalf("missing raw section with role in %+v", sections)
-	}
-}
 
 // TestRenderToBoardNormalizesRawToolContext locks the final world
 // sections for a dirty raw window: a call without a result must become
 // a synthetic aborted tool message, and an orphan result must not leak
 // into the model as text.
-func TestRenderToBoardNormalizesRawToolContext(t *testing.T) {
-	svc := New(Options{WorkBase: t.TempDir()})
-	svc.memory = stubMemory{items: []corememory.ContextItem{
-		toolCallItem("c-raw-1"),
-		toolResultItem("missing", "orphan output"),
-	}}
-	board := agent.NewBoard()
-	if err := svc.RenderToBoard(
-		context.Background(), "assistant", "s-c1", "continue", nil, board,
-	); err != nil {
-		t.Fatal(err)
-	}
-	sections := unmarshalSections(t, board)
-	var raws []Section
-	for _, sec := range sections {
-		if sec.ID == "memory_raw" {
-			raws = append(raws, sec)
-		}
-	}
-	if len(raws) != 2 {
-		t.Fatalf("memory_raw sections = %+v, want call + aborted result", raws)
-	}
-	if raws[0].Role != message.RoleAssistant {
-		t.Fatalf("first raw role = %s, want assistant", raws[0].Role)
-	}
-	if raws[1].Role != message.RoleTool {
-		t.Fatalf("second raw role = %s, want tool", raws[1].Role)
-	}
-	results := raws[1].ToolResults()
-	if len(results) != 1 || results[0].CallID != "c-raw-1" ||
-		results[0].Content.Text() != "aborted" {
-		t.Fatalf("synthetic result = %+v", results)
-	}
-	for _, sec := range raws {
-		if sec.Content.Text() == "orphan output" {
-			t.Fatalf("orphan output leaked into world sections: %+v", raws)
-		}
-	}
-	assertSystemFirst(t, sections)
-}
 
 func TestRenderToBoardReplayFullHistory(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
