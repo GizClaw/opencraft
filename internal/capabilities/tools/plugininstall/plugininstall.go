@@ -24,7 +24,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/confirm"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // Canonical tool names.

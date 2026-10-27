@@ -176,7 +176,7 @@ func Merge(board *agent.Board) (MergeCounts, error) {
 	counts.History = len(history)
 	board.SetVar(BoardVarHistoryCount, counts.History)
 
-	tail := board.GetVarString(config.BoardVarTailBlock)
+	tail := board.VarString(config.BoardVarTailBlock)
 	var ownMessage bool
 	// The tail rides the turn's own message. Replacing the slice copy's
 	// last element keeps the board's own message untouched, and
@@ -206,7 +206,7 @@ func Merge(board *agent.Board) (MergeCounts, error) {
 // node has always read both vars as "absent means none".
 func decodeVar[T any](board *agent.Board, name string) (T, error) {
 	var value T
-	raw := board.GetVarString(name)
+	raw := board.VarString(name)
 	if raw == "" {
 		return value, nil
 	}

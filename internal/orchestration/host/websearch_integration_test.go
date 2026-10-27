@@ -53,7 +53,7 @@ func assertSearchBagProviders(
 	if res == nil || res.LastBoard == nil {
 		t.Fatalf("run produced no board, want llm_extensions %v", want)
 	}
-	value, ok := res.LastBoard.GetVar("llm_extensions")
+	value, ok := res.LastBoard.Var("llm_extensions")
 	if len(want) == 0 {
 		if ok {
 			t.Fatalf("llm_extensions = %#v, want unset", value)

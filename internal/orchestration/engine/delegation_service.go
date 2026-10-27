@@ -7,7 +7,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // delegationSessionsDep carries the workspace session store into the

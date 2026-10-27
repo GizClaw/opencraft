@@ -13,7 +13,6 @@ import (
 	reviewstore "github.com/GizClaw/opencraft/internal/capabilities/review/store"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // Factory builds the opencraft.review observe hook. Every dependency is

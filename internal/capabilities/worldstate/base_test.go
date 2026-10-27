@@ -95,7 +95,7 @@ func TestBaseSectionsRenderBeforeEnvironment(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	raw := board.GetVarString("world.sections")
+	raw := board.VarString("world.sections")
 	var sections []Section
 	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
 		t.Fatalf("sections = %q: %v", raw, err)

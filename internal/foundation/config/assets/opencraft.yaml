@@ -333,6 +333,30 @@ resources:
   # the "ocworld" global, which the world node merges the channel with
   # (internal/capabilities/worldstate/bridge.go). The graph engine is
   # wired to script.opencraft in assets/agents.yaml.
+  # The assistant graph's node types. Since core/v0.10.0 a node type is a
+  # deployment resource the engine mounts through a `node_type.*` dep; the
+  # collaborators each type used to take from the engine are its own deps
+  # now, so a graph can only reach what its deployment declared.
+  node.inference:
+    kind: graph.NodeType
+    impl: inference
+    deps:
+      inference: infer
+      router: router
+      tools: tools
+  node.tool:
+    kind: graph.NodeType
+    impl: tool
+    deps:
+      tools: tools
+  node.script:
+    kind: graph.NodeType
+    impl: script
+    deps:
+      script_runtime.js: js
+      tools: tools
+      workspace: ws
+
   script.standard:
     kind: agent.ScriptBindings
     impl: standard

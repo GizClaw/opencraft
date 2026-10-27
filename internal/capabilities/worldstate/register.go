@@ -9,7 +9,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
-	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
@@ -20,10 +19,10 @@ import (
 // the script surface carrying the "ocworld" global.
 func Register(r *resource.Registry) error {
 	return errors.Join(
-		r.Register(prepareFactory{}),
-		r.Register(activateObserverFactory{}),
-		r.Register(usageAnchorCommitFactory{}),
-		r.Register(scriptBindingsFactory{}),
+		resource.Register(r, prepareFactory{}),
+		resource.Register(r, activateObserverFactory{}),
+		resource.Register(r, usageAnchorCommitFactory{}),
+		resource.Register(r, scriptBindingsFactory{}),
 	)
 }
 
@@ -96,27 +95,23 @@ func (prepareFactory) New(ctx context.Context, in resource.Input) (agent.Prepare
 	if svc, ok, err := depPrepareSkills.TryGet(in); err != nil {
 		return nil, err
 	} else if ok {
-			service.SetSkills(svc)
-		}
+		service.SetSkills(svc)
 	}
 	service.SetMemory(mem)
 	if prefixes, ok, err := depPrepareExecPolicy.TryGet(in); err != nil {
 		return nil, err
 	} else if ok {
-			service.SetPrefixProvider(prefixes)
-		}
+		service.SetPrefixProvider(prefixes)
 	}
 	if st, ok, err := depPrepareSessions.TryGet(in); err != nil {
 		return nil, err
 	} else if ok {
-			service.SetSessions(st)
-		}
+		service.SetSessions(st)
 	}
 	if binding, ok, err := depPrepareUserMemory.TryGet(in); err != nil {
 		return nil, err
 	} else if ok {
-			service.SetUserMemory(binding)
-		}
+		service.SetUserMemory(binding)
 	}
 	return agent.PreparerFunc(func(
 		ctx context.Context, identity agent.Identity, req *agent.Request, prev *agent.Board,

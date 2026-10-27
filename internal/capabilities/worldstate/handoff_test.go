@@ -41,7 +41,7 @@ func TestMergeTakesTheRenderedReplayFromTheHandoff(t *testing.T) {
 	if text := got[0].Content.Text(); !strings.Contains(text, "replayed user turn") {
 		t.Fatalf("channel[0] = %q, want the replayed user turn", text)
 	}
-	if raw := board.GetVarString(BoardVarHistory); raw != "" {
+	if raw := board.VarString(BoardVarHistory); raw != "" {
 		t.Fatalf("%s is set (%d bytes), want no board var at all",
 			BoardVarHistory, len(raw))
 	}

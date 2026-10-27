@@ -9,14 +9,11 @@ import (
 )
 
 func TestNetPolicyFactoryDefaults(t *testing.T) {
-	value, err := (NetPolicyFactory{}).New(context.Background(), resource.Input{})
+	value, err := (NetPolicyFactory{}).New(context.Background(), resource.NewTestInput(nil))
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
-	pol, ok := value.(Policy)
-	if !ok {
-		t.Fatalf("factory returned %T, want Policy", value)
-	}
+	pol := value
 	if pol.Exec.Mode != corenet.NetDefault {
 		t.Fatalf("exec mode = %v, want NetDefault", pol.Exec.Mode)
 	}
@@ -26,20 +23,18 @@ func TestNetPolicyFactoryDefaults(t *testing.T) {
 }
 
 func TestNetPolicyFactoryAllowList(t *testing.T) {
-	value, err := (NetPolicyFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{
+	value, err := (NetPolicyFactory{}).New(context.Background(), resource.NewInput([]byte(`{
 			"exec": {
 				"mode": "allow-list",
 				"allow_hosts": ["github.com", "api.openai.com"],
 				"rules": [{"action": "deny", "host": "*.example.com"}]
 			},
 			"web_fetch": {"allow_private": true}
-		}`),
-	})
+		}`), nil, nil, nil))
 	if err != nil {
 		t.Fatalf("factory: %v", err)
 	}
-	pol := value.(Policy)
+	pol := value
 	if pol.Exec.Mode != corenet.NetAllowList {
 		t.Fatalf("exec mode = %v, want NetAllowList", pol.Exec.Mode)
 	}
@@ -55,9 +50,7 @@ func TestNetPolicyFactoryAllowList(t *testing.T) {
 }
 
 func TestNetPolicyFactoryRejectsBadMode(t *testing.T) {
-	_, err := (NetPolicyFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{"exec": {"mode": "banana"}}`),
-	})
+	_, err := (NetPolicyFactory{}).New(context.Background(), resource.NewInput([]byte(`{"exec": {"mode": "banana"}}`), nil, nil, nil))
 	if err == nil {
 		t.Fatal("unknown mode must be rejected")
 	}

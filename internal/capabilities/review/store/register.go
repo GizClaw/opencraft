@@ -6,7 +6,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // StoreContract is the deploy contract of the caller-owned review queue

@@ -256,7 +256,7 @@ func TestRenderToBoardPlacesUserMemory(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	raw := board.GetVarString("world.sections")
+	raw := board.VarString("world.sections")
 	var sections []Section
 	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
 		t.Fatalf("sections = %q: %v", raw, err)
@@ -278,7 +278,7 @@ func TestRenderToBoardPlacesUserMemory(t *testing.T) {
 		t.Fatalf("user_memory at %d, want right after agents_md at %d: %v",
 			memoryAt, agentsAt, sectionNames)
 	}
-	if tail := board.GetVarString("world.tail_block"); strings.Contains(
+	if tail := board.VarString("world.tail_block"); strings.Contains(
 		tail, "a durable fact",
 	) {
 		t.Fatalf("memory leaked into the per-turn tail: %q", tail)

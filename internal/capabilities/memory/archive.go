@@ -26,7 +26,6 @@ type archiveObserverFactory struct{}
 
 var _ resource.Factory[*archiveObserver] = archiveObserverFactory{}
 
-
 func (archiveObserverFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "hook.observe",

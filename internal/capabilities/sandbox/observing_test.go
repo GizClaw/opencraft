@@ -133,19 +133,13 @@ func TestObservingWorkspaceBoundedReadAndClose(t *testing.T) {
 func TestObservingWorkspaceFactoryBuildsSharedWS(t *testing.T) {
 	root := t.TempDir()
 	c := newCaptureObserver()
-	value, err := (ObservingWorkspaceFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{"root":` + strconv.Quote(root) + `}`),
-		Deps: map[string]any{
-			"observer": c.ArtifactObserver,
-		},
-	})
+	value, err := (ObservingWorkspaceFactory{}).New(context.Background(), resource.NewInput([]byte(`{"root":`+strconv.Quote(root)+`}`), map[string]any{
+		"observer": c.ArtifactObserver,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("factory new: %v", err)
 	}
-	ow, ok := value.(*observingWorkspace)
-	if !ok {
-		t.Fatalf("factory returned %T, want *observingWorkspace", value)
-	}
+	ow := value
 	inner, ok := ow.inner.(*workspace.LocalWorkspace)
 	if !ok {
 		t.Fatalf("inner is %T, want *LocalWorkspace", ow.inner)
@@ -168,28 +162,22 @@ func TestObservingWorkspaceFactoryBuildsSharedWS(t *testing.T) {
 func TestHostWorkspaceFactoryWrapsBothBranches(t *testing.T) {
 	root := t.TempDir()
 	c := newCaptureObserver()
-	wsValue, err := (ObservingWorkspaceFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{"root":` + strconv.Quote(root) + `}`),
-		Deps: map[string]any{
-			"observer": c.ArtifactObserver,
-		},
-	})
+	wsValue, err := (ObservingWorkspaceFactory{}).New(context.Background(), resource.NewInput([]byte(`{"root":`+strconv.Quote(root)+`}`), map[string]any{
+		"observer": c.ArtifactObserver,
+	}, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	store := newTestStore(t)
-	hwValue, err := (HostWorkspaceFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{}`),
-		Deps: map[string]any{
-			"sessions":  store,
-			"workspace": wsValue,
-			"observer":  c.ArtifactObserver,
-		},
-	})
+	hwValue, err := (HostWorkspaceFactory{}).New(context.Background(), resource.NewInput([]byte(`{}`), map[string]any{
+		"sessions":  store,
+		"workspace": wsValue,
+		"observer":  c.ArtifactObserver,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("hostws factory new: %v", err)
 	}
-	hw := hwValue.(*HostWorkspace)
+	hw := hwValue
 
 	// Workspace mode: write inside the root goes through the confined
 	// (observing) ws and is reported.

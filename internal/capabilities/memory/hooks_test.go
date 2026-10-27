@@ -31,17 +31,14 @@ func TestCommitHookWritesTranscriptOnce(t *testing.T) {
 	adapter := &sqliteTurnStore{db: store.Database()}
 	res := summary.NewAssembly(adapter)
 
-	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{}`),
-		Deps: map[string]any{
-			"memory":   res,
-			"sessions": store,
-		},
-	})
+	value, err := (commitHookFactory{}).New(context.Background(), resource.NewInput([]byte(`{}`), map[string]any{
+		"memory":   res,
+		"sessions": store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	committer := value.(agent.CommitterFunc)
+	committer := value
 	ctx := context.Background()
 	id := agent.Identity{RunID: "run-atomic", AgentID: "assistant", ConversationID: "s-atomic"}
 	req := &agent.Request{
@@ -94,20 +91,14 @@ func TestCommitHookFactoryCommitsTurn(t *testing.T) {
 	}
 	sink := &stubSink{}
 
-	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{"runtime_id":"rt-1","user_id":"u-9","agent_id":"assistant"}`),
-		Deps: map[string]any{
-			"memory":   sink,
-			"sessions": store,
-		},
-	})
+	value, err := (commitHookFactory{}).New(context.Background(), resource.NewInput([]byte(`{"runtime_id":"rt-1","user_id":"u-9","agent_id":"assistant"}`), map[string]any{
+		"memory":   sink,
+		"sessions": store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("factory New: %v", err)
 	}
-	committer, ok := value.(agent.CommitterFunc)
-	if !ok {
-		t.Fatalf("value = %T, want agent.CommitterFunc", value)
-	}
+	committer := value
 
 	ctx := context.Background()
 	id := agent.Identity{RunID: "run-1", AgentID: "assistant", ConversationID: "s-1"}
@@ -175,17 +166,14 @@ func TestCommitHookSkipsEmptyResult(t *testing.T) {
 	}
 	sink := &stubSink{}
 
-	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{}`),
-		Deps: map[string]any{
-			"memory":   sink,
-			"sessions": store,
-		},
-	})
+	value, err := (commitHookFactory{}).New(context.Background(), resource.NewInput([]byte(`{}`), map[string]any{
+		"memory":   sink,
+		"sessions": store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	committer := value.(agent.CommitterFunc)
+	committer := value
 	ctx := context.Background()
 	id := agent.Identity{RunID: "run-1", ConversationID: "s-1"}
 
@@ -217,17 +205,14 @@ func TestCommitHookSkipsEphemeralContext(t *testing.T) {
 	}
 	sink := &stubSink{}
 
-	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{}`),
-		Deps: map[string]any{
-			"memory":   sink,
-			"sessions": store,
-		},
-	})
+	value, err := (commitHookFactory{}).New(context.Background(), resource.NewInput([]byte(`{}`), map[string]any{
+		"memory":   sink,
+		"sessions": store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	committer := value.(agent.CommitterFunc)
+	committer := value
 	ctx := context.Background()
 	id := agent.Identity{RunID: "run-1", AgentID: "assistant", ConversationID: "ctx-abc"}
 
@@ -270,17 +255,14 @@ func TestCommitHookPersistsFullConversation(t *testing.T) {
 	}
 	sink := &stubSink{}
 
-	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{}`),
-		Deps: map[string]any{
-			"memory":   sink,
-			"sessions": store,
-		},
-	})
+	value, err := (commitHookFactory{}).New(context.Background(), resource.NewInput([]byte(`{}`), map[string]any{
+		"memory":   sink,
+		"sessions": store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("factory New: %v", err)
 	}
-	committer := value.(agent.CommitterFunc)
+	committer := value
 
 	ctx := context.Background()
 	id := agent.Identity{RunID: "run-1", AgentID: "assistant", ConversationID: "s-1"}
@@ -396,17 +378,14 @@ func TestCommitHookDropsReplayedHistory(t *testing.T) {
 	adapter := &sqliteTurnStore{db: store.Database()}
 	res := summary.NewAssembly(adapter)
 
-	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{}`),
-		Deps: map[string]any{
-			"memory":   res,
-			"sessions": store,
-		},
-	})
+	value, err := (commitHookFactory{}).New(context.Background(), resource.NewInput([]byte(`{}`), map[string]any{
+		"memory":   res,
+		"sessions": store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	committer := value.(agent.CommitterFunc)
+	committer := value
 	ctx := context.Background()
 
 	commit := func(runID, userText, replyText string, replay []message.Message) {
@@ -502,17 +481,14 @@ func TestCommitHookExcludesCompactionSummary(t *testing.T) {
 	}
 	sink := &stubSink{}
 
-	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{}`),
-		Deps: map[string]any{
-			"memory":   sink,
-			"sessions": store,
-		},
-	})
+	value, err := (commitHookFactory{}).New(context.Background(), resource.NewInput([]byte(`{}`), map[string]any{
+		"memory":   sink,
+		"sessions": store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("factory New: %v", err)
 	}
-	committer := value.(agent.CommitterFunc)
+	committer := value
 
 	ctx := context.Background()
 	id := agent.Identity{RunID: "run-1", AgentID: "assistant", ConversationID: "s-1"}
@@ -603,17 +579,14 @@ func TestCommitHookScopeFallbacks(t *testing.T) {
 	}
 	sink := &stubSink{}
 
-	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{}`),
-		Deps: map[string]any{
-			"memory":   sink,
-			"sessions": store,
-		},
-	})
+	value, err := (commitHookFactory{}).New(context.Background(), resource.NewInput([]byte(`{}`), map[string]any{
+		"memory":   sink,
+		"sessions": store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	committer := value.(agent.CommitterFunc)
+	committer := value
 	ctx := context.Background()
 	id := agent.Identity{RunID: "run-1", AgentID: "fallback-agent", ConversationID: "s-1"}
 
@@ -650,16 +623,18 @@ func TestCommitHookFactoryMissingDeps(t *testing.T) {
 		"no sessions": {"memory": sink},
 		"wrong type":  {"memory": store, "sessions": sink}, // both wrong types
 	} {
-		_, err := (commitHookFactory{}).New(ctx, resource.Input{
-			Settings: []byte(`{}`),
-			Deps:     deps,
-		})
+		_, err := (commitHookFactory{}).New(ctx, resource.NewInput([]byte(`{}`), deps, nil, nil))
 		if err == nil {
 			t.Errorf("%s: expected validation error, got nil", name)
 			continue
 		}
-		if !strings.Contains(err.Error(), "required") && !strings.Contains(err.Error(), "want") {
-			t.Errorf("%s: error = %v, want a validation error", name, err)
+		// core/v0.10.0's typed handles report an absent dependency as
+		// NotFound ("dep %q is missing") rather than the string-typed
+		// protocol's validation error; both mean "the document did not
+		// provide it".
+		if !strings.Contains(err.Error(), "missing") &&
+			!strings.Contains(err.Error(), "want") {
+			t.Errorf("%s: error = %v, want a missing-dep error", name, err)
 		}
 	}
 }

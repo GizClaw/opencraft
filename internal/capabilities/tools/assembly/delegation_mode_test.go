@@ -12,7 +12,6 @@ import (
 	tooldelegation "github.com/GizClaw/flowcraft/core/delegation/tool"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
-	"github.com/GizClaw/flowcraft/core/tool"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
@@ -210,28 +209,20 @@ func TestAssemblyStampsTheCallerModeOnTheRealDelegateCall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	source, err := tooldelegation.NewSourceFactory().New(ctx, resource.Input{
-		Deps: map[string]any{
-			sdkdelegation.DirectoryDep: sdkdelegation.NewDirectory(),
-		},
-	})
+	source, err := tooldelegation.NewSourceFactory().New(ctx, resource.NewTestInput(map[string]any{
+		sdkdelegation.DirectoryDep: sdkdelegation.NewDirectory(),
+	}))
 	if err != nil {
 		t.Fatalf("build the delegate source: %v", err)
 	}
-	value, err := (AssemblyFactory{}).New(ctx, resource.Input{
-		Settings: []byte(`{}`),
-		Deps: map[string]any{
-			"tool":     source,
-			"sessions": store,
-		},
-	})
+	value, err := (AssemblyFactory{}).New(ctx, resource.NewInput([]byte(`{}`), map[string]any{
+		"tool":     source,
+		"sessions": store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("build assembly: %v", err)
 	}
-	assembly, ok := value.(*tool.Assembly)
-	if !ok {
-		t.Fatalf("assembly = %T, want *tool.Assembly", value)
-	}
+	assembly := value
 	defer func() { _ = assembly.Close() }()
 
 	service := &recordingDelegationService{}

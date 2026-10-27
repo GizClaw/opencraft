@@ -145,11 +145,11 @@ func TestMergeSeedsTheChannelFromRenderedWorldState(t *testing.T) {
 			board := mergeBoard(t, tc.svc, "use $review", tc.channel)
 			sections := boardSections(t, board)
 			history := tc.history
-			tailBlock := board.GetVarString(config.BoardVarTailBlock)
+			tailBlock := board.VarString(config.BoardVarTailBlock)
 			if len(sections) == 0 {
 				t.Fatal("the turn rendered no world sections")
 			}
-			if raw := board.GetVarString(BoardVarHistory); raw != "" {
+			if raw := board.VarString(BoardVarHistory); raw != "" {
 				t.Fatalf("%s is set (%d bytes), want the in-memory handoff",
 					BoardVarHistory, len(raw))
 			}
@@ -231,7 +231,7 @@ func TestMergeLeavesTheTurnMessageAloneWithoutATail(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir(), UserDir: isolateUserHome(t)})
 	turn := message.NewTextMessage(message.RoleUser, "hi")
 	board := mergeBoard(t, svc, "hi", []message.Message{turn})
-	if tail := board.GetVarString(config.BoardVarTailBlock); tail != "" {
+	if tail := board.VarString(config.BoardVarTailBlock); tail != "" {
 		t.Fatalf("render wrote a tail block for a turn with no per-turn context: %q", tail)
 	}
 	got := board.Channel(agent.MainChannel)
@@ -339,7 +339,7 @@ func mergeBoard(
 func boardSections(t *testing.T, board *agent.Board) []Section {
 	t.Helper()
 	var sections []Section
-	if raw := board.GetVarString(BoardVarSections); raw != "" {
+	if raw := board.VarString(BoardVarSections); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &sections); err != nil {
 			t.Fatalf("decode %s: %v", BoardVarSections, err)
 		}

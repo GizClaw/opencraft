@@ -84,7 +84,7 @@ func checkpointConversationID(cp *agent.Checkpoint) string {
 	if cp.Board == nil {
 		return ""
 	}
-	raw, ok := agent.RestoreBoard(cp.Board).GetVar(boardVarThreadID)
+	raw, ok := agent.RestoreBoard(cp.Board).Var(boardVarThreadID)
 	if !ok {
 		return ""
 	}

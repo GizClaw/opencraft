@@ -35,7 +35,7 @@ type execPolicyResource struct{}
 
 // Register adds the opencraft.execpolicy deploy resource factory.
 func Register(r *resource.Registry) error {
-	return r.Register(execPolicyResource{})
+	return resource.Register(r, execPolicyResource{})
 }
 
 var _ resource.Factory[*Manager] = execPolicyResource{}

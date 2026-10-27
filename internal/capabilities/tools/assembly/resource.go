@@ -51,27 +51,30 @@ type middlewareSettings struct {
 // AssemblyFactory builds tool.Assembly/opencraft.
 type AssemblyFactory struct{}
 
-var _ resource.Factory = AssemblyFactory{}
+var _ resource.Factory[*tool.Assembly] = AssemblyFactory{}
+
+var (
+	// depSources is every tool source in the deployment.
+	depSources = resource.RequireMany[tool.Source]("tool")
+	depHooks   = resource.Optional[*hooks.Manager]("hooks")
+	// Optional: the curated delegation target policy, enforced on
+	// delegate calls by a middleware of this chain.
+	depPolicy = resource.Optional[*subagents.Policy]("policy")
+	// Optional: the workspace session store the delegate tool's caller
+	// mode is resolved from. Without it a delegation carries no
+	// permission mode.
+	depAssemblySessions = resource.Optional[*sessions.Store]("sessions")
+)
 
 // Spec implements resource.Factory.
 func (AssemblyFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: tool.AssemblyKind,
 		Impl: AssemblyImpl,
-		Deps: []resource.DepSpec{{
-			Name: "tool", Type: "tool.Source", Required: true, Many: true,
-		}, {
-			Name: "hooks", Type: hooks.ResourceKind, Required: false,
-		}, {
-			// Optional: the curated delegation target policy, enforced
-			// on delegate calls by a middleware of this chain.
-			Name: "policy", Type: subagents.PolicyResourceKind, Required: false,
-		}, {
-			// Optional: the workspace session store the delegate
-			// tool's caller mode is resolved from. Without it a
-			// delegation carries no permission mode.
-			Name: "sessions", Type: sessions.ResourceKind, Required: false,
-		}},
+		Deps: []resource.Requirement{
+			depSources.Spec(), depHooks.Spec(),
+			depPolicy.Spec(), depAssemblySessions.Spec(),
+		},
 	}
 }
 
@@ -81,7 +84,7 @@ func (AssemblyFactory) Spec() resource.Spec {
 // audit middleware (outermost of the transforms) records the final
 // content the model actually sees. Redact sits innermost so the
 // persisted truncate cache never carries secrets either.
-func (AssemblyFactory) New(ctx context.Context, in resource.Input) (any, error) {
+func (AssemblyFactory) New(ctx context.Context, in resource.Input) (*tool.Assembly, error) {
 	settings, err := resource.DecodeTyped[AssemblySettings](
 		ctx, in.Settings)
 	if err != nil {
@@ -89,38 +92,26 @@ func (AssemblyFactory) New(ctx context.Context, in resource.Input) (any, error) 
 			"tool middleware: decode assembly settings: %v", err)
 	}
 
-	values := in.DepsMany("tool")
-	sources := make([]tool.Source, 0, len(values))
-	for _, value := range values {
-		src, ok := value.(tool.Source)
-		if !ok {
-			return nil, errdefs.Validationf(
-				"tool middleware: assembly dep is %T, want tool.Source", value)
-		}
-		sources = append(sources, src)
+	sources, err := depSources.GetAll(in)
+	if err != nil {
+		return nil, err
 	}
 	if len(sources) == 0 {
 		return nil, errdefs.Validationf(
 			"tool middleware: assembly requires at least one tool source")
 	}
 
-	var hookMgr *hooks.Manager
-	if dep, ok := in.Dep("hooks"); ok {
-		if mgr, ok := dep.(*hooks.Manager); ok {
-			hookMgr = mgr
-		}
+	hookMgr, _, err := depHooks.TryGet(in)
+	if err != nil {
+		return nil, err
 	}
-	var policy *subagents.Policy
-	if dep, ok := in.Dep("policy"); ok {
-		if p, ok := dep.(*subagents.Policy); ok {
-			policy = p
-		}
+	policy, _, err := depPolicy.TryGet(in)
+	if err != nil {
+		return nil, err
 	}
-	var store *sessions.Store
-	if dep, ok := in.Dep("sessions"); ok {
-		if s, ok := dep.(*sessions.Store); ok {
-			store = s
-		}
+	store, _, err := depAssemblySessions.TryGet(in)
+	if err != nil {
+		return nil, err
 	}
 	mws, catTimeout, err := buildMiddleware(
 		settings.Middlewares, hookMgr, policy, store)
@@ -254,7 +245,11 @@ func buildMiddleware(
 			opts = append(opts, toolmiddleware.WithResultPartBudget(
 				*s.ResultLimit.PartBudgetBytes))
 		}
-		mws = append(mws, toolmiddleware.ResultLimiter(s.ResultLimit.Max, opts...))
+		limiter, err := toolmiddleware.ResultLimiter(s.ResultLimit.Max, opts...)
+		if err != nil {
+			return nil, nil, err
+		}
+		mws = append(mws, limiter)
 	}
 	if s.Truncate != nil && s.Truncate.Enabled {
 		if s.Truncate.MaxChars <= 0 {

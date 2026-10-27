@@ -21,7 +21,15 @@ const ResourceKind = "opencraft.skills"
 // the worldstate prepare hook and the skill_search / skill_read tools.
 type Factory struct{}
 
-var _ resource.Factory = Factory{}
+var _ resource.Factory[*Service] = Factory{}
+
+var (
+	// Optional: enabled plugins may contribute skill roots.
+	depPluginHost = resource.Optional[pluginRootsProvider]("plugin.host")
+	// Optional: the user.db skill lifecycle store behind usage recording,
+	// retirement and the curator.
+	depSkillLifecycle = resource.Optional[*skillusage.Binding]("skilllifecycle")
+)
 
 // pluginRootsProvider is implemented by the shared plugin host
 // (internal/capabilities/plugins/agent) and contributes plugin skill roots.
@@ -34,12 +42,8 @@ func (Factory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: ResourceKind,
 		Impl: "local",
-		Deps: []resource.DepSpec{
-			// Optional: enabled plugins may contribute skill roots.
-			{Name: "plugin.host", Type: "opencraft.plugins", Required: false},
-			// Optional: the user.db skill lifecycle store behind usage
-			// recording, retirement and the curator.
-			{Name: "skilllifecycle", Type: skillusage.ResourceKind, Required: false},
+		Deps: []resource.Requirement{
+			depPluginHost.Spec(), depSkillLifecycle.Spec(),
 		},
 	}
 }
@@ -61,7 +65,7 @@ type Settings struct {
 }
 
 // New builds the shared skills service.
-func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
+func (Factory) New(ctx context.Context, in resource.Input) (*Service, error) {
 	settings, err := resource.DecodeTyped[Settings](
 		ctx, in.Settings)
 	if err != nil {
@@ -72,10 +76,10 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		enabled = *settings.Enabled
 	}
 	extraRoots := append([]string(nil), settings.ExtraRoots...)
-	if dep, ok := in.Dep("plugin.host"); ok {
-		if p, ok := dep.(pluginRootsProvider); ok && p != nil {
-			extraRoots = append(extraRoots, p.SkillRoots()...)
-		}
+	if p, ok, err := depPluginHost.TryGet(in); err != nil {
+		return nil, err
+	} else if ok && p != nil {
+		extraRoots = append(extraRoots, p.SkillRoots()...)
 	}
 	svc := NewService(ctx, Options{
 		UserDir:    settings.UserDir,
@@ -85,10 +89,10 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		ExtraRoots: extraRoots,
 		Disabled:   settings.Disabled,
 	})
-	if dep, ok := in.Dep("skilllifecycle"); ok {
-		if binding, ok := dep.(*skillusage.Binding); ok && binding != nil {
-			svc.SetLifecycle(binding.Store, binding.Config, settings.ArchiveDir)
-		}
+	if binding, ok, err := depSkillLifecycle.TryGet(in); err != nil {
+		return nil, err
+	} else if ok && binding != nil {
+		svc.SetLifecycle(binding.Store, binding.Config, settings.ArchiveDir)
 	}
 	// Accepted shape issues (a third-party name that differs from its
 	// directory, for example) repeat on every runtime assembly, so they
@@ -117,5 +121,5 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 
 // Register adds the opencraft.skills factory to r.
 func Register(r *resource.Registry) error {
-	return r.Register(Factory{})
+	return resource.Register(r, Factory{})
 }
