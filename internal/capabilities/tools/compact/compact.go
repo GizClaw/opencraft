@@ -53,6 +53,18 @@ const maxCondenseRounds = 3
 // opening dozens of provider streams at once.
 const maxCondenseParallel = 4
 
+// maxLLMFoldChars bounds the fold a model summarises shard by shard. Past it the
+// fold is not context, it is the transcript: forty shards would each compress a
+// slice of history into a paragraph and the merge would lose what the extras
+// held, at a cost of minutes during which the turn shows nothing and a
+// cancellation throws all of it away (the fold only becomes durable when the
+// next round applies it — see compact.js).
+//
+// The mechanical digest is bounded, deterministic and immediate, so an oversized
+// first fold lands at once; the folds that follow are small and get condensed
+// properly.
+const maxLLMFoldChars = 8 * maxCondenseChars
+
 // Args is the compact tool input.
 //
 // The tool never receives the conversation: it names a range and reads the rows
@@ -526,6 +538,13 @@ func (t *Tool) condenseFold(ctx context.Context, in condenseInput) string {
 	if len(raw) <= maxCondenseChars {
 		in.raw = raw
 		return t.condenseText(ctx, in)
+	}
+	if len(raw) > maxLLMFoldChars {
+		telemetry.Info(ctx,
+			"compact: fold is too large for the model; digesting mechanically",
+			attribute.String("conversation.id", in.conversationID),
+			attribute.Int("fold.chars", len(raw)))
+		return summarytext.MechanicalSummary(in.fresh, in.prevSummary, in.budget)
 	}
 	shards := shardMessages(in.fresh, maxCondenseChars)
 	telemetry.Info(ctx, "compact: condensing a large fold in shards",
