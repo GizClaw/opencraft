@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -13,7 +12,18 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
+
+// RowsAfter projects the transcript rows appended after afterSeq, rendered the
+// same way the replay renders them. It is the read the fold tool needs: the
+// rows a range covers, so the tool never receives the conversation as an
+// argument.
+func RowsAfter(
+	ctx context.Context, database *db.DB, conversationID string, afterSeq int64,
+) ([]summary.StoredMessage, error) {
+	return (&sqliteTurnStore{db: database}).LoadAfter(ctx, conversationID, afterSeq)
+}
 
 // sqliteTurnStore is the memory-owned TurnStore over foundation/db.
 type sqliteTurnStore struct {
@@ -135,7 +145,7 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 	// a delegation note is the app speaking to the model and belongs in
 	// the window like any other row. The one structural exclusion is an
 	// imported conversation's own system prompt (see projection.go).
-	query := `SELECT m.seq, m.role, m.content_json
+	query := `SELECT m.seq, m.role, m.content_json, m.prompt_json, m.prompt_state
 		FROM archive_messages m
 		WHERE m.conversation_id = ? AND m.role != 'system'`
 	args := []any{conversationID}
@@ -196,13 +206,57 @@ func projectTranscriptRows(
 	out := projectedRows{OldestRawSeq: -1}
 	for rows.Next() {
 		var seq int64
-		var role, payload string
-		if err := rows.Scan(&seq, &role, &payload); err != nil {
+		var role, payload, promptJSON, promptState string
+		if err := rows.Scan(&seq, &role, &payload, &promptJSON, &promptState); err != nil {
 			return projectedRows{},
 				fmt.Errorf("memory: scan transcript row: %w", err)
 		}
 		out.Read++
 		out.OldestRawSeq = seq
+		// A row written since migration 026 carries the projection it was
+		// stored with; the decode below is the upgrade path for older rows.
+		if promptState != "" {
+			if promptState == summarytext.PromptSkip {
+				empty++
+				continue
+			}
+			// The two columns hold different shapes: prompt_json is a whole
+			// message (role + content), content_json is bare parts. Decoding
+			// content_json as a message yields an empty message with a role —
+			// which is how a transcript of blank turns reaches the provider.
+			if promptState == summarytext.PromptPlaceholder {
+				placeholders++
+			}
+			if promptJSON != "" {
+				var stored message.Message
+				if err := json.Unmarshal([]byte(promptJSON), &stored); err == nil {
+					if stored.Role == "" {
+						stored.Role = message.Role(role)
+					}
+					out.Messages = append(out.Messages, summary.StoredMessage{
+						Seq:     seq,
+						Role:    stored.Role,
+						Content: stored.Content,
+					})
+					continue
+				}
+			} else {
+				// No second copy: the projection is identical to the content,
+				// so the content *is* the prompt form.
+				var content message.Content
+				if err := json.Unmarshal([]byte(payload), &content); err == nil {
+					out.Messages = append(out.Messages, summary.StoredMessage{
+						Seq:     seq,
+						Role:    message.Role(role),
+						Content: content,
+					})
+					continue
+				}
+			}
+			// Fall through to the content projection: a prompt form that
+			// does not decode is treated like a row written before the
+			// column existed, not like a skipped row.
+		}
 		var content message.Content
 		if err := json.Unmarshal([]byte(payload), &content); err != nil {
 			// Canonical content carries at least one valid part, so a
@@ -260,7 +314,7 @@ func (a *sqliteTurnStore) LoadAfter(
 	ctx context.Context, conversationID string, afterSeq int64,
 ) ([]summary.StoredMessage, error) {
 	rows, err := a.db.SQLDB().QueryContext(ctx, `
-		SELECT m.seq, m.role, m.content_json
+		SELECT m.seq, m.role, m.content_json, m.prompt_json, m.prompt_state
 		FROM archive_messages m
 		WHERE m.conversation_id = ? AND m.role != 'system' AND m.seq > ?
 		ORDER BY m.seq`, conversationID, afterSeq)
@@ -276,236 +330,4 @@ func (a *sqliteTurnStore) LoadAfter(
 		return nil, err
 	}
 	return projected.Messages, nil
-}
-
-// UpsertSummaryNode writes one fold node, unless its conversation is
-// gone: the insert is conditioned on the id still being that
-// conversation's (a summary describes a transcript, and a transcript
-// the user deleted has nothing left to describe). The condensation
-// that produces a node runs detached from the turn, so it can land
-// after a delete; without the condition it would rebuild a node that
-// DeleteConversationRows had just removed, and the next assembly would
-// pack a summary of deleted content into the model window.
-func (a *sqliteTurnStore) UpsertSummaryNode(
-	ctx context.Context, node summary.SummaryNode,
-) error {
-	parents, err := json.Marshal(node.ParentIDs)
-	if err != nil {
-		return fmt.Errorf("memory: marshal summary parents: %w", err)
-	}
-	sources, err := json.Marshal(node.SourceIDs)
-	if err != nil {
-		return fmt.Errorf("memory: marshal summary sources: %w", err)
-	}
-	metadata, err := json.Marshal(node.Metadata)
-	if err != nil {
-		return fmt.Errorf("memory: marshal summary metadata: %w", err)
-	}
-	content, err := json.Marshal(node.Content)
-	if err != nil {
-		return fmt.Errorf("memory: marshal summary content: %w", err)
-	}
-	res, err := a.db.SQLDB().ExecContext(ctx, `
-		INSERT INTO summary_nodes(
-			id, thread_id, level, parent_ids, source_ids, summary,
-			created_at, updated_at, metadata
-		)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
-		WHERE EXISTS (
-			SELECT 1 FROM conversations WHERE id = ?
-		) AND NOT EXISTS (
-			SELECT 1 FROM deleted_conversations WHERE id = ?
-		)
-		ON CONFLICT(id) DO UPDATE SET
-			parent_ids = excluded.parent_ids,
-			source_ids = excluded.source_ids,
-			summary = excluded.summary,
-			created_at = excluded.created_at,
-			updated_at = excluded.updated_at,
-			metadata = excluded.metadata`,
-		node.ID, node.ThreadID, node.Level,
-		string(parents), string(sources), string(content),
-		node.CreatedAt.UTC().Format(time.RFC3339Nano),
-		node.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		string(metadata), node.ThreadID, node.ThreadID,
-	)
-	if err != nil {
-		return fmt.Errorf("memory: upsert summary node: %w", err)
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("memory: upsert summary node: %w", err)
-	}
-	if affected == 0 {
-		// The conversation is gone: deleted while the fold (or its
-		// detached condensation) was in flight, or a thread id this
-		// store keeps no row for. Nothing to write to, and the node
-		// must not appear: report success, the way the usage writers
-		// treat a write that arrives after the delete.
-		telemetry.Info(ctx,
-			"memory: summary write skipped; conversation is gone",
-			attribute.String("conversation.id", node.ThreadID),
-			attribute.String("node.id", node.ID))
-	}
-	return nil
-}
-
-// CondenseSummaryNode replaces the stored copy of want with replacement
-// while the row still holds want exactly — same content, same coverage,
-// same update time — as one statement. ok=false means a newer fold (or
-// an earlier condensation) landed first: the caller drops the
-// replacement instead of rolling the stored window back. A conversation
-// deleted while the generation ran removes the row too, which reads the
-// same way, and a plain UPDATE can never resurrect it.
-func (a *sqliteTurnStore) CondenseSummaryNode(
-	ctx context.Context, want, replacement summary.SummaryNode,
-) (bool, error) {
-	wantSources, err := json.Marshal(want.SourceIDs)
-	if err != nil {
-		return false, fmt.Errorf("memory: marshal summary sources: %w", err)
-	}
-	wantContent, err := json.Marshal(want.Content)
-	if err != nil {
-		return false, fmt.Errorf("memory: marshal summary content: %w", err)
-	}
-	parents, err := json.Marshal(replacement.ParentIDs)
-	if err != nil {
-		return false, fmt.Errorf("memory: marshal summary parents: %w", err)
-	}
-	sources, err := json.Marshal(replacement.SourceIDs)
-	if err != nil {
-		return false, fmt.Errorf("memory: marshal summary sources: %w", err)
-	}
-	metadata, err := json.Marshal(replacement.Metadata)
-	if err != nil {
-		return false, fmt.Errorf("memory: marshal summary metadata: %w", err)
-	}
-	content, err := json.Marshal(replacement.Content)
-	if err != nil {
-		return false, fmt.Errorf("memory: marshal summary content: %w", err)
-	}
-	res, err := a.db.SQLDB().ExecContext(ctx, `
-		UPDATE summary_nodes SET
-			parent_ids = ?, source_ids = ?, summary = ?, created_at = ?, updated_at = ?, metadata = ?
-		WHERE id = ? AND thread_id = ?
-			AND source_ids = ? AND summary = ? AND updated_at = ?`,
-		string(parents), string(sources), string(content),
-		replacement.CreatedAt.UTC().Format(time.RFC3339Nano),
-		replacement.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		string(metadata),
-		replacement.ID, replacement.ThreadID,
-		string(wantSources), string(wantContent),
-		want.UpdatedAt.UTC().Format(time.RFC3339Nano),
-	)
-	if err != nil {
-		return false, fmt.Errorf("memory: condense summary node: %w", err)
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("memory: condense summary node: %w", err)
-	}
-	if affected == 0 {
-		telemetry.Info(ctx,
-			"memory: condensation write skipped; the buffer moved on or the conversation is gone",
-			attribute.String("conversation.id", replacement.ThreadID),
-			attribute.String("node.id", replacement.ID))
-		return false, nil
-	}
-	return true, nil
-}
-
-func (a *sqliteTurnStore) ListSummaryNodes(
-	ctx context.Context, conversationID string,
-) ([]summary.SummaryNode, error) {
-	rows, err := a.db.SQLDB().QueryContext(ctx, `
-		SELECT id, thread_id, level, parent_ids, source_ids, summary,
-			created_at, updated_at, metadata
-		FROM summary_nodes WHERE thread_id = ? ORDER BY level, created_at`,
-		conversationID)
-	if err != nil {
-		return nil, fmt.Errorf("memory: list summary nodes: %w", err)
-	}
-	defer func() {
-		telemetry.WarnErr(ctx, "memory: close summary rows failed", rows.Close())
-	}()
-	var nodes []summary.SummaryNode
-	for rows.Next() {
-		var n summary.SummaryNode
-		var parents, sources, content, createdAt, updatedAt, metadata string
-		if err := rows.Scan(&n.ID, &n.ThreadID, &n.Level, &parents, &sources,
-			&content, &createdAt, &updatedAt, &metadata); err != nil {
-			return nil, fmt.Errorf("memory: scan summary node: %w", err)
-		}
-		if err := json.Unmarshal([]byte(parents), &n.ParentIDs); err != nil {
-			telemetry.WarnErr(ctx, "memory: decode summary parents failed", err,
-				attribute.String("conversation.id", conversationID))
-		}
-		if err := json.Unmarshal([]byte(sources), &n.SourceIDs); err != nil {
-			telemetry.WarnErr(ctx, "memory: decode summary sources failed", err,
-				attribute.String("conversation.id", conversationID))
-		}
-		if err := json.Unmarshal([]byte(content), &n.Content); err != nil {
-			telemetry.WarnErr(ctx, "memory: decode summary content failed", err,
-				attribute.String("conversation.id", conversationID))
-		}
-		if err := json.Unmarshal([]byte(metadata), &n.Metadata); err != nil {
-			telemetry.WarnErr(ctx, "memory: decode summary metadata failed", err,
-				attribute.String("conversation.id", conversationID))
-		}
-		var timeErr error
-		n.CreatedAt, timeErr = time.Parse(time.RFC3339Nano, createdAt)
-		if timeErr != nil {
-			telemetry.WarnErr(ctx, "memory: parse summary created time failed",
-				timeErr, attribute.String("conversation.id", conversationID))
-		}
-		n.UpdatedAt, timeErr = time.Parse(time.RFC3339Nano, updatedAt)
-		if timeErr != nil {
-			telemetry.WarnErr(ctx, "memory: parse summary updated time failed",
-				timeErr, attribute.String("conversation.id", conversationID))
-		}
-		nodes = append(nodes, n)
-	}
-	return nodes, rows.Err()
-}
-
-func (a *sqliteTurnStore) DeleteSummaryNodes(
-	ctx context.Context, conversationID string, level int, keepID string,
-) error {
-	_, err := a.db.SQLDB().ExecContext(ctx, `
-		DELETE FROM summary_nodes
-		WHERE thread_id = ? AND level = ? AND id != ?`,
-		conversationID, level, keepID)
-	if err != nil {
-		return fmt.Errorf("memory: delete summary nodes: %w", err)
-	}
-	return nil
-}
-
-// DeleteSummaryNodesByID removes the named nodes, which is how coverage
-// written in another identity generation is retired.
-func (a *sqliteTurnStore) DeleteSummaryNodesByID(
-	ctx context.Context, conversationID string, ids []string,
-) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	placeholders := make([]byte, 0, len(ids)*2)
-	for i := range ids {
-		if i > 0 {
-			placeholders = append(placeholders, ',')
-		}
-		placeholders = append(placeholders, '?')
-	}
-	args := make([]any, 0, len(ids)+1)
-	args = append(args, conversationID)
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	_, err := a.db.SQLDB().ExecContext(ctx, `
-		DELETE FROM summary_nodes
-		WHERE thread_id = ? AND id IN (`+string(placeholders)+`)`, args...)
-	if err != nil {
-		return fmt.Errorf("memory: delete summary nodes by id: %w", err)
-	}
-	return nil
 }

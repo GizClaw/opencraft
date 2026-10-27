@@ -53,15 +53,6 @@ const pluginInferenceState = {
   ],
 };
 
-// The memory tab's three sections, so a test can open the tab and edit a
-// draft without a card failing to load.
-const memorySettings = {
-  max_raw_messages: 36,
-  preserve_recent: 4,
-  max_summary_bytes: 4096,
-  replay_full_history: false,
-};
-
 const memoryState = {
   enabled: true,
   inject_max_items: 12,
@@ -205,8 +196,6 @@ const apiMock = vi.hoisted(() => {
       models: catalogModels,
     })),
     saveInstances: vi.fn(async () => undefined),
-    memoryConfig: vi.fn(async () => memorySettings),
-    saveMemory: vi.fn(async () => undefined),
     userMemoryState: vi.fn(async () => memoryState),
     memoryFacts: vi.fn(async () => []),
     reviewSettings: vi.fn(async () => reviewState),
@@ -810,29 +799,6 @@ describe('ConfigPage inference', () => {
     expect(screen.getByText('No matching models.')).toBeInTheDocument();
     const triggers = screen.getAllByLabelText('Fill from built-in models');
     expect(triggers).toHaveLength(2);
-  });
-});
-
-describe('ConfigPage memory', () => {
-  it('keeps an unsaved draft when the tab is left and re-entered', async () => {
-    useStore.setState({ configTab: 'memory' });
-    render(<ConfigPage />);
-
-    const raw = await screen.findByLabelText('Raw window');
-    expect(raw).toHaveValue(36);
-
-    // An edit nobody saved: the card's bar says there is a draft.
-    fireEvent.change(raw, { target: { value: '12' } });
-    expect(await screen.findByText('Unsaved changes')).toBeInTheDocument();
-
-    // Coming back to the tab used to reload the form from the server,
-    // which replaced the draft and reset the baseline the bar compares it
-    // against.
-    fireEvent.click(screen.getByRole('tab', { name: 'Interface' }));
-    fireEvent.click(screen.getByRole('tab', { name: 'Memory' }));
-
-    expect(await screen.findByLabelText('Raw window')).toHaveValue(12);
-    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
   });
 });
 

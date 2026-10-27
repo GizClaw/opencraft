@@ -19,6 +19,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/agents"
 	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
+	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -110,11 +111,11 @@ func (compactSourceFactory) New(_ context.Context, in resource.Input) (toolList,
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	router, err := depRouter.Get(in)
-	if err != nil {
-		return nil, err
-	}
 	store, err := depSessions.Get(in)
+	if err != nil {
+		return toolList{}, err
+	}
+	router, err := depRouter.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +125,7 @@ func (compactSourceFactory) New(_ context.Context, in resource.Input) (toolList,
 	} else if ok {
 		observer = obs.ReportUsage
 	}
-	return toolList{compact.New(router, store, observer)}, nil
+	return toolList{compact.New(router, observer, transcriptRows{store: store})}, nil
 }
 
 // execSourceFactory contributes the sandbox-backed exec tools.
@@ -613,4 +614,15 @@ func (agentlifecycleSourceFactory) New(_ context.Context, in resource.Input) (to
 		return nil, err
 	}
 	return toolList(agents.MustNew(lifecycle).Tools()), nil
+}
+
+// transcriptRows adapts the workspace session store to the fold tool's reader:
+// the tool names a range and reads the rows behind it instead of receiving the
+// conversation as an argument.
+type transcriptRows struct{ store *sessions.Store }
+
+func (r transcriptRows) LoadAfter(
+	ctx context.Context, conversationID string, afterSeq int64,
+) ([]summary.StoredMessage, error) {
+	return opmemory.RowsAfter(ctx, r.store.Database(), conversationID, afterSeq)
 }

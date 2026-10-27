@@ -58,7 +58,6 @@ import type {
   InferenceRequest,
   MCPServer,
   MCPStatus,
-  MemorySettings,
   MemoryFact,
   MemoryFactRequest,
   ReviewAcceptResult,
@@ -442,14 +441,9 @@ export const api = {
     Settings.RenderSkillPatch(name, patch) as unknown as Promise<
       PatchFileDTO[]
     >,
-  memoryConfig: () => Config.MemoryConfig() as Promise<MemorySettings>,
-  saveMemory: (s: MemorySettings) =>
-    settingsSave(() =>
-      Config.SaveMemory(s as unknown as genConfig.MemorySettings),
-    ),
-  // userMemory is the user-level long-term memory (facts that outlive a
-  // session), as opposed to memoryConfig above, which tunes how the
-  // conversation history of the current session is folded.
+  // userMemory is the user-level long-term memory: facts that outlive a
+  // session. (How the current session's history is folded is not a setting:
+  // the graph's compact node decides it from the measured budget.)
   userMemoryState: () =>
     Config.UserMemoryState() as unknown as Promise<UserMemoryState>,
   memoryFacts: () => Config.MemoryFacts() as unknown as Promise<MemoryFact[]>,

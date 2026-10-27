@@ -23,7 +23,7 @@ func seedPurgeWorkspace(t *testing.T) *db.DB {
 	if err := handle.Migrate(ctx, workspaceMigrations()); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
-	// The step that drops summary_nodes' foreign key to the dropped
+	// The step that dropped summary_nodes' foreign key to the dropped
 	// threads table (012). A database old enough to hold the rows this
 	// purge looks for has run it, and the summary fixture below needs
 	// the table to accept a row.
@@ -41,11 +41,6 @@ func seedPurgeWorkspace(t *testing.T) *db.DB {
 		`INSERT INTO conversation_state
 			(conversation_id, name, value_json, updated_at)
 		 VALUES ('s-resurrected', 'plan', '{}', '2026-09-01T00:00:00Z')`,
-		`INSERT INTO summary_nodes
-			(id, thread_id, level, parent_ids, source_ids, summary,
-			 created_at, updated_at, metadata)
-		 VALUES ('node-1', 's-resurrected', 0, '[]', '[]', 'stale summary',
-			'2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', '{}')`,
 		// Zero turns and usage, but the row carries a title: a start
 		// that seeded one, which a run could still be writing to.
 		`INSERT INTO conversations
@@ -125,7 +120,6 @@ func TestWorkspaceSchemaPurgesConversationsAnOlderBuildResurrected(t *testing.T)
 	for _, tc := range []struct{ name, query string }{
 		{"conversation", `SELECT COUNT(*) FROM conversations WHERE id = ?`},
 		{"state", `SELECT COUNT(*) FROM conversation_state WHERE conversation_id = ?`},
-		{"summary", `SELECT COUNT(*) FROM summary_nodes WHERE thread_id = ?`},
 	} {
 		if n := countRows(t, handle, tc.query, "s-resurrected"); n != 0 {
 			t.Errorf("s-resurrected %s rows after the purge = %d, want 0", tc.name, n)

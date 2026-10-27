@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -32,7 +33,17 @@ var assets embed.FS
 //go:embed build/appicon.png
 var trayIcon []byte
 
+// heapCeiling is the soft ceiling this process plans to stay under. It does not
+// cap allocations — they are still served past it — it tells the collector when
+// to start working, which is what keeps a desktop app that stays open for hours
+// from growing to twice the live heap and staying there.
+const heapCeiling = 1 << 30
+
 func main() {
+	// Before any GUI machinery: the shell, the webview bridge and the replay
+	// path all allocate from here.
+	debug.SetMemoryLimit(heapCeiling)
+
 	// execd is the internal self-forked sandbox child. It must be handled
 	// before any GUI machinery starts.
 	if len(os.Args) > 1 && os.Args[1] == "execd" {

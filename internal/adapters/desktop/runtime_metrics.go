@@ -77,6 +77,9 @@ func (d *Desktop) sampleRuntimeMetrics() {
 	// and moves slowly.
 	if d.runtimeMetricTicks%procMetricEvery == 0 {
 		samples = append(samples, procSamples(now)...)
+		// Same cadence as the family reading: the pages a fold or a replay
+		// peak left behind are returned once the heap is mostly idle again.
+		returnIdleHeap()
 	}
 	d.runtimeMetricTicks++
 	if err := store.RecordBatch(ctx, samples); err != nil {

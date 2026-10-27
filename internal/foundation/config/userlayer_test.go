@@ -43,9 +43,6 @@ func TestUserLayerWritersLeaveNoEmptySettings(t *testing.T) {
 		{"web search", func(dir string) error {
 			return SaveWebSearch(dir, WebSearchSettings{})
 		}},
-		{"memory", func(dir string) error {
-			return WriteMemory(dir, MemorySettings{})
-		}},
 		{"tool options", func(dir string) error {
 			return SaveToolOptions(dir, ToolOptions{}, nil)
 		}},

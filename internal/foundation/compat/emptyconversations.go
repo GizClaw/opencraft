@@ -84,7 +84,6 @@ func purgeEmptyConversations(ctx context.Context, handle *db.DB) error {
 			{"archive_messages", "conversation_id"},
 			{"archive_turns", "conversation_id"},
 			{"conversation_state", "conversation_id"},
-			{"summary_nodes", "thread_id"},
 			{"message_fts", "conversation_id"},
 			{"conversations", "id"},
 		} {

@@ -44,7 +44,6 @@ import { PerfProbeCard } from './PerfProbeCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { TelemetryExportCard } from './TelemetryExportCard';
 import { ToolsSection } from './ToolsSection';
-import { MemoryContextCard } from './MemoryContextCard';
 import { UserMemoryCard } from './UserMemoryCard';
 import { DelegationCard } from './DelegationCard';
 import { WebSearchSection } from './WebSearchSection';
@@ -55,7 +54,6 @@ import type {
   InferenceCatalogModel,
   InferenceCatalogTemplate,
   InstanceSpec,
-  MemorySettings,
   ModelSpec,
   ModelUsageStat,
   PolicyDecision,
@@ -171,18 +169,6 @@ function effortMapComplete(m: RowModel): boolean {
 
 function limitToRow(v: number | undefined): number | '' {
   return v === undefined || !Number.isFinite(v) || v <= 0 ? '' : v;
-}
-
-// sameMemorySettings compares the fold knobs the memory card's save bar
-// watches: four scalars, so equality is spelled out instead of
-// stringified.
-function sameMemorySettings(a: MemorySettings, b: MemorySettings): boolean {
-  return (
-    a.max_raw_messages === b.max_raw_messages &&
-    a.preserve_recent === b.preserve_recent &&
-    a.max_summary_bytes === b.max_summary_bytes &&
-    a.replay_full_history === b.replay_full_history
-  );
 }
 
 // modelLifecyclePayload renders one row's discovery metadata, dropping
@@ -580,25 +566,6 @@ export function ConfigPage() {
   // attempt and the approval prompt.
   const [escalatedRules, setEscalatedRules] = useState<string[]>([]);
   const [escalatedInput, setEscalatedInput] = useState('');
-  // Placeholder until the load lands; it mirrors the shipped defaults so
-  // the card cannot flash the opposite of what it is about to show.
-  const [memory, setMemory] = useState<MemorySettings>({
-    max_raw_messages: 36,
-    preserve_recent: 4,
-    max_summary_bytes: 4096,
-    replay_full_history: true,
-  });
-  const [memorySaving, setMemorySaving] = useState(false);
-  const [memorySaved, setMemorySaved] = useState(false);
-  // The values the memory card's save bar compares its drafts against:
-  // loaded with the form and updated on every successful save, so the bar
-  // cannot claim "unsaved" before the user has touched anything.
-  const [memoryBase, setMemoryBase] = useState<MemorySettings | null>(null);
-  // The memory draft versus the values the last load or save put there.
-  // The card's save bar and the memory tab's fetch read the same fact, so
-  // a refetch can never land on an unsaved draft.
-  const memoryDirty =
-    memoryBase !== null && !sameMemorySettings(memory, memoryBase);
   const [diag, setDiag] = useState<DiagnosticsReport | null>(null);
   const [probe, setProbe] = useState<SandboxProbeResult | null>(null);
   const [policyInput, setPolicyInput] = useState('');
@@ -740,22 +707,6 @@ export function ConfigPage() {
   }, [tab]);
 
   useEffect(() => {
-    if (tab !== 'memory') return;
-    void api
-      .memoryConfig()
-      .then((next) => {
-        // An unsaved draft wins over the fetch: re-entering the tab used
-        // to reload the form and the baseline it is compared against, so
-        // the edits on screen vanished and the bar stopped saying there
-        // were any.
-        if (memoryDirty) return;
-        setMemory(next);
-        setMemoryBase(next);
-      })
-      .catch((err) => setError(String(err)));
-  }, [tab, memoryDirty]);
-
-  useEffect(() => {
     if (tab !== 'diagnostics') return;
     void api
       .diagnostics()
@@ -821,27 +772,8 @@ export function ConfigPage() {
     }
   };
 
-  const saveMemory = async () => {
-    setMemorySaving(true);
-    try {
-      await api.saveMemory(memory);
-      setError('');
-      setMemorySaved(true);
-      setMemoryBase(memory);
-    } catch (err) {
-      setMemorySaved(false);
-      setError(String(err));
-    } finally {
-      setMemorySaving(false);
-    }
-  };
-
   // Any edit invalidates the saved check, so the bar never claims the
   // form on screen is what the runtime is using.
-  const editMemory = (patch: Partial<MemorySettings>) => {
-    setMemory((m) => ({ ...m, ...patch }));
-    setMemorySaved(false);
-  };
 
   useEffect(() => {
     if (tab !== 'usage') return;
@@ -2770,21 +2702,6 @@ export function ConfigPage() {
 
           {tab === 'memory' && (
             <div className="space-y-4">
-              {/* The settings-search anchor (`memory-context`): how much
-                  of the conversation reaches the model verbatim, and when
-                  the older turns fold into a summary. */}
-              <div id="settings-memory-context" className="scroll-mt-4">
-                <MemoryContextCard
-                  settings={memory}
-                  onChange={editMemory}
-                  saved={memorySaved}
-                  dirty={memoryDirty}
-                  saving={memorySaving}
-                  error={error}
-                  onSave={() => void saveMemory()}
-                />
-              </div>
-
               {/* User-level long-term memory and the pending review queue.
                   The first id is the settings-search anchor (`memory-facts`); the
                   queue carries its own (`memory-suggestions`). */}

@@ -74,7 +74,7 @@ func benchBoard(b *testing.B) *agent.Board {
 func benchEnv(ctx context.Context, board *agent.Board) *agent.ScriptEnv {
 	_, bridge := bindings.NewBoardBridge(board)(ctx)
 	return &agent.ScriptEnv{
-		Config: map[string]any{"preserve_recent": 10},
+		Config: map[string]any{"retain_ratio": 0.16},
 		Bindings: map[string]any{
 			"board": bridge,
 			"run": map[string]any{

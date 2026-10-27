@@ -45,8 +45,22 @@
 // memory hooks, the context meter and the fold tool budget with. Only the
 // fold crosses back into Go, as the compact tool call below.
 var cfg = config || {};
-var PRESERVE = cfg.preserve_recent || 10;
+// Retention is a token budget, not a message count: what survives a fold is
+// the newest slice the budget pays for, so a conversation of short turns keeps
+// more messages than one of long tool-heavy ones. The budget is a fraction of
+// the routed model window (or an absolute retain_tokens), which is how the
+// harness this strategy follows expresses it; a message count pretended every
+// round costs the same.
+var RETAIN_RATIO = cfg.retain_ratio != null ? cfg.retain_ratio : 0.16;
+var RETAIN_TOKENS = cfg.retain_tokens || 0;
+// Floor for the retained tail: folding away the round that was just answered
+// would leave the model a summary and nothing to continue from.
+var MIN_KEEP = cfg.min_keep_messages || 2;
 var BUDGET = cfg.budget_chars || 4096;
+// SUMMARY_PREFIX mirrors summarytext.SummaryPrefix: the marker line the replay
+// puts in front of a fold's summary.
+var SUMMARY_PREFIX =
+  "Another language model started to solve this problem and produced a summary of its thinking process.";
 var RATIO = cfg.threshold_ratio || 0.85;
 // Consecutive failed folds before folding stops for the turn. A failure
 // costs a summarization call and tells us nothing about the next attempt,
@@ -374,6 +388,18 @@ if (board.getVar("world.compact.pending")) {
     board.setChannel(board.MAIN_CHANNEL, rebuilt);
     board.setVar("world.compact.summary_text", messageText(patch.message));
     board.setVar("world.compact.failed_end", -1);
+    // Record the fold as a fact about the transcript, not just about this
+    // turn's channel: the range it replaced, in transcript rows. A later
+    // turn replays the summary plus the content outside that range instead
+    // of replaying the whole transcript and folding it again.
+    //
+    // Best effort: a deployment without the bridge (an older harness) keeps
+    // the in-turn-only behaviour, which is what it had before.
+    try {
+      ocworld.markFold(foldStart, foldEnd, messageText(patch.message));
+    } catch (e) {
+      // Nothing to do: the fold itself already landed below.
+    }
     // The ask's index moves down with the messages that just left: the
     // next fold must still find it where it now sits.
     var shiftedAsk = Number(board.getVar("world.compact.turn_start") || -1);
@@ -432,13 +458,45 @@ if (board.getVar("world.compact.turn_start_seeded") !== true) {
 }
 if (turnStart < count) turnStart = count;
 
+// retainTail returns the index that starts the retained verbatim tail. Sizing
+// is the same estimate the trigger uses, so "what stays" is measured in the
+// currency the budget is expressed in. The proportional split costs one
+// estimate call; the correction loop is bounded and only runs when the estimate
+// disagrees with the budget.
+function retainTail(start, len) {
+  var budget = RETAIN_TOKENS;
+  if (budget <= 0 && maxTokens > 0) {
+    budget = Math.floor(maxTokens * RETAIN_RATIO);
+  }
+  var span = len - start;
+  if (budget <= 0 || span <= MIN_KEEP) {
+    return Math.max(start, len - MIN_KEEP);
+  }
+  var total = estimateTokens(start);
+  var keep = total > 0 ? Math.round(span * Math.min(1, budget / total)) : span;
+  keep = Math.max(MIN_KEEP, Math.min(span, keep));
+  for (var i = 0; i < 4; i++) {
+    var cost = estimateTokens(Math.max(start, len - keep));
+    if (cost > budget && keep > MIN_KEEP) {
+      keep = Math.max(MIN_KEEP, Math.floor(keep * 0.75));
+      continue;
+    }
+    if (cost < budget * 0.6 && keep < span) {
+      keep = Math.min(span, Math.floor(keep * 1.2) + 1);
+      continue;
+    }
+    break;
+  }
+  return Math.max(start, len - keep);
+}
+
 // The boundary is about messages, not counts: project the channel only on
 // the rounds that can fold.
 if (shouldCompact) {
   var foldStart = count;
   if (turnStart === foldStart) foldStart = count + 1;
   var msgs = messages();
-  var foldEnd = Math.max(foldStart, len - PRESERVE);
+  var foldEnd = retainTail(foldStart, len);
   if (turnStart > foldStart && turnStart < foldEnd) {
     // Fold everything before the user message first; later rounds may
     // fold what follows it.
@@ -467,15 +525,29 @@ if (shouldCompact) {
 }
 
 if (shouldCompact) {
-  var fold = messages().slice(foldStart, foldEnd);
-  if (fold.length > 0) {
+  if (foldEnd > foldStart) {
+    // The tool reads the rows itself: naming the range keeps the conversation
+    // off the tool-call payload (thousands of messages of JSON on a long
+    // session, marshalled and parsed on every fold).
+    var range = ocworld.foldSeq(foldStart, foldEnd);
+    // The summary an earlier fold left is no longer among the rows, so the
+    // node passes its text along: it is the first replayed message carrying
+    // the Go marker.
+    var prevSummary = "";
+    for (var p = 0; p < foldStart; p++) {
+      var head = messageText(msgs[p]);
+      if (head.indexOf(SUMMARY_PREFIX) === 0) {
+        prevSummary = head.slice(SUMMARY_PREFIX.length + 1);
+        break;
+      }
+    }
     var args = {
-      conversation: fold.map(function (m) {
-        return { role: m.role, content: m.content };
-      }),
-      budget_chars: BUDGET,
-      conversation_id: run.get_context_id()
+      conversation_id: run.get_context_id(),
+      from_seq: range.from,
+      to_seq: range.to,
+      budget_chars: BUDGET
     };
+    if (prevSummary) args.prev_summary = prevSummary;
     board.appendChannel(board.MAIN_CHANNEL, {
       role: "assistant",
       content: {

@@ -93,7 +93,10 @@ function runNode(board: unknown, maxInputTokens = 1): void {
   // the stop conditions themselves). This file pins the fold geometry, so
   // it sets the budget explicitly instead of riding the defaults.
   const config = {
-    preserve_recent: 2,
+    // The retained tail is a token budget with a floor; a budget of one token
+    // can only pay for the floor, which is what these fixtures pin.
+    retain_tokens: 1,
+    min_keep_messages: 2,
     max_consecutive_failures: 3,
     max_folds_per_turn: 3,
     budget_chars: 4096,
@@ -114,13 +117,22 @@ function runNode(board: unknown, maxInputTokens = 1): void {
           .slice(from),
       ),
   };
-  new Function('board', 'config', 'run', 'inference', 'occompact', source)(
-    board,
-    config,
-    run,
-    inference,
-    occompact,
-  );
+  // The node names the row range it folds instead of shipping the
+  // conversation: ocworld.foldSeq maps channel positions onto transcript seqs
+  // (in production, the replay pairing). These fixtures record no fold, so a
+  // channel position is its own row, one-based.
+  const ocworld = {
+    foldSeq: (start: number, end: number) => ({ from: start + 1, to: end }),
+  };
+  new Function(
+    'board',
+    'config',
+    'run',
+    'inference',
+    'occompact',
+    'ocworld',
+    source,
+  )(board, config, run, inference, occompact, ocworld);
 }
 
 /** Appends the compact tool result the tools node would have written. */

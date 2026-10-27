@@ -60,33 +60,12 @@ func (Factory) Spec() resource.Spec {
 		Impl: "summary",
 		Deps: []resource.Requirement{
 			depMemSessions.Spec(),
-			// Optional: the inference router. LLM condensation goes
-			// through it so the compaction model follows the
-			// user-editable routing policy; absent deployments stay
-			// buffer-fold only.
+			// Optional: the inference router. Retained while the graph's
+			// compact tool is the only summarizer: it is how a deployment
+			// names the model that folds.
 			depMemRouter.Spec(), depMemObserver.Spec(),
 		},
 	}
-}
-
-type policySettings struct {
-	MaxRawMessages  int `json:"max_raw_messages,omitempty"`
-	PreserveRecent  int `json:"preserve_recent,omitempty"`
-	MaxSummaryBytes int `json:"max_summary_bytes,omitempty"`
-	// ReplayFullHistory is a pointer so a settings document that omits
-	// the switch gets the shipped default instead of Go's zero value.
-	ReplayFullHistory *bool `json:"replay_full_history,omitempty"`
-}
-
-// replayFullHistory is the policy's switch, on unless a deployment says
-// otherwise. The default lives here and not only in the embedded deploy
-// document: a custom deployment, a test fixture and a user layer that
-// predates the switch all have to land on the same behaviour.
-func (p policySettings) replayFullHistory() bool {
-	if p.ReplayFullHistory == nil {
-		return true
-	}
-	return *p.ReplayFullHistory
 }
 
 // New builds the summary Assembly over the SQLite adapter.
@@ -95,18 +74,7 @@ func (Factory) New(ctx context.Context, in resource.Input) (*summary.Assembly, e
 	if err != nil {
 		return nil, err
 	}
-	policy, err := resource.DecodeTyped[policySettings](ctx, in.Settings)
-	if err != nil {
-		return nil, err
-	}
-	opts := []summary.AssemblyOption{
-		summary.WithAssemblyPolicy(summary.Policy{
-			MaxRawMessages:  policy.MaxRawMessages,
-			PreserveRecent:  policy.PreserveRecent,
-			MaxSummaryBytes: policy.MaxSummaryBytes,
-		}),
-		summary.WithReplayFullHistory(policy.replayFullHistory()),
-	}
+	var opts []summary.AssemblyOption
 	if router, ok, err := depMemRouter.TryGet(in); err != nil {
 		return nil, err
 	} else if ok {

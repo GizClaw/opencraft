@@ -11,6 +11,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
 // Conversation is the SQLite-backed session index row. It replaces the
@@ -578,12 +580,41 @@ func (s *Store) CommitConversationTurn(
 		if err != nil {
 			return fmt.Errorf("state: marshal archive message: %w", err)
 		}
+		// The row's prompt form is derived once, here, instead of on every
+		// read: the replay projects the whole transcript, and decoding plus
+		// re-rendering every row each time was the largest cost on that path.
+		projected, promptState := summarytext.ProjectRow(
+			message.Role(msgs[i].Role), msgs[i].Content)
+		// Only a projection that differs from the stored content is worth a
+		// second copy: for a plain text row the prompt form *is* the content,
+		// and duplicating it would double the archive to save a decode the
+		// reader can do just as well.
+		prompt := ""
+		if promptState != summarytext.PromptSkip {
+			// The comparison is against the *content*, not the message: the
+			// two columns hold different shapes (content_json is bare parts,
+			// prompt_json is a message), so comparing the marshalled message
+			// with the marshalled content never matches and every row would
+			// carry a second copy.
+			projectedContent, err := json.Marshal(projected.Content)
+			if err != nil {
+				return fmt.Errorf("state: marshal prompt content: %w", err)
+			}
+			if string(projectedContent) != string(content) {
+				raw, err := json.Marshal(projected)
+				if err != nil {
+					return fmt.Errorf("state: marshal prompt projection: %w", err)
+				}
+				prompt = string(raw)
+			}
+		}
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO archive_messages(
-				conversation_id, turn_id, seq, role, content_json, created_at
-			) VALUES (?, ?, ?, ?, ?, ?)`,
+				conversation_id, turn_id, seq, role, content_json,
+				prompt_json, prompt_state, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			c.ID, turnID, msgs[i].Seq, msgs[i].Role,
-			string(content),
+			string(content), prompt, promptState,
 			msgs[i].CreatedAt.UTC().Format(time.RFC3339Nano),
 		)
 		if err != nil {
@@ -1037,14 +1068,6 @@ func (s *Store) DeleteConversationRows(ctx context.Context, id string) error {
 	} {
 		if _, err := tx.ExecContext(ctx, stmt, id); err != nil {
 			return fmt.Errorf("state: delete conversation %s: %w", id, err)
-		}
-	}
-	// The summary tree is derived from these rows and would outlive them
-	// (migration 020 retired the other derived copy, memory_items).
-	for _, table := range []string{"summary_nodes"} {
-		query := `DELETE FROM ` + table + ` WHERE thread_id = ?`
-		if err := execIfTableExists(ctx, tx, table, query, id); err != nil {
-			return fmt.Errorf("state: delete conversation %s memory: %w", id, err)
 		}
 	}
 	// The message search index (migration 016) mirrors archive_messages

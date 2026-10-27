@@ -35,7 +35,7 @@ func toolResultItem(callID, content string) memory.ContextItem {
 }
 
 func TestRawPairPreservesToolRoles(t *testing.T) {
-	secs := renderRawSections([]memory.ContextItem{
+	secs := normalizeRawItems([]memory.ContextItem{
 		toolCallItem("c1"),
 		toolResultItem("c1", "ok"),
 	})
@@ -53,7 +53,7 @@ func TestRawPairPreservesToolRoles(t *testing.T) {
 }
 
 func TestOrphanToolOutputDropped(t *testing.T) {
-	secs := renderRawSections([]memory.ContextItem{
+	secs := normalizeRawItems([]memory.ContextItem{
 		toolResultItem("missing", "ok"),
 	})
 	if len(secs) != 0 {
@@ -62,7 +62,7 @@ func TestOrphanToolOutputDropped(t *testing.T) {
 }
 
 func TestCallWithoutResultGetsAbortedSynthetic(t *testing.T) {
-	secs := renderRawSections([]memory.ContextItem{
+	secs := normalizeRawItems([]memory.ContextItem{
 		toolCallItem("c3"),
 	})
 	if len(secs) != 2 {
@@ -92,7 +92,7 @@ func TestEmptyErrorResultBecomesAborted(t *testing.T) {
 			}},
 		}},
 	}
-	secs := renderRawSections([]memory.ContextItem{
+	secs := normalizeRawItems([]memory.ContextItem{
 		toolCallItem("c1"), item,
 	})
 	if len(secs) != 2 || secs[1].Role != message.RoleTool {
@@ -105,7 +105,7 @@ func TestEmptyErrorResultBecomesAborted(t *testing.T) {
 }
 
 func TestHistoryPairPreservesToolRoles(t *testing.T) {
-	hist := renderHistoryMessages([]memory.ContextItem{
+	hist := normalizeRawItems([]memory.ContextItem{
 		toolCallItem("c2"),
 		toolResultItem("c2", "ok"),
 	})
@@ -119,7 +119,7 @@ func TestHistoryPairPreservesToolRoles(t *testing.T) {
 }
 
 func TestPlainAssistantRawKeepsRole(t *testing.T) {
-	secs := renderRawSections([]memory.ContextItem{{
+	secs := normalizeRawItems([]memory.ContextItem{{
 		Kind:        memory.ContextRawMessage,
 		MessageRole: message.RoleAssistant,
 		Content: message.Content{Parts: []message.Part{

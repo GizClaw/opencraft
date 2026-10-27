@@ -193,15 +193,21 @@ func (s *Service) RenderTurn(
 	// AGENTS.md, folded memory, then the replayed conversation prefix.
 	// The per-turn plan / skills / extras split off into the tail block
 	// further down.
-	var summaries, raw []Section
-	// historyTokens is what the replayed transcript costs, in the same
-	// estimate the compaction node budgets with. Bounded mode replays
-	// its raw window as sections instead, so this stays zero there.
+	// The conversation reaches the model one way: the graph's world node
+	// prepends the replayed history right after the world sections, and the
+	// compact node folds it when the model window is exceeded. What the
+	// replay contains is "the summary a recorded fold left, then every row
+	// the fold did not touch" (see fold.go) — there is no mode that replays
+	// everything and no mode that replays a fixed number of messages; the
+	// fold is the only thing that decides what the model reads.
+	//
+	// The messages are handed over as they are (see pendingHistory): a board
+	// var would have to be a JSON string, and marshalling the transcript on
+	// one side of the world node to unmarshal it back on the other is two
+	// copies of it for a value nothing else reads.
 	historyTokens := 0
 	if s.memory != nil {
-		if rp, ok := s.memory.(interface {
-			ReplayFullHistory() bool
-		}); ok && rp.ReplayFullHistory() {
+		{
 			// Full-history replay: the graph's world node prepends the
 			// history right after the world sections, and the compact
 			// node owns folding when the model window is exceeded. The
@@ -210,17 +216,13 @@ func (s *Service) RenderTurn(
 			// the whole transcript on one side of the world node to
 			// unmarshal it back on the other is two copies of it for a
 			// value nothing else reads.
-			if history := s.replayHistory(ctx, id.ConversationID); len(history) > 0 {
+			if history, seqs := s.replayHistory(ctx, id.ConversationID); len(history) > 0 {
 				pendingHistory.put(board, history)
+				// The rows behind those messages, in the same order: the
+				// durable fold maps a channel range back to transcript rows
+				// through this pairing (see fold.go).
+				stashReplaySeqs(board, s.sessionStore, seqs)
 				historyTokens = summarytext.EstimateTokens(history)
-			}
-		} else {
-			for _, sec := range s.memorySections(ctx, id.ConversationID) {
-				if sec.ID == "memory_summary" {
-					summaries = append(summaries, sec)
-				} else {
-					raw = append(raw, sec)
-				}
 			}
 		}
 	}
@@ -237,9 +239,6 @@ func (s *Service) RenderTurn(
 	} else if memory.Content.Text() != "" {
 		sections = append(sections, memory)
 	}
-	sections = append(sections, summaries...)
-	sections = append(sections, raw...)
-
 	// Per-turn tail: everything that is expected to change between turns.
 	// It rides with the user's message (world.tail_block), not as channel
 	// messages of its own.
@@ -441,52 +440,6 @@ func mergeSkillLists(mentioned, ranked []skills.SkillMetadata) []skills.SkillMet
 	return out
 }
 
-// memorySections packs the memory assembly's context items into board
-// sections. The memory assembly is the single source of conversation
-// context: folded summaries render as one system section
-// (memory_summary), then the raw window messages render as individual
-// sections that keep their user/assistant role. The session archive is
-// deliberately NOT injected here: it is a durability store (resume
-// listing, usage, full transcript) and injecting it alongside memory
-// made every turn re-read the whole archive from disk just to duplicate
-// the raw window the memory assembly already returns. The raw window
-// (max_raw_messages + preserve_recent, 40 in the default deployment)
-// plus the folded summary cover exactly what the old history window
-// carried, so dropping the archive injection loses nothing.
-func (s *Service) memorySections(ctx context.Context, contextID string) []Section {
-	if s.memory == nil {
-		return nil
-	}
-	res, err := s.memory.Context(ctx, memory.ContextRequest{
-		Scope:          memory.Scope{RuntimeID: "opencraft"},
-		ConversationID: contextID,
-		Budget: memory.Budget{
-			MaxItems: s.opts.MemoryMaxItems,
-			MaxChars: s.opts.MemoryMaxChars,
-		},
-	})
-	if err != nil {
-		return nil
-	}
-	var raws []memory.ContextItem
-	sections := make([]Section, 0, len(res.Items))
-	for _, item := range res.Items {
-		switch item.Kind {
-		case memory.ContextSummary:
-			text := item.Content.Text()
-			if text == "" {
-				continue
-			}
-			sections = append(sections, newTextSection(
-				"memory_summary", message.RoleUser, text))
-		case memory.ContextRawMessage:
-			raws = append(raws, item)
-		}
-	}
-	sections = append(sections, renderRawSections(raws)...)
-	return sections
-}
-
 // replayHistory returns the full persisted conversation in
 // chronological order, preserving assistant tool_call / tool result
 // pairing where the stored messages are complete. An unlimited budget
@@ -495,14 +448,14 @@ func (s *Service) memorySections(ctx context.Context, contextID string) []Sectio
 func (s *Service) replayHistory(
 	ctx context.Context,
 	contextID string,
-) []message.Message {
+) ([]message.Message, []int64) {
 	res, err := s.memory.Context(ctx, memory.ContextRequest{
 		Scope:          memory.Scope{RuntimeID: "opencraft"},
 		ConversationID: contextID,
 		Budget:         memory.Budget{},
 	})
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var raws []memory.ContextItem
 	for _, item := range res.Items {
@@ -510,5 +463,14 @@ func (s *Service) replayHistory(
 			raws = append(raws, item)
 		}
 	}
-	return renderHistoryMessages(raws)
+	// A fold recorded on an earlier turn replaces the rows it covered with
+	// its summary (fold.go). This is what keeps the transcript from being
+	// replayed and folded again on every turn: the model reads the folded
+	// view, the archive keeps the rows.
+	raws = applyFold(ctx, s.sessionStore, contextID, raws)
+	// Older tool output is shortened in the view (see prune.go): the archive
+	// keeps every byte, and the window stays proportional to what the model is
+	// actually working with instead of to everything a tool ever printed.
+	raws = pruneOldToolResults(raws)
+	return normalizeRawItemsWithSeqs(raws)
 }

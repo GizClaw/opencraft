@@ -427,25 +427,6 @@ func (b *Config) ModelUsageSeries(
 	return out, nil
 }
 
-// MemoryConfig returns the effective memory settings.
-func (b *Config) MemoryConfig() (config.MemorySettings, error) {
-	return config.LoadMemory(b.core.UserDir)
-}
-
-// SaveMemory persists memory settings.
-func (b *Config) SaveMemory(settings config.MemorySettings) error {
-	if settings.MaxRawMessages < 0 ||
-		settings.PreserveRecent < 0 ||
-		settings.MaxSummaryBytes < 0 {
-		return errors.New("memory: settings must not be negative")
-	}
-	if err := config.WriteMemory(b.core.UserDir, settings); err != nil {
-		return err
-	}
-	return b.core.ApplyDocumentReload(host.WithAssemblyReason(
-		b.core.Shell.Context(), host.ReasonSettingsSave))
-}
-
 // SaveInstances persists inference instances and invalidates pooled
 // hosts so the next Acquire rebuilds from the new configuration.
 func (b *Config) SaveInstances(req InferenceRequest) error {
