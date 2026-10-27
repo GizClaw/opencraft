@@ -39,18 +39,6 @@ import (
 // (memory_items) was retired: a note is now visible to the model, and a
 // row that has no prompt form is reported rather than lost.
 
-// projectMessage returns the prompt projection of one stored message:
-// canonical parts, plus the rendered tool activity as a text part when the
-// message carries any. Tool calls and results are structured parts the
-// provider needs, and the appended text is what keeps them readable in a
-// projection that speaks text. The write path and the read path both go
-// through this function, so a message cannot be stored in one shape and
-// read back in another.
-func projectMessage(m message.Message) *message.Message {
-	rendered := summarytext.RenderPrompt(m)
-	return &rendered
-}
-
 // projection is one row's model-facing form plus what the read path had
 // to do to get there.
 type projection struct {
@@ -74,16 +62,13 @@ func projectRow(
 	role message.Role,
 	content message.Content,
 ) (projection, bool) {
-	projected := projectMessage(message.Message{Role: role, Content: content})
-	if text := projected.Content.Text(); text != "" {
-		return projection{Message: *projected}, true
-	}
-	placeholder := summarytext.PlaceholderFor(content)
-	if placeholder == "" {
+	projected, state := summarytext.ProjectRow(role, content)
+	switch state {
+	case summarytext.PromptSkip:
 		return projection{}, false
+	case summarytext.PromptPlaceholder:
+		return projection{Message: projected, Placeholder: true}, true
+	default:
+		return projection{Message: projected}, true
 	}
-	stub := message.Message{Role: role, Content: message.Content{
-		Parts: []message.Part{message.TextPart{Text: placeholder}},
-	}}
-	return projection{Message: stub, Placeholder: true}, true
 }

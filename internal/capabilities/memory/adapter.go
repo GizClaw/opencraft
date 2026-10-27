@@ -12,6 +12,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
 // RowsAfter projects the transcript rows appended after afterSeq, rendered the
@@ -144,7 +145,7 @@ func (a *sqliteTurnStore) loadProjectedBefore(
 	// a delegation note is the app speaking to the model and belongs in
 	// the window like any other row. The one structural exclusion is an
 	// imported conversation's own system prompt (see projection.go).
-	query := `SELECT m.seq, m.role, m.content_json
+	query := `SELECT m.seq, m.role, m.content_json, m.prompt_json, m.prompt_state
 		FROM archive_messages m
 		WHERE m.conversation_id = ? AND m.role != 'system'`
 	args := []any{conversationID}
@@ -205,13 +206,39 @@ func projectTranscriptRows(
 	out := projectedRows{OldestRawSeq: -1}
 	for rows.Next() {
 		var seq int64
-		var role, payload string
-		if err := rows.Scan(&seq, &role, &payload); err != nil {
+		var role, payload, promptJSON, promptState string
+		if err := rows.Scan(&seq, &role, &payload, &promptJSON, &promptState); err != nil {
 			return projectedRows{},
 				fmt.Errorf("memory: scan transcript row: %w", err)
 		}
 		out.Read++
 		out.OldestRawSeq = seq
+		// A row written since migration 026 carries the projection it was
+		// stored with; the decode below is the upgrade path for older rows.
+		if promptState != "" {
+			if promptState == summarytext.PromptSkip {
+				empty++
+				continue
+			}
+			var stored message.Message
+			if err := json.Unmarshal([]byte(promptJSON), &stored); err == nil {
+				if promptState == summarytext.PromptPlaceholder {
+					placeholders++
+				}
+				if stored.Role == "" {
+					stored.Role = message.Role(role)
+				}
+				out.Messages = append(out.Messages, summary.StoredMessage{
+					Seq:     seq,
+					Role:    stored.Role,
+					Content: stored.Content,
+				})
+				continue
+			}
+			// Fall through to the content projection: a prompt form that
+			// does not decode is treated like a row written before the
+			// column existed, not like a skipped row.
+		}
 		var content message.Content
 		if err := json.Unmarshal([]byte(payload), &content); err != nil {
 			// Canonical content carries at least one valid part, so a
@@ -269,7 +296,7 @@ func (a *sqliteTurnStore) LoadAfter(
 	ctx context.Context, conversationID string, afterSeq int64,
 ) ([]summary.StoredMessage, error) {
 	rows, err := a.db.SQLDB().QueryContext(ctx, `
-		SELECT m.seq, m.role, m.content_json
+		SELECT m.seq, m.role, m.content_json, m.prompt_json, m.prompt_state
 		FROM archive_messages m
 		WHERE m.conversation_id = ? AND m.role != 'system' AND m.seq > ?
 		ORDER BY m.seq`, conversationID, afterSeq)

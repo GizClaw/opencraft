@@ -11,6 +11,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
 // Conversation is the SQLite-backed session index row. It replaces the
@@ -578,12 +580,26 @@ func (s *Store) CommitConversationTurn(
 		if err != nil {
 			return fmt.Errorf("state: marshal archive message: %w", err)
 		}
+		// The row's prompt form is derived once, here, instead of on every
+		// read: the replay projects the whole transcript, and decoding plus
+		// re-rendering every row each time was the largest cost on that path.
+		projected, promptState := summarytext.ProjectRow(
+			message.Role(msgs[i].Role), msgs[i].Content)
+		prompt := ""
+		if promptState != summarytext.PromptSkip {
+			raw, err := json.Marshal(projected)
+			if err != nil {
+				return fmt.Errorf("state: marshal prompt projection: %w", err)
+			}
+			prompt = string(raw)
+		}
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO archive_messages(
-				conversation_id, turn_id, seq, role, content_json, created_at
-			) VALUES (?, ?, ?, ?, ?, ?)`,
+				conversation_id, turn_id, seq, role, content_json,
+				prompt_json, prompt_state, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			c.ID, turnID, msgs[i].Seq, msgs[i].Role,
-			string(content),
+			string(content), prompt, promptState,
 			msgs[i].CreatedAt.UTC().Format(time.RFC3339Nano),
 		)
 		if err != nil {

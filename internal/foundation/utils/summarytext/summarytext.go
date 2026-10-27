@@ -430,3 +430,32 @@ func PlaceholderFor(content message.Content) string {
 	}
 	return "[attachment: " + strings.Join(kinds, ", ") + "]"
 }
+
+// The projection states a stored row can be in.
+const (
+	// PromptOK is a row that projects to text of its own.
+	PromptOK = "ok"
+	// PromptPlaceholder is a row whose content carries no text: the projection
+	// names what it carries instead of leaving a hole.
+	PromptPlaceholder = "placeholder"
+	// PromptSkip is a payload with no prompt form at all — every part a trace
+	// the prompt never carries.
+	PromptSkip = "skip"
+)
+
+// ProjectRow lowers one archived row into its model-facing form. It is the
+// whole rule, in one place: the archive stores the result and the window reads
+// it back, so a row cannot be written in one shape and projected in another.
+func ProjectRow(role message.Role, content message.Content) (message.Message, string) {
+	projected := RenderPrompt(message.Message{Role: role, Content: content})
+	if projected.Content.Text() != "" {
+		return projected, PromptOK
+	}
+	placeholder := PlaceholderFor(content)
+	if placeholder == "" {
+		return message.Message{}, PromptSkip
+	}
+	return message.Message{Role: role, Content: message.Content{
+		Parts: []message.Part{message.TextPart{Text: placeholder}},
+	}}, PromptPlaceholder
+}
