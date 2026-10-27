@@ -871,22 +871,16 @@ func TestFactoryNewWiresOptionalDeps(t *testing.T) {
 		Config: config.UserMemoryConfig{Enabled: true, InjectMaxItems: 12, InjectMaxChars: 2048},
 	}
 	observer := opmemory.UsageObserverFunc(func(context.Context, inference.Usage) {})
-	value, err := (Factory{}).New(ctx, resource.Input{
-		Settings: []byte(`{"work_dir":"/w","max_output_tokens":512}`),
-		Deps: map[string]any{
-			"queue":    &reviewstore.Binding{Queue: newQueueStore(t), Config: enabledCfg()},
-			"memory":   memBinding,
-			"router":   newRouter(t),
-			"observer": observer,
-		},
-	})
+	value, err := (Factory{}).New(ctx, resource.NewInput([]byte(`{"work_dir":"/w","max_output_tokens":512}`), map[string]any{
+		"queue":    &reviewstore.Binding{Queue: newQueueStore(t), Config: enabledCfg()},
+		"memory":   memBinding,
+		"router":   newRouter(t),
+		"observer": observer,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	o, ok := value.(*Observer)
-	if !ok {
-		t.Fatalf("value = %T, want *Observer", value)
-	}
+	o := value
 	if o.memory != memBinding {
 		t.Fatal("memory binding not wired")
 	}
@@ -901,14 +895,11 @@ func TestFactoryNewWiresOptionalDeps(t *testing.T) {
 	}
 
 	// A queue-only assembly still builds: every other dep is optional.
-	minimal, err := (Factory{}).New(ctx, resource.Input{
-		Settings: []byte(`{}`),
-		Deps:     map[string]any{"queue": &reviewstore.Binding{Queue: newQueueStore(t), Config: enabledCfg()}},
-	})
+	minimal, err := (Factory{}).New(ctx, resource.NewInput([]byte(`{}`), map[string]any{"queue": &reviewstore.Binding{Queue: newQueueStore(t), Config: enabledCfg()}}, nil, nil))
 	if err != nil {
 		t.Fatalf("New(queue only): %v", err)
 	}
-	mo := minimal.(*Observer)
+	mo := minimal
 	if mo.memory != nil || mo.router != nil || mo.usage != nil || mo.skills != nil || mo.sessions != nil {
 		t.Fatalf("queue-only assembly wired unexpected deps: %+v", mo)
 	}

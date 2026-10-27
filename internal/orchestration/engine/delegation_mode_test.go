@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -121,20 +122,14 @@ func newDelegationProbe(t *testing.T) *delegationProbe {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	value, err := (delegationServiceFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{"max_concurrency": 2, "max_depth": 2}`),
-		Deps: map[string]any{
-			"directory":           directory,
-			delegationSessionsDep: store,
-		},
-	})
+	value, err := (delegationServiceFactory{}).New(context.Background(), resource.NewInput([]byte(`{"max_concurrency": 2, "max_depth": 2}`), map[string]any{
+		"directory":           directory,
+		delegationSessionsDep: store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("build delegation service: %v", err)
 	}
-	service, ok := value.(*sdkdelegation.LocalService)
-	if !ok {
-		t.Fatalf("delegation service = %T, want *delegation.LocalService", value)
-	}
+	service := value
 	t.Cleanup(func() { _ = service.Close() })
 	if err := service.BindSessionManager(manager); err != nil {
 		t.Fatal(err)
@@ -248,10 +243,7 @@ func TestDelegationServiceRequiresTheSessionStore(t *testing.T) {
 	if err := directory.Bind(subagentDeployment{instance: &agent.Agent{ID: "writer"}}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := (delegationServiceFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{"max_concurrency": 2}`),
-		Deps:     map[string]any{"directory": directory},
-	})
+	_, err := (delegationServiceFactory{}).New(context.Background(), resource.NewInput([]byte(`{"max_concurrency": 2}`), map[string]any{"directory": directory}, nil, nil))
 	if err == nil {
 		t.Fatal("the factory built a delegation service without a session store")
 	}
@@ -276,9 +268,9 @@ func TestDelegationServiceSpecDeclaresTheSessionStore(t *testing.T) {
 		if !dep.Required {
 			t.Fatal("the session store dependency is optional")
 		}
-		if dep.Type != ocsessions.ResourceKind {
-			t.Fatalf("session store dep type = %q, want %q",
-				dep.Type, ocsessions.ResourceKind)
+		if dep.Type != reflect.TypeFor[*ocsessions.Store]() {
+			t.Fatalf("session store dep type = %s, want %s",
+				dep.Type, reflect.TypeFor[*ocsessions.Store]())
 		}
 		return
 	}

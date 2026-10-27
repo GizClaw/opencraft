@@ -16,7 +16,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/GizClaw/flowcraft/backends/secret/keychain"
+	checkpointstore "github.com/GizClaw/flowcraft/backends/checkpoint/sqlite"
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/agent/scriptrt"
 	sdkdelegation "github.com/GizClaw/flowcraft/core/delegation"
@@ -36,6 +36,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
 	sbwindows "github.com/GizClaw/flowcraft/core/sandbox/windows"
 	"github.com/GizClaw/flowcraft/core/secret"
+	"github.com/GizClaw/flowcraft/core/secret/keychain"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
@@ -295,6 +296,10 @@ func (r registrar) Register(reg *resource.Registry) error { return r.fn(reg) }
 func coreCapabilities() []craft.Capability {
 	return []craft.Capability{
 		registrar{"events", event.Register},
+		// The journalling checkpoint store (core/agent.CheckpointJournal):
+		// one base record per run plus append-only deltas, so a long turn
+		// no longer rewrites its whole board at every wave.
+		registrar{"checkpoint-store", checkpointstore.Register},
 		registrar{"graph", graphresource.Register},
 		registrar{"workspace", workspace.Register},
 		registrar{"tools", tool.Register},
@@ -334,7 +339,7 @@ func appCapabilities(o *Options) []craft.Capability {
 					"engine: session store requires WithSessionStore " +
 						"(schema migration is centralized in internal/foundation/compat)")
 			}
-			return r.Register(ocsessions.Factory{StoreFor: o.SessionStore})
+			return resource.Register(r, ocsessions.Factory{StoreFor: o.SessionStore})
 		}},
 		registrar{"media-hooks", mediahook.Register},
 		registrar{"skills", skills.Register},
@@ -343,7 +348,7 @@ func appCapabilities(o *Options) []craft.Capability {
 		registrar{"keychain", keychain.Register},
 		registrar{"worldstate", worldstate.Register},
 		registrar{"agents", func(r *resource.Registry) error {
-			return r.Register(agents.Factory{})
+			return resource.Register(r, agents.Factory{})
 		}},
 		registrar{"delegation-kanban", delegationkanban.Register},
 		registrar{"delegation-directory", sdkdelegation.RegisterDirectory},
@@ -369,10 +374,10 @@ func appCapabilities(o *Options) []craft.Capability {
 			// handed the caller's sandbox mode instead of starting on
 			// the store's confined default (see
 			// ocsessions.ModeInitializer).
-			return r.Register(delegationServiceFactory{opts: opts})
+			return resource.Register(r, delegationServiceFactory{opts: opts})
 		}},
 		registrar{"delegation-tool", func(r *resource.Registry) error {
-			return r.Register(tooldelegation.NewSourceFactory())
+			return resource.Register(r, tooldelegation.NewSourceFactory())
 		}},
 		registrar{"exec-policy", execpolicy.Register},
 		registrar{"hooks", func(r *resource.Registry) error {
@@ -381,26 +386,26 @@ func appCapabilities(o *Options) []craft.Capability {
 			// as this runner's extra hook source, so enabled plugins keep
 			// contributing their hooks.json files.
 			return hooks.Register(r,
-				hooks.WithSourceDep("plugin.host", "opencraft.plugins"),
+				hooks.WithSourceDep[*pluginagent.Host]("plugin.host"),
 			)
 		}},
 		// User-level state bindings: each pairs the caller-owned store the
 		// host attached to user.db with that feature's document settings,
 		// so consumers read one dependency instead of two.
 		registrar{"user-memory-store", func(r *resource.Registry) error {
-			return r.Register(userstore.Factory{})
+			return resource.Register(r, userstore.Factory{})
 		}},
 		registrar{"skill-usage-store", func(r *resource.Registry) error {
-			return r.Register(skillusage.Factory{})
+			return resource.Register(r, skillusage.Factory{})
 		}},
 		registrar{"review-store", func(r *resource.Registry) error {
-			return r.Register(reviewstore.Factory{})
+			return resource.Register(r, reviewstore.Factory{})
 		}},
 		registrar{"review", func(r *resource.Registry) error {
-			return r.Register(review.Factory{})
+			return resource.Register(r, review.Factory{})
 		}},
 		registrar{"subagent-policy", func(r *resource.Registry) error {
-			return r.Register(subagents.PolicyFactory{})
+			return resource.Register(r, subagents.PolicyFactory{})
 		}},
 	}
 }
@@ -516,49 +521,16 @@ func assemblyExternals(o *Options) []deploy.ExternalResource {
 	if reviewQueue == nil {
 		reviewQueue = reviewstore.Empty()
 	}
+	// NewExternal records the value's Go type with it: the assembler checks
+	// every injected value against the dependency's declared type, so a
+	// mismatched injection is a startup error instead of a runtime panic.
 	return []deploy.ExternalResource{
-		{
-			External: deploy.External{
-				Name:     "plugin.host",
-				Contract: pluginagent.ResourceKind,
-			},
-			Value: pluginHost,
-		},
-		{
-			External: deploy.External{
-				Name:     "automation.host",
-				Contract: automationtool.ResourceKind,
-			},
-			Value: automationHost,
-		},
-		{
-			External: deploy.External{
-				Name:     "plugin.installer",
-				Contract: plugininstalltool.ResourceKind,
-			},
-			Value: pluginInstaller,
-		},
-		{
-			External: deploy.External{
-				Name:     "user.memory",
-				Contract: userstore.StoreContract,
-			},
-			Value: userMemory,
-		},
-		{
-			External: deploy.External{
-				Name:     "skill.usage",
-				Contract: skillusage.StoreContract,
-			},
-			Value: skillUsage,
-		},
-		{
-			External: deploy.External{
-				Name:     "review.queue",
-				Contract: reviewstore.StoreContract,
-			},
-			Value: reviewQueue,
-		},
+		deploy.NewExternal("plugin.host", pluginagent.ResourceKind, pluginHost),
+		deploy.NewExternal("automation.host", automationtool.ResourceKind, automationHost),
+		deploy.NewExternal("plugin.installer", plugininstalltool.ResourceKind, pluginInstaller),
+		deploy.NewExternal("user.memory", userstore.StoreContract, userMemory),
+		deploy.NewExternal("skill.usage", skillusage.StoreContract, skillUsage),
+		deploy.NewExternal("review.queue", reviewstore.StoreContract, reviewQueue),
 	}
 }
 

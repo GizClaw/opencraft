@@ -72,7 +72,7 @@ func TestRunExposesCompactionBookkeeping(t *testing.T) {
 	if !report.Empty() {
 		t.Fatalf("report = %+v, want an idle compaction report", report)
 	}
-	if _, ok := res.LastBoard.GetVar("world.compact.anchor_len"); !ok {
+	if _, ok := res.LastBoard.Var("world.compact.anchor_len"); !ok {
 		t.Fatal("the node did not stamp the anchor length before the model call")
 	}
 
@@ -137,7 +137,7 @@ func TestRunWithoutProviderUsageWritesNoAnchor(t *testing.T) {
 	}
 	// The node still stamps the shape of the request it sent; what it cannot
 	// know is how many tokens that cost.
-	if _, ok := res.LastBoard.GetVar("world.compact.anchor_len"); !ok {
+	if _, ok := res.LastBoard.Var("world.compact.anchor_len"); !ok {
 		t.Fatal("the node must stamp the anchor length even without provider usage")
 	}
 	if _, err := h.Sessions().ReadUsageAnchor(run.ContextID()); !errors.Is(err, os.ErrNotExist) {

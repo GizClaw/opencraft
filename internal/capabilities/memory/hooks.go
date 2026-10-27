@@ -11,7 +11,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/ids"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
@@ -27,16 +26,18 @@ type foldSink interface {
 // turn's new messages to the memory TurnSink (persist + fold).
 type commitHookFactory struct{}
 
-var _ resource.Factory = commitHookFactory{}
+var _ resource.Factory[agent.CommitterFunc] = commitHookFactory{}
+
+var (
+	depSink     = resource.Require[corememory.TurnSink]("memory")
+	depSessions = resource.Require[*sessions.Store]("sessions")
+)
 
 func (commitHookFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "hook.commit",
 		Impl: "opencraft.commit",
-		Deps: []resource.DepSpec{
-			{Name: "memory", Type: ResourceKind, Required: true},
-			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
-		},
+		Deps: []resource.Requirement{depSink.Spec(), depSessions.Spec()},
 	}
 }
 
@@ -46,12 +47,12 @@ type commitSettings struct {
 	AgentID   string `json:"agent_id,omitempty"`
 }
 
-func (commitHookFactory) New(ctx context.Context, in resource.Input) (any, error) {
-	sink, err := resourcedep.Required[corememory.TurnSink](in, "memory", "memory")
+func (commitHookFactory) New(ctx context.Context, in resource.Input) (agent.CommitterFunc, error) {
+	sink, err := depSink.Get(in)
 	if err != nil {
 		return nil, err
 	}
-	store, err := resourcedep.Required[*sessions.Store](in, "memory", "sessions")
+	store, err := depSessions.Get(in)
 	if err != nil {
 		return nil, err
 	}

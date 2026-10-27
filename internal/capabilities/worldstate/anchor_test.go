@@ -139,9 +139,9 @@ func TestUsageAnchorRidesBoardNotSections(t *testing.T) {
 	if !ok {
 		t.Fatal("prepare must expose the recorded anchor")
 	}
-	if rendered.GetVarString(config.BoardVarUsageAnchor) != string(data) {
+	if rendered.VarString(config.BoardVarUsageAnchor) != string(data) {
 		t.Fatalf("board anchor = %q, want %q",
-			rendered.GetVarString(config.BoardVarUsageAnchor), string(data))
+			rendered.VarString(config.BoardVarUsageAnchor), string(data))
 	}
 	sections := unmarshalSections(t, rendered)
 	for _, sec := range sections {
@@ -173,7 +173,7 @@ func TestUsageAnchorWithheldFromWindowedMemory(t *testing.T) {
 	if _, ok := svc.usageAnchorBoardValue(ctx, contextID); ok {
 		t.Fatal("windowed memory must not receive a cross-turn anchor")
 	}
-	if got := boardOf(t, svc, contextID, "hi").GetVarString(config.BoardVarUsageAnchor); got != "" {
+	if got := boardOf(t, svc, contextID, "hi").VarString(config.BoardVarUsageAnchor); got != "" {
 		t.Fatalf("board anchor = %q, want it unset for a windowed deployment", got)
 	}
 	// The measurement itself survives for the switch to full replay.

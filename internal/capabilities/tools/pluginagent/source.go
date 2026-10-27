@@ -66,31 +66,31 @@ type PluginHost interface {
 // SourceFactory builds the plugin agent tool source.
 type SourceFactory struct{}
 
-var _ resource.Factory = SourceFactory{}
+var _ resource.Factory[*Source] = SourceFactory{}
+
+// depPluginHost is the plugin host whose kraft tools and MCP servers this
+// source publishes.
+var depPluginHost = resource.Require[PluginHost]("plugin.host")
 
 // Spec implements resource.Factory.
 func (SourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: ResourceImpl,
-		Deps: []resource.DepSpec{
-			{Name: "plugin.host", Type: agent.ResourceKind, Required: true},
-		},
+		Deps: []resource.Requirement{depPluginHost.Spec()},
 	}
 }
 
 // New implements resource.Factory. An empty plugin host contributes
 // no tools.
-func (SourceFactory) New(ctx context.Context, in resource.Input) (any, error) {
-	dep, ok := in.Dep("plugin.host")
-	if !ok {
-		return nil, errdefs.Validationf(
-			"plugin agent tools: plugins dependency is required")
+func (SourceFactory) New(ctx context.Context, in resource.Input) (*Source, error) {
+	host, err := depPluginHost.Get(in)
+	if err != nil {
+		return nil, err
 	}
-	host, ok := dep.(PluginHost)
-	if !ok || host == nil {
+	if host == nil {
 		return nil, errdefs.Validationf(
-			"plugin agent tools: plugins dep is %T, want plugin host", dep)
+			"plugin agent tools: plugins dependency is nil")
 	}
 	return newSource(ctx, host)
 }

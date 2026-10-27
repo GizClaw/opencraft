@@ -17,7 +17,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // HostWorkspace implements workspace.Workspace, delegating to the
@@ -575,29 +574,30 @@ type HostWorkspaceSettings struct {
 // a mode-aware workspace over the session's persisted permission mode.
 type HostWorkspaceFactory struct{}
 
-var _ resource.Factory = HostWorkspaceFactory{}
+var _ resource.Factory[*HostWorkspace] = HostWorkspaceFactory{}
+
+var (
+	depHWSessions = resource.Require[*sessions.Store]("sessions")
+	// The confined backend: one shared LocalWorkspace (the ws resource)
+	// so engine/system reads and tool writes land on the same underlying
+	// workspace, and a single observer wrapped around it sees every
+	// workspace-API write.
+	depHWWorkspace = resource.Require[workspace.Workspace]("workspace")
+	// Optional: contributes discovered skill roots to the workspace-mode
+	// read-only allowlist.
+	depHWSkills = resource.Optional[*skills.Service]("skills")
+	// Optional: the shared artifact sink. Without it YOLO-mode writes are
+	// still allowed but not reported.
+	depHWObserver = resource.Optional[*ArtifactObserver]("observer")
+)
 
 func (HostWorkspaceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: HostWorkspaceResourceKind,
 		Impl: "local",
-		Deps: []resource.DepSpec{
-			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
-			// The confined backend: one shared LocalWorkspace (the ws
-			// resource) so engine/system reads and tool writes land on
-			// the same underlying workspace. A single observer wrapped
-			// around it therefore sees every workspace-API write.
-			{Name: "workspace", Type: "workspace.Workspace", Required: true},
-			// Optional: contributes discovered skill roots to the
-			// workspace-mode read-only allowlist.
-			{Name: "skills", Type: skills.ResourceKind, Required: false},
-			// Optional: the shared artifact sink. Without it YOLO-mode
-			// writes are still allowed but not reported.
-			{
-				Name:     "observer",
-				Type:     ArtifactObserverResourceKind,
-				Required: false,
-			},
+		Deps: []resource.Requirement{
+			depHWSessions.Spec(), depHWWorkspace.Spec(),
+			depHWSkills.Spec(), depHWObserver.Spec(),
 		},
 	}
 }
@@ -605,15 +605,14 @@ func (HostWorkspaceFactory) Spec() resource.Spec {
 func (HostWorkspaceFactory) New(
 	ctx context.Context,
 	in resource.Input,
-) (any, error) {
+) (*HostWorkspace, error) {
 	settings, err := resource.DecodeTyped[HostWorkspaceSettings](
 		ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf(
 			"opencraft hostworkspace: decode settings: %v", err)
 	}
-	store, err := resourcedep.Required[*sessions.Store](
-		in, "opencraft hostworkspace", "sessions")
+	store, err := depHWSessions.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -621,8 +620,7 @@ func (HostWorkspaceFactory) New(
 	// backend instead of building a second LocalWorkspace over the same
 	// root, and derive the host/YOLO resolution root from it so both
 	// views always point at the same directory.
-	confined, err := resourcedep.Required[workspace.Workspace](
-		in, "opencraft hostworkspace", "workspace")
+	confined, err := depHWWorkspace.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -632,16 +630,16 @@ func (HostWorkspaceFactory) New(
 			"opencraft hostworkspace: workspace dependency must expose a root")
 	}
 	readonly := append([]string(nil), settings.ReadonlyRoots...)
-	if dep, ok := in.Dep("skills"); ok {
-		if svc, ok := dep.(*skills.Service); ok {
-			readonly = append(readonly, svc.Roots()...)
-		}
+	if svc, ok, err := depHWSkills.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		readonly = append(readonly, svc.Roots()...)
 	}
 	obs := &ArtifactObserver{}
-	if dep, ok := in.Dep("observer"); ok {
-		if o, ok := dep.(*ArtifactObserver); ok {
-			obs = o
-		}
+	if o, ok, err := depHWObserver.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		obs = o
 	}
 	return &HostWorkspace{
 		sessions: store,

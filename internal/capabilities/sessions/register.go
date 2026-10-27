@@ -15,7 +15,7 @@ type Factory struct {
 	) (*Store, error)
 }
 
-var _ resource.Factory = Factory{}
+var _ resource.Factory[*Store] = Factory{}
 
 // Spec implements resource.Factory.
 func (Factory) Spec() resource.Spec {
@@ -28,7 +28,7 @@ type settings struct {
 }
 
 // New implements resource.Factory.
-func (f Factory) New(ctx context.Context, in resource.Input) (any, error) {
+func (f Factory) New(ctx context.Context, in resource.Input) (*Store, error) {
 	s, err := resource.DecodeTyped[settings](ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf("session store: %v", err)

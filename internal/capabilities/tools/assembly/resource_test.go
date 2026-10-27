@@ -34,17 +34,11 @@ var _ tool.Source = stubSource{}
 func newAssembly(t testing.TB, settings string, src tool.Source) *tool.Assembly {
 	t.Helper()
 	f := AssemblyFactory{}
-	value, err := f.New(context.Background(), resource.Input{
-		Settings: []byte(settings),
-		Deps:     map[string]any{"tool": src},
-	})
+	value, err := f.New(context.Background(), resource.NewInput([]byte(settings), map[string]any{"tool": src}, nil, nil))
 	if err != nil {
 		t.Fatalf("assembly factory: %v", err)
 	}
-	asm, ok := value.(*tool.Assembly)
-	if !ok {
-		t.Fatalf("factory returned %T, want *tool.Assembly", value)
-	}
+	asm := value
 	return asm
 }
 
@@ -339,12 +333,9 @@ func TestAssemblyResultLimitSectionRules(t *testing.T) {
 	}
 
 	f := AssemblyFactory{}
-	_, err := f.New(context.Background(), resource.Input{
-		Settings: []byte(`{
+	_, err := f.New(context.Background(), resource.NewInput([]byte(`{
 			"middlewares": {"result_limit": {"max": 0}}
-		}`),
-		Deps: map[string]any{"tool": stubSource{t: probeTool("x")}},
-	})
+		}`), map[string]any{"tool": stubSource{t: probeTool("x")}}, nil, nil))
 	if err == nil || !strings.Contains(err.Error(), "result_limit.max") {
 		t.Fatalf("zero budget error = %v, want result_limit.max", err)
 	}
@@ -489,10 +480,7 @@ func TestAssemblyRejectsInvalidMiddlewareSettings(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := AssemblyFactory{}
-			_, err := f.New(context.Background(), resource.Input{
-				Settings: []byte(tc.settings),
-				Deps:     map[string]any{"tool": stubSource{t: probeTool("x")}},
-			})
+			_, err := f.New(context.Background(), resource.NewInput([]byte(tc.settings), map[string]any{"tool": stubSource{t: probeTool("x")}}, nil, nil))
 			if err == nil {
 				t.Fatal("factory must reject invalid middleware settings")
 			}
@@ -519,17 +507,14 @@ func TestAssemblyFiresToolHooks(t *testing.T) {
 	}
 
 	f := AssemblyFactory{}
-	value, err := f.New(context.Background(), resource.Input{
-		Settings: []byte(`{"middlewares": {}}`),
-		Deps: map[string]any{
-			"tool":  stubSource{t: probeTool("ok")},
-			"hooks": mgr,
-		},
-	})
+	value, err := f.New(context.Background(), resource.NewInput([]byte(`{"middlewares": {}}`), map[string]any{
+		"tool":  stubSource{t: probeTool("ok")},
+		"hooks": mgr,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("assembly factory: %v", err)
 	}
-	asm := value.(*tool.Assembly)
+	asm := value
 	runProbe(asm)
 
 	data, err := os.ReadFile(hookOut)

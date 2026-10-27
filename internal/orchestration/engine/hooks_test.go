@@ -111,7 +111,10 @@ func TestRuntimeFiresSubagentHooks(t *testing.T) {
 	if !ok || bus == nil {
 		t.Fatalf("events resource is %T, want event.Bus", busValue)
 	}
-	board := kanban.New("engine-hooks-test", kanban.WithBus(bus))
+	board, err := kanban.New("engine-hooks-test", kanban.WithBus(bus))
+	if err != nil {
+		t.Fatalf("kanban board: %v", err)
+	}
 	defer func() { _ = board.Close() }()
 
 	ctx := context.Background()

@@ -43,32 +43,31 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/webfetch"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/websearch"
 	"github.com/GizClaw/opencraft/internal/foundation/platform/shelldetect"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // Register adds every opencraft tool.Source factory to r.
 func Register(r *resource.Registry) error {
 	return errors.Join(
-		r.Register(execSourceFactory{}),
-		r.Register(applypatchSourceFactory{}),
-		r.Register(webfetchSourceFactory{}),
-		r.Register(websearchSourceFactory{}),
-		r.Register(askuserSourceFactory{}),
-		r.Register(automation.SourceFactory{}),
-		r.Register(filesSourceFactory{}),
-		r.Register(imagegenSourceFactory{}),
-		r.Register(videogenSourceFactory{}),
-		r.Register(viewimageSourceFactory{}),
-		r.Register(permissionsSourceFactory{}),
-		r.Register(planSourceFactory{}),
-		r.Register(skillsSourceFactory{}),
-		r.Register(sessionsearchSourceFactory{}),
-		r.Register(rememberSourceFactory{}),
-		r.Register(plugintools.SourceFactory{}),
-		r.Register(plugininstalltools.SourceFactory{}),
-		r.Register(agentlifecycleSourceFactory{}),
-		r.Register(compactSourceFactory{}),
-		r.Register(assembly.AssemblyFactory{}),
+		resource.Register(r, execSourceFactory{}),
+		resource.Register(r, applypatchSourceFactory{}),
+		resource.Register(r, webfetchSourceFactory{}),
+		resource.Register(r, websearchSourceFactory{}),
+		resource.Register(r, askuserSourceFactory{}),
+		resource.Register(r, automation.SourceFactory{}),
+		resource.Register(r, filesSourceFactory{}),
+		resource.Register(r, imagegenSourceFactory{}),
+		resource.Register(r, videogenSourceFactory{}),
+		resource.Register(r, viewimageSourceFactory{}),
+		resource.Register(r, permissionsSourceFactory{}),
+		resource.Register(r, planSourceFactory{}),
+		resource.Register(r, skillsSourceFactory{}),
+		resource.Register(r, sessionsearchSourceFactory{}),
+		resource.Register(r, rememberSourceFactory{}),
+		resource.Register(r, plugintools.SourceFactory{}),
+		resource.Register(r, plugininstalltools.SourceFactory{}),
+		resource.Register(r, agentlifecycleSourceFactory{}),
+		resource.Register(r, compactSourceFactory{}),
+		resource.Register(r, assembly.AssemblyFactory{}),
 	)
 }
 
@@ -77,39 +76,53 @@ func Register(r *resource.Registry) error {
 // per-conversation compaction artifact.
 type compactSourceFactory struct{}
 
-var _ resource.Factory = compactSourceFactory{}
+// Dependency handles. A tool source declares a dep and reads it through
+// the same handle, so the assembly layer type-checks every edge before a
+// resource is built.
+var (
+	depRouter        = resource.Require[*route.Router]("router")
+	depSessions      = resource.Require[*sessions.Store]("sessions")
+	depSandbox       = resource.Require[sandbox.Runner]("sandbox")
+	depHostWorkspace = resource.Require[workspace.Workspace]("hostworkspace")
+	depExecPolicy    = resource.Require[permissions.Policy]("execpolicy")
+	depUserMemory    = resource.Require[*userstore.Binding]("usermemory")
+	depSkills        = resource.Require[*skillsvc.Service]("skills")
+	depAgentLife     = resource.Require[*agents.Lifecycle]("agentlifecycle")
+
+	depObserver     = resource.Optional[opmemory.UsageObserver]("observer")
+	depOptSessions  = resource.Optional[*sessions.Store]("sessions")
+	depOptNetPolicy = resource.Optional[ocsandbox.Policy]("netpolicy")
+)
+
+var _ resource.Factory[toolList] = compactSourceFactory{}
 
 func (compactSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/compact",
-		Deps: []resource.DepSpec{
-			{Name: "router", Type: "inference.Router", Required: true},
-			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
-			{Name: "observer", Type: opmemory.UsageObserverResourceKind, Required: false},
+		Deps: []resource.Requirement{
+			depRouter.Spec(), depSessions.Spec(), depObserver.Spec(),
 		},
 	}
 }
 
-func (compactSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (compactSourceFactory) New(_ context.Context, in resource.Input) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	router, err := resourcedep.Required[*route.Router](
-		in, "compact tool", "router")
+	router, err := depRouter.Get(in)
 	if err != nil {
 		return nil, err
 	}
-	store, err := resourcedep.Required[*sessions.Store](
-		in, "compact tool", "sessions")
+	store, err := depSessions.Get(in)
 	if err != nil {
 		return nil, err
 	}
 	var observer func(context.Context, inference.Usage)
-	if dep, ok := in.Dep("observer"); ok {
-		if obs, ok := dep.(opmemory.UsageObserver); ok {
-			observer = obs.ReportUsage
-		}
+	if obs, ok, err := depObserver.TryGet(in); err != nil {
+		return toolList{}, err
+	} else if ok {
+		observer = obs.ReportUsage
 	}
 	return toolList{compact.New(router, store, observer)}, nil
 }
@@ -117,23 +130,21 @@ func (compactSourceFactory) New(_ context.Context, in resource.Input) (any, erro
 // execSourceFactory contributes the sandbox-backed exec tools.
 type execSourceFactory struct{}
 
-var _ resource.Factory = execSourceFactory{}
+var _ resource.Factory[toolList] = execSourceFactory{}
 
 func (execSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/exec",
-		Deps: []resource.DepSpec{
-			{Name: "sandbox", Type: "sandbox.Runner", Required: true},
-		},
+		Deps: []resource.Requirement{depSandbox.Spec()},
 	}
 }
 
-func (execSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (execSourceFactory) New(_ context.Context, in resource.Input) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	runner, err := resourcedep.Required[sandbox.Runner](in, "tool source", "sandbox")
+	runner, err := depSandbox.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -169,24 +180,21 @@ func execToolList(
 // tool.
 type applypatchSourceFactory struct{}
 
-var _ resource.Factory = applypatchSourceFactory{}
+var _ resource.Factory[toolList] = applypatchSourceFactory{}
 
 func (applypatchSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/applypatch",
-		Deps: []resource.DepSpec{
-			{Name: "hostworkspace", Type: "opencraft.hostworkspace", Required: true},
-		},
+		Deps: []resource.Requirement{depHostWorkspace.Spec()},
 	}
 }
 
-func (applypatchSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (applypatchSourceFactory) New(_ context.Context, in resource.Input) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	ws, err := resourcedep.Required[workspace.Workspace](
-		in, "tool source", "hostworkspace")
+	ws, err := depHostWorkspace.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -196,33 +204,32 @@ func (applypatchSourceFactory) New(_ context.Context, in resource.Input) (any, e
 // webfetchSourceFactory contributes the web_fetch tool.
 type webfetchSourceFactory struct{}
 
-var _ resource.Factory = webfetchSourceFactory{}
+var _ resource.Factory[toolList] = webfetchSourceFactory{}
 
 func (webfetchSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/webfetch",
-		Deps: []resource.DepSpec{
-			{Name: "netpolicy", Type: ocsandbox.NetPolicyResourceKind, Required: false},
-			{Name: "sessions", Type: sessions.ResourceKind, Required: false},
+		Deps: []resource.Requirement{
+			depOptNetPolicy.Spec(), depOptSessions.Spec(),
 		},
 	}
 }
 
-func (webfetchSourceFactory) New(ctx context.Context, in resource.Input) (any, error) {
+func (webfetchSourceFactory) New(ctx context.Context, in resource.Input) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
 	t := webfetch.New()
-	var store *sessions.Store
-	if dep, ok := in.Dep("sessions"); ok {
-		if s, isStore := dep.(*sessions.Store); isStore && s != nil {
-			store = s
-		}
+	store, _, err := depOptSessions.TryGet(in)
+	if err != nil {
+		return toolList{}, err
 	}
-	dep, ok := in.Dep("netpolicy")
-	policy, hasPolicy := dep.(ocsandbox.Policy)
-	if !ok || !hasPolicy {
+	policy, hasPolicy, err := depOptNetPolicy.TryGet(in)
+	if err != nil {
+		return toolList{}, err
+	}
+	if !hasPolicy {
 		// No net policy resource in this deployment: fail closed.
 		// There is no domain allowlist to enforce, but the SSRF
 		// surface must not widen just because the resource is
@@ -262,7 +269,7 @@ func (webfetchSourceFactory) New(ctx context.Context, in resource.Input) (any, e
 // any model out of the box.
 type websearchSourceFactory struct{}
 
-var _ resource.Factory = websearchSourceFactory{}
+var _ resource.Factory[toolList] = websearchSourceFactory{}
 
 func (websearchSourceFactory) Spec() resource.Spec {
 	return resource.Spec{Kind: "tool.Source", Impl: "opencraft/websearch"}
@@ -271,7 +278,7 @@ func (websearchSourceFactory) Spec() resource.Spec {
 func (websearchSourceFactory) New(
 	ctx context.Context,
 	in resource.Input,
-) (any, error) {
+) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
@@ -291,13 +298,13 @@ func (websearchSourceFactory) New(
 // sandbox/workspace: the host is recovered from the tool context.
 type askuserSourceFactory struct{}
 
-var _ resource.Factory = askuserSourceFactory{}
+var _ resource.Factory[toolList] = askuserSourceFactory{}
 
 func (askuserSourceFactory) Spec() resource.Spec {
 	return resource.Spec{Kind: "tool.Source", Impl: "opencraft/askuser"}
 }
 
-func (askuserSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (askuserSourceFactory) New(_ context.Context, in resource.Input) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
@@ -307,24 +314,21 @@ func (askuserSourceFactory) New(_ context.Context, in resource.Input) (any, erro
 // filesSourceFactory contributes the workspace-backed file tools.
 type filesSourceFactory struct{}
 
-var _ resource.Factory = filesSourceFactory{}
+var _ resource.Factory[toolList] = filesSourceFactory{}
 
 func (filesSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/files",
-		Deps: []resource.DepSpec{
-			{Name: "hostworkspace", Type: "opencraft.hostworkspace", Required: true},
-		},
+		Deps: []resource.Requirement{depHostWorkspace.Spec()},
 	}
 }
 
-func (filesSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (filesSourceFactory) New(_ context.Context, in resource.Input) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	ws, err := resourcedep.Required[workspace.Workspace](
-		in, "tool source", "hostworkspace")
+	ws, err := depHostWorkspace.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -337,24 +341,21 @@ func (filesSourceFactory) New(_ context.Context, in resource.Input) (any, error)
 // vision model can look at it instead of reading bytes.
 type viewimageSourceFactory struct{}
 
-var _ resource.Factory = viewimageSourceFactory{}
+var _ resource.Factory[toolList] = viewimageSourceFactory{}
 
 func (viewimageSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/viewimage",
-		Deps: []resource.DepSpec{{
-			Name: "hostworkspace", Type: "opencraft.hostworkspace", Required: true,
-		}},
+		Deps: []resource.Requirement{depHostWorkspace.Spec()},
 	}
 }
 
-func (viewimageSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (viewimageSourceFactory) New(_ context.Context, in resource.Input) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	ws, err := resourcedep.Required[workspace.Workspace](
-		in, "view_image tool", "hostworkspace")
+	ws, err := depHostWorkspace.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -375,30 +376,27 @@ func (viewimageSourceFactory) New(_ context.Context, in resource.Input) (any, er
 // workspace (generated files land under generated/).
 type imagegenSourceFactory struct{}
 
-var _ resource.Factory = imagegenSourceFactory{}
+var _ resource.Factory[toolList] = imagegenSourceFactory{}
 
 func (imagegenSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/imagegen",
-		Deps: []resource.DepSpec{
-			{Name: "router", Type: "inference.Router", Required: true},
-			{Name: "hostworkspace", Type: "opencraft.hostworkspace", Required: true},
+		Deps: []resource.Requirement{
+			depRouter.Spec(), depHostWorkspace.Spec(),
 		},
 	}
 }
 
-func (imagegenSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (imagegenSourceFactory) New(_ context.Context, in resource.Input) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	router, err := resourcedep.Required[*route.Router](
-		in, "imagegen tool", "router")
+	router, err := depRouter.Get(in)
 	if err != nil {
 		return nil, err
 	}
-	ws, err := resourcedep.Required[workspace.Workspace](
-		in, "imagegen tool", "hostworkspace")
+	ws, err := depHostWorkspace.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -415,30 +413,27 @@ func (imagegenSourceFactory) New(_ context.Context, in resource.Input) (any, err
 // workspace (generated files land under generated/).
 type videogenSourceFactory struct{}
 
-var _ resource.Factory = videogenSourceFactory{}
+var _ resource.Factory[toolList] = videogenSourceFactory{}
 
 func (videogenSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/videogen",
-		Deps: []resource.DepSpec{
-			{Name: "router", Type: "inference.Router", Required: true},
-			{Name: "hostworkspace", Type: "opencraft.hostworkspace", Required: true},
+		Deps: []resource.Requirement{
+			depRouter.Spec(), depHostWorkspace.Spec(),
 		},
 	}
 }
 
-func (videogenSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (videogenSourceFactory) New(_ context.Context, in resource.Input) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	router, err := resourcedep.Required[*route.Router](
-		in, "videogen tool", "router")
+	router, err := depRouter.Get(in)
 	if err != nil {
 		return nil, err
 	}
-	ws, err := resourcedep.Required[workspace.Workspace](
-		in, "videogen tool", "hostworkspace")
+	ws, err := depHostWorkspace.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -454,27 +449,24 @@ func (videogenSourceFactory) New(_ context.Context, in resource.Input) (any, err
 // over the runtime execpolicy resource.
 type permissionsSourceFactory struct{}
 
-var _ resource.Factory = permissionsSourceFactory{}
+var _ resource.Factory[toolList] = permissionsSourceFactory{}
 
 func (permissionsSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/permissions",
-		Deps: []resource.DepSpec{
-			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: true},
-		},
+		Deps: []resource.Requirement{depExecPolicy.Spec()},
 	}
 }
 
 func (permissionsSourceFactory) New(
 	_ context.Context,
 	in resource.Input,
-) (any, error) {
+) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	policy, err := resourcedep.Required[permissions.Policy](
-		in, "permissions", "execpolicy")
+	policy, err := depExecPolicy.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -489,9 +481,7 @@ func (planSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/plan",
-		Deps: []resource.DepSpec{
-			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
-		},
+		Deps: []resource.Requirement{depSessions.Spec()},
 	}
 }
 
@@ -502,8 +492,7 @@ func (planSourceFactory) New(
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	store, err := resourcedep.Required[*sessions.Store](
-		in, "update_plan tool", "sessions")
+	store, err := depSessions.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -519,9 +508,7 @@ func (sessionsearchSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/sessionsearch",
-		Deps: []resource.DepSpec{
-			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
-		},
+		Deps: []resource.Requirement{depSessions.Spec()},
 	}
 }
 
@@ -532,8 +519,7 @@ func (sessionsearchSourceFactory) New(
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	store, err := resourcedep.Required[*sessions.Store](
-		in, "session_search tool", "sessions")
+	store, err := depSessions.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -550,9 +536,7 @@ func (rememberSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/remember",
-		Deps: []resource.DepSpec{
-			{Name: "usermemory", Type: userstore.ResourceKind, Required: true},
-		},
+		Deps: []resource.Requirement{depUserMemory.Spec()},
 	}
 }
 
@@ -563,8 +547,7 @@ func (rememberSourceFactory) New(
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	binding, err := resourcedep.Required[*userstore.Binding](
-		in, "remember tool", "usermemory")
+	binding, err := depUserMemory.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -586,24 +569,21 @@ func (rememberSourceFactory) New(
 // over the shared skills registry.
 type skillsSourceFactory struct{}
 
-var _ resource.Factory = skillsSourceFactory{}
+var _ resource.Factory[toolList] = skillsSourceFactory{}
 
 func (skillsSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/skills",
-		Deps: []resource.DepSpec{
-			{Name: "skills", Type: skillsvc.ResourceKind, Required: true},
-		},
+		Deps: []resource.Requirement{depSkills.Spec()},
 	}
 }
 
-func (skillsSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (skillsSourceFactory) New(_ context.Context, in resource.Input) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	svc, err := resourcedep.Required[*skillsvc.Service](
-		in, "tool source", "skills")
+	svc, err := depSkills.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -614,24 +594,21 @@ func (skillsSourceFactory) New(_ context.Context, in resource.Input) (any, error
 // unregister_agent tools over the persistent subagent registry.
 type agentlifecycleSourceFactory struct{}
 
-var _ resource.Factory = agentlifecycleSourceFactory{}
+var _ resource.Factory[toolList] = agentlifecycleSourceFactory{}
 
 func (agentlifecycleSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/agentlifecycle",
-		Deps: []resource.DepSpec{
-			{Name: "agentlifecycle", Type: agents.ResourceKind, Required: true},
-		},
+		Deps: []resource.Requirement{depAgentLife.Spec()},
 	}
 }
 
-func (agentlifecycleSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (agentlifecycleSourceFactory) New(_ context.Context, in resource.Input) (toolList, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	lifecycle, err := resourcedep.Required[*agents.Lifecycle](
-		in, "tool source", "agentlifecycle")
+	lifecycle, err := depAgentLife.Get(in)
 	if err != nil {
 		return nil, err
 	}

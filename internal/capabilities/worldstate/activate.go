@@ -12,7 +12,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // maxModelActivations caps how many model-requested skills a single
@@ -27,25 +26,29 @@ const maxModelActivations = 3
 // a skill by mentioning it (codex-style implicit invocation).
 type activateObserverFactory struct{}
 
-var _ resource.Factory = activateObserverFactory{}
+var _ resource.Factory[*activateObserver] = activateObserverFactory{}
+
+var (
+	depActivateSkills   = resource.Require[*skills.Service]("skills")
+	depActivateSessions = resource.Require[*sessions.Store]("sessions")
+)
 
 func (activateObserverFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "hook.observe",
 		Impl: "opencraft.skillactivate",
-		Deps: []resource.DepSpec{
-			{Name: "skills", Type: skills.ResourceKind, Required: true},
-			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
+		Deps: []resource.Requirement{
+			depActivateSkills.Spec(), depActivateSessions.Spec(),
 		},
 	}
 }
 
-func (activateObserverFactory) New(_ context.Context, in resource.Input) (any, error) {
-	svc, err := resourcedep.Required[*skills.Service](in, "skillactivate", "skills")
+func (activateObserverFactory) New(_ context.Context, in resource.Input) (*activateObserver, error) {
+	svc, err := depActivateSkills.Get(in)
 	if err != nil {
 		return nil, err
 	}
-	store, err := resourcedep.Required[*sessions.Store](in, "skillactivate", "sessions")
+	store, err := depActivateSessions.Get(in)
 	if err != nil {
 		return nil, err
 	}

@@ -12,7 +12,7 @@ import (
 // PolicyFactory builds the opencraft.delegation.policy resource.
 type PolicyFactory struct{}
 
-var _ resource.Factory = PolicyFactory{}
+var _ resource.Factory[*Policy] = PolicyFactory{}
 
 // Spec implements resource.Factory.
 func (PolicyFactory) Spec() resource.Spec {
@@ -27,7 +27,7 @@ func (PolicyFactory) Spec() resource.Spec {
 // do what it says is worse than no policy.
 func (PolicyFactory) New(
 	ctx context.Context, in resource.Input,
-) (any, error) {
+) (*Policy, error) {
 	settings, err := resource.DecodeTyped[PolicySettings](ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf(

@@ -30,20 +30,14 @@ func commitHook(t *testing.T) (agent.CommitterFunc, *sessions.Store, *sqliteTurn
 	t.Cleanup(func() { _ = store.CloseDB() })
 	adapter := &sqliteTurnStore{db: store.Database()}
 	res := summary.NewAssembly(adapter)
-	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{}`),
-		Deps: map[string]any{
-			"memory":   res,
-			"sessions": store,
-		},
-	})
+	value, err := (commitHookFactory{}).New(context.Background(), resource.NewInput([]byte(`{}`), map[string]any{
+		"memory":   res,
+		"sessions": store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	committer, ok := value.(agent.CommitterFunc)
-	if !ok {
-		t.Fatalf("value = %T, want agent.CommitterFunc", value)
-	}
+	committer := value
 	return committer, store, adapter
 }
 

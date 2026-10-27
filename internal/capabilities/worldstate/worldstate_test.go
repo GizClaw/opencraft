@@ -94,7 +94,7 @@ func TestRenderToBoardRefreshesAgentsMdEachTurn(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		return board.GetVarString("world.sections")
+		return board.VarString("world.sections")
 	}
 	if first := render(); !contains(first, "version one") {
 		t.Fatalf("first render missing AGENTS.md: %q", first)
@@ -119,7 +119,7 @@ func TestRenderToBoardPlacesAgentsAfterPermissions(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	raw := board.GetVarString("world.sections")
+	raw := board.VarString("world.sections")
 	var sections []Section
 	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
 		t.Fatalf("sections = %q: %v", raw, err)
@@ -171,7 +171,7 @@ func TestRenderToBoardGroupsAllSystemBeforeUserContent(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	rawBoard := board.GetVarString("world.sections")
+	rawBoard := board.VarString("world.sections")
 	var sections []Section
 	if err := json.Unmarshal([]byte(rawBoard), &sections); err != nil {
 		t.Fatalf("sections = %q: %v", rawBoard, err)
@@ -269,7 +269,7 @@ func TestRenderToBoardFullSectionOrder(t *testing.T) {
 			}
 		}
 	}
-	block := board.GetVarString("world.tail_block")
+	block := board.VarString("world.tail_block")
 	for _, frag := range []string{
 		"inspect",          // plan item
 		"## Skills",        // ranked skills list
@@ -312,9 +312,9 @@ func TestRenderToBoardPrefixIsStableAcrossTurns(t *testing.T) {
 	}
 	ws.SetSessions(sess)
 
-	sectionsA := boardOf(t, ws, "s-c1", "use $review").GetVarString("world.sections")
+	sectionsA := boardOf(t, ws, "s-c1", "use $review").VarString("world.sections")
 	blockA := tailBlockOf(t, ws, "s-c1", "use $review")
-	sectionsB := boardOf(t, ws, "s-c1", "what does this repo do?").GetVarString("world.sections")
+	sectionsB := boardOf(t, ws, "s-c1", "what does this repo do?").VarString("world.sections")
 	blockB := tailBlockOf(t, ws, "s-c1", "what does this repo do?")
 
 	if sectionsA != sectionsB {
@@ -376,7 +376,7 @@ func TestRenderToBoardClearsAStaleTailBlock(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if got := board.GetVarString("world.tail_block"); got != "" {
+	if got := board.VarString("world.tail_block"); got != "" {
 		t.Fatalf("stale tail block survived: %q", got)
 	}
 }
@@ -431,7 +431,7 @@ func boardOf(t *testing.T, ws *Service, contextID, prompt string) *agent.Board {
 // node appends to the user's own message ("" when the turn has none).
 func tailBlockOf(t *testing.T, ws *Service, contextID, prompt string) string {
 	t.Helper()
-	return boardOf(t, ws, contextID, prompt).GetVarString("world.tail_block")
+	return boardOf(t, ws, contextID, prompt).VarString("world.tail_block")
 }
 
 type stubPrefixProvider []string
@@ -632,7 +632,7 @@ func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	raw := board.GetVarString("world.sections")
+	raw := board.VarString("world.sections")
 	var sections []Section
 	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
 		t.Fatalf("sections = %q: %v", raw, err)
@@ -731,7 +731,7 @@ func TestRenderToBoardReplayFullHistory(t *testing.T) {
 	// var: a var would be re-marshalled on one side and unmarshalled on
 	// the other. Merge is what proves the handoff landed where the node
 	// reads it.
-	if raw := board.GetVarString(BoardVarHistory); raw != "" {
+	if raw := board.VarString(BoardVarHistory); raw != "" {
 		t.Fatalf("%s is set (%d bytes), want the in-memory handoff",
 			BoardVarHistory, len(raw))
 	}
@@ -752,7 +752,7 @@ func TestRenderToBoardReplayFullHistory(t *testing.T) {
 		}
 	}
 
-	raw := board.GetVarString("world.sections")
+	raw := board.VarString("world.sections")
 	var sections []Section
 	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
 		t.Fatalf("sections = %q: %v", raw, err)
@@ -818,7 +818,7 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	raw2 := board2.GetVarString("world.sections")
+	raw2 := board2.VarString("world.sections")
 	var sections2 []Section
 	if err := json.Unmarshal([]byte(raw2), &sections2); err != nil {
 		t.Fatal(err)
@@ -889,7 +889,7 @@ func TestRenderToBoardInjectsRankedSkills(t *testing.T) {
 	}
 	// The ranked list is per-turn state and rides in the tail block, which
 	// is always user-role content: it is appended to the user's message.
-	block := board.GetVarString("world.tail_block")
+	block := board.VarString("world.tail_block")
 	if !contains(block, "review") ||
 		contains(block, "Do the review thing.") {
 		t.Fatalf("tail block = %q, want skill metadata only", block)
@@ -930,7 +930,7 @@ func TestRenderToBoardMentionInjectsFullText(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	block := board.GetVarString("world.tail_block")
+	block := board.VarString("world.tail_block")
 	if !contains(block, "Do the review thing.") {
 		t.Fatalf("mention must inject the full skill body:\n%s", block)
 	}
@@ -963,7 +963,7 @@ func TestMentionStagesSkillToCache(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if block := board.GetVarString("world.tail_block"); !contains(block, "staged copy for execution") {
+	if block := board.VarString("world.tail_block"); !contains(block, "staged copy for execution") {
 		t.Fatalf("mention must stage the skill:\n%s", block)
 	}
 	staged := filepath.Join(userDir, "staged", "s-c1",
@@ -1002,7 +1002,7 @@ func TestModelRequestedActivation(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	block := board.GetVarString("world.tail_block")
+	block := board.VarString("world.tail_block")
 	if !contains(block, "requested by the model") ||
 		!contains(block, "Do the review thing.") {
 		t.Fatalf("model-requested activation missing:\n%s", block)
@@ -1015,7 +1015,7 @@ func TestModelRequestedActivation(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if block := board2.GetVarString("world.tail_block"); contains(block, "requested by the model") {
+	if block := board2.VarString("world.tail_block"); contains(block, "requested by the model") {
 		t.Fatalf("activation must be consumed after one turn:\n%s", block)
 	}
 }
@@ -1062,7 +1062,7 @@ func TestSubagentContextSkipsActivationStore(t *testing.T) {
 
 func unmarshalSections(t *testing.T, board *agent.Board) []Section {
 	t.Helper()
-	raw := board.GetVarString("world.sections")
+	raw := board.VarString("world.sections")
 	var sections []Section
 	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
 		t.Fatalf("sections = %q: %v", raw, err)

@@ -6,7 +6,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // StoreContract is the deploy contract of the caller-owned skill
@@ -45,21 +44,21 @@ type Settings = config.SkillLifecycleSettings
 // which records nothing and retires nothing.
 type Factory struct{}
 
-var _ resource.Factory = Factory{}
+var _ resource.Factory[*Binding] = Factory{}
+
+var depLifecycleStore = resource.Require[Lifecycle]("store")
 
 // Spec implements resource.Factory.
 func (Factory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: ResourceKind,
 		Impl: ResourceImpl,
-		Deps: []resource.DepSpec{
-			{Name: "store", Type: StoreContract, Required: true},
-		},
+		Deps: []resource.Requirement{depLifecycleStore.Spec()},
 	}
 }
 
 // New implements resource.Factory.
-func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
+func (Factory) New(ctx context.Context, in resource.Input) (*Binding, error) {
 	settings, err := resource.DecodeTyped[Settings](ctx, in.Settings)
 	if err != nil {
 		return nil, err
@@ -68,7 +67,7 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := resourcedep.Required[Lifecycle](in, "skill lifecycle", "store")
+	store, err := depLifecycleStore.Get(in)
 	if err != nil {
 		return nil, err
 	}

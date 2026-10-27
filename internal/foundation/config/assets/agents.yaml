@@ -9,12 +9,12 @@ agents:
       kind: agent.Engine
       impl: graph
       deps:
-        inference: infer
-        router: router
-        tools: tools
-        workspace: ws
-        sandbox: box
-        script_runtime: js
+        # Node types are resources since core/v0.10.0: the engine mounts
+        # one per capability set, and each type carries the collaborators
+        # it used to take from the engine (assets/opencraft.yaml).
+        node_type.inference: node.inference
+        node_type.tool: node.tool
+        node_type.script: node.script
         # The script surface every script node of this graph runs on:
         # the standard bridges plus the "ocworld" global the world node
         # merges the channel with (assets/opencraft.yaml).

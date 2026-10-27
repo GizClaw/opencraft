@@ -295,20 +295,14 @@ func TestHostWorkspaceFactoryDerivesRootFromWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := newTestStore(t)
-	value, err := (HostWorkspaceFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{}`),
-		Deps: map[string]any{
-			"sessions":  store,
-			"workspace": ws,
-		},
-	})
+	value, err := (HostWorkspaceFactory{}).New(context.Background(), resource.NewInput([]byte(`{}`), map[string]any{
+		"sessions":  store,
+		"workspace": ws,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("factory new: %v", err)
 	}
-	hw, ok := value.(*HostWorkspace)
-	if !ok {
-		t.Fatalf("factory returned %T, want *HostWorkspace", value)
-	}
+	hw := value
 	if hw.root != ws.Root() {
 		t.Fatalf("hostws root = %q, want ws root %q", hw.root, ws.Root())
 	}

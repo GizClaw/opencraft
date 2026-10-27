@@ -8,7 +8,7 @@ import (
 	coregraph "github.com/GizClaw/flowcraft/core/graph"
 	graphnodes "github.com/GizClaw/flowcraft/core/graph/nodes"
 	scriptnode "github.com/GizClaw/flowcraft/core/graph/nodes/script"
-	"github.com/GizClaw/flowcraft/core/utils"
+	"github.com/GizClaw/flowcraft/core/utils/decode"
 )
 
 // TestAssistantGraphBuildWarnings pins the build-time findings of the
@@ -28,7 +28,7 @@ func TestAssistantGraphBuildWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read assistant graph: %v", err)
 	}
-	def, err := utils.Decode[coregraph.GraphDefinition](data)
+	def, err := decode.Decode[coregraph.GraphDefinition](data)
 	if err != nil {
 		t.Fatalf("decode assistant graph: %v", err)
 	}

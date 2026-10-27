@@ -7,7 +7,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
-	corenet "github.com/GizClaw/flowcraft/core/utils/net"
+	corenet "github.com/GizClaw/flowcraft/core/utils/netpolicy"
 )
 
 // NetPolicyResourceKind is the deploy resource kind for the assembled
@@ -64,7 +64,7 @@ type WebFetchSettings struct {
 // NetPolicyFactory builds the opencraft.netpolicy resource.
 type NetPolicyFactory struct{}
 
-var _ resource.Factory = NetPolicyFactory{}
+var _ resource.Factory[Policy] = NetPolicyFactory{}
 
 // Spec implements resource.Factory.
 func (NetPolicyFactory) Spec() resource.Spec {
@@ -74,11 +74,11 @@ func (NetPolicyFactory) Spec() resource.Spec {
 // New implements resource.Factory. Absent sections keep safe defaults:
 // exec stays NetDefault (host networking, the historical behavior) and
 // web_fetch keeps the SSRF guard enabled.
-func (NetPolicyFactory) New(ctx context.Context, in resource.Input) (any, error) {
+func (NetPolicyFactory) New(ctx context.Context, in resource.Input) (Policy, error) {
 	settings, err := resource.DecodeTyped[NetPolicySettings](
 		ctx, in.Settings)
 	if err != nil {
-		return nil, errdefs.Validationf(
+		return Policy{}, errdefs.Validationf(
 			"opencraft netpolicy: decode settings: %v", err)
 	}
 	pol := Policy{
@@ -88,7 +88,7 @@ func (NetPolicyFactory) New(ctx context.Context, in resource.Input) (any, error)
 	if settings.Exec != nil {
 		pol.Exec, err = buildExecNet(*settings.Exec)
 		if err != nil {
-			return nil, err
+			return Policy{}, err
 		}
 	}
 	if settings.WebFetch != nil {
@@ -152,5 +152,5 @@ func buildExecNet(s ExecNetSettings) (corenet.NetPolicy, error) {
 
 // Register adds the netpolicy factory to r.
 func registerNetPolicy(r *resource.Registry) error {
-	return r.Register(NetPolicyFactory{})
+	return resource.Register(r, NetPolicyFactory{})
 }

@@ -13,7 +13,6 @@ import (
 	reviewstore "github.com/GizClaw/opencraft/internal/capabilities/review/store"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // Factory builds the opencraft.review observe hook. Every dependency is
@@ -21,28 +20,35 @@ import (
 // router or a skills registry still assembles, it simply cannot review.
 type Factory struct{}
 
-var _ resource.Factory = Factory{}
+var _ resource.Factory[*Observer] = Factory{}
+
+// The queue is the only dependency a review cannot do without: a runtime
+// without a user database, a router or a skills registry still assembles,
+// it simply cannot review.
+var (
+	depQueue    = resource.Require[*reviewstore.Binding]("queue")
+	depMemory   = resource.Optional[*userstore.Binding]("memory")
+	depSkills   = resource.Optional[*skills.Service]("skills")
+	depSessions = resource.Optional[*ocsessions.Store]("sessions")
+	depRouter   = resource.Optional[*route.Router]("router")
+	depUsage    = resource.Optional[opmemory.UsageObserver]("observer")
+)
 
 // Spec implements resource.Factory.
 func (Factory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "hook.observe",
 		Impl: ResourceImpl,
-		Deps: []resource.DepSpec{
-			{Name: "queue", Type: reviewstore.ResourceKind, Required: true},
-			{Name: "memory", Type: userstore.ResourceKind, Required: false},
-			{Name: "skills", Type: skills.ResourceKind, Required: false},
-			{Name: "sessions", Type: ocsessions.ResourceKind, Required: false},
-			{Name: "router", Type: "inference.Router", Required: false},
-			{Name: "observer", Type: opmemory.UsageObserverResourceKind, Required: false},
+		Deps: []resource.Requirement{
+			depQueue.Spec(), depMemory.Spec(), depSkills.Spec(),
+			depSessions.Spec(), depRouter.Spec(), depUsage.Spec(),
 		},
 	}
 }
 
 // New implements resource.Factory.
-func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
-	queue, err := resourcedep.Required[*reviewstore.Binding](
-		in, "review", "queue")
+func (Factory) New(ctx context.Context, in resource.Input) (*Observer, error) {
+	queue, err := depQueue.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -61,30 +67,36 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		turns:    map[string]int{},
 		inflight: map[string]bool{},
 	}
-	if dep, ok := in.Dep("memory"); ok {
-		if binding, ok := dep.(*userstore.Binding); ok {
-			o.memory = binding
-		}
+	optional := []struct {
+		name string
+		read func() (any, bool, error)
+		set  func(any) error
+	}{}
+	_ = optional
+	if binding, ok, err := depMemory.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		o.memory = binding
 	}
-	if dep, ok := in.Dep("skills"); ok {
-		if svc, ok := dep.(*skills.Service); ok {
-			o.skills = svc
-		}
+	if svc, ok, err := depSkills.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		o.skills = svc
 	}
-	if dep, ok := in.Dep("sessions"); ok {
-		if store, ok := dep.(*ocsessions.Store); ok {
-			o.sessions = store
-		}
+	if store, ok, err := depSessions.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		o.sessions = store
 	}
-	if dep, ok := in.Dep("router"); ok {
-		if router, ok := dep.(*route.Router); ok {
-			o.router = router
-		}
+	if router, ok, err := depRouter.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		o.router = router
 	}
-	if dep, ok := in.Dep("observer"); ok {
-		if observer, ok := dep.(opmemory.UsageObserver); ok {
-			o.usage = observer
-		}
+	if observer, ok, err := depUsage.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		o.usage = observer
 	}
 	return o, nil
 }

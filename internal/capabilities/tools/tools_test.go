@@ -54,9 +54,8 @@ func TestWebSearchSourceFactory(t *testing.T) {
 	if !ok {
 		t.Fatal("websearch factory is not registered")
 	}
-	built, err := factory.New(context.Background(), resource.Input{
-		Settings: []byte(`{"enabled":true,"max_results":3}`),
-	})
+	built, err := factory.Build(context.Background(),
+		resource.NewInput([]byte(`{"enabled":true,"max_results":3}`), nil, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,9 +67,8 @@ func TestWebSearchSourceFactory(t *testing.T) {
 		t.Fatalf("names = %v", names)
 	}
 
-	disabled, err := factory.New(context.Background(), resource.Input{
-		Settings: []byte(`{"enabled":false}`),
-	})
+	disabled, err := factory.Build(context.Background(),
+		resource.NewInput([]byte(`{"enabled":false}`), nil, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,12 +82,12 @@ func TestWebSearchSourceFactory(t *testing.T) {
 // must still get the hardened client (private destinations refused),
 // not the default HTTP client.
 func TestWebFetchSourceFactoryWithoutNetPolicyFailsClosed(t *testing.T) {
-	built, err := (webfetchSourceFactory{}).New(context.Background(), resource.Input{})
+	built, err := (webfetchSourceFactory{}).New(context.Background(), resource.NewTestInput(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, ok := built.(toolList)
-	if !ok || len(src) != 1 {
+	src := built
+	if len(src) != 1 {
 		t.Fatalf("built = %T (%v), want one fetched tool", built, src)
 	}
 	_, err = src[0].Execute(context.Background(), `{"url":"http://127.0.0.1:9/"}`)
@@ -118,9 +116,7 @@ func TestSessionSearchSourceFactory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	built, err := factory.New(context.Background(), resource.Input{
-		Deps: map[string]any{"sessions": store},
-	})
+	built, err := factory.Build(context.Background(), resource.NewTestInput(map[string]any{"sessions": store}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,10 +125,7 @@ func TestSessionSearchSourceFactory(t *testing.T) {
 		t.Fatalf("names = %v", names)
 	}
 
-	disabled, err := factory.New(context.Background(), resource.Input{
-		Settings: []byte(`{"enabled":false}`),
-		Deps:     map[string]any{"sessions": store},
-	})
+	disabled, err := factory.Build(context.Background(), resource.NewInput([]byte(`{"enabled":false}`), map[string]any{"sessions": store}, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,7 +13,7 @@ type Factory struct {
 	Installer Installer
 }
 
-var _ resource.Factory = Factory{}
+var _ resource.Factory[Installer] = Factory{}
 
 // Spec implements resource.Factory.
 func (Factory) Spec() resource.Spec {
@@ -23,7 +23,7 @@ func (Factory) Spec() resource.Spec {
 // New implements resource.Factory.
 func (f Factory) New(
 	_ context.Context, _ resource.Input,
-) (any, error) {
+) (Installer, error) {
 	if f.Installer == nil {
 		return EmptyInstaller(), nil
 	}

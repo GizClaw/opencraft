@@ -7,7 +7,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/compaction"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // ScriptBindingsImpl is the impl name of this package's script surface:
@@ -67,23 +66,22 @@ func (WorldBridge) Bind(inv bindings.Invocation) ([]bindings.Binding, error) {
 // a global and nothing else.
 type scriptBindingsFactory struct{}
 
-var _ resource.Factory = scriptBindingsFactory{}
+var _ resource.Factory[bindings.Provider] = scriptBindingsFactory{}
+
+var depScriptStandard = resource.Require[bindings.Provider]("standard")
 
 // Spec implements [resource.Factory].
 func (scriptBindingsFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: bindings.ResourceKind,
 		Impl: ScriptBindingsImpl,
-		Deps: []resource.DepSpec{
-			{Name: "standard", Type: bindings.ResourceKind, Required: true},
-		},
+		Deps: []resource.Requirement{depScriptStandard.Spec()},
 	}
 }
 
 // New implements [resource.Factory].
-func (scriptBindingsFactory) New(_ context.Context, in resource.Input) (any, error) {
-	standard, err := resourcedep.Required[bindings.Provider](
-		in, "worldstate", "standard")
+func (scriptBindingsFactory) New(_ context.Context, in resource.Input) (bindings.Provider, error) {
+	standard, err := depScriptStandard.Get(in)
 	if err != nil {
 		return nil, err
 	}

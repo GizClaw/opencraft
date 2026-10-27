@@ -192,14 +192,11 @@ func TestExecPolicyResourceDecodesSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	value, err := (execPolicyResource{}).New(
-		context.Background(), resource.Input{Settings: settings})
+		context.Background(), resource.NewInput(settings, nil, nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr, ok := value.(*Manager)
-	if !ok {
-		t.Fatalf("resource value = %T, want *Manager", value)
-	}
+	mgr := value
 	if !mgr.Allowlist().Matches(sandbox.ExecRequest{
 		Command: "/bin/sh", Args: []string{"-c", "git status"},
 	}) {
@@ -214,14 +211,11 @@ func TestExecPolicyResourceDecodesSettings(t *testing.T) {
 
 func TestExecPolicyResourceEmptyPathInMemory(t *testing.T) {
 	value, err := (execPolicyResource{}).New(
-		context.Background(), resource.Input{})
+		context.Background(), resource.NewTestInput(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	mgr, ok := value.(*Manager)
-	if !ok {
-		t.Fatalf("resource value = %T, want *Manager", value)
-	}
+	mgr := value
 	if err := mgr.AlwaysAllow("go run *"); err != nil {
 		t.Fatal(err)
 	}

@@ -96,7 +96,7 @@ func TestEstimateContextUsageEmptyPromptDeletesTheVar(t *testing.T) {
 
 	estimateContextUsage(nil, "", 0, 0).writeTo(board)
 
-	if _, ok := board.GetVar(config.BoardVarContextUsage); ok {
+	if _, ok := board.Var(config.BoardVarContextUsage); ok {
 		t.Fatal("stale context estimate survived a turn that rendered nothing")
 	}
 }

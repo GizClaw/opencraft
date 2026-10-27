@@ -24,7 +24,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/confirm"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // Canonical tool names.
@@ -121,25 +120,19 @@ func (emptyInstaller) Empty() bool { return true }
 // installer resource and the workspace path resolver.
 type SourceFactory struct{}
 
-var _ resource.Factory = SourceFactory{}
+var _ resource.Factory[source] = SourceFactory{}
+
+var (
+	depInstaller = resource.Require[Installer]("plugin.installer")
+	depWorkspace = resource.Require[SourceRoot]("workspace")
+)
 
 // Spec implements resource.Factory.
 func (SourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: ResourceImpl,
-		Deps: []resource.DepSpec{
-			{
-				Name:     "plugin.installer",
-				Type:     ResourceKind,
-				Required: true,
-			},
-			{
-				Name:     "workspace",
-				Type:     "opencraft.hostworkspace",
-				Required: true,
-			},
-		},
+		Deps: []resource.Requirement{depInstaller.Spec(), depWorkspace.Spec()},
 	}
 }
 
@@ -147,16 +140,14 @@ func (SourceFactory) Spec() resource.Spec {
 // tools.
 func (SourceFactory) New(
 	_ context.Context, in resource.Input,
-) (any, error) {
-	installer, err := resourcedep.Required[Installer](
-		in, "plugin install tools", "plugin.installer")
+) (source, error) {
+	installer, err := depInstaller.Get(in)
 	if err != nil {
-		return nil, err
+		return source{}, err
 	}
-	root, err := resourcedep.Required[SourceRoot](
-		in, "plugin install tools", "workspace")
+	root, err := depWorkspace.Get(in)
 	if err != nil {
-		return nil, err
+		return source{}, err
 	}
 	if empty, ok := installer.(interface{ Empty() bool }); ok && empty.Empty() {
 		return source{}, nil

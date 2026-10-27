@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/resource"
@@ -20,7 +19,13 @@ const ResourceKind = "memory"
 // depending on the session store (which owns the SQLite state).
 type Factory struct{}
 
-var _ resource.Factory = Factory{}
+var _ resource.Factory[*summary.Assembly] = Factory{}
+
+var (
+	depMemSessions = resource.Require[*sessions.Store]("sessions")
+	depMemRouter   = resource.Optional[*route.Router]("router")
+	depMemObserver = resource.Optional[UsageObserver]("observer")
+)
 
 // RegisterWithObserver registers the memory resources plus the usage
 // observer the engine supplies. The observer resource is registered
@@ -35,15 +40,15 @@ func RegisterWithObserver(
 	if observe == nil {
 		fn = func(context.Context, inference.Usage) {}
 	}
-	if err := r.Register(usageObserverFactory{
+	if err := resource.Register(r, usageObserverFactory{
 		fn: fn,
 	}); err != nil {
 		return err
 	}
 	return errors.Join(
-		r.Register(Factory{}),
-		r.Register(commitHookFactory{}),
-		r.Register(archiveObserverFactory{}),
+		resource.Register(r, Factory{}),
+		resource.Register(r, commitHookFactory{}),
+		resource.Register(r, archiveObserverFactory{}),
 	)
 }
 
@@ -53,14 +58,13 @@ func (Factory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: ResourceKind,
 		Impl: "summary",
-		Deps: []resource.DepSpec{
-			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
+		Deps: []resource.Requirement{
+			depMemSessions.Spec(),
 			// Optional: the inference router. LLM condensation goes
 			// through it so the compaction model follows the
 			// user-editable routing policy; absent deployments stay
 			// buffer-fold only.
-			{Name: "router", Type: "inference.Router", Required: false},
-			{Name: "observer", Type: UsageObserverResourceKind, Required: false},
+			depMemRouter.Spec(), depMemObserver.Spec(),
 		},
 	}
 }
@@ -86,16 +90,10 @@ func (p policySettings) replayFullHistory() bool {
 }
 
 // New builds the summary Assembly over the SQLite adapter.
-func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
-	dep, ok := in.Dep("sessions")
-	if !ok {
-		return nil, errdefs.Validationf(
-			"memory: sessions dependency is required")
-	}
-	sessionsStore, ok := dep.(*sessions.Store)
-	if !ok {
-		return nil, errdefs.Validationf(
-			"memory: sessions dep is not *sessions.Store")
+func (Factory) New(ctx context.Context, in resource.Input) (*summary.Assembly, error) {
+	sessionsStore, err := depMemSessions.Get(in)
+	if err != nil {
+		return nil, err
 	}
 	policy, err := resource.DecodeTyped[policySettings](ctx, in.Settings)
 	if err != nil {
@@ -109,19 +107,19 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		}),
 		summary.WithReplayFullHistory(policy.replayFullHistory()),
 	}
-	if dep, ok := in.Dep("router"); ok {
-		if router, ok := dep.(*route.Router); ok {
-			opts = append(opts, summary.WithRouter(router))
-		}
+	if router, ok, err := depMemRouter.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		opts = append(opts, summary.WithRouter(router))
 	}
-	if dep, ok := in.Dep("observer"); ok {
-		if observer, ok := dep.(UsageObserver); ok {
-			opts = append(opts, summary.WithUsageObserver(
-				func(ctx context.Context, usage inference.Usage) {
-					observer.ReportUsage(ctx, usage)
-				},
-			))
-		}
+	if observer, ok, err := depMemObserver.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		opts = append(opts, summary.WithUsageObserver(
+			func(ctx context.Context, usage inference.Usage) {
+				observer.ReportUsage(ctx, usage)
+			},
+		))
 	}
 	adapter := &sqliteTurnStore{db: sessionsStore.Database()}
 	return summary.NewAssembly(adapter, opts...), nil

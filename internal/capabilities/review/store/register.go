@@ -6,7 +6,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // StoreContract is the deploy contract of the caller-owned review queue
@@ -44,21 +43,22 @@ type Settings = config.ReviewSettings
 // which accepts no suggestion.
 type Factory struct{}
 
-var _ resource.Factory = Factory{}
+var _ resource.Factory[*Binding] = Factory{}
+
+// depStore is the queue this binding writes candidates through.
+var depStore = resource.Require[Queue]("store")
 
 // Spec implements resource.Factory.
 func (Factory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: ResourceKind,
 		Impl: ResourceImpl,
-		Deps: []resource.DepSpec{
-			{Name: "store", Type: StoreContract, Required: true},
-		},
+		Deps: []resource.Requirement{depStore.Spec()},
 	}
 }
 
 // New implements resource.Factory.
-func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
+func (Factory) New(ctx context.Context, in resource.Input) (*Binding, error) {
 	settings, err := resource.DecodeTyped[Settings](ctx, in.Settings)
 	if err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	queue, err := resourcedep.Required[Queue](in, "review queue", "store")
+	queue, err := depStore.Get(in)
 	if err != nil {
 		return nil, err
 	}

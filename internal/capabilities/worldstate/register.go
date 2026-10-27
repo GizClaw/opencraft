@@ -9,11 +9,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
-	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/userstore"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
-	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
 // Register adds this package's factories to r: the opencraft.prepare
@@ -21,10 +19,10 @@ import (
 // the script surface carrying the "ocworld" global.
 func Register(r *resource.Registry) error {
 	return errors.Join(
-		r.Register(prepareFactory{}),
-		r.Register(activateObserverFactory{}),
-		r.Register(usageAnchorCommitFactory{}),
-		r.Register(scriptBindingsFactory{}),
+		resource.Register(r, prepareFactory{}),
+		resource.Register(r, activateObserverFactory{}),
+		resource.Register(r, usageAnchorCommitFactory{}),
+		resource.Register(r, scriptBindingsFactory{}),
 	)
 }
 
@@ -34,27 +32,28 @@ func Register(r *resource.Registry) error {
 // model-facing message list (see Merge).
 type prepareFactory struct{}
 
-var _ resource.Factory = prepareFactory{}
+var _ resource.Factory[agent.PreparerFunc] = prepareFactory{}
+
+var (
+	depPrepareMemory     = resource.Require[memory.ContextProvider]("memory")
+	depPrepareWorkspace  = resource.Require[workspace.Workspace]("workspace")
+	depPrepareSkills     = resource.Optional[*skills.Service]("skills")
+	depPrepareExecPolicy = resource.Optional[PrefixProvider]("execpolicy")
+	depPrepareSessions   = resource.Optional[*ocsessions.Store]("sessions")
+	depPrepareUserMemory = resource.Optional[*userstore.Binding]("usermemory")
+)
 
 func (prepareFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "hook.prepare",
 		Impl: "opencraft.prepare",
-		Deps: []resource.DepSpec{
-			{Name: "memory", Type: opmemory.ResourceKind, Required: true},
-			{Name: "workspace", Type: "workspace.Workspace", Required: true},
-			// Optional: the sandbox exec policy rules source. Deployments
-			// without it simply omit the approved-prefix line.
-			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: false},
-			// Optional: the session store. Deployments without it
-			// simply omit the yolo marker from the permissions section.
-			{Name: "sessions", Type: ocsessions.ResourceKind, Required: false},
-			// Optional: the shared skills registry. Deployments without
-			// it omit the per-turn skills section entirely.
-			{Name: "skills", Type: skills.ResourceKind, Required: false},
-			// Optional: the user-level long-term memory binding.
-			// Deployments without a user database inject no section.
-			{Name: "usermemory", Type: userstore.ResourceKind, Required: false},
+		Deps: []resource.Requirement{
+			depPrepareMemory.Spec(), depPrepareWorkspace.Spec(),
+			// Optional: without them the sections they contribute (the
+			// approved-prefix line, the yolo marker, the skills block,
+			// the user-memory block) are simply absent.
+			depPrepareExecPolicy.Spec(), depPrepareSessions.Spec(),
+			depPrepareSkills.Spec(), depPrepareUserMemory.Spec(),
 		},
 	}
 }
@@ -69,12 +68,12 @@ type prepareSettings struct {
 	MemoryMaxChars    int    `json:"memory_max_chars,omitempty"`
 }
 
-func (prepareFactory) New(ctx context.Context, in resource.Input) (any, error) {
-	mem, err := resourcedep.Required[memory.ContextProvider](in, "worldstate", "memory")
+func (prepareFactory) New(ctx context.Context, in resource.Input) (agent.PreparerFunc, error) {
+	mem, err := depPrepareMemory.Get(in)
 	if err != nil {
 		return nil, err
 	}
-	ws, err := resourcedep.Required[workspace.Workspace](in, "worldstate", "workspace")
+	ws, err := depPrepareWorkspace.Get(in)
 	if err != nil {
 		return nil, err
 	}
@@ -93,26 +92,26 @@ func (prepareFactory) New(ctx context.Context, in resource.Input) (any, error) {
 		MemoryMaxChars:    settings.MemoryMaxChars,
 		Workspace:         ws,
 	})
-	if dep, ok := in.Dep("skills"); ok {
-		if svc, ok := dep.(*skills.Service); ok {
-			service.SetSkills(svc)
-		}
+	if svc, ok, err := depPrepareSkills.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		service.SetSkills(svc)
 	}
 	service.SetMemory(mem)
-	if dep, ok := in.Dep("execpolicy"); ok {
-		if prefixes, ok := dep.(PrefixProvider); ok {
-			service.SetPrefixProvider(prefixes)
-		}
+	if prefixes, ok, err := depPrepareExecPolicy.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		service.SetPrefixProvider(prefixes)
 	}
-	if dep, ok := in.Dep("sessions"); ok {
-		if st, ok := dep.(*ocsessions.Store); ok {
-			service.SetSessions(st)
-		}
+	if st, ok, err := depPrepareSessions.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		service.SetSessions(st)
 	}
-	if dep, ok := in.Dep("usermemory"); ok {
-		if binding, ok := dep.(*userstore.Binding); ok {
-			service.SetUserMemory(binding)
-		}
+	if binding, ok, err := depPrepareUserMemory.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		service.SetUserMemory(binding)
 	}
 	return agent.PreparerFunc(func(
 		ctx context.Context, identity agent.Identity, req *agent.Request, prev *agent.Board,

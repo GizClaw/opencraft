@@ -51,13 +51,14 @@ func (l *Lifecycle) agentDefinition(spec AgentSpec) (agent.Definition, error) {
 		Engine: agent.EngineRef{
 			Kind: spec.Engine.Kind,
 			Impl: spec.Engine.Impl,
+			// Since core/v0.10.0 a graph engine mounts node types as
+			// resources; a dynamic subagent points at the same three the
+			// assistant engine does (assets/opencraft.yaml), which is
+			// where its collaborators live now.
 			Deps: resource.Deps{
-				"inference":      "infer",
-				"router":         "router",
-				"tools":          "tools",
-				"workspace":      "ws",
-				"sandbox":        "box",
-				"script_runtime": "js",
+				"node_type.inference": "node.inference",
+				"node_type.tool":      "node.tool",
+				"node_type.script":    "node.script",
 			},
 			Settings: engineSettings,
 		},

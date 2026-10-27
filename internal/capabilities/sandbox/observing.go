@@ -51,7 +51,7 @@ const ArtifactObserverResourceKind = "opencraft.artifacts"
 // ArtifactObserverFactory builds the opencraft.artifacts resource.
 type ArtifactObserverFactory struct{}
 
-var _ resource.Factory = ArtifactObserverFactory{}
+var _ resource.Factory[*ArtifactObserver] = ArtifactObserverFactory{}
 
 func (ArtifactObserverFactory) Spec() resource.Spec {
 	return resource.Spec{
@@ -62,7 +62,7 @@ func (ArtifactObserverFactory) Spec() resource.Spec {
 
 func (ArtifactObserverFactory) New(
 	context.Context, resource.Input,
-) (any, error) {
+) (*ArtifactObserver, error) {
 	return &ArtifactObserver{}, nil
 }
 
@@ -227,28 +227,24 @@ type ObservingWorkspaceSettings struct {
 // artifact sink.
 type ObservingWorkspaceFactory struct{}
 
-var _ resource.Factory = ObservingWorkspaceFactory{}
+var _ resource.Factory[*observingWorkspace] = ObservingWorkspaceFactory{}
+
+// depObserver is the shared artifact sink: without it writes are still
+// confined, just not reported.
+var depObserver = resource.Optional[*ArtifactObserver]("observer")
 
 func (ObservingWorkspaceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: ObservingWorkspaceResourceKind,
 		Impl: "local",
-		Deps: []resource.DepSpec{
-			// Optional: the shared artifact sink. Without it writes are
-			// still confined but not reported.
-			{
-				Name:     "observer",
-				Type:     ArtifactObserverResourceKind,
-				Required: false,
-			},
-		},
+		Deps: []resource.Requirement{depObserver.Spec()},
 	}
 }
 
 func (ObservingWorkspaceFactory) New(
 	ctx context.Context,
 	in resource.Input,
-) (any, error) {
+) (*observingWorkspace, error) {
 	settings, err := resource.DecodeTyped[ObservingWorkspaceSettings](
 		ctx, in.Settings)
 	if err != nil {
@@ -264,10 +260,10 @@ func (ObservingWorkspaceFactory) New(
 		return nil, err
 	}
 	obs := &ArtifactObserver{}
-	if dep, ok := in.Dep("observer"); ok {
-		if o, ok := dep.(*ArtifactObserver); ok {
-			obs = o
-		}
+	if o, ok, err := depObserver.TryGet(in); err != nil {
+		return nil, err
+	} else if ok {
+		obs = o
 	}
 	return &observingWorkspace{inner: inner, obs: obs}, nil
 }

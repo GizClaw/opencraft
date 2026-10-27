@@ -2,6 +2,7 @@ package userstore
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/resource"
@@ -39,24 +40,18 @@ func TestFactorySpecDeclaresTheStoreContract(t *testing.T) {
 		t.Fatalf("deps = %+v, want the single store dep", spec.Deps)
 	}
 	dep := spec.Deps[0]
-	if dep.Name != "store" || dep.Type != StoreContract || !dep.Required {
+	if dep.Name != "store" || dep.Type != reflect.TypeFor[Memory]() || !dep.Required {
 		t.Fatalf("store dep = %+v, want a required StoreContract", dep)
 	}
 }
 
 func TestFactoryBuildsBindingOverTheStore(t *testing.T) {
 	store := newStore(t)
-	value, err := (Factory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{}`),
-		Deps:     map[string]any{"store": store},
-	})
+	value, err := (Factory{}).New(context.Background(), resource.NewInput([]byte(`{}`), map[string]any{"store": store}, nil, nil))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	binding, ok := value.(*Binding)
-	if !ok {
-		t.Fatalf("value = %T, want *Binding", value)
-	}
+	binding := value
 	if binding.Memory != store {
 		t.Fatal("binding did not keep the injected store")
 	}
@@ -70,22 +65,14 @@ func TestFactoryBuildsBindingOverTheStore(t *testing.T) {
 
 func TestFactoryRejectsMissingStoreAndBadSettings(t *testing.T) {
 	ctx := context.Background()
-	if _, err := (Factory{}).New(ctx, resource.Input{
-		Settings: []byte(`{}`),
-	}); err == nil {
+	if _, err := (Factory{}).New(ctx, resource.NewInput([]byte(`{}`), nil, nil, nil)); err == nil {
 		t.Fatal("New without a store dep must fail")
 	}
 	store := newStore(t)
-	if _, err := (Factory{}).New(ctx, resource.Input{
-		Settings: []byte(`{}`),
-		Deps:     map[string]any{"store": "not a memory"},
-	}); err == nil {
+	if _, err := (Factory{}).New(ctx, resource.NewInput([]byte(`{}`), map[string]any{"store": "not a memory"}, nil, nil)); err == nil {
 		t.Fatal("New with a mistyped store dep must fail")
 	}
-	if _, err := (Factory{}).New(ctx, resource.Input{
-		Settings: []byte(`{"inject_max_items":999}`),
-		Deps:     map[string]any{"store": store},
-	}); err == nil {
+	if _, err := (Factory{}).New(ctx, resource.NewInput([]byte(`{"inject_max_items":999}`), map[string]any{"store": store}, nil, nil)); err == nil {
 		t.Fatal("New with out-of-range settings must fail")
 	}
 }

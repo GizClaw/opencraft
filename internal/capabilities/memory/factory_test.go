@@ -8,10 +8,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/inference/route"
-	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/resource"
-
-	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 )
 
 // TestFactoryWiresRouter verifies the memory assembly builds over a
@@ -42,32 +39,20 @@ func TestFactoryWiresRouter(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	value, err := (Factory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{"max_raw_messages":32,"preserve_recent":4}`),
-		Deps: map[string]any{
-			"sessions": store,
-			"router":   router,
-		},
-	})
+	_, err = (Factory{}).New(context.Background(), resource.NewInput([]byte(`{"max_raw_messages":32,"preserve_recent":4}`), map[string]any{
+		"sessions": store,
+		"router":   router,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("factory with router: %v", err)
 	}
-	if _, ok := value.(corememory.TurnSink); !ok {
-		t.Fatalf("value = %T, want corememory.TurnSink", value)
-	}
 
 	// Without a router the assembly still builds (buffer fold only).
-	value, err = (Factory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{"max_raw_messages":32,"preserve_recent":4}`),
-		Deps: map[string]any{
-			"sessions": store,
-		},
-	})
+	_, err = (Factory{}).New(context.Background(), resource.NewInput([]byte(`{"max_raw_messages":32,"preserve_recent":4}`), map[string]any{
+		"sessions": store,
+	}, nil, nil))
 	if err != nil {
 		t.Fatalf("factory without router: %v", err)
-	}
-	if _, ok := value.(corememory.TurnSink); !ok {
-		t.Fatalf("value = %T, want corememory.TurnSink", value)
 	}
 }
 
@@ -94,17 +79,11 @@ func TestFactoryReplayFullHistoryDefaultsOn(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			value, err := (Factory{}).New(context.Background(), resource.Input{
-				Settings: []byte(tc.settings),
-				Deps:     map[string]any{"sessions": store},
-			})
+			value, err := (Factory{}).New(context.Background(), resource.NewInput([]byte(tc.settings), map[string]any{"sessions": store}, nil, nil))
 			if err != nil {
 				t.Fatalf("factory: %v", err)
 			}
-			assembly, ok := value.(*summary.Assembly)
-			if !ok {
-				t.Fatalf("value = %T, want *summary.Assembly", value)
-			}
+			assembly := value
 			if got := assembly.ReplayFullHistory(); got != tc.want {
 				t.Fatalf("ReplayFullHistory = %v, want %v", got, tc.want)
 			}

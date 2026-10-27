@@ -78,14 +78,12 @@ func TestPolicyReportsWhatItAccepted(t *testing.T) {
 // producing a policy that does not do what it says.
 func TestPolicyFactoryValidation(t *testing.T) {
 	factory := PolicyFactory{}
-	built, err := factory.New(context.Background(), resource.Input{
-		Settings: []byte(`{"allowed_targets":["researcher"],"blocked_targets":[]}`),
-	})
+	built, err := factory.New(context.Background(), resource.NewInput([]byte(`{"allowed_targets":["researcher"],"blocked_targets":[]}`), nil, nil, nil))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	policy, ok := built.(*Policy)
-	if !ok || !policy.Allows("researcher") || policy.Allows("reviewer") {
+	policy := built
+	if !policy.Allows("researcher") || policy.Allows("reviewer") {
 		t.Fatalf("built = %#v", built)
 	}
 
@@ -95,9 +93,7 @@ func TestPolicyFactoryValidation(t *testing.T) {
 		"separator":         `{"allowed_targets":["a/b"]}`,
 		"undecodable":       `{`,
 	} {
-		if _, err := factory.New(context.Background(), resource.Input{
-			Settings: []byte(settings),
-		}); err == nil {
+		if _, err := factory.New(context.Background(), resource.NewInput([]byte(settings), nil, nil, nil)); err == nil {
 			t.Errorf("%s: accepted %s", name, settings)
 		}
 	}

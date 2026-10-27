@@ -236,6 +236,25 @@ func (s *Store) Save(ctx context.Context, cp agent.Checkpoint) error {
 	return s.db.Save(ctx, cp)
 }
 
+// WriteBase implements agent.CheckpointJournal: the store keeps a base
+// record per run plus an append-only chain, so a long turn writes only the
+// board's writes at each wave instead of the whole board. The trimmer runs
+// on a base exactly as it does on Save: a base is the one record that
+// carries the whole board.
+func (s *Store) WriteBase(ctx context.Context, cp agent.Checkpoint) error {
+	if fn := s.checkpointTrim.Load(); fn != nil {
+		cp = (*fn)(ctx, cp)
+	}
+	return s.db.WriteBase(ctx, cp)
+}
+
+// Append implements agent.CheckpointJournal. The delta is encoded by the
+// store before it returns (it borrows the producing board's memory), and an
+// at-cap chain answers agent.ErrNeedsBase so the engine writes a base.
+func (s *Store) Append(ctx context.Context, delta agent.CheckpointDelta) error {
+	return s.db.Append(ctx, delta)
+}
+
 // Load implements agent.CheckpointStore.
 func (s *Store) Load(ctx context.Context, execID string) (*agent.Checkpoint, error) {
 	return s.db.Load(ctx, execID)
@@ -247,6 +266,7 @@ func (s *Store) Delete(ctx context.Context, execID string) error {
 }
 
 var _ agent.CheckpointStore = (*Store)(nil)
+var _ agent.CheckpointJournal = (*Store)(nil)
 var _ agent.CheckpointDeleter = (*Store)(nil)
 
 // DefaultSessionID is the stable session key used by tools that run
