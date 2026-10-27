@@ -20,7 +20,9 @@ import (
 // It has no write side. The transcript is written by the conversation's
 // owner — capabilities/sessions, one writer, in the transaction that also
 // maintains the search index and the counter caches — and this package
-// only reads it and maintains its own summary_nodes.
+// only reads it: the fold that used to accumulate here is the graph's
+// compact tool now, and the record of what it covered lives in the
+// conversation's session document (`compact_fold`).
 //
 // Transcript-coordinate contract: every row carries the immutable Seq it
 // was appended with, and that Seq is the row's identity — the model
@@ -48,22 +50,6 @@ type TurnStore interface {
 	// oldest first. The transcript is append-only, so a reader that
 	// already holds the prefix only has to read what came after it.
 	LoadAfter(ctx context.Context, conversationID string, afterSeq int64) ([]StoredMessage, error)
-	UpsertSummaryNode(ctx context.Context, node SummaryNode) error
-	// CondenseSummaryNode replaces the stored copy of want with
-	// replacement, but only while the row still holds want exactly
-	// (same content, same coverage, same update time). ok=false means a
-	// newer fold or condensation landed first: the replacement is stale
-	// and must be dropped. Comparison and write are one statement, so
-	// nothing can land between them.
-	CondenseSummaryNode(ctx context.Context, want, replacement SummaryNode) (bool, error)
-	ListSummaryNodes(ctx context.Context, conversationID string) ([]SummaryNode, error)
-	// DeleteSummaryNodes removes a thread's nodes at level except the node
-	// whose id equals keepID (pass "" to delete all at that level).
-	DeleteSummaryNodes(ctx context.Context, conversationID string, level int, keepID string) error
-	// DeleteSummaryNodesByID removes the given nodes. It retires coverage
-	// written in another identity generation, which no reader can map onto
-	// transcript rows.
-	DeleteSummaryNodesByID(ctx context.Context, conversationID string, ids []string) error
 }
 
 // Assembly implements flowcraft's sdk/memory.Assembly on top of the summary
@@ -72,7 +58,6 @@ type TurnStore interface {
 // configuration rather than called ad hoc.
 type Assembly struct {
 	store    TurnStore
-	policy   Policy
 	generate generateFunc // nil => buffer fold only
 	usage    func(context.Context, inference.Usage)
 	now      func() time.Time
@@ -103,10 +88,6 @@ type generateFunc func(
 
 // AssemblyOption configures an Assembly.
 type AssemblyOption func(*Assembly)
-
-func WithAssemblyPolicy(p Policy) AssemblyOption {
-	return func(a *Assembly) { a.policy = p }
-}
 
 // WithRouter enables the LLM layered compaction stage through the
 // deployment's inference router. The router selects the model from the
@@ -139,7 +120,6 @@ func WithUsageObserver(fn func(context.Context, inference.Usage)) AssemblyOption
 func NewAssembly(store TurnStore, opts ...AssemblyOption) *Assembly {
 	a := &Assembly{
 		store:        store,
-		policy:       Policy{},
 		now:          time.Now,
 		condensePerm: make(chan struct{}, 1),
 		replay:       newReplayCache(replayCacheDepth),

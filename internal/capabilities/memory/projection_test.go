@@ -75,9 +75,7 @@ func TestProjectionServesTheModelWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assembly := summary.NewAssembly(adapter, summary.WithAssemblyPolicy(summary.Policy{
-		MaxRawMessages: 2, PreserveRecent: 0, MaxSummaryBytes: 4096,
-	}))
+	assembly := summary.NewAssembly(adapter)
 	got, err := assembly.Context(ctx, corememory.ContextRequest{
 		Scope:          corememory.Scope{RuntimeID: "opencraft"},
 		ConversationID: conv,
@@ -172,9 +170,7 @@ func TestProjectionWindowIncludesAppAuthoredTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assembly := summary.NewAssembly(adapter, summary.WithAssemblyPolicy(summary.Policy{
-		MaxRawMessages: 50, PreserveRecent: 0, MaxSummaryBytes: 4096,
-	}))
+	assembly := summary.NewAssembly(adapter)
 	got, err := assembly.Context(ctx, corememory.ContextRequest{
 		Scope:          corememory.Scope{RuntimeID: "opencraft"},
 		ConversationID: conv,
@@ -240,9 +236,7 @@ func TestProjectionServesTextlessRowAsPlaceholder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assembly := summary.NewAssembly(adapter, summary.WithAssemblyPolicy(summary.Policy{
-		MaxRawMessages: 10, PreserveRecent: 0, MaxSummaryBytes: 4096,
-	}))
+	assembly := summary.NewAssembly(adapter)
 	got, err := assembly.Context(ctx, corememory.ContextRequest{
 		Scope:          corememory.Scope{RuntimeID: "opencraft"},
 		ConversationID: conv,

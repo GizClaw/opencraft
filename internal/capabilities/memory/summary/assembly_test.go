@@ -2,7 +2,6 @@ package summary
 
 import (
 	"context"
-	"slices"
 	"sync"
 	"testing"
 
@@ -25,14 +24,8 @@ func storedRows(msgs ...message.Message) []StoredMessage {
 }
 
 type fakeTurnStore struct {
-	mu    sync.Mutex
-	msgs  map[string][]StoredMessage
-	nodes []SummaryNode
-	// writes counts every mutating store call, so a test can assert a
-	// barrier held without reading stable ids back: a fold that ran
-	// rewrites the same level-0 node in place, and a node count would
-	// not move.
-	writes int
+	mu   sync.Mutex
+	msgs map[string][]StoredMessage
 }
 
 func (f *fakeTurnStore) appendRows(conversationID string, msgs ...message.Message) {
@@ -133,91 +126,6 @@ func (f *fakeTurnStore) LoadBack(_ context.Context, conversationID string, befor
 		out[i], out[j] = out[j], out[i]
 	}
 	return out, nil
-}
-
-func (f *fakeTurnStore) UpsertSummaryNode(_ context.Context, n SummaryNode) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.writes++
-	for i := range f.nodes {
-		if f.nodes[i].ID == n.ID {
-			f.nodes[i] = n
-			return nil
-		}
-	}
-	f.nodes = append(f.nodes, n)
-	return nil
-}
-
-// CondenseSummaryNode mirrors the sqlite store's atomic gate: the swap
-// lands only while the row still holds exactly the buffer the job
-// condensed (content, coverage, write time).
-func (f *fakeTurnStore) CondenseSummaryNode(
-	_ context.Context, want, replacement SummaryNode,
-) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for i := range f.nodes {
-		cur := f.nodes[i]
-		if cur.ID != want.ID {
-			continue
-		}
-		if cur.Content.Text() != want.Content.Text() ||
-			!cur.UpdatedAt.Equal(want.UpdatedAt) ||
-			!slices.Equal(cur.SourceIDs, want.SourceIDs) {
-			return false, nil
-		}
-		f.writes++
-		f.nodes[i] = replacement
-		return true, nil
-	}
-	return false, nil
-}
-
-func (f *fakeTurnStore) ListSummaryNodes(_ context.Context, conversationID string) ([]SummaryNode, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var out []SummaryNode
-	for _, n := range f.nodes {
-		if n.ThreadID == conversationID {
-			out = append(out, n)
-		}
-	}
-	return out, nil
-}
-
-func (f *fakeTurnStore) DeleteSummaryNodes(_ context.Context, conversationID string, level int, keepID string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.writes++
-	var out []SummaryNode
-	for _, n := range f.nodes {
-		if n.ThreadID == conversationID && n.Level == level && n.ID != keepID {
-			continue
-		}
-		out = append(out, n)
-	}
-	f.nodes = out
-	return nil
-}
-
-func (f *fakeTurnStore) DeleteSummaryNodesByID(_ context.Context, conversationID string, ids []string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.writes++
-	drop := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		drop[id] = true
-	}
-	out := make([]SummaryNode, 0, len(f.nodes))
-	for _, n := range f.nodes {
-		if n.ThreadID == conversationID && drop[n.ID] {
-			continue
-		}
-		out = append(out, n)
-	}
-	f.nodes = out
-	return nil
 }
 
 func TestAssemblyRejectsDocuments(t *testing.T) {

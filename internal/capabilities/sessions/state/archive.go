@@ -1039,14 +1039,6 @@ func (s *Store) DeleteConversationRows(ctx context.Context, id string) error {
 			return fmt.Errorf("state: delete conversation %s: %w", id, err)
 		}
 	}
-	// The summary tree is derived from these rows and would outlive them
-	// (migration 020 retired the other derived copy, memory_items).
-	for _, table := range []string{"summary_nodes"} {
-		query := `DELETE FROM ` + table + ` WHERE thread_id = ?`
-		if err := execIfTableExists(ctx, tx, table, query, id); err != nil {
-			return fmt.Errorf("state: delete conversation %s memory: %w", id, err)
-		}
-	}
 	// The message search index (migration 016) mirrors archive_messages
 	// by row key; dropping the archive rows without it would leave hits
 	// that join to nothing.
