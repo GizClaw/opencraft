@@ -468,5 +468,9 @@ func (s *Service) replayHistory(
 	// replayed and folded again on every turn: the model reads the folded
 	// view, the archive keeps the rows.
 	raws = applyFold(ctx, s.sessionStore, contextID, raws)
+	// Older tool output is shortened in the view (see prune.go): the archive
+	// keeps every byte, and the window stays proportional to what the model is
+	// actually working with instead of to everything a tool ever printed.
+	raws = pruneOldToolResults(raws)
 	return normalizeRawItemsWithSeqs(raws)
 }
