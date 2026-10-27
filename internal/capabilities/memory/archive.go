@@ -196,12 +196,6 @@ func commitArchivedTurn(
 	if len(msgs) <= 1 {
 		return nil
 	}
-	if folder, ok := sink.(foldSink); ok {
-		if err := folder.FoldOnly(ctx, conversationID); err != nil {
-			return fmt.Errorf("memory: fold after archive: %w", err)
-		}
-		return nil
-	}
 	if err := sink.CommitTurn(ctx, corememory.Turn{
 		Scope:          scope,
 		ConversationID: conversationID,

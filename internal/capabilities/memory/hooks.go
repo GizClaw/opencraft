@@ -14,14 +14,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
-// foldSink is implemented by the production memory resource: it folds a
-// conversation's transcript into its summary tree. The commit hook writes
-// the turn to the session store and then folds, in that order — the fold
-// reads the rows the archive just wrote.
-type foldSink interface {
-	FoldOnly(ctx context.Context, conversationID string) error
-}
-
 // commitHookFactory builds the opencraft.commit hook: it commits the
 // turn's new messages to the memory TurnSink (persist + fold).
 type commitHookFactory struct{}
@@ -84,20 +76,9 @@ func (commitHookFactory) New(ctx context.Context, in resource.Input) (agent.Comm
 			return nil
 		}
 		persistCtx := context.WithoutCancel(ctx)
-		if folder, ok := sink.(foldSink); ok {
-			// Same rule as the archive observer: a Referee may accept a
-			// canceled/interrupted run into the committer path, so the
-			// store write must not inherit the run's cancellation.
-			// The turn is written once, by the store, and the memory
-			// side folds what was written: there is no second copy to
-			// keep in step (see projection.go).
-			if err := store.AppendTurnWithRunID(
-				persistCtx, req.ContextID, res.RunID, raw,
-			); err != nil {
-				return err
-			}
-			return folder.FoldOnly(persistCtx, req.ContextID)
-		}
+		// The turn is written once, by the store; the memory side has no
+		// second copy to keep in step (see projection.go), so the sink is
+		// handed the same messages the archive just received.
 		if err := store.AppendTurnWithRunID(
 			persistCtx, req.ContextID, res.RunID, raw,
 		); err != nil {

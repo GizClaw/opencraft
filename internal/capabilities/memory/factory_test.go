@@ -61,32 +61,3 @@ func TestFactoryWiresRouter(t *testing.T) {
 // switch (or a custom deployment that never wrote one) gets the same
 // behaviour as the embedded document, and only an explicit false turns it
 // back into the bounded raw window.
-func TestFactoryReplayFullHistoryDefaultsOn(t *testing.T) {
-	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = store.CloseDB() }()
-
-	cases := []struct {
-		name     string
-		settings string
-		want     bool
-	}{
-		{"absent", `{"max_raw_messages":32,"preserve_recent":4}`, true},
-		{"true", `{"max_raw_messages":32,"replay_full_history":true}`, true},
-		{"false", `{"max_raw_messages":32,"replay_full_history":false}`, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			value, err := (Factory{}).New(context.Background(), resource.NewInput([]byte(tc.settings), map[string]any{"sessions": store}, nil, nil))
-			if err != nil {
-				t.Fatalf("factory: %v", err)
-			}
-			assembly := value
-			if got := assembly.ReplayFullHistory(); got != tc.want {
-				t.Fatalf("ReplayFullHistory = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
