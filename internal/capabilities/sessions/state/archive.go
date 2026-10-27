@@ -585,13 +585,19 @@ func (s *Store) CommitConversationTurn(
 		// re-rendering every row each time was the largest cost on that path.
 		projected, promptState := summarytext.ProjectRow(
 			message.Role(msgs[i].Role), msgs[i].Content)
+		// Only a projection that differs from the stored content is worth a
+		// second copy: for a plain text row the prompt form *is* the content,
+		// and duplicating it would double the archive to save a decode the
+		// reader can do just as well.
 		prompt := ""
 		if promptState != summarytext.PromptSkip {
 			raw, err := json.Marshal(projected)
 			if err != nil {
 				return fmt.Errorf("state: marshal prompt projection: %w", err)
 			}
-			prompt = string(raw)
+			if string(raw) != string(content) {
+				prompt = string(raw)
+			}
 		}
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO archive_messages(

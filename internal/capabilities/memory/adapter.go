@@ -220,8 +220,15 @@ func projectTranscriptRows(
 				empty++
 				continue
 			}
+			// An empty prompt_json with a recorded state means the projection
+			// was identical to the content, so the content *is* the prompt
+			// form: decode it and hand it over without rendering it again.
+			payloadJSON := promptJSON
+			if payloadJSON == "" {
+				payloadJSON = payload
+			}
 			var stored message.Message
-			if err := json.Unmarshal([]byte(promptJSON), &stored); err == nil {
+			if err := json.Unmarshal([]byte(payloadJSON), &stored); err == nil {
 				if promptState == summarytext.PromptPlaceholder {
 					placeholders++
 				}
