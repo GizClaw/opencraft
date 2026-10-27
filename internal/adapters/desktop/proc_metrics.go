@@ -3,6 +3,8 @@ package desktop
 import (
 	"context"
 	"errors"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -31,6 +33,28 @@ const (
 // keeps alive — grows over minutes: the resolution is spent where it costs
 // no series the panel needs.
 const procMetricEvery = 4
+
+// heapIdleFloor is how much allocated-but-idle heap is worth returning. Go
+// grows the heap to twice what is live and does not give the pages back on its
+// own; a desktop process that folds a large conversation settles at the peak and
+// stays there, which reads as an RSS that never drops. Returning them costs one
+// collection and is only worth it when there is something to return.
+const heapIdleFloor = 64 << 20
+
+// returnIdleHeap hands back the pages a peak left behind, once the heap is
+// mostly idle. It runs on the metrics tick rather than on every collection: the
+// point is to reclaim after the burst, not to pay a full sweep during it.
+func returnIdleHeap() {
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	if stats.HeapSys < stats.HeapAlloc {
+		return
+	}
+	if stats.HeapSys-stats.HeapAlloc < heapIdleFloor {
+		return
+	}
+	debug.FreeOSMemory()
+}
 
 // procSamples renders one snapshot of the process family, or nothing on a
 // platform without a probe.
