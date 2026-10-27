@@ -27,12 +27,14 @@ import (
 )
 
 const (
-	// maxIndexRunes bounds the text one message contributes to the
-	// index. The trigram index is a few times the size of the text it
-	// covers, and a search only ever needs a window of a message: the
-	// head of a huge tool result already carries the truncation pointer
-	// the result middleware wrote, and the excerpt above it.
-	maxIndexRunes = 4000
+	// maxIndexRunes bounds the text one message contributes to the index. A
+	// trigram index costs about three times the text it covers, and a search
+	// only ever needs a window of a message: the head of a huge tool result
+	// already carries the truncation pointer the result middleware wrote, and
+	// the excerpt above it. Measured on a 64k-message workspace, 4000 runes
+	// per message bought 356 MB of index data for text a query matches in its
+	// first lines or not at all.
+	maxIndexRunes = 1200
 	// snippetTokens is the snippet window handed to fts5's snippet().
 	// The trigram tokenizer counts three-character windows, so a token
 	// budget is roughly a character budget: 200 keeps a snippet around

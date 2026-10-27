@@ -23,8 +23,8 @@ import (
 // layer owns that it happens exactly once per database, recorded in
 // schema_migrations like any other step.
 const (
-	searchIndexVersion = 17
-	searchIndexName    = "017_message_fts_backfill"
+	searchIndexVersion = 29
+	searchIndexName    = "029_message_fts_reindex"
 )
 
 // BackfillSearchIndex indexes the messages of a database that predates
@@ -54,6 +54,17 @@ func BackfillSearchIndex(
 	}
 	if err := importer.BackfillSearchIndex(ctx); err != nil {
 		return fmt.Errorf("compat: backfill message index: %w", err)
+	}
+	// The index that was just replaced left its pages behind; VACUUM returns
+	// them to the filesystem. A workspace database is hundreds of megabytes
+	// and the freed share is most of the index, so this is the difference
+	// between the upgrade and a reclaim.
+	//
+	// Best effort: a database held by another process refuses the exclusive
+	// lock, and that is not a reason to fail the open — the space comes back
+	// on the next quiet start.
+	if _, err := handle.SQLDB().ExecContext(ctx, `VACUUM`); err != nil {
+		telemetry.WarnErr(ctx, "compat: reclaim workspace space failed", err)
 	}
 	if _, err := handle.SQLDB().ExecContext(ctx,
 		`INSERT INTO schema_migrations(version, name, applied_at)
